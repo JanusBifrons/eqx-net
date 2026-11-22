@@ -1,9 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
-import RocketIcon from '@mui/icons-material/RocketLaunch';
-import StopIcon from '@mui/icons-material/Stop';
-import SettingsIcon from '@mui/icons-material/Settings';
-import CloseIcon from '@mui/icons-material/Close';
+import { EqxIcon } from '../EqxIcon/EqxIcon.js';
 import { EqxStrip, STRIP_WIDTH } from './EqxStrip.js';
 import { EqxIconButton } from '../EqxIconButton/EqxIconButton.js';
 import { EqxStripIdentity } from '../EqxStripIdentity/EqxStripIdentity.js';
@@ -17,16 +14,16 @@ function SelectionStrip({ open, count }: { open?: boolean; count?: number }) {
   return (
     <EqxStrip data-testid="strip" aria-label="Selection" {...(open === undefined ? {} : { open })}>
       <EqxStripIdentity
-        icon={<RocketIcon />}
+        icon={<EqxIcon name="fleet" />}
         tooltip="Fighter"
         health="warn"
         data-testid="identity"
         {...(count === undefined ? {} : { count })}
       />
-      <EqxIconButton variant="strip" icon={<StopIcon />} tooltip="Stop" tone="danger" badge={2} />
+      <EqxIconButton variant="strip" icon={<EqxIcon name="stop" />} tooltip="Stop" tone="danger" badge={2} />
       <EqxStrip.Separator data-testid="sep" />
-      <EqxIconButton variant="strip" icon={<SettingsIcon fontSize="large" />} tooltip="Menu" />
-      <EqxIconButton variant="strip" icon={<CloseIcon />} tooltip="Deselect" />
+      <EqxIconButton variant="strip" icon={<EqxIcon name="cog" size="large" />} tooltip="Menu" />
+      <EqxIconButton variant="strip" icon={<EqxIcon name="close" />} tooltip="Deselect" />
     </EqxStrip>
   );
 }
@@ -99,7 +96,7 @@ describe('EqxStrip', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     render(
       <EqxStrip>
-        <EqxIconButton variant="strip" icon={<StopIcon />} tooltip="Stop" />
+        <EqxIconButton variant="strip" icon={<EqxIcon name="stop" />} tooltip="Stop" />
         <span>Stop</span>
       </EqxStrip>,
     );
