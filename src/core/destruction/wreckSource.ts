@@ -38,7 +38,9 @@ import {
 } from '../../shared-types/shipScale/tuning.js';
 import { shipHullOutline, shipShapeScale } from '../geometry/shipHullOutline.js';
 import { generateAsteroidVertices, polygonArea } from '../swarm/asteroidShape.js';
-import { WRECK_ROCK_PARENT_KIND, type WreckRockRef } from '../../shared-types/messages/wreckDescriptor.js';
+import {
+  WRECK_ROCK_PARENT_KIND, WRECK_STRUCTURE_PARENT_KIND, type WreckRockRef, type WreckStructureRef,
+} from '../../shared-types/messages/wreckDescriptor.js';
 import { rocksInChunk, unpackRockKey, type ChunkOpts } from '../terrain/fieldLayout.js';
 import { fieldRockBody } from '../terrain/chunkStreamer.js';
 import { getStructureKind, SOCKET_OUTLINE_STYLE, structureOutline, type StructureKindId } from '../../shared-types/structureKinds.js';
@@ -64,11 +66,12 @@ export const ROCK_INTEGRITY_PER_AREA = 0.2;
  *  the wire: each side attaches its own (the welcome's, on a client). */
 export type WreckRockSource = WreckRockRef & { readonly field?: ChunkOpts | null };
 
-/** The structure a wreck was broken from: its kind (`k`). No orientation:
- *  a structure's quarter-turn is its body angle, the death pose's. */
-export interface WreckStructureRef {
-  readonly k: StructureKindId;
-}
+/** The structure a wreck was broken from (the descriptor's `structure`,
+ *  as it rides the wire): its kind (`k`). */
+export type { WreckStructureRef };
+
+/** The descriptor's `parentKind` of a structure's wreck (not a ship kind). */
+export const STRUCTURE_WRECK_PARENT_KIND = WRECK_STRUCTURE_PARENT_KIND;
 
 /** A structure's body mass per world unit² of outline: one density with a
  *  cut rock's (`ROCK_WRECK_DENSITY`), so a structure's piece weighs like

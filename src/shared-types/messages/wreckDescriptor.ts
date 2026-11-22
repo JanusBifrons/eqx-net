@@ -3,6 +3,8 @@
  *  Split out of `snapshotMessages.ts`, which re-exports all of it. */
 import { z } from 'zod';
 import { ASTEROID_RESOURCE_IDS, type AsteroidResourceId } from '../asteroidResources.js';
+import { isStructureKindId } from '../structureKinds/lookup.js';
+import type { StructureKindId } from '../structureKinds/types.js';
 
 /** Wreck ids are u16, never 0; a resync range's `hi` may be one past the end. */
 export const WRECK_ID_END = 0x10000;
@@ -57,6 +59,22 @@ export interface WreckRockRef {
   fk?: number;
 }
 
+/** Structure break-up: the descriptor's `parentKind` of a structure's wreck
+ *  (not a ship kind). */
+export const WRECK_STRUCTURE_PARENT_KIND = 'structure';
+
+/** Structure break-up: the structure a root wreck was broken from, by its
+ *  kind id (`STRUCTURE_KINDS_LIST`), whose socket outline the fracture cuts
+ *  on both sides. No orientation: a structure's quarter-turn is its body
+ *  angle, the death pose's. Also `WreckFractureInputs.structure`. */
+export interface WreckStructureRef {
+  readonly k: StructureKindId;
+}
+
+export const WreckStructureRefSchema = z
+  .object({ k: z.string().min(1).max(64).refine((k): k is StructureKindId => isStructureKindId(k)) })
+  .strict();
+
 /** Highest packed field rock key (a u32). */
 export const MAX_WRECK_FIELD_ROCK_KEY = 0xffffffff;
 
@@ -104,6 +122,7 @@ export const WreckDescriptorSchema = z
     parentPiece: z.number().int().min(0).max(MAX_WRECK_PIECE_INDEX).optional(),
     owner: z.string().min(1).max(MAX_WRECK_OWNER_LEN).optional(),
     rock: WreckRockRefSchema.optional(),
+    structure: WreckStructureRefSchema.optional(),
   })
   .strict()
   // A child names its parent wreck AND piece, or neither (a root); never
@@ -111,7 +130,10 @@ export const WreckDescriptorSchema = z
   .refine((d) => (d.parentWreck === undefined) === (d.parentPiece === undefined) && d.parentWreck !== d.wreckId
     && (d.extraCuts === undefined || d.cutKind !== undefined)
     // A rock rides only on a ROOT rock wreck (children resolve to it).
-    && (d.rock === undefined || (d.parentWreck === undefined && d.parentKind === WRECK_ROCK_PARENT_KIND)));
+    && (d.rock === undefined || (d.parentWreck === undefined && d.parentKind === WRECK_ROCK_PARENT_KIND))
+    // Likewise a structure, only on a ROOT structure wreck, never with a rock.
+    && (d.structure === undefined
+      || (d.parentWreck === undefined && d.parentKind === WRECK_STRUCTURE_PARENT_KIND && d.rock === undefined)));
 
 /** The snapshot's wreck fields (#3). The snapshot as a whole is the
  *  documented high-cadence carve-out (not zod-parsed on ingest); the client
@@ -160,6 +182,16 @@ function isRockRef(v: unknown): boolean {
       && r['fk'] >= 0 && r['fk'] <= MAX_WRECK_FIELD_ROCK_KEY && shape === 0));
 }
 
+/** Alloc-free twin of `WreckStructureRefSchema` (strict: `k` only). */
+function isStructureRef(v: unknown): boolean {
+  if (typeof v !== 'object' || v === null) return false;
+  const r = v as Record<string, unknown>;
+  const k = r['k'];
+  if (typeof k !== 'string' || k.length === 0 || k.length > 64 || !isStructureKindId(k)) return false;
+  for (const key in r) if (key !== 'k') return false;
+  return true;
+}
+
 /** Alloc-free twin of `WreckRemovesSchema`'s element check. */
 export function isWreckId(v: unknown): v is number {
   return typeof v === 'number' && Number.isInteger(v) && v >= 1 && v < WRECK_ID_END;
@@ -184,6 +216,8 @@ export function isWreckDescriptor(v: unknown): v is WreckDescriptor {
     && (d['extraCuts'] === undefined || (d['cutKind'] !== undefined && isExtraCuts(d['extraCuts'])))
     && (d['owner'] === undefined || (typeof d['owner'] === 'string' && d['owner'].length > 0 && d['owner'].length <= MAX_WRECK_OWNER_LEN))
     && (d['rock'] === undefined || (isRockRef(d['rock']) && d['parentWreck'] === undefined && d['parentKind'] === WRECK_ROCK_PARENT_KIND))
+    && (d['structure'] === undefined || (isStructureRef(d['structure']) && d['parentWreck'] === undefined
+      && d['parentKind'] === WRECK_STRUCTURE_PARENT_KIND && d['rock'] === undefined))
     && (d['parentWreck'] === undefined
       ? d['parentPiece'] === undefined
       : isWreckId(d['parentWreck']) && d['parentWreck'] !== d['wreckId']
@@ -257,6 +291,11 @@ export interface WreckDescriptor {
    *  seed and radius, whose outline the fracture cuts. A rock's child wrecks
    *  repeat `parentKind` and resolve to this root. Absent = a ship's wreck. */
   rock?: WreckRockRef;
+  /** Structure break-up: a ROOT wreck broken from a structure (`parentKind`
+   *  is then `WRECK_STRUCTURE_PARENT_KIND`): its kind, whose outline the
+   *  fracture cuts. Its child wrecks repeat `parentKind` and resolve to this
+   *  root. Never with `rock`. */
+  structure?: WreckStructureRef;
 }
 
 /** A rolling-resync chunk of the live wreck set (`SnapshotMessage.wreckSync`). */

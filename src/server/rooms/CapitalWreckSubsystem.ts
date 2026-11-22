@@ -52,7 +52,9 @@ import { breakUpWreck, WRECK_HIT_BUCKET_TICKS as BUCKET_TICKS, WRECK_HIT_BUCKETS
 import { RockCutter } from './rockCut.js';
 import type { WreckLineageState } from './wreckLineageSaves.js';
 import { WreckKickQueue } from './wreckKicks.js';
-import { asWreckSource, ROCK_WRECK_PARENT_KIND, type WreckSource } from '../../core/destruction/wreckSource.js';
+import {
+  asWreckSource, ROCK_WRECK_PARENT_KIND, STRUCTURE_WRECK_PARENT_KIND, type WreckSource,
+} from '../../core/destruction/wreckSource.js';
 export type { WreckPiecePose };
 export type { WreckDeathOutcome } from './wreckBreakUp.js';
 export type { CapitalWreckDeps, LiveWreck, PieceKnock, SpawnWreckOpts, WreckOrigin, WreckPieceSpawn } from './capitalWreckTypes.js';
@@ -281,7 +283,7 @@ export class CapitalWreckSubsystem {
       const owner = opts.owner ?? this.d.ownerOf?.(ownerKey);
       this.wrecks.set(wreckId, {
         desc: {
-          wreckId, parentKind: kindId ?? ROCK_WRECK_PARENT_KIND, seed: fracture.seed, killX: fracture.killX, killY: fracture.killY,
+          wreckId, parentKind: kindId ?? (src.structure !== null ? STRUCTURE_WRECK_PARENT_KIND : ROCK_WRECK_PARENT_KIND), seed: fracture.seed, killX: fracture.killX, killY: fracture.killY,
           killBlowDamage: fracture.killBlowDamage, recentDamageRate: fracture.recentDamageRate,
           snapChance: fracture.snapChance, algoVersion: FRACTURE_ALGO_VERSION,
           ...(opts.cool === true ? {} : { deathTick: at }), // cool: drawn long dead
@@ -291,6 +293,7 @@ export class CapitalWreckSubsystem {
           ...(fracture.extraCuts !== undefined ? { extraCuts: fracture.extraCuts.slice() } : {}),
           ...(owner !== undefined && owner !== '' ? { owner } : {}),
           ...(src.rock !== null ? { rock: src.rock } : {}), // a rock source rides by its rock (#16)
+          ...(src.structure !== null ? { structure: { k: src.structure.k } } : {}), // a structure by its kind
         },
         pieces: spawned,
         ids: spawnedIds,

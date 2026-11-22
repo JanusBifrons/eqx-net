@@ -1064,6 +1064,14 @@ Wreck pieces now wear down and break again. Pure numbers in
   battery: ~10 s to crack the biggest battleship piece, a child >= ~3 s,
   drift < 1.5 u/s).
 
+### Structures (structure break-up)
+
+A destroyed structure breaks through the same wreck path as a ship or a cut rock; nothing here is a second system.
+
+- **Source:** `structureWreckSource({ k })` (`core/destruction/wreckSource.ts`, memoised per kind) gives the kind's socket outline (Y flipped into the fracture's Pixi-up frame), scale 1, mass `STRUCTURE_WRECK_DENSITY` (the rock density) × area, and the catalogue `maxHealth` as its max hull. No orientation: the quarter-turn is the body angle, which the death pose carries.
+- **Profile:** `DESTRUCTION_PROFILES.structure` shatters from the kill point in wedges (`radialCracks`; a squarish thing has no keel), with a fixed piece count from area alone: `pieceSide` caps the pieces at round(√area ÷ 30), clamped 1–6 (a connector breaks in 2, the base Capital in 6). Gates never break (their colliders are split posts), and an unbuilt structure (blueprint or frame) just goes: `structureBreaks(kindId, built)`.
+- **Descriptor:** a structure's ROOT descriptor carries `structure: { k }` (its kind id) with `parentKind` = `WRECK_STRUCTURE_PARENT_KIND` (`'structure'`), exactly as a rock root carries `rock` with `WRECK_ROCK_PARENT_KIND`. The zod refine and its alloc-free guard twin (`isWreckDescriptor`) accept it only on a root with that `parentKind`, never together with `rock`; children repeat `parentKind` and resolve to the root (`wreckWire.test.ts`). `wreckSourceOf`, the shared resolver (`wreckDescriptorGeometry.ts`), the death path's descriptor build (`CapitalWreckSubsystem.spawnWreck`) and the lineage save/restore (`wreckLineageRecord.ts`, `wreckLineageSaves.ts`; a sub-cap hull's restore cost) all read it. Locks: `wreckDescriptorGeometry.test.ts`, `wreckLineageRecord.test.ts`, `battleWreckStreaming.test.ts`.
+
 ### Later: wrecks as terrain and salvage
 
 - **Terrain.** Long-lived wreck pieces: heavy, slow, cover that blocks ships
