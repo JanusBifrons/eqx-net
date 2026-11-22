@@ -1,8 +1,8 @@
 /**
- * Build mode runs in the Command view. Ships still selected from Command turn
- * a touch tap on your own building into a fleet order; entering Build clears
- * that selection (`buildModeView` → `selectFleetShips([])`), after which the
- * same tap selects the building (its card + management actions).
+ * Build mode runs in the Command view. A touch tap on your own building
+ * selects it (its card + management actions), whether or not ships are still
+ * selected from Command (entering Build clears them: `buildModeView` →
+ * `selectFleetShips([])`); a touch tap is never a fleet order.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { RendererInputController } from './rendererInputController.js';
@@ -49,14 +49,14 @@ function tapBuilding(ctl: RendererInputController): void {
 }
 
 describe('RendererInputController: a tap on your building in Build selects it', () => {
-  it('with ships carried over from Command, a touch tap orders them (the gap)', () => {
+  it('with ships carried over from Command, a touch tap selects it too (no order)', () => {
     const { ctl, deps, feedback } = setup();
     ctl.selectFleetShips(['ship-2']); // no mirror yet: kept as-is
     deps.lastMirror = MIRROR;
     tapBuilding(ctl);
-    expect(feedback.orderSeq).toBe(1);
-    expect(feedback.orderKind).toBe('move'); // my own building: never attacked
-    expect(ctl._focusId).toBeNull();
+    expect(feedback.orderSeq).toBe(0); // a touch tap is never an order
+    expect(ctl._focusId).toBe('swarm-9');
+    expect(ctl._selShips.size).toBe(0); // a focus that is mine ends the ships
   });
 
   it('after Build clears the ship selection, the same tap selects the building', () => {

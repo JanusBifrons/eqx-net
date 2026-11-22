@@ -1,9 +1,11 @@
 /**
- * Command view, S3b: with ships selected, a finger tap (or right-click) on MY
- * OWN structure is a move order there, never an attack on it; an enemy
- * structure is still attacked. Zoomed out, the finger's reach is a fixed
- * screen size (`fingerSlopWorld`), so a tap a few pixels off a structure
- * still lands on it.
+ * Command view, S3b + the tap rule: with ships selected, a right-click on MY
+ * OWN structure is a move order there, never an attack on it; on an enemy
+ * structure it attacks. A finger tap is never an order: on my own structure
+ * it selects that structure (the ships end, as for any focus that is mine);
+ * on an enemy one it focuses it and the ships stay. Zoomed out, the finger's
+ * reach is a fixed screen size (`fingerSlopWorld`), so a tap a few pixels off
+ * a structure still lands on it.
  */
 import { describe, it, expect, vi } from 'vitest';
 import { RendererInputController } from './rendererInputController.js';
@@ -64,21 +66,20 @@ function press(ctl: RendererInputController, x: number, y: number, pointerType: 
 }
 
 describe('Command view: own structure under the finger / cursor', () => {
-  it('a touch tap on my own structure moves there (no attack on it)', () => {
+  it('a touch tap on my own structure selects it, no order (never an attack)', () => {
     const { ctl, feedback } = setup(mirror());
     press(ctl, 100, 100, 'touch');
-    expect(feedback.orderSeq).toBe(1);
-    expect(feedback.orderKind).toBe('move');
-    expect(feedback.orderTargetId).toBeNull();
-    expect(feedback.orderX).toBe(100);
-    expect(feedback.orderY).toBe(-100);
+    expect(feedback.orderSeq).toBe(0);
+    expect(ctl._focusId).toBe('swarm-7');
+    expect(ctl._selShips.size).toBe(0);
   });
 
-  it('a touch tap on an enemy structure still attacks it', () => {
+  it('a touch tap on an enemy structure focuses it, ships kept, no order', () => {
     const { ctl, feedback } = setup(mirror());
     press(ctl, 400, 100, 'touch');
-    expect(feedback.orderKind).toBe('attack');
-    expect(feedback.orderTargetId).toBe('swarm-8');
+    expect(feedback.orderSeq).toBe(0);
+    expect(ctl._focusId).toBe('swarm-8');
+    expect([...ctl._selShips]).toEqual(['ship-2']);
   });
 
   it('a right-click on my own structure moves; on an enemy one attacks', () => {
@@ -98,13 +99,14 @@ describe('Command view zoomed out: finger slop is screen-sized', () => {
   // scale 0.1: the enemy turret (game 400, -100) sits at screen (40, 10). A
   // tap 15 px right of its footprint edge is 150 world units off: outside the
   // 24-unit mouse slop, inside the 24 px finger (240 world units).
-  it('a touch tap a few pixels off the enemy structure attacks it', () => {
+  it('a touch tap a few pixels off the enemy structure focuses it', () => {
     const { ctl, feedback } = setup(mirror(), 0.1);
     const edgeWorld = 400 + getStructureKind('turret').footprint.w / 2;
     const tapWorld = edgeWorld + 150;
     expect(tapWorld - edgeWorld).toBeGreaterThan(TAP_SLOP); // a mouse would miss
     press(ctl, tapWorld * 0.1, 10, 'touch');
-    expect(feedback.orderKind).toBe('attack');
-    expect(feedback.orderTargetId).toBe('swarm-8');
+    expect(feedback.orderSeq).toBe(0);
+    expect(ctl._focusId).toBe('swarm-8');
+    expect([...ctl._selShips]).toEqual(['ship-2']);
   });
 });

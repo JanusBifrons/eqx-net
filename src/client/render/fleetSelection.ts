@@ -173,11 +173,19 @@ export function applySelection(
 /**
  * THE selection's focus rule (RTS Part A: one selection concept). The focus
  * (the entity whose details panel shows) survives a change of the selected
- * ships only when no ships are selected (then it may be anything you tapped)
- * or it is one of them. False ⇒ the focus clears.
+ * ships when no ships are selected (then it may be anything you tapped), when
+ * it is one of them, or when it is NOT mine (an enemy or neutral you focused
+ * with ships selected: the left strip shows it, the ships stay). Another of my
+ * own ships or structures (`focusIsMine`, see {@link isMine}) does not.
+ * False ⇒ the focus clears.
  */
-export function focusSurvives(ships: ReadonlySet<string>, focusId: string | null): boolean {
-  return focusId !== null && (ships.size === 0 || ships.has(focusId));
+export function focusSurvives(ships: ReadonlySet<string>, focusId: string | null, focusIsMine = false): boolean {
+  return focusId !== null && (ships.size === 0 || ships.has(focusId) || !focusIsMine);
+}
+
+/** Whether pick id `id` is mine: one of my ships or my structures. */
+export function isMine(id: string, mirror: RenderMirror): boolean {
+  return isOwnShipPresent(id, mirror) || isOwnStructure(id, mirror);
 }
 
 /** True when both sets hold the same ids. */
