@@ -27,6 +27,7 @@ import type { LockSubsystem } from '../LockSubsystem.js';
 import type { WeaponMountTicker } from '../WeaponMountTicker.js';
 import type { PlayerFireResolver } from '../PlayerFireResolver.js';
 import type { WorkerCmd } from '../PhysicsWorkerProxy.js';
+import { wireSwarmEntityId } from './fleetMessages.js';
 import { holdsLiveLock, WingmanKeptLocks } from './wingmanKeptLocks.js';
 
 /** RTS slice 4b — `fleet.detach` options when the owner takes a member's helm. */
@@ -428,14 +429,8 @@ export class WingmanPilots {
   private swarmRecByAnyId(id: string): SwarmEntityRecord | null {
     const rec = this.h.swarmRegistry.get(id);
     if (rec) return rec;
-    if (!id.startsWith('swarm-') || id.length <= 6) return null;
-    let n = 0;
-    for (let i = 6; i < id.length; i++) {
-      const c = id.charCodeAt(i) - 48;
-      if (c < 0 || c > 9) return null;
-      n = n * 10 + c;
-    }
-    return this.h.swarmRegistry.getByEntityId(n);
+    const n = wireSwarmEntityId(id);
+    return n < 0 ? null : this.h.swarmRegistry.getByEntityId(n);
   }
 
   /** Live pose of any entity a wingman may name: a lingering hull, a pilot's

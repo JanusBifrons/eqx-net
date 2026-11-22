@@ -21,9 +21,6 @@ vi.mock('../layout/Drawer/tabs/TradeTab', () => ({
   TradeDealsPage: () => <div data-testid="trade-deals">deals</div>,
   TradeHistoryPage: () => <div data-testid="trade-history">history</div>,
 }));
-vi.mock('./TradeGiftPage', () => ({
-  TradeGiftPage: () => <div data-testid="trade-gift">gift</div>,
-}));
 vi.mock('../layout/Drawer/tabs/BlueprintMarketSection', () => ({
   BlueprintMarketSection: () => <div data-testid="trade-blueprints">blueprints</div>,
 }));
@@ -45,7 +42,7 @@ describe('TradePanel (U2-6a drill-down)', () => {
     act(() => useUIStore.getState().setDrawerTab('trade'));
     expect(screen.getByTestId('trade-panel')).toBeVisible();
     expect(screen.getByTestId('trade-header')).toBeTruthy();
-    expect(TRADE_SECTIONS.map((s) => s.label)).toEqual(['Offers', 'Deals', 'History', 'Gift', 'Blueprints']);
+    expect(TRADE_SECTIONS.map((s) => s.label)).toEqual(['Offers', 'Deals', 'History', 'Blueprints']);
     for (const s of TRADE_SECTIONS) expect(screen.getByRole('button', { name: s.label })).toBeTruthy();
     expect(screen.getByTestId('trade-section-deals')).toHaveTextContent('2');
     expect(screen.queryByTestId('eqx-panel-back')).toBeNull();

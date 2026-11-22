@@ -25,20 +25,32 @@ const TILE_BASE = {
   border: `1px solid ${S.edge}`,
   borderRadius: `${S.tileRadius}px`,
   bgcolor: S.cell,
-  color: HUD.color.ink,
-  '& .MuiSvgIcon-root, & svg': { fontSize: S.icon, width: S.icon, height: S.icon },
+  color: S.ink,
+  '& .MuiSvgIcon-root, & svg': { fontSize: S.icon, width: S.icon, height: S.icon, strokeWidth: S.iconStroke },
 } as const;
+
+/** An 8-digit hex: `#rrggbb` at `alpha` (0..1). */
+function withAlpha(hex: string, alpha: number): string {
+  return `${hex}${Math.round(alpha * 255).toString(16).padStart(2, '0')}`;
+}
 
 /**
  * Tile look for EqxIconButton `variant="strip"`:
  * - tone primary = ok (green fill, dark icon); danger = no (red icon, red-ish edge);
  * - `status` = cyan icon + cyan-tinted edge (`alert`: red icon, aggressive stance);
  * - `active` = cyan edge (+ a 1 px cyan ring on a status tile: its fly-out is open;
- *   a plain tile also turns its icon cyan: the current fly-out option).
+ *   a plain tile also turns its icon cyan: the current fly-out option);
+ * - `accent` (a `#rrggbb` colour the action has in the world, e.g. the move-order
+ *   green): icon in that colour, edge tinted with it; `active` = solid edge + ring.
  */
-export function stripTileSx(tone: EqxTone, active: boolean, status: 'calm' | 'alert' | undefined): SxProps<Theme> {
+export function stripTileSx(
+  tone: EqxTone, active: boolean, status: 'calm' | 'alert' | undefined, accent?: string,
+): SxProps<Theme> {
   let look: Record<string, unknown>;
-  if (status) {
+  if (accent !== undefined) {
+    look = { color: accent, borderColor: withAlpha(accent, 0.6) };
+    if (active) look = { ...look, borderColor: accent, boxShadow: `0 0 0 1px ${accent}` };
+  } else if (status) {
     look = { color: status === 'alert' ? HUD.color.danger : HUD.color.auto, borderColor: S.statusEdge };
     if (active) look = { ...look, borderColor: HUD.color.auto, boxShadow: `0 0 0 1px ${HUD.color.auto}` };
   } else if (tone === 'primary') {
@@ -52,14 +64,14 @@ export function stripTileSx(tone: EqxTone, active: boolean, status: 'calm' | 'al
   return { ...TILE_BASE, ...look, '&:hover': { bgcolor: bg } } as SxProps<Theme>;
 }
 
-/** Round identity tile: health-coloured edge + inset ring, gold icon. */
-export function stripIdentitySx(ring: string): SxProps<Theme> {
+/** Round identity tile: health-coloured edge + inset ring; gold icon, or `iconColor` (e.g. a stance colour). */
+export function stripIdentitySx(ring: string, iconColor?: string): SxProps<Theme> {
   return {
     ...TILE_BASE,
     borderRadius: '50%',
     borderColor: ring,
     boxShadow: `inset 0 0 0 1px ${ring}`,
-    color: HUD.color.credits,
+    color: iconColor ?? HUD.color.credits,
     '&:hover': { bgcolor: S.cell },
   } as SxProps<Theme>;
 }
