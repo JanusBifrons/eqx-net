@@ -41,8 +41,9 @@ const BTN_SX = {
 };
 const BTN_ON_SX = { ...BTN_SX, backgroundColor: 'rgba(90,160,255,0.45)', color: '#fff' };
 
-/** Set the Command speed and re-pace the selection's running moves. */
-function chooseSpeed(step: 0 | 1 | 2 | 3): void {
+/** Set the Command speed and re-pace the selection's running moves (also the
+ *  left strip's Speed fly-out, `layout/fleetStripItems.tsx`). */
+export function chooseSpeed(step: 0 | 1 | 2 | 3): void {
   const s = useUIStore.getState();
   s.setCommandSpeed(step);
   const ids = s.selection.ids;

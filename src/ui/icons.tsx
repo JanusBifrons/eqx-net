@@ -25,6 +25,12 @@ export const EQX_ICON_NAMES = [
   'defensive',
   'aggressive',
   'holdFire',
+  // Command speed (the telegraph) and a mixed selection
+  'speedStop',
+  'speedThird',
+  'speedTwoThirds',
+  'speedFull',
+  'mixed',
   // Quick actions
   'stop',
   'trade',
@@ -98,6 +104,42 @@ export const EQX_ICONS = {
     <>
       <circle cx="12" cy="12" r="8" />
       <path d="M6.5 6.5l11 11" />
+    </>
+  ),
+  // new: speed gauge, needle at zero (the mock's speed gauge; the bare square is stop)
+  speedStop: (
+    <>
+      <path d="M4 16a8 8 0 0 1 16 0" />
+      <path d="M12 16H6" />
+    </>
+  ),
+  // new: speed gauge, needle at a third
+  speedThird: (
+    <>
+      <path d="M4 16a8 8 0 0 1 16 0" />
+      <path d="M12 16l-3-5.2" />
+    </>
+  ),
+  // new: speed gauge, needle at two thirds
+  speedTwoThirds: (
+    <>
+      <path d="M4 16a8 8 0 0 1 16 0" />
+      <path d="M12 16l3-5.2" />
+    </>
+  ),
+  // mock [speed], needle moved to the full mark so it reads apart from two thirds
+  speedFull: (
+    <>
+      <path d="M4 16a8 8 0 0 1 16 0" />
+      <path d="M12 16h6" />
+    </>
+  ),
+  // new: three dots (a selection whose ships differ)
+  mixed: (
+    <>
+      <circle cx="6" cy="12" r="1.2" />
+      <circle cx="12" cy="12" r="1.2" />
+      <circle cx="18" cy="12" r="1.2" />
     </>
   ),
   // mock

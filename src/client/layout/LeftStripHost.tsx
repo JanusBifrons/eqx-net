@@ -2,8 +2,9 @@
  * The left strip host (UI language plan A5, job U1-8).
  *
  * - Draws the active strip in `<Slot anchor="left-strip">`. For now that is the
- *   selection strip skeleton: identity (icon + count), ⚙ and ✕. Status icons and
- *   quick actions come with U3-1; the doing-mode strips with U3-7.
+ *   selection strip: identity (icon + count); for own ships in Command the fleet
+ *   section (Order / Stance / Speed fly-outs and Stop, `fleetStripItems.tsx`);
+ *   then ⚙ and ✕. Other quick actions come with U3-1; doing-mode strips with U3-7.
  * - Renders only while something is selected (the store's mirror of THE
  *   selection, `selection`).
  * - Never both sides: the strip slides away while a right panel is open
@@ -21,6 +22,7 @@ import { selectControlMode, useShouldRenderHud, useUIStore } from '../state/stor
 import type { RightPanel } from '../state/rightPanel';
 import type { SelectionFocusKind, UISelection } from '../state/storeTypes';
 import { Slot } from './Slot';
+import { useFleetStripItems } from './fleetStripItems';
 
 const FOCUS_LOOK: Readonly<Record<SelectionFocusKind, { icon: EqxIconName; tooltip: string }>> = {
   ship: { icon: 'fleet', tooltip: 'Ship' },
@@ -57,6 +59,7 @@ export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
   const selection = useUIStore((s) => s.selection);
   const panelOpen = useUIStore((s) => s.rightPanel !== null || (s.contactsOpen && selectControlMode(s) === 'fly'));
   const setRightPanel = useUIStore((s) => s.setRightPanel);
+  const fleetItems = useFleetStripItems();
   const id = stripIdentity(selection);
   if (!shown || id === null) return null;
   const panel = id.panel;
@@ -64,6 +67,7 @@ export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
     <Slot anchor="left-strip">
       <EqxStrip aria-label="Selection" open={!panelOpen} data-testid="left-strip">
         <EqxStripIdentity icon={<EqxIcon name={id.icon} />} tooltip={id.tooltip} health="ok" count={id.count} data-testid="left-strip-identity" />
+        {fleetItems}
         <EqxStrip.Separator />
         {panel !== null && (
           <EqxIconButton variant="strip" icon={<EqxIcon name="cog" />} tooltip="All orders and details"

@@ -60,8 +60,8 @@ Output (gitignored) lands in `showcase-out/`:
      dropping their frames.
    - **Phone shots** are pillarboxed into the 16:9 frame.
    - **Captions:** a lower-third, rendered from HTML, fades in and out.
-     When the RTS fleet panel shows along the bottom, the recorder reads its
-     top edge (`fleet-panel`, after setup, after each `ctx.spectate()` and at
+     When the RTS fleet map-pick bar shows along the bottom, the recorder reads its
+     top edge (`fleet-pick`, after setup, after each `ctx.spectate()` and at
      the end; `bottomHudTop` in `manifest.json`) and the caption's box ends
      16 px above it (`captionPlacement.ts`). Without it the caption keeps its
      default place. (The old bottom build bar is gone: building is in the

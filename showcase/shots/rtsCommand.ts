@@ -318,9 +318,14 @@ export const rtsCommand: Shot = {
     await waitUntil(ctx, async () => (await selCount(page)) >= 1, 3000);
     mark(`re-selected ${await selCount(page)}; rows: ${await rows(page)}`);
     await ctx.sleep(600);
-    await clickButton(ctx, m, 'fleet-mode-hunt');
+    // Orders are on the left strip's fly-outs (UI plan U3-4).
+    await clickButton(ctx, m, 'left-strip-order');
+    await ctx.sleep(250);
+    await clickButton(ctx, m, 'left-strip-order-option-hunt');
     await ctx.sleep(400);
-    await clickButton(ctx, m, 'fleet-stance-aggressive');
+    await clickButton(ctx, m, 'left-strip-stance');
+    await ctx.sleep(250);
+    await clickButton(ctx, m, 'left-strip-stance-option-aggressive');
     mark('hunt + aggressive');
     await wheel(ctx, m, 2);
     await ctx.sleep(500);

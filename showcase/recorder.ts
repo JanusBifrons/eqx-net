@@ -339,14 +339,14 @@ async function readPilotMode(page: Pick<Page, 'evaluate'>): Promise<string | nul
 
 /**
  * Top edge (CSS px) of the game's bottom HUD that is showing: the spectator
- * build bar (`bottom-control-panel` in `build` mode) or the RTS fleet panel
- * (`fleet-panel`, shown in its place while ships are selected). Null when
+ * build bar (`bottom-control-panel` in `build` mode) or the RTS fleet map-pick
+ * bar (`fleet-pick`; fleet orders moved to the left strip). Null when
  * neither shows (pilot mode, touch). Read only; the game UI is filmed as it is.
  */
 export async function measureBottomHudTop(page: Pick<Page, 'evaluate'>): Promise<number | null> {
   return page.evaluate(() => {
     let top: number | null = null;
-    for (const sel of ['[data-testid="bottom-control-panel"][data-panel-mode="build"]', '[data-testid="fleet-panel"]']) {
+    for (const sel of ['[data-testid="bottom-control-panel"][data-panel-mode="build"]', '[data-testid="fleet-pick"]']) {
       const el = document.querySelector(sel);
       if (!el) continue;
       const r = el.getBoundingClientRect();

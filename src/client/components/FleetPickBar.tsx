@@ -7,7 +7,8 @@ import { resolveFleetCommands } from '../fleet/useFleetSelectionView.js';
 import { canFinishFleetPick, fleetPickHint } from '../fleet/fleetPickView.js';
 
 /**
- * RTS slice 14b — shown by the fleet panel and strip while a mode waits for
+ * RTS slice 14b — shown by the fleet panel and strip (and on its own,
+ * `FleetPickHost`, in the HUD) while a mode waits for
  * a target on the map (Zustand `fleetPick`): a plain hint plus
  *  - Patrol: Done (needs 2+ points; also Enter / right-click) and Cancel;
  *  - Escort: Cancel (the next tap on another own ship sends it);
@@ -54,6 +55,35 @@ export function FleetPickBar({ ids, commands }: Props): JSX.Element | null {
       <Button size="small" variant="outlined" color="inherit" sx={BTN_SX} data-testid="fleet-pick-cancel" onClick={onCancel}>
         Cancel
       </Button>
+    </Box>
+  );
+}
+
+const HOST_SX = {
+  boxSizing: 'border-box',
+  maxWidth: 'calc(100vw - 32px)',
+  px: 1,
+  py: 0.5,
+  bgcolor: 'rgba(6,9,18,0.78)',
+  border: '1px solid rgba(255,255,255,0.1)',
+  borderRadius: 1.5,
+  color: '#dfe8f5',
+} as const;
+
+/**
+ * The pick bar on its own in the HUD's bottom-centre slot (UI plan U3-3 until
+ * the route strip lands): fleet orders moved to the left strip, whose Patrol /
+ * Escort / Retreat fly-out picks start a map pick that still needs Done /
+ * Back to post / Cancel. Renders only while a pick is under way, for the
+ * current selection.
+ */
+export function FleetPickHost(): JSX.Element | null {
+  const picking = useUIStore((s) => s.fleetPick !== null);
+  const ids = useUIStore((s) => s.selection.ids);
+  if (!picking) return null;
+  return (
+    <Box sx={HOST_SX} data-hud-exclusion="">
+      <FleetPickBar ids={ids} />
     </Box>
   );
 }
