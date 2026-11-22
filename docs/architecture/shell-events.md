@@ -330,6 +330,27 @@ Now (`net/drawnShellTiming.ts`, `DrawnShellTiming.deferKill` / `release`):
   stayed drawn after the beam's destroy), `ColyseusClient.damageAfterDeath.test.ts`
   (the number comes with the deferred explosion).
 
+## Stamped release: holding for the drone timeline (2026-11-22)
+
+Off-pilot event timing, slice 1 of 6. One-shot server events (damage FX,
+drone kills, detonations) carry no tick and fire on arrival, but drones,
+scrap and missiles are drawn on the drone display delay (up to
+`OFF_PILOT_MAX_TOTAL_DISPLAY_DELAY_MS` behind off pilot), so the FX lead the
+drawn target. `NavalHitHold` gets a second release condition instead of a
+second queue: `holdStamped(evt, …, stampTick, nowWall, nowGame, offPilot)`
+holds a hit stamped with the newest snapshot tick at arrival
+(`anchorTick()`), placed on the drone tick clock with `swarmTickToStampMs`
+(not held before that clock is seeded). `release(…, readPointMs)` frees it
+once the drones' read point, `swarmReadPointMs(now)` = now − the held
+display delay (the time `interpolateSwarmPose` reads), reaches that stamp.
+Safety deadline: the current delay (game ms) + `STAMPED_HOLD_MARGIN_MS`
+(`MAX_HOLD_MS` − `MAX_TOTAL_DISPLAY_DELAY_MS`), capped by `matchedHoldMs`.
+Stamped entries share the pool, `holdsKill` (so `deferKill` holds their
+deaths), `flushTarget` and the welcome flush; shell matching (`onShellEnd`,
+`releaseHitAt`) skips them. Nothing calls it yet; later slices route
+non-shell damage FX, missile detonations, `shell_blast` / `mine_detonated`
+and the swarm sweep through it. Lock: `navalHitHold.stamped.test.ts`.
+
 ## Client rules in detail
 
 Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
