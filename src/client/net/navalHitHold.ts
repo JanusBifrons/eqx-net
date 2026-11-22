@@ -34,6 +34,14 @@
  * `STAMPED_HOLD_MARGIN_MS`, capped by `matchedHoldMs`. Shell matching
  * (`onShellEnd`, `releaseHitAt`) never touches a stamped entry.
  *
+ * Blasts (off-pilot event timing, slice 4/6): a siege shell's `shell_blast`
+ * arrives with its damage, ahead of the drawn shell, like a hit.
+ * `maybeHoldBlast` holds it the same way (on a live shell's path, matched by
+ * its `shell_end` at the same point, released the frame the burst is drawn).
+ * Its entry has `blastRadius` > 0 and no target, so kill / beam / target
+ * matching never picks it; `flush` drops it (a blast from before a welcome
+ * is stale).
+ *
  * Entries are pooled and mutated in place; no allocation once warm (#14).
  */
 import type { ShellSalvoRenderInfo } from '@core/contracts/IRenderer';
@@ -89,6 +97,9 @@ export interface HeldDamage {
   stampTick: number;
   /** That tick's stamp on the drone tick clock (wall ms), else NaN. */
   stampMs: number;
+  /** A held `shell_blast` (`maybeHoldBlast`): its radius, centre at
+   *  `evt.hitX/Y`; 0 for a damage hit. */
+  blastRadius: number;
 }
 
 export interface HeldDamageSink {
@@ -109,6 +120,20 @@ function onShellPath(r: ShellSalvoRenderInfo, hx: number, hy: number): boolean {
   return dx * dx + dy * dy <= tol * tol;
 }
 
+/** Is (hx, hy) on the path of a live, not-yet-ended shell in `shells`? */
+function onLiveShellPath(shells: ReadonlyMap<string, ShellSalvoRenderInfo>, hx: number, hy: number): boolean {
+  for (const r of shells.values()) {
+    if (r.endTick < 0 && onShellPath(r, hx, hy)) return true;
+  }
+  return false;
+}
+
+/** The event a held blast's entry copies: no target, never a kill. */
+const BLAST_EVT: DamageEvent = {
+  type: 'damage', targetId: '', damage: 0, newHealth: 1, shooterId: '',
+  newShield: 0, shieldMax: 0, hullMax: 0, hitLayer: 'hull',
+};
+
 export class NavalHitHold {
   private readonly held: HeldDamage[] = [];
   private count = 0;
@@ -124,12 +149,25 @@ export class NavalHitHold {
     shells: ReadonlyMap<string, ShellSalvoRenderInfo>, nowGameMs: number,
   ): boolean {
     if (evt.hitX === undefined || evt.hitY === undefined || shells.size === 0) return false;
-    let onPath = false;
-    for (const r of shells.values()) {
-      if (r.endTick < 0 && onShellPath(r, evt.hitX, evt.hitY)) { onPath = true; break; }
-    }
-    if (!onPath) return false;
+    if (!onLiveShellPath(shells, evt.hitX, evt.hitY)) return false;
     this.push(evt, suppressNumber, nowGameMs + UNMATCHED_HOLD_MS);
+    return true;
+  }
+
+  /**
+   * Hold a `shell_blast` at (x, y) until its shell's burst is drawn, if (x, y)
+   * is on a live, unended shell's path in `shells` (as `maybeHold`). The
+   * release hands the sink an entry with `blastRadius` = `radius`. Returns
+   * whether held.
+   */
+  maybeHoldBlast(
+    x: number, y: number, radius: number,
+    shells: ReadonlyMap<string, ShellSalvoRenderInfo>, nowGameMs: number,
+  ): boolean {
+    if (radius <= 0 || shells.size === 0 || !onLiveShellPath(shells, x, y)) return false;
+    BLAST_EVT.hitX = x;
+    BLAST_EVT.hitY = y;
+    this.push(BLAST_EVT, true, nowGameMs + UNMATCHED_HOLD_MS).blastRadius = radius;
     return true;
   }
 
@@ -164,6 +202,7 @@ export class NavalHitHold {
           newShield: 0, shieldMax: 0, hullMax: 0, hitLayer: 'hull',
         },
         suppressNumber: false, endTick: -1, deadline: 0, stampTick: -1, stampMs: Number.NaN,
+        blastRadius: 0,
       };
       this.held[this.count] = h;
     }
@@ -178,6 +217,7 @@ export class NavalHitHold {
     h.deadline = deadline;
     h.stampTick = -1;
     h.stampMs = Number.NaN;
+    h.blastRadius = 0;
     return h;
   }
 
@@ -216,8 +256,21 @@ export class NavalHitHold {
     }
   }
 
-  /** Release everything now (shell events switched off / sector handoff). */
+  /** Release every held hit now and drop every held blast (shell events
+   *  switched off / sector handoff: a blast drawn after it would be stale). */
   flush(sink: HeldDamageSink): void {
+    let i = 0;
+    while (i < this.count) {
+      const h = this.held[i]!;
+      if (h.blastRadius > 0) {
+        const last = this.count - 1;
+        this.held[i] = this.held[last]!;
+        this.held[last] = h;
+        this.count = last;
+        continue;
+      }
+      i++;
+    }
     this.release(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, sink, Number.POSITIVE_INFINITY);
   }
 

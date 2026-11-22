@@ -351,6 +351,30 @@ deaths), `flushTarget` and the welcome flush; shell matching (`onShellEnd`,
 non-shell damage FX, missile detonations, `shell_blast` / `mine_detonated`
 and the swarm sweep through it. Lock: `navalHitHold.stamped.test.ts`.
 
+## Blasts wait for the drawn timeline (2026-11-22)
+
+Slice 4 of 6. A siege shell's `shell_blast` (`ProjectilePipeline.blast` →
+`onBlast`) is broadcast in the hit's tick, before that tick's `shell_end`,
+so it arrived a display delay ahead of the drawn shell (~150 ms piloting,
+up to seconds off pilot); the client ignores the `shell_end` blast radius,
+so the big explosion was never tied to the drawn burst. It now rides the
+same hold as a naval hit, not a stamp: `NavalHitHold.maybeHoldBlast` holds
+it when its centre is on a live, unended shell's path (handler
+`handlers/shellHandlers.ts`, `holdBlast` in the handler ctx, shells as
+events only); the `shell_end` at the same point gives it the hit tick, and
+the per-frame `release` in `DrawnShellTiming.place` hands it to the sink
+(`pushShellBlast`) the frame the burst is drawn, with the hit's safety
+deadlines. The entry has `blastRadius` > 0 and no target, so `holdsKill`,
+`releaseHitAt` and `flushTarget` never pick it; `flush` (welcome, shell
+events off) drops it rather than drawing a stale blast.
+
+Not held here: `wall_hit` for a bolt (bolts are drawn at the present from
+snapshots, like the fence) and the static-world side of `mine_detonated`.
+`wall_hit` for a missile and `mine_detonated` on a drone-timeline ship
+lead their drawn partner; they need the stamped release (`readPointMs`)
+wired into the per-frame release, which only `DrawnShellTiming.place`
+calls. Lock: `navalHitHold.blast.test.ts`.
+
 ## Client rules in detail
 
 Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.

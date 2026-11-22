@@ -43,6 +43,7 @@ import { DrawnShellTiming } from './drawnShellTiming';
 import type { FleetArrival, FleetArrivalWatch } from './fleetWarpFollow';
 import { cargoChanged, cargoViewOf, type WireCargo } from './lootView';
 import { registerClientHandlers, type ClientHandlerCtx } from './handlers/index.js';
+import { pushShellBlast } from './handlers/shellHandlers.js';
 import type { MirrorPassCtx } from './mirror/mirrorPassCtx.js';
 import type { PredictionStepCtx } from './prediction/predictionStepCtx.js';
 import { FIXED_MS, MAX_CATCH_UP_TICKS, MAX_OVER_PREDICTION_TICKS, stepInputTick, predictFrameEnergy, sendCapSentinel,
@@ -1102,6 +1103,8 @@ export class ColyseusGameClient {
     mirror: this.mirror, shellStore: this._shellStore, cutField: this._cutField,
     shellEvents: () => this._shellEvents,
     applyShellEnd: (msg: ShellEnd): void => this.applyShellEnd(msg),
+    holdBlast: (x: number, y: number, r: number): boolean => this._shellEvents
+      && this._navalHitHold.maybeHoldBlast(x, y, r, this._shellStore.map, this.gameClock.now()),
     transitInstr: this.transitInstr,
     now: (): number => this.clock.now(),
     isDisposed: (): boolean => this.disposed,
@@ -1246,7 +1249,10 @@ export class ColyseusGameClient {
   private readonly _navalHitHold = new NavalHitHold();
   /** The sink `_navalHitHold.release` calls (built once, #14). */
   private readonly _heldDamageSink = {
-    applyHeldDamage: (h: HeldDamage): void => this.applyDamageFx(h.evt, h.suppressNumber),
+    applyHeldDamage: (h: HeldDamage): void => {
+      if (h.blastRadius > 0) pushShellBlast(this.mirror, h.evt.hitX!, h.evt.hitY!, h.blastRadius);
+      else this.applyDamageFx(h.evt, h.suppressNumber);
+    },
   };
   /** The ctx the damage / death path (`damagePath.ts`) runs with, built once (#14). */
   private readonly _damageCtx: DamagePathCtx = ((c: ColyseusGameClient): DamagePathCtx => ({
