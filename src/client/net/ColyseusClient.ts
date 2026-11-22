@@ -2542,6 +2542,12 @@ export class ColyseusGameClient {
     const ticksSinceAnchor = Math.floor((this.gameClock.now() - this.clockAnchorPerfNow) / FIXED_MS);
     const targetTick = this.clockAnchorServerTick + ticksSinceAnchor + this.gameLeadTicks();
     const tickDeficitBefore = targetTick - this.inputTick;
+    // Over-prediction cap, measured from the last acked input, or from the
+    // latest server tick (the clock anchor: welcome, then every snapshot)
+    // until the first ack. It used to switch off with no ack (capital-fixes
+    // S1, 2026-11-22: a Command join never acks, so the cap never held).
+    const overPredictionCap = (this.stats.lastAckedTick > 0 ? this.stats.lastAckedTick : this.clockAnchorServerTick)
+      + MAX_OVER_PREDICTION_TICKS;
     // A stall (loading curtain, background tab) is skipped, not replayed at 4
     // ticks a frame, and only from a FRESH clock anchor: hold until a snapshot
     // re-syncs it (inputTickRecovery.stallResumeAction; lock: loading-catchup.spec.ts).
@@ -2558,10 +2564,7 @@ export class ColyseusGameClient {
       }
       this._stallHoldSinceMs = -1;
       if (resume === 'skip') {
-        this.inputTick = skipStalledBacklog(
-          this.inputTick, targetTick,
-          this.stats.lastAckedTick > 0 ? this.stats.lastAckedTick + MAX_OVER_PREDICTION_TICKS : Infinity,
-        );
+        this.inputTick = skipStalledBacklog(this.inputTick, targetTick, overPredictionCap);
       }
     }
     let stepsThisFrame = 0;
@@ -2581,11 +2584,17 @@ export class ColyseusGameClient {
     aimInput.setEnabled(useUIStore.getState().pilotMode !== 'spectator');
     this.updateHelmAvailability();
     this.syncHelmMark(); // the spectator flip doesn't pass through publishHelm
-    while (this.inputTick < targetTick && stepsThisFrame < MAX_CATCH_UP_TICKS) {
-      // Over-prediction cap. `lastAckedTick > 0` excludes the
-      // welcome-to-first-snapshot window (~50 ms; too short to spiral).
-      if (this.stats.lastAckedTick > 0
-          && this.inputTick >= this.stats.lastAckedTick + MAX_OVER_PREDICTION_TICKS) {
+    // No own body to predict (Command / spectating: no Reconciler) ⇒ no
+    // stepping. Remote ships and parked / AI-flown hulls are re-anchored each
+    // snapshot and drawn through their decaying lerp offsets; drones, scrap,
+    // rocks and structures draw off the wire. Stepping the whole-sector
+    // prediction world 4 ticks a frame here was the 14 fps Command join
+    // (capital-fixes S1). Same as Command after flying, where the frozen ack
+    // already held the cap shut. Piloting re-seeds the body, then the stall
+    // skip above jumps to the target.
+    const hasLocalBody = this.reconciler !== null;
+    while (hasLocalBody && this.inputTick < targetTick && stepsThisFrame < MAX_CATCH_UP_TICKS) {
+      if (this.inputTick >= overPredictionCap) {
         capEngaged = true;
         break;
       }
