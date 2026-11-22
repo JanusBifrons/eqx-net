@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, cleanup, fireEvent } from '@testing-library/react';
-import { StructurePlacementBanner } from './StructurePlacementBanner.js';
+import { PLACING_BAR_WIDTH_PX, StructurePlacementBanner } from './StructurePlacementBanner.js';
 import { LayoutContext } from '../layout/useLayout.js';
 import { useUIStore } from '../state/store.js';
 import { getPlacementMirror, getPlacementRotationDeg, setPlacementMirror, setPlacementRotationDeg } from '../structures/structurePlacementClient.js';
@@ -34,11 +34,11 @@ vi.mock('../input/TouchInput', () => ({
   isTouchDevice: () => isTouchDeviceMock(),
 }));
 
-// The banner docks in the `top-center` anchor (build mode, owner design
-// 2026-11-20), so tests supply a real host for its Slot.
-let topCenter: HTMLDivElement;
+// The bar docks in the `bottom-center` anchor (placing bar, owner design
+// 2026-11-22), so tests supply a real host for its Slot.
+let bottomCenter: HTMLDivElement;
 const renderBanner = () => render(
-  <LayoutContext.Provider value={{ 'top-center': topCenter }}>
+  <LayoutContext.Provider value={{ 'bottom-center': bottomCenter }}>
     <StructurePlacementBanner />
   </LayoutContext.Provider>,
 );
@@ -47,8 +47,8 @@ describe('StructurePlacementBanner', () => {
   beforeEach(() => {
     cleanup();
     document.body.innerHTML = '';
-    topCenter = document.createElement('div');
-    document.body.appendChild(topCenter);
+    bottomCenter = document.createElement('div');
+    document.body.appendChild(bottomCenter);
     commitChosenPlacement.mockClear();
     isTouchDeviceMock.mockReturnValue(true);
     useUIStore.setState({ placementKind: 'capital' });
@@ -64,7 +64,7 @@ describe('StructurePlacementBanner', () => {
     expect(commitChosenPlacement).toHaveBeenCalledTimes(2);
     expect(commitChosenPlacement).toHaveBeenCalledWith('solar');
     expect(useUIStore.getState().placementKind).toBe('solar'); // still placing
-    expect(getByTestId('placement-banner').textContent).toContain('Solar');
+    expect(getByTestId('placement-banner').dataset.kind).toBe('solar');
   });
 
   it.each(['capital', 'territory_lock'] as const)('Confirm places a %s once: placement ends', (kind) => {
@@ -95,12 +95,10 @@ describe('StructurePlacementBanner', () => {
     expect(useUIStore.getState().placementKind).toBe('capital');
   });
 
-  it('Cancel exits placement without committing', () => {
-    const { getByTestId } = renderBanner();
-    fireEvent.click(getByTestId('placement-cancel'));
-
-    expect(commitChosenPlacement).not.toHaveBeenCalled();
-    expect(useUIStore.getState().placementKind).toBeNull();
+  it('has no Cancel and no text: the strip ✕ stops placing', () => {
+    const { getByTestId, queryByTestId } = renderBanner();
+    expect(queryByTestId('placement-cancel')).toBeNull();
+    expect(getByTestId('placement-banner').textContent).toBe('');
   });
 
   it('Rotate turns the placement 90 degrees', () => {
@@ -130,9 +128,11 @@ describe('StructurePlacementBanner', () => {
     expect(useUIStore.getState().placementKind).toBe('capital');
   });
 
-  it('uses icon-only buttons (rotate, mirror, tick, cross) with labels and 40 px targets', () => {
+  it('uses three icon-only buttons (place, rotate, mirror) with labels and 40 px targets', () => {
     const { getByTestId } = renderBanner();
-    for (const [id, label] of [['placement-rotate', 'Rotate'], ['placement-mirror', 'Mirror'], ['placement-confirm', 'Confirm'], ['placement-cancel', 'Cancel']] as const) {
+    const ids = [...getByTestId('placement-banner').querySelectorAll('button')].map((b) => b.dataset.testid);
+    expect(ids).toEqual(['placement-confirm', 'placement-rotate', 'placement-mirror']);
+    for (const [id, label] of [['placement-confirm', 'Place'], ['placement-rotate', 'Rotate'], ['placement-mirror', 'Mirror']] as const) {
       const b = getByTestId(id);
       expect(b.getAttribute('aria-label')).toBe(label);
       expect(b.getAttribute('title')).toBe(label);
@@ -142,8 +142,12 @@ describe('StructurePlacementBanner', () => {
       expect(parseFloat(cs.width)).toBeGreaterThanOrEqual(40);
       expect(parseFloat(cs.height)).toBeGreaterThanOrEqual(40);
     }
-    // The prompt line stays.
-    expect(getByTestId('placement-banner').textContent).toContain('here?');
+  });
+
+  it.each(['solar', 'capital', 'territory_lock'] as const)('the bar is the same fixed width for %s', (kind) => {
+    useUIStore.setState({ placementKind: kind });
+    const { getByTestId } = renderBanner();
+    expect(getComputedStyle(getByTestId('placement-banner')).width).toBe(PLACING_BAR_WIDTH_PX + 'px');
   });
 
   it('renders nothing when not in placement mode', () => {
@@ -162,11 +166,11 @@ describe('StructurePlacementBanner', () => {
     expect(container.querySelector('[data-testid="placement-banner"]')).toBeNull();
   });
 
-  it('docks at top centre with the reason line under it, not at the ghost', () => {
+  it('docks bottom-middle with the reason line above it, outside the bar', () => {
     const { getByTestId } = renderBanner();
     const dock = getByTestId('placement-dock');
     const banner = getByTestId('placement-banner');
-    expect(topCenter.contains(dock)).toBe(true);
+    expect(bottomCenter.contains(dock)).toBe(true);
     expect(dock.contains(banner)).toBe(true);
     // No per-frame world anchoring: the banner carries no inline position.
     expect(banner.style.left).toBe('');
@@ -174,7 +178,9 @@ describe('StructurePlacementBanner', () => {
     const hint = getByTestId('placement-link-hint');
     expect(dock.contains(hint)).toBe(true);
     expect(hint.dataset.docked).toBe('1');
-    // The hint follows the banner in the dock column.
-    expect(banner.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // The hint sits above the bar (before it in the dock column), never inside it,
+    // so it cannot resize the bar; the dock grows upward from the bottom edge.
+    expect(banner.contains(hint)).toBe(false);
+    expect(banner.compareDocumentPosition(hint) & Node.DOCUMENT_POSITION_PRECEDING).toBeTruthy();
   });
 });

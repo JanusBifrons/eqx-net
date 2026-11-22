@@ -196,14 +196,14 @@ test('Confirm keeps placing with the sidebar folded to the strip; Cancel brings 
     // strip (the picked kind, a ✕), so it never covers the ghost.
     await page.locator('[data-testid="build-solar"] button').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
-    await expect(page.locator('[data-testid="placement-banner"]')).toContainText('Solar');
+    await expect(page.locator('[data-testid="placement-banner"]')).toHaveAttribute('data-kind', 'solar');
     await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
     await expect(page.locator('[data-testid="build-strip"]')).toHaveAttribute('data-kind', 'solar');
 
     // The portrait expands the full sidebar with placement live; its ✕ folds back.
     await page.locator('[data-testid="build-strip-portrait"] button').click();
     await expect(page.locator('[data-testid="build-rail"]')).toBeVisible();
-    await expect(page.locator('[data-testid="placement-banner"]')).toContainText('Solar');
+    await expect(page.locator('[data-testid="placement-banner"]')).toHaveAttribute('data-kind', 'solar');
     await page.locator('[data-testid="build-sidebar-close"]').click();
     await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
     await expect(page.locator('[data-testid="build-strip"]')).toBeVisible();
@@ -212,12 +212,12 @@ test('Confirm keeps placing with the sidebar folded to the strip; Cancel brings 
     // sidebar stays folded to the strip.
     await page.locator('[data-testid="placement-confirm"]').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible();
-    await expect(page.locator('[data-testid="placement-banner"]')).toContainText('Solar');
+    await expect(page.locator('[data-testid="placement-banner"]')).toHaveAttribute('data-kind', 'solar');
     await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
     await expect(page.locator('[data-testid="build-strip"]')).toHaveAttribute('data-kind', 'solar');
 
     // Cancel ends it: the sidebar is back on Economy, the next pick one tap.
-    await page.locator('[data-testid="placement-cancel"]').click();
+    await page.locator('[data-testid="build-strip-cancel"]').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeHidden();
     await expect(page.locator('[data-testid="build-kinds"]')).toHaveAttribute('data-category', 'economy', { timeout: 5_000 });
     await expect(page.locator('[data-testid="build-solar"]')).toBeVisible();

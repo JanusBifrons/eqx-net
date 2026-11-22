@@ -182,7 +182,7 @@ test('placement Cancel exits placement mode without placing', async ({ browser }
     await page.locator('[data-testid="build-solar"] button').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
 
-    await page.locator('[data-testid="placement-cancel"]').click();
+    await page.locator('[data-testid="build-strip-cancel"]').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeHidden();
 
     // Give it a moment; nothing should have been placed.
