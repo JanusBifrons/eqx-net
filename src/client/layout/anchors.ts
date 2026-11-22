@@ -222,6 +222,9 @@ export const ANCHOR_STYLES: Record<AnchorName, CSSProperties> = {
     position: 'fixed',
     top: 'max(calc(var(--hud-tl-bottom, 0px) + 8px), calc(57% - var(--left-strip-h, 0px) / 2))',
     left: SAFE_LEFT,
+    // Scaled down only when taller than the room under the HUD (leftStripFit.ts).
+    transform: 'scale(var(--left-strip-scale, 1))',
+    transformOrigin: 'top left',
     zIndex: Z.railStrip,
     display: 'flex',
     flexDirection: 'column',
