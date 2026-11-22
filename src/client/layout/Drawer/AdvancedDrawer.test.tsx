@@ -7,7 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, fireEvent, render, screen } from '@testing-library/react';
 import { useUIStore } from '../../state/store';
 
-vi.mock('./tabs/GalaxyTab', () => ({ GalaxyTab: () => <div>galaxy page</div> }));
 vi.mock('./tabs/ContractsTab', () => ({ ContractsTab: () => <div>jobs page</div> }));
 vi.mock('./tabs/FactionsTab', () => ({ FactionsTab: () => <div>factions page</div> }));
 vi.mock('./tabs/ShipLookTab', () => ({ ShipLookTab: () => <div>look page</div> }));
@@ -19,7 +18,7 @@ afterEach(() => { useUIStore.setState({ rightPanel: null, drawerTab: 'galaxy' })
 
 describe('AdvancedDrawer: each rail panel shows only its own pages', () => {
   it('maps pages to panels as the plan says', () => {
-    expect(pagesOfPanel('galaxy').map((p) => p.id)).toEqual(['galaxy']);
+    expect(pagesOfPanel('galaxy')).toEqual([]); // its own panel, panels/GalaxyPanel.tsx
     expect(pagesOfPanel('trade')).toEqual([]); // its own drill-down, panels/TradePanel.tsx
     expect(pagesOfPanel('jobs').map((p) => p.id)).toEqual(['contracts']);
     expect(pagesOfPanel('faction').map((p) => p.id)).toEqual(['factions', 'look']);
@@ -27,10 +26,10 @@ describe('AdvancedDrawer: each rail panel shows only its own pages', () => {
     expect(pagesOfPanel('cog')).toEqual([]);
   });
 
-  it('Galaxy: its page and title, no tab column and no page switch', () => {
+  it('Jobs: its page and title, no tab column and no page switch', () => {
     render(<AdvancedDrawer />);
-    act(() => { useUIStore.getState().setDrawerTab('galaxy'); });
-    expect(screen.getByTestId('drawer-panel-galaxy').textContent).toBe('galaxy page');
+    act(() => { useUIStore.getState().setDrawerTab('contracts'); });
+    expect(screen.getByTestId('drawer-panel-contracts').textContent).toBe('jobs page');
     expect(screen.getByTestId('advanced-drawer')).toBeVisible();
     expect(screen.queryByRole('tablist')).toBeNull();
     expect(screen.queryByTestId('drawer-tab')).toBeNull();
@@ -58,6 +57,13 @@ describe('AdvancedDrawer: each rail panel shows only its own pages', () => {
     act(() => { useUIStore.getState().setDrawerTab('contracts'); });
     fireEvent.click(screen.getByTestId('drawer-close'));
     expect(useUIStore.getState().rightPanel).toBeNull();
+  });
+
+  it('stays shut while the Galaxy panel is open (GalaxyPanel draws it)', () => {
+    render(<AdvancedDrawer />);
+    act(() => { useUIStore.getState().setDrawerTab('galaxy'); });
+    expect(useUIStore.getState().rightPanel).toBe('galaxy');
+    expect(screen.getByTestId('advanced-drawer')).not.toBeVisible();
   });
 
   it('stays shut while the Trade panel is open (Trade draws its own panel)', () => {

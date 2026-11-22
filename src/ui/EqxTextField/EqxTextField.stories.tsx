@@ -24,6 +24,8 @@ export const Filled: Story = {};
 export const Empty: Story = { args: { value: '', placeholder: 'Name your ship' } };
 export const Error: Story = { args: { error: 'That name is taken' } };
 export const Disabled: Story = { args: { disabled: true } };
+/** A coordinate: decimal keyboard on a phone. */
+export const Decimal: Story = { args: { label: 'Arrival X', value: '250', inputMode: 'decimal' } };
 /** Type to edit. */
 export const Interactive: Story = {
   render: function Render(args) {
