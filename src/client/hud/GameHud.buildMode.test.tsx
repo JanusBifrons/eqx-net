@@ -8,14 +8,12 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { render, cleanup } from '@testing-library/react';
 
 vi.mock('../components/BuildSidebarHost', () => ({ BuildSidebarHost: () => <div data-testid="stub-build-sidebar" /> }));
-vi.mock('../components/FleetPanel', () => ({ FleetPanel: () => null }));
-vi.mock('../components/FleetStrip', () => ({ FleetStrip: () => null }));
 vi.mock('./WeaponStrip', () => ({ WeaponStrip: () => <div data-testid="stub-weapon-strip" /> }));
 vi.mock('./LockStatusBand', () => ({ LockStatusBand: () => <div data-testid="stub-lock-band" /> }));
 vi.mock('../net/clientSingleton', () => ({ getGameClient: () => null }));
 
 import { GameHud } from './GameHud.js';
-import { HelmPanel } from '../components/HelmPanel.js';
+import { OrdersPanel } from '../panels/OrdersPanel.js';
 import { LayoutContext } from '../layout/useLayout.js';
 import { useUIStore } from '../state/store.js';
 import type { TouchInput } from '../input/TouchInput';
@@ -41,7 +39,7 @@ function renderHud() {
   return render(
     <LayoutContext.Provider value={hosts() as never}>
       <GameHud touchInput={touchInput} />
-      <HelmPanel />
+      <OrdersPanel />
     </LayoutContext.Provider>,
   );
 }
@@ -50,21 +48,21 @@ describe('GameHud in build mode', () => {
   beforeEach(() => {
     cleanup();
     document.body.innerHTML = '';
-    useUIStore.setState({ phase: 'galaxy-map', pilotMode: 'pilot', isDead: false, helmAvailable: true, placementKind: null, buildMode: false });
+    useUIStore.setState({ phase: 'galaxy-map', pilotMode: 'pilot', isDead: false, helmAvailable: true, placementKind: null, buildMode: false, rightPanel: null });
   });
 
   it('shows the flight controls while flying, and no speed bar (Fly is manual)', () => {
     useUIStore.setState({ selection: { ids: ['me'], focusId: null, focusKind: null } });
     renderHud();
     for (const id of FLIGHT_IDS) expect(document.querySelector(`[data-testid="${id}"]`), id).not.toBeNull();
-    expect(document.querySelector('[data-testid="helm-panel"]')).toBeNull();
+    expect(document.querySelector('[data-testid="helm-speed"]')).toBeNull();
   });
 
   it('renders no flight control and no helm bar in Build mode', () => {
     useUIStore.getState().setPlacementKind('battery'); // a pick enters Build
     renderHud();
     for (const id of FLIGHT_IDS) expect(document.querySelector(`[data-testid="${id}"]`), id).toBeNull();
-    expect(document.querySelector('[data-testid="helm-panel"]')).toBeNull();
+    expect(document.querySelector('[data-testid="helm-speed"]')).toBeNull();
     // The status capsule stays, in its build variant (no ship health).
     expect(document.querySelector('[data-testid="hud-status"]')?.getAttribute('data-mode')).toBe('build');
   });

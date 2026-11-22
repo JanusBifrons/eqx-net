@@ -142,7 +142,7 @@ describe('left strip route tools (U3-3)', () => {
 
   it('starting a pick closes the right panel so the strip (and the map) show', () => {
     mount();
-    act(() => { useUIStore.setState({ rightPanel: 'fleet' }); });
+    act(() => { useUIStore.setState({ rightPanel: 'orders' }); });
     startPick('patrol');
     expect(useUIStore.getState().rightPanel).toBeNull();
     expect(screen.getByTestId('left-strip-route')).toBeTruthy();

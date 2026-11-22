@@ -940,7 +940,7 @@ function GameSurface({
       <Slot anchor="top-center" order={3}><TeleportWarning /></Slot>
       <Slot anchor="top-center" order={3}><DisabledIndicator /></Slot>
       <Slot anchor="top-center" order={3}><WarpStatusChip /></Slot>
-      {/* The Command speed telegraph (HelmPanel) rides the fleet panel / strip,
+      {/* The Command speed telegraph rides the Orders panel (panels/OrdersPanel.tsx),
        *  never a slot over the map (a bar there swallowed move orders). */}
       {/* Living World P2 — trade toasts (escort prompt when red). */}
       <Slot anchor="top-center" order={5}><TradeToasts /></Slot>

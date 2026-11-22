@@ -207,7 +207,7 @@ describe('LeftStripHost (U1-8)', () => {
     mount();
     select(['a', 'b']);
     fireEvent.click(screen.getByTestId('left-strip-cog'));
-    expect(useUIStore.getState().rightPanel).toBe('fleet');
+    expect(useUIStore.getState().rightPanel).toBe('orders');
     expect(screen.getByTestId('left-strip').getAttribute('data-open')).toBe('false');
   });
 
@@ -249,7 +249,7 @@ describe('stripHealth', () => {
 describe('stripIdentity', () => {
   it('maps the selection to icon, count and panel', () => {
     expect(stripIdentity({ ids: [], focusId: null, focusKind: null })).toBeNull();
-    expect(stripIdentity({ ids: ['a'], focusId: 'a', focusKind: 'ship' })).toMatchObject({ icon: 'fleet', count: 1, panel: 'fleet' });
+    expect(stripIdentity({ ids: ['a'], focusId: 'a', focusKind: 'ship' })).toMatchObject({ icon: 'fleet', count: 1, panel: 'orders' });
     expect(stripIdentity({ ids: [], focusId: 'd', focusKind: 'drone' })).toMatchObject({ icon: 'ship', count: 1, panel: 'details' });
   });
 

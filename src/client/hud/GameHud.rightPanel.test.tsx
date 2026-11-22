@@ -9,8 +9,6 @@ import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { act, render, cleanup } from '@testing-library/react';
 
 vi.mock('../components/BuildSidebarHost', () => ({ BuildSidebarHost: () => null }));
-vi.mock('../components/FleetPanel', () => ({ FleetPanel: () => null }));
-vi.mock('../components/FleetStrip', () => ({ FleetStrip: () => null }));
 vi.mock('./WeaponStrip', () => ({ WeaponStrip: () => <div data-testid="stub-weapon-strip" /> }));
 vi.mock('./LockStatusBand', () => ({ LockStatusBand: () => null }));
 vi.mock('../net/clientSingleton', () => ({ getGameClient: () => null }));
