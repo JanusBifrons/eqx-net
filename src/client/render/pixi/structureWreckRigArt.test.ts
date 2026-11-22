@@ -21,6 +21,7 @@ import { rigForStructureKind } from '../../../core/articulation/rigCatalogue.js'
 import { STRUCTURE_KINDS_LIST } from '../../../shared-types/structureKinds.js';
 import { structureTurrets, turretBakeJobs } from '../art/turretLayout.js';
 import { WRECK_STRUCTURE_PARENT_KIND, type WreckDescriptor } from '../../../shared-types/messages/wreckDescriptor.js';
+import { pointInRing } from './wreckGlowStrip.js';
 
 const PPU = 0.5;
 function structArt(kindId: string): StructArt {
@@ -120,7 +121,7 @@ describe('structure wreck pieces carry the turret\'s gun(s)', () => {
   // the muzzle (1.6 × the turret radius), well past the hull, as the live
   // turret draws it; the piece mask (its outline) cut it at the hull edge,
   // leaving the stretch between the housing and the hull side.
-  it('the barrel past the hull stays whole on the piece that holds the mount; no other piece draws it', () => {
+  it('the barrel past the hull stays whole on one piece; no other piece draws it', () => {
     const gunTex = new Texture({ source: new TextureSource({ width: 8, height: 16 }) });
     const gunArt = { frames: [gunTex, gunTex], w: 8, h: 16, tiles: 1, tileH: 16, density: 2, nozzles: [], navLights: [] };
     for (const seed of [3, 17, 31]) {
@@ -135,13 +136,61 @@ describe('structure wreck pieces carry the turret\'s gun(s)', () => {
         places.forEach((pl, i) => {
           const pv = rig.getChildByLabel('wreck-gun', true)!.parent!.children.filter((c) => c.label === 'wreck-gun')[i]!;
           const at = (t: number): { x: number; y: number } => rig.toLocal({ x: 0, y: -t }, pv);
-          const owner = mask.containsPoint(at(0));
           // Just short of the muzzle: outside the hull (the turret's half side is 70).
           const tip = at(pl.muzzle * 0.95);
           expect(Math.hypot(tip.x + p.cx, tip.y - p.cy), 'tip is past the hull').toBeGreaterThan(75);
-          expect(mask.containsPoint(tip), `s${seed} piece ${p.index}: tip ${owner ? 'kept' : 'not drawn'}`).toBe(owner);
+          const owner = mask.containsPoint(tip);
+          // Whole: from the hull side to the muzzle, no gap.
+          if (owner) for (let t = 72; t < pl.muzzle; t += 4) expect(mask.containsPoint(at(t)), `s${seed} piece ${p.index}: gap at ${t}`).toBe(true);
           if (owner) owners++;
         });
+        sp.destroy({ children: true });
+      }
+      expect(owners, `s${seed}: one owner per gun`).toBe(places.length);
+    }
+  });
+
+  // Round-3 stills: a cut through the mount leaves the pivot on a corner
+  // every piece around it shares; the overhang went to a piece the barrel
+  // does not lie on (the one below the gun), so as the pieces parted the
+  // barrel hung off in space under the piece that carries the gun. The
+  // overhang must ride the piece the barrel itself lies on, rigidly: posed
+  // anywhere, its muzzle and the barrel just inside the hull are both drawn
+  // by that piece, at the gun's rest angle.
+  it('the overhang rides the piece the barrel lies on, also when a cut runs through the mount', () => {
+    const gunTex = new Texture({ source: new TextureSource({ width: 8, height: 16 }) });
+    const gunArt = { frames: [gunTex, gunTex], w: 8, h: 16, tiles: 1, tileH: 16, density: 2, nozzles: [], navLights: [] };
+    const world = new Container();
+    for (let seed = 1; seed <= 12; seed++) {
+      const ds = { ...d, seed, killX: 0, killY: 0 };
+      const ps = rebuildWreckPieces(ds)!;
+      const inf = new WreckArtState().infoFor(ds, ps, 0, { x: 0, y: 0, angle: 0 }, 0, 1000);
+      let owners = 0;
+      for (const p of ps) {
+        const sp = new WreckPieceSprite(p, WRECK_STRUCTURE_PARENT_KIND, art, inf, p.index, null, null, structureWreckSource({ k }), places.map(() => gunArt));
+        world.addChild(sp);
+        // Parted and turned, as the swarm updater poses it (Pixi y = -game y).
+        sp.position.set(300 + 40 * p.index, -120 - 25 * p.index);
+        sp.rotation = 0.7 - 0.4 * p.index;
+        const rig = sp.getChildByLabel('wreck-rig')!;
+        const mask = rig.mask as Graphics;
+        const ring = p.outline.map((v) => ({ x: v.x, y: -v.y }));
+        const pv = rig.getChildByLabel('wreck-gun', true)!;
+        places.forEach((pl) => {
+          const tipW = pv.toGlobal({ x: 0, y: -pl.muzzle * 0.95 });
+          if (!mask.containsPoint(mask.toLocal(tipW))) return; // not this piece's overhang
+          owners++;
+          // The gun keeps its rest angle on the piece: tip straight out from the pivot along the piece's pose.
+          const pivW = pv.toGlobal({ x: 0, y: 0 });
+          expect(Math.atan2(tipW.y - pivW.y, tipW.x - pivW.x)).toBeCloseTo(sp.rotation - pl.mount.baseAngle - Math.PI / 2, 5);
+          // The barrel just inside the hull (either side of its axis) lies on this same piece.
+          const onPiece = [-0.5, 0.5].some((s) => {
+            const q = rig.toLocal(pv.toGlobal({ x: s * pl.wid, y: -60 }));
+            return pointInRing(ring, q.x, q.y);
+          });
+          expect(onPiece, `s${seed} piece ${p.index}: the overhang hangs off a piece the barrel is not on`).toBe(true);
+        });
+        world.removeChild(sp);
         sp.destroy({ children: true });
       }
       expect(owners, `s${seed}: one owner per gun`).toBe(places.length);

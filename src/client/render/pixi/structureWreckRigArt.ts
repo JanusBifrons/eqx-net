@@ -99,31 +99,36 @@ export function structureWreckRigArt(
 
 /** Marching steps along a barrel when finding where it leaves the hull. */
 const EXIT_STEPS = 32;
+/** Where the overhang's owner is decided, in barrel widths: this far back
+ *  from the hull exit along the barrel, this far off its axis (a generic
+ *  point, never on a cut through the mount or along the barrel). */
+const OWNER_BACK = 0.5, OWNER_SIDE = 0.3;
 
 /**
  * A live turret's barrel reaches its muzzle (`structureTurretMuzzle`: 1.6 ×
  * the turret radius), past the hull; the piece mask (its outline) cut it at
  * the hull side, leaving a stub. The barrel past the hull goes with the
- * piece that holds its mount (the pivot inside its outline): that piece's
- * mask adds the barrel strip from where it leaves the structure's hull to
- * its tip. Inside the hull the barrel still breaks with the pieces it lies
- * on. Root (piece Pixi) frame; build time only.
+ * piece the barrel leaves the hull from (the piece holding the barrel just
+ * inside the hull side): that piece's mask adds the barrel strip from there
+ * to its tip, so the overhang carries on from the barrel that piece draws.
+ * Not the piece holding the PIVOT: a cut through the mount leaves the pivot
+ * on a corner shared by every piece around it, so the strip went to a piece
+ * the barrel does not lie on and hung off it in space (r3 stills). Inside the
+ * hull the barrel still breaks with the pieces it lies on. Root (piece Pixi)
+ * frame; build time only.
  */
 function addBarrelOverhangs(
   mask: Graphics, root: Container, kindId: string, piece: WreckRigPiece,
   ring: ReadonlyArray<{ x: number; y: number }>, places: ReturnType<typeof structureTurrets>, pivots: readonly Container[],
 ): void {
-  let hull: Array<{ x: number; y: number }> | null = null;
+  // The structure's hull, body frame (Pixi) → the piece's.
+  const hull = structureWreckSource({ k: getStructureKind(kindId).id }).outline.map(([x, y]) => ({ x: x - piece.cx, y: y + piece.cy }));
   for (let i = 0; i < pivots.length; i++) {
     const pv = pivots[i]!, pl = places[i]!;
-    const o = root.toLocal({ x: 0, y: 0 }, pv);
-    if (!pointInRing(ring, o.x, o.y)) continue; // another piece holds this mount
-    // The structure's hull, body frame (Pixi) → the piece's.
-    hull ??= structureWreckSource({ k: getStructureKind(kindId).id }).outline.map(([x, y]) => ({ x: x - piece.cx, y: y + piece.cy }));
     const hw = pl.wid, len = Math.max(pl.muzzle, pl.len) + pl.wid;
     const inHull = (lat: number, t: number): boolean => {
       const p = root.toLocal({ x: lat, y: -t }, pv);
-      return pointInRing(hull!, p.x, p.y);
+      return pointInRing(hull, p.x, p.y);
     };
     // Where the barrel's sides and axis first leave the hull (the earliest).
     let t0 = len;
@@ -135,6 +140,8 @@ function addBarrelOverhangs(
       t0 = Math.min(t0, lo);
     }
     if (t0 >= len) continue; // all inside the hull (a rack): the outline mask keeps it
+    const own = root.toLocal({ x: OWNER_SIDE * hw, y: -Math.max(0, t0 - OWNER_BACK * hw) }, pv);
+    if (!pointInRing(ring, own.x, own.y)) continue; // the barrel leaves the hull from another piece
     mask.poly([[-hw, -t0], [hw, -t0], [hw, -len], [-hw, -len]].map(([x, y]) => root.toLocal({ x: x!, y: y! }, pv))).fill({ color: 0xffffff });
   }
 }
