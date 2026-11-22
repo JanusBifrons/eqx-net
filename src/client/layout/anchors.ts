@@ -214,11 +214,12 @@ export const ANCHOR_STYLES: Record<AnchorName, CSSProperties> = {
     alignItems: 'stretch',
     pointerEvents: 'none',
   },
-  // Left strip (plan B2): left edge, centred down the side so it stays clear of
-  // the top-left corner (the mode switch and top-left HUD own it).
+  // Left strip (plan B2): left edge, centred at 57% of the height (the approved
+  // EqxLayout composition, mock .lbar): clear of the top-left HUD and of the
+  // Fly contacts tab (left edge, top 30%).
   'left-strip': {
     position: 'fixed',
-    top: '50%',
+    top: '57%',
     left: SAFE_LEFT,
     transform: 'translateY(-50%)',
     zIndex: Z.railStrip,

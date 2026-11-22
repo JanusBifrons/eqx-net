@@ -84,6 +84,7 @@ import { GalaxyPickerChrome, type GalaxyPickerApi } from './components/GalaxyPic
 import { LayoutProvider } from './layout/LayoutProvider';
 import { Slot } from './layout/Slot';
 import { RightPanelHost } from './layout/RightPanelHost';
+import { LeftStripHost } from './layout/LeftStripHost';
 import { TopRightToolbar } from './layout/TopRightToolbar';
 import { applyHudMode, applyHudOverlays, hudModeFromSearch, isHudMode } from './cinematic/hudMode';
 import type { CameraCue } from '@core/contracts/cameraScript';
@@ -949,9 +950,6 @@ function GameSurface({
       {/* Living World P2 — trade toasts (escort prompt when red). */}
       <Slot anchor="top-center" order={5}><TradeToasts /></Slot>
       <WhileAwayDialog />
-      {/* Phase 5 — the top-right X/Y · hull · ammo · speed · heading stat card
-       *  (ShipStatsCard) was REMOVED entirely (user request); the hull/shield
-       *  HUD bars + the in-world stat panel carry that info. */}
       {/* Phase 5 — always-visible Pilot/Spectate toggle (out of the speed-dial).
        *  No separate mode label: the switch itself shows the active mode
        *  (owner 2026-11-22). */}
@@ -959,6 +957,7 @@ function GameSurface({
           toggle sits under the sector chip instead of over the ship. */}
       <PilotToggleSlot />
       <RightPanelHost />
+      <LeftStripHost rendererRef={rendererRef} />
       {/* Phase 4 WS-A1 (D3) — the blocking DeathOverlay "You Died/Respawn" modal
        *  is removed. Death transitions INSTANTLY into spectator (free-roam
        *  construction camera); re-entry is via the galaxy map or (WS-A2) an

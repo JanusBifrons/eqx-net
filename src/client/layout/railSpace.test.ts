@@ -35,7 +35,7 @@ describe('rail space anchors', () => {
     const s = ANCHOR_STYLES['left-strip'];
     expect(s.position).toBe('fixed');
     expect(String(s.left)).toContain('safe-area-inset-left');
-    expect(s.top).toBe('50%');
+    expect(s.top).toBe('57%');
     expect(s.zIndex).toBe(Z.railStrip);
   });
 });
