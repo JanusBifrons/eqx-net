@@ -9,7 +9,7 @@
  * - Driven by the store's `rightPanel` flag: a rail pick sets it, a second pick
  *   of the open item, ✕ or Esc clears it. Renders the panels the flag opens,
  *   including today's advanced drawer (moved here from App.tsx), the Trade
- *   drill-down (`panels/TradePanel.tsx`), the cog panel (`panels/CogPanel.tsx`) and the
+ *   drill-down (`panels/TradePanel.tsx`), Jobs (`panels/JobsPanel.tsx`), the cog panel (`panels/CogPanel.tsx`) and the
  *   selection's Details panel (opened from the left strip's ⚙, not a rail item).
  *   The Build panel (`build`) is mounted by GameHud (BuildSidebarHost) and opens
  *   on the same flag.
@@ -22,6 +22,7 @@ import type { UIStore } from '../state/storeTypes';
 import { AdvancedDrawer } from './Drawer/AdvancedDrawer';
 import { HoldPanel } from '../panels/HoldPanel';
 import { TradePanel } from '../panels/TradePanel';
+import { JobsPanel } from '../panels/JobsPanel';
 import { FleetRailPanel } from '../panels/FleetPanel';
 import { DetailsPanel } from '../panels/DetailsPanel';
 import { CogPanel } from '../panels/CogPanel';
@@ -77,6 +78,7 @@ export function RightPanelHost(): JSX.Element {
       )}
       <AdvancedDrawer />
       <TradePanel />
+      <JobsPanel />
       <HoldPanel />
       <FleetRailPanel />
       <DetailsPanel />

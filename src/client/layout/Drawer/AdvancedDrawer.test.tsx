@@ -8,7 +8,6 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { useUIStore } from '../../state/store';
 
 vi.mock('./tabs/GalaxyTab', () => ({ GalaxyTab: () => <div>galaxy page</div> }));
-vi.mock('./tabs/ContractsTab', () => ({ ContractsTab: () => <div>jobs page</div> }));
 vi.mock('./tabs/FactionsTab', () => ({ FactionsTab: () => <div>factions page</div> }));
 vi.mock('./tabs/ShipLookTab', () => ({ ShipLookTab: () => <div>look page</div> }));
 
@@ -21,7 +20,7 @@ describe('AdvancedDrawer: each rail panel shows only its own pages', () => {
   it('maps pages to panels as the plan says', () => {
     expect(pagesOfPanel('galaxy').map((p) => p.id)).toEqual(['galaxy']);
     expect(pagesOfPanel('trade')).toEqual([]); // its own drill-down, panels/TradePanel.tsx
-    expect(pagesOfPanel('jobs').map((p) => p.id)).toEqual(['contracts']);
+    expect(pagesOfPanel('jobs')).toEqual([]); // its own panel, panels/JobsPanel.tsx
     expect(pagesOfPanel('faction').map((p) => p.id)).toEqual(['factions', 'look']);
     // The cog draws its own panel (panels/CogPanel.tsx).
     expect(pagesOfPanel('cog')).toEqual([]);
@@ -55,7 +54,7 @@ describe('AdvancedDrawer: each rail panel shows only its own pages', () => {
 
   it('✕ closes the panel', () => {
     render(<AdvancedDrawer />);
-    act(() => { useUIStore.getState().setDrawerTab('contracts'); });
+    act(() => { useUIStore.getState().setDrawerTab('factions'); });
     fireEvent.click(screen.getByTestId('drawer-close'));
     expect(useUIStore.getState().rightPanel).toBeNull();
   });
@@ -64,6 +63,13 @@ describe('AdvancedDrawer: each rail panel shows only its own pages', () => {
     render(<AdvancedDrawer />);
     act(() => { useUIStore.getState().setDrawerTab('trade'); });
     expect(useUIStore.getState().rightPanel).toBe('trade');
+    expect(screen.getByTestId('advanced-drawer')).not.toBeVisible();
+  });
+
+  it('stays shut while the Jobs panel is open (Jobs draws its own panel)', () => {
+    render(<AdvancedDrawer />);
+    act(() => { useUIStore.getState().setDrawerTab('contracts'); });
+    expect(useUIStore.getState().rightPanel).toBe('jobs');
     expect(screen.getByTestId('advanced-drawer')).not.toBeVisible();
   });
 });
