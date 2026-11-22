@@ -66,6 +66,8 @@ const SWITCH_OPTIONS: Readonly<Partial<Record<RailId, { id: string; label: strin
     .filter(([, opts]) => opts.length > 1),
 );
 
+const DRAWER_PAPER_ATTRS = { 'data-testid': 'advanced-drawer' } as const;
+
 const PAGE_SX = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 } as const;
 
 export function AdvancedDrawer(): JSX.Element {
@@ -85,7 +87,10 @@ export function AdvancedDrawer(): JSX.Element {
     <EqxPanel
       open={isOpen}
       onClose={handleClose}
-      testId="advanced-drawer"
+      // The test id goes on the Paper: the persistent Drawer root is a zero-size
+      // docked div (the Paper is fixed), so e2e would never see it visible.
+      testId="advanced-drawer-root"
+      paperAttrs={DRAWER_PAPER_ATTRS}
       closeTestId="drawer-close"
       title={PANEL_TITLE[panel]}
       size={EQX_PANEL_SIZE}
