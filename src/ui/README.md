@@ -13,6 +13,7 @@ raw `@mui/*` and `@emotion/*` imports live only inside `src/ui/`.
 | `EqxIconButton` | The one icon button (rail, left strip, fly-outs). One fixed box (`HUD.size.iconButton`), icon centred, no label | `icon`, **required** `tooltip` (also the aria-label), `tone`, `active`, `badge`, `holdMs`, `disabled`, `onClick`, `data-testid` |
 | `EqxTooltip` | Tooltip: hover on desktop, press-and-hold on touch | `title`, `holdMs` |
 | `EqxSwitch` | On / off | `checked`, `onChange(checked)`, `label` (also the accessible name), `disabled`, `data-testid` |
+| `EqxRail` | The slim right rail: EqxIconButtons top to bottom, cog pinned at the bottom, labels only in tooltips; at most 8 items plus the cog (more throws in dev, prod shows 8). Width `HUD.size.railPhone` when `compact`, else `railDesktop`; `compact` defaults to the `(pointer: coarse)` query. Fills its parent; never positions itself | `items` (`id`, `icon`, `tooltip`, `badge`), `activeId`, `onPick(id)`, `cog` (`{ icon, tooltip, id }`, or `true` for the default cog with id `cog`), `compact`, `data-testid` (buttons get `<testid>-<id>`) |
 
 ## Extend, never hand-roll
 
