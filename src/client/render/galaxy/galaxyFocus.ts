@@ -8,6 +8,7 @@
  *
  * Everything here runs on a focus change or a tap, never per frame.
  */
+import { railWidthPx } from '../../layout/railWidth.js';
 
 /** Glide in / hop / back out duration (wall ms; UI motion, not game time). */
 export const FOCUS_GLIDE_MS = 650;
@@ -46,13 +47,17 @@ export function focusPanelWidth(screenW: number, touch: boolean): number {
 
 export interface ScreenInsets { top: number; right: number; bottom: number }
 
-/** The screen strips the panel and app bar cover, for framing the focus. The
- *  phone panel's top gap sits under the toolbar, not over the map, so the hex
- *  keeps the full height. */
-export function focusPanelInsets(dock: FocusPanelDock, screenW: number, screenH: number, touch: boolean): ScreenInsets {
+/** The screen strips the panel, the right rail and the app bar cover, for
+ *  framing the focus. The phone panel's top gap sits under the toolbar, not
+ *  over the map, so the hex keeps the full height. `railW` (CSS px) is the
+ *  right rail (`--rail-w`, read by `railWidthPx`; 0 until it mounts, and 0 in
+ *  the render worker, which has no DOM). */
+export function focusPanelInsets(
+  dock: FocusPanelDock, screenW: number, screenH: number, touch: boolean, railW: number = railWidthPx(),
+): ScreenInsets {
   const top = touch ? 0 : APP_BAR_H;
-  if (dock === 'right') return { top, right: focusPanelWidth(screenW, touch), bottom: 0 };
-  return { top, right: 0, bottom: Math.min(screenH * SHEET_FRAC_PORTRAIT, SHEET_MAX_H) };
+  if (dock === 'right') return { top, right: focusPanelWidth(screenW, touch) + railW, bottom: 0 };
+  return { top, right: railW, bottom: Math.min(screenH * SHEET_FRAC_PORTRAIT, SHEET_MAX_H) };
 }
 
 // ── Hop arrows ──

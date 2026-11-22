@@ -16,6 +16,8 @@ import type {
   UIStore,
   UISelection,
 } from './storeTypes.js';
+import { rightPanelSlice } from './rightPanel.js';
+export { selectDrawerOpen } from './rightPanel.js';
 
 // Re-export the type surface so existing import sites (40+ files using
 // `import { useUIStore, type Phase } from './state/store'`) keep
@@ -199,8 +201,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   pendingLevelUp: null,
   upgradeAck: null,
   lastFireMs: null,
-  isDrawerOpen: false,
-  drawerTab: 'galaxy',
+  ...rightPanelSlice(set),
   // Living Galaxy P5 — the live galaxy map is the first screen on load. The
   // `?room=`/`?galaxy=` deep-links still override to 'game' via App's autoJoin
   // effect; `meta` is retired from the default path (kept reachable via
@@ -349,8 +350,6 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setPendingLevelUp: (level) => set({ pendingLevelUp: level }),
   setUpgradeAck: (ack) => set({ upgradeAck: ack }),
   setLastFireMs: (ms) => set({ lastFireMs: ms }),
-  setDrawerOpen: (v) => set({ isDrawerOpen: v }),
-  setDrawerTab: (id) => set({ drawerTab: id }),
   setPhase: (p) => set((prev) => {
     // Join-render readiness reset. `setPhase` re-arms on phase
     // ENTER/LEAVE-`game` (initial join, ship-swap arrival, respawn) —

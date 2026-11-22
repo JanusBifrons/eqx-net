@@ -16,17 +16,17 @@ import { useUIStore } from '../state/store.js';
  *                          map (the homepage). Logout must drive the phase
  *                          transition itself;
  *                          the map stays usable logged-out.
- *   3. `setDrawerOpen(false)` — closes the drawer if open; a harmless no-op on
+ *   3. `setRightPanel(null)` — closes the drawer if open; a harmless no-op on
  *                          surfaces (header / mobile badge) that have no drawer.
  */
 export function useLogout(): () => void {
   const clearAuth = useAuthStore((s) => s.clearAuth);
   const setPhase = useUIStore((s) => s.setPhase);
-  const setDrawerOpen = useUIStore((s) => s.setDrawerOpen);
+  const setRightPanel = useUIStore((s) => s.setRightPanel);
 
   return useCallback(() => {
     clearAuth();
     setPhase('galaxy-map');
-    setDrawerOpen(false);
-  }, [clearAuth, setPhase, setDrawerOpen]);
+    setRightPanel(null);
+  }, [clearAuth, setPhase, setRightPanel]);
 }

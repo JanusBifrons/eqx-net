@@ -7,6 +7,7 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { renderHook, act } from '@testing-library/react';
 import { useAuthStore } from './authStore.js';
 import { useUIStore } from '../state/store.js';
+import { selectDrawerOpen } from '../state/rightPanel.js';
 import { useLogout } from './useLogout.js';
 
 describe('useLogout', () => {
@@ -15,7 +16,7 @@ describe('useLogout', () => {
       token: 'tok-123',
       user: { id: 'u1', email: 'pilot@eqx.test', displayName: 'Pilot' },
     });
-    useUIStore.setState({ phase: 'game', isDrawerOpen: true });
+    useUIStore.setState({ phase: 'game', rightPanel: 'galaxy' });
   });
 
   it('clears auth, returns to the galaxy map, and closes the drawer in one call', () => {
@@ -26,7 +27,7 @@ describe('useLogout', () => {
     expect(useAuthStore.getState().token).toBeNull();
     expect(useAuthStore.getState().user).toBeNull();
     expect(useUIStore.getState().phase).toBe('galaxy-map');
-    expect(useUIStore.getState().isDrawerOpen).toBe(false);
+    expect(selectDrawerOpen(useUIStore.getState())).toBe(false);
   });
 
   it('clears the persisted token from localStorage', () => {
