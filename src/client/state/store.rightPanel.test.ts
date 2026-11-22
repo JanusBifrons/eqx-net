@@ -81,3 +81,26 @@ describe('drawer tab -> panel mapping', () => {
     expect(useUIStore.getState().drawerTab).toBe('settings');
   });
 });
+
+describe('the Build panel on the one flag (U2-1)', () => {
+  it('leaving Build clears the Build panel; any other panel stays', () => {
+    const ui = useUIStore.getState();
+    ui.setBuildMode(true);
+    ui.setRightPanel('build');
+    useUIStore.getState().setBuildMode(false);
+    expect(useUIStore.getState().rightPanel).toBeNull();
+
+    ui.setBuildMode(true);
+    ui.setRightPanel('galaxy');
+    useUIStore.getState().setBuildMode(false);
+    expect(useUIStore.getState().rightPanel).toBe('galaxy');
+  });
+
+  it('flying a ship again (pilot) ends Build and clears the Build panel', () => {
+    useUIStore.setState({ buildMode: true, rightPanel: 'build' });
+    useUIStore.getState().setPilotMode('pilot');
+    expect(useUIStore.getState().buildMode).toBe(false);
+    expect(useUIStore.getState().rightPanel).toBeNull();
+    useUIStore.setState({ pilotMode: 'spectator' });
+  });
+});

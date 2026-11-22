@@ -3,17 +3,18 @@ import type { Browser, Page } from '@playwright/test';
 import { DEFAULT_BASE_URL } from './helpers/ports';
 
 /**
- * The Build sidebar (BuildSidebarHost.tsx → BuildSidebar.tsx) and the right
+ * The Build panel (BuildSidebarHost.tsx → panels/BuildPanel.tsx) and the right
  * rail's Galaxy item. The speed dial and the ☰ drawer button are gone (UI
  * language plan A7): the right rail opens every panel, the Galaxy page holds
- * Map and Warp, and Build mode opens the sidebar.
+ * Map and Warp, and the rail's Build item opens the Build panel.
  *
  * What this locks:
  *   1. The rail's Galaxy item opens the drawer on the Galaxy page, with the
  *      "Show galaxy map" button (the old dial Map action).
  *
  * Build menu redesign M1 (the Build sidebar replaced the dial's build drill):
- *   2. Build opens the right-hand Build sidebar (category rail + kind tiles).
+ *   2. In Build, the rail's Build item opens the right-hand Build panel
+ *      (category rail + kind tiles); entering Build opens nothing (U2-1).
  *   3. A rail tap switches the category.
  *   4. Picking a kind hides the sidebar. Confirm KEEPS placing the same
  *      building (M3) with it hidden; Cancel, or a place-once kind (Capital)
@@ -63,8 +64,10 @@ test('the rail Galaxy item opens the Galaxy page with the map button', async ({ 
 // ── Build menu redesign M1 — the Build sidebar ─────────────────────────────
 
 async function openBuildSidebar(page: Page): Promise<void> {
-  // Build mode is the only way to build (owner 2026-11-22): the switch opens it.
+  // Build mode is the only way to build (owner 2026-11-22). Entering Build opens
+  // nothing (UI language plan U2-1): the rail's Build item opens the panel.
   await page.locator('[data-testid="build-toggle"]').click();
+  await page.locator('[data-testid="right-rail-build"]').click();
   await expect(page.locator('[data-testid="build-sidebar"][data-open="1"]')).toBeVisible({ timeout: 5_000 });
 }
 
@@ -170,7 +173,8 @@ test('the sidebar ✕ and Escape close it', async ({ browser }) => {
     await page.locator('[data-testid="build-sidebar-close"]').click();
     await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
 
-    await openBuildSidebar(page);
+    await page.locator('[data-testid="right-rail-build"]').click(); // already in Build: the rail item reopens it
+    await expect(page.locator('[data-testid="build-sidebar"][data-open="1"]')).toBeVisible({ timeout: 5_000 });
     await page.keyboard.press('Escape');
     await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
   } finally {

@@ -64,3 +64,9 @@ export const selectDrawerTabShown = (tab: string) => (s: PanelState): boolean =>
 export function openDrawerPanel(s: PanelState & Pick<RightPanelUi, 'setRightPanel'>): void {
   s.setRightPanel(panelForDrawerTab(s.drawerTab));
 }
+
+/** Leaving Build closes the Build panel (UI plan U2-1): the patch for a store
+ *  write that ends Build. Any other open panel stays. */
+export function closeBuildPanel(s: Pick<RightPanelUi, 'rightPanel'>): Partial<RightPanelUi> {
+  return s.rightPanel === 'build' ? { rightPanel: null } : {};
+}

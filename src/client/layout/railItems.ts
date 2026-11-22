@@ -9,9 +9,8 @@
  * into its own `panels/<Id>Panel.tsx`):
  *   - `drawer`: today's advanced drawer on that page (`setDrawerTab(page)` sets
  *     the `rightPanel` flag to the item; AdvancedDrawer shows on that flag).
- *   - `panel`: a `panels/*Panel.tsx` the host renders while the flag is the item.
- *   - `build`: today's Build sidebar (`requestBuildSidebar`), which owns its own
- *     open flag until U2-1 moves it into `panels/BuildPanel.tsx`.
+ *   - `panel`: a `panels/*Panel.tsx` shown while the flag is the item (Build:
+ *     panels/BuildPanel.tsx, mounted by GameHud's BuildSidebarHost).
  *   - `contacts`: today's contacts list (`contactsOpen`), until its panel lands.
  */
 import type { EqxIconName } from '../../ui/icons.js';
@@ -21,7 +20,6 @@ import type { ControlMode } from '../state/storeTypes.js';
 export type RailOpen =
   | { kind: 'drawer'; page: string }
   | { kind: 'panel' }
-  | { kind: 'build' }
   | { kind: 'contacts' };
 
 export interface RailItemSpec {
@@ -35,7 +33,7 @@ export interface RailItemSpec {
 const CONTACTS: RailItemSpec = { id: 'contacts', icon: 'contacts', tooltip: 'Contacts', open: { kind: 'contacts' } };
 const HOLD: RailItemSpec = { id: 'hold', icon: 'hold', tooltip: 'Hold', open: { kind: 'panel' } };
 const FLEET: RailItemSpec = { id: 'fleet', icon: 'fleet', tooltip: 'Fleet', open: { kind: 'panel' } };
-const BUILD: RailItemSpec = { id: 'build', icon: 'build', tooltip: 'Build', open: { kind: 'build' } };
+const BUILD: RailItemSpec = { id: 'build', icon: 'build', tooltip: 'Build', open: { kind: 'panel' } };
 
 /** In every mode, below the mode's tools. */
 export const RAIL_COMMON: readonly RailItemSpec[] = [

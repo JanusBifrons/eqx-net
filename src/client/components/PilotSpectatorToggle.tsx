@@ -10,7 +10,7 @@ import { sendCommand, sendPilotShip } from '../ships/shipActionsClient';
 import type { ControlMode } from '../state/storeTypes';
 import { isOwnedByMe, isParkedHull } from '../render/shipOwnership';
 import { leaveBuildMode } from '../structures/buildModeView';
-import { requestBuildSidebar } from './BuildSidebar';
+import { requestBuildPanel } from '../panels/BuildPanel';
 
 /**
  * The ALWAYS-VISIBLE mode switch: Fly, Command, Build (three joined MUI
@@ -116,7 +116,7 @@ export function PilotSpectatorToggle(): JSX.Element | null {
   // the Build sidebar back after a ✕ (the only way in since the dial stopped
   // building, owner 2026-11-22).
   const onBuildClick = (): void => {
-    if (controlMode === 'build') requestBuildSidebar();
+    if (controlMode === 'build') requestBuildPanel();
   };
 
   const onFlyClick = (e: React.MouseEvent<HTMLElement>): void => {

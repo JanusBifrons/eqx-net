@@ -1,31 +1,24 @@
 /**
- * Desktop keys for the Build sidebar (BuildSidebar.tsx), the one build surface.
+ * Desktop keys for the Build panel (panels/BuildPanel.tsx), the one build surface.
  * While it is open: 1–9 pick the Nth kind tile of the open category (the same
  * action as clicking that tile), Q / E step to the previous / next category.
  * These moved here from the old bottom build hotbar (BottomControlPanel), whose
  * number keys picked the Nth building of a flattened palette.
  *
- * The sidebar's open flag is BuildSidebarHost's local React state (presentation,
- * never Zustand); the sidebar mirrors it here so the fire-control keys
- * (MouseLock.ts `installFcKeys`) stand down while it is open and 1–9 do not
- * also switch weapon groups.
+ * The panel is open while the store's one panel flag is `rightPanel === 'build'`
+ * (UI language plan U2-1); the fire-control keys (MouseLock.ts `installFcKeys`)
+ * read it here and stand down meanwhile, so 1–9 do not also switch weapon groups.
  */
+import { useUIStore } from '../state/store';
 
-let open = false;
-
-/** BuildSidebar sets this while it is open (cleared on close / unmount). */
-export function setBuildMenuKeysOpen(v: boolean): void {
-  open = v;
-}
-
-/** Is the Build sidebar open (its keys own 1–9 / Q / E)? */
+/** Is the Build panel open (its keys own 1–9 / Q / E)? */
 export function buildMenuKeysOpen(): boolean {
-  return open;
+  return useUIStore.getState().rightPanel === 'build';
 }
 
 export type BuildMenuKeyAction = { kind: 'pick'; index: number } | { kind: 'step'; delta: -1 | 1 };
 
-/** Pure: key event → Build sidebar key action (null = not ours). */
+/** Pure: key event → Build panel key action (null = not ours). */
 export function buildMenuKeyAction(key: string, code: string): BuildMenuKeyAction | null {
   const m = /^Digit([1-9])$/.exec(code);
   if (m) return { kind: 'pick', index: Number(m[1]) - 1 };

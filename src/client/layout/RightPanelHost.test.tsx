@@ -10,8 +10,6 @@ vi.mock('./Drawer/AdvancedDrawer', () => ({ AdvancedDrawer: () => null }));
 vi.mock('../panels/HoldPanel', () => ({ HoldPanel: () => null }));
 vi.mock('../components/FleetPanel', () => ({ FleetPanel: () => <div data-testid="fleet-orders" /> }));
 vi.mock('../components/FleetStrip', () => ({ FleetStrip: () => null }));
-const requestBuildSidebar = vi.fn();
-vi.mock('../components/BuildSidebar', () => ({ requestBuildSidebar: () => requestBuildSidebar() }));
 
 import { useUIStore } from '../state/store';
 import { LayoutProvider } from './LayoutProvider';
@@ -36,7 +34,7 @@ beforeEach(() => {
     pilotMode: 'spectator', buildMode: false, placementKind: null, fleetPick: null,
   });
 });
-afterEach(() => { cleanup(); vi.unstubAllGlobals(); requestBuildSidebar.mockReset(); });
+afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
 const mount = (): void => { render(<LayoutProvider><RightPanelHost /></LayoutProvider>); };
 
@@ -120,12 +118,16 @@ describe('pickRailItem', () => {
     expect(st().drawerTab).toBe('look');
     expect(st().rightPanel).toBe('faction');
   });
-  it('Contacts toggles the contacts list; Build asks for the Build sidebar', () => {
+  it('Contacts toggles the contacts list; Build opens and closes the Build panel on the one flag', () => {
     pickRailItem('contacts', st());
     expect(st().contactsOpen).toBe(true);
     pickRailItem('build', st());
-    expect(requestBuildSidebar).toHaveBeenCalledTimes(1);
+    expect(st().rightPanel).toBe('build');
+    pickRailItem('build', st());
     expect(st().rightPanel).toBeNull();
+    pickRailItem('build', st());
+    pickRailItem('galaxy', st()); // another panel replaces it
+    expect(st().rightPanel).toBe('galaxy');
   });
 });
 

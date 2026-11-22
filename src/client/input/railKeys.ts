@@ -16,7 +16,6 @@
 import { selectControlMode } from '../state/store';
 import type { UIStore } from '../state/storeTypes';
 import { stripIdentity } from '../layout/LeftStripHost';
-import { buildMenuKeysOpen } from './buildMenuKeys';
 import { pickRailItem } from '../layout/RightPanelHost';
 import { railItemsFor } from '../layout/railItems';
 
@@ -24,13 +23,13 @@ type EscState = Pick<UIStore, 'placementKind' | 'fleetPick' | 'rightPanel' | 'co
   | 'drawerTab' | 'setRightPanel' | 'setDrawerTab' | 'setContactsOpen'>
   & Parameters<typeof selectControlMode>[0];
 
-/** Pure: does this Esc press clear the strip (deselect)? `buildOpen` is the
- *  Build sidebar's open flag (`buildMenuKeysOpen`). */
-export function escClearsStrip(e: Pick<KeyboardEvent, 'key' | 'defaultPrevented' | 'target'>, s: EscState, buildOpen: boolean): boolean {
+/** Pure: does this Esc press clear the strip (deselect)? Any open panel,
+ *  the Build panel included (`rightPanel === 'build'`), takes the press first. */
+export function escClearsStrip(e: Pick<KeyboardEvent, 'key' | 'defaultPrevented' | 'target'>, s: EscState): boolean {
   if (e.key !== 'Escape' || e.defaultPrevented) return false;
   const t = e.target as HTMLElement | null;
   if (t !== null && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return false;
-  if (s.placementKind !== null || s.fleetPick !== null || s.rightPanel !== null || buildOpen) return false;
+  if (s.placementKind !== null || s.fleetPick !== null || s.rightPanel !== null) return false;
   if (s.contactsOpen && selectControlMode(s) === 'fly') return false;
   return stripIdentity(s.selection) !== null;
 }
@@ -54,5 +53,5 @@ export function handleRailKeys(e: KeyboardEvent, s: EscState, clear: () => void)
     if (item !== undefined) { pickRailItem(item.id, s); e.preventDefault(); }
     return;
   }
-  if (escClearsStrip(e, s, buildMenuKeysOpen())) { clear(); e.preventDefault(); }
+  if (escClearsStrip(e, s)) { clear(); e.preventDefault(); }
 }

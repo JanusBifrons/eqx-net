@@ -2,82 +2,74 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { type StructureKindId } from '@shared-types/structureKinds';
 import { onGameWindowOpen } from './GameWindow';
-import { BuildSidebar, onBuildSidebarRequest } from './BuildSidebar';
+import { BuildPanel } from '../panels/BuildPanel';
 import { cancelPlacement } from '../structures/placementCancel';
 
-/** The Build sidebar's view: closed, the full list, or folded to the placing
- *  strip (only shown while a kind is picked). */
-type BuildView = 'closed' | 'full' | 'strip';
-
 /**
- * Owns the Build sidebar's open flag and mounts it (BuildSidebar.tsx: a
- * category rail and kind tiles). Split out of the retired speed dial: the
- * right rail replaced the dial and the ☰ drawer button (UI language plan A7,
- * U5-2), and this keeps the Build menu where it was until it moves into
- * `panels/BuildPanel.tsx` (U2-1).
+ * Mounts the Build panel (panels/BuildPanel.tsx: a category rail and kind
+ * tiles) and drives it from the store's one panel flag (UI language plan U2-1):
+ * the full list is open while `rightPanel === 'build'`. The rail's Build item
+ * and a Build tap on the mode switch while in Build (`requestBuildPanel`) set
+ * it; ✕, Esc, a second rail tap or another rail panel clear it. Entering Build
+ * opens nothing (no auto-open); leaving Build clears it (store `setBuildMode`).
  *
- * Build mode is the only way in: entering it opens the sidebar, and a Build
- * tap while already in Build (the mode switch or the rail's Build item,
- * `requestBuildSidebar`) reopens it after a ✕. Picking a kind sets
- * `placementKind` and folds the sidebar to the placing strip
- * (BuildPlacingStrip.tsx), so it never covers the ghost; Confirm keeps placing
- * the same building (placementCancel.ts) with it folded; the strip's portrait
- * expands it (placement stays live) and the full sidebar's ✕ folds it back;
- * Cancel (the strip's ✕ too: the ghost goes, Build stays) brings the full list
- * back; leaving Build closes it. A game window opening closes it (one right
- * panel at a time).
+ * Picking a kind sets `placementKind` and closes the full list, folding it to
+ * the placing strip (BuildPlacingStrip.tsx) so it never covers the ghost; the
+ * strip shows while placing with no right panel open. Confirm keeps placing the
+ * same building (placementCancel.ts) with it folded; the strip's portrait
+ * reopens the full list (placement stays live) and its ✕ folds back; Cancel (the
+ * strip's ✕ too: the ghost goes, Build stays) and a place-once place bring the
+ * full list back for the next structure. A game window opening closes both
+ * (one right panel at a time). The strip mode stays until U3-7.
  *
- * The open flag is local React state: pure presentation, never Zustand
- * (invariant #2).
+ * `stripHidden` is presentation only (a game window put the strip away), never
+ * Zustand (invariant #2); the open state is the store flag, nothing else.
  */
 export function BuildSidebarHost(): JSX.Element | null {
   const shouldRender = useShouldRenderHud();
   const isDead = useUIStore((s) => s.isDead);
   const setPlacementKind = useUIStore((s) => s.setPlacementKind);
-  const [buildView, setBuildView] = useState<BuildView>('closed');
+  const setRightPanel = useUIStore((s) => s.setRightPanel);
+  const open = useUIStore((s) => s.rightPanel === 'build' && s.buildMode);
+  const noPanel = useUIStore((s) => s.rightPanel === null);
+  const [stripHidden, setStripHidden] = useState(false);
 
-  const collapse = useCallback(() => setBuildView('closed'), []);
-  useEffect(() => onGameWindowOpen(collapse), [collapse]);
+  useEffect(() => onGameWindowOpen(() => {
+    if (useUIStore.getState().rightPanel === 'build') setRightPanel(null);
+    setStripHidden(true);
+  }), [setRightPanel]);
+  useEffect(() => { if (open) setStripHidden(false); }, [open]);
 
-  // Entering Build and every placement end (Cancel, or a place-once kind
-  // placed: the ghost goes, Build stays) open the full list for the next
-  // structure. A Confirm keeps placing, so it stays folded. Leaving Build
-  // closes it.
-  const building = useUIStore((s) => s.buildMode);
-  const buildListReady = useUIStore((s) => s.buildMode && s.placementKind === null);
-  const wasBuilding = useRef(false);
+  // Every placement end in Build (Cancel, or a place-once kind placed: the
+  // ghost goes, Build stays) brings the full list back for the next structure,
+  // unless another panel is up. A Confirm keeps placing, so it stays folded.
+  const placing = useUIStore((s) => s.placementKind !== null);
+  const wasPlacing = useRef(placing);
   useEffect(() => {
-    if (buildListReady) setBuildView('full');
-    else if (!building && wasBuilding.current) collapse();
-    wasBuilding.current = building;
-  }, [building, buildListReady, collapse]);
+    const s = useUIStore.getState();
+    if (wasPlacing.current && !placing && s.buildMode && s.rightPanel === null) s.setRightPanel('build');
+    wasPlacing.current = placing;
+  }, [placing]);
 
-  // A Build tap while already in Build brings the sidebar back.
-  useEffect(() => onBuildSidebarRequest(() => {
-    if (!useUIStore.getState().buildMode) return;
-    setBuildView('full');
-  }), []);
-  // The full sidebar's ✕ / swipe: while placing it folds to the strip.
-  const closeBuild = useCallback(() => {
-    setBuildView(useUIStore.getState().placementKind !== null ? 'strip' : 'closed');
-  }, []);
-  const expandBuild = useCallback(() => setBuildView('full'), []);
+  const closeBuild = useCallback(() => setRightPanel(null), [setRightPanel]);
+  const expandBuild = useCallback(() => setRightPanel('build'), [setRightPanel]);
 
-  // Pick a kind to place: raise the placement ghost and fold the sidebar to the
+  // Pick a kind to place: raise the placement ghost and fold the panel to the
   // strip, so it never covers the ghost (build mode, stills review 2026-11-20).
   // Cancel brings it back on the same category (the R2.6 repeat-build need).
   const handlePickBuild = useCallback(
     (kind: StructureKindId) => {
       setPlacementKind(kind);
-      setBuildView('strip');
+      setRightPanel(null);
+      setStripHidden(false);
       (document.activeElement as HTMLElement | null)?.blur();
     },
-    [setPlacementKind],
+    [setPlacementKind, setRightPanel],
   );
 
   if (!shouldRender || isDead) return null;
   return (
-    <BuildSidebar open={buildView === 'full'} strip={buildView === 'strip'} onClose={closeBuild}
+    <BuildPanel open={open} strip={noPanel && !stripHidden} onClose={closeBuild}
       onPick={handlePickBuild} onExpand={expandBuild} onCancel={cancelPlacement} />
   );
 }

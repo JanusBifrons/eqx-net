@@ -12,21 +12,21 @@ const esc = (over: Partial<KeyboardEvent> = {}) => ({ key: 'Escape', defaultPrev
 
 describe('escClearsStrip', () => {
   it('clears the strip when nothing else is up', () => {
-    expect(escClearsStrip(esc(), base(), false)).toBe(true);
+    expect(escClearsStrip(esc(), base())).toBe(true);
   });
   it('an open panel closes first (the strip stays)', () => {
-    expect(escClearsStrip(esc(), { ...base(), rightPanel: 'fleet' }, false)).toBe(false);
-    expect(escClearsStrip(esc(), base(), true)).toBe(false); // Build sidebar open
+    expect(escClearsStrip(esc(), { ...base(), rightPanel: 'fleet' })).toBe(false);
+    expect(escClearsStrip(esc(), { ...base(), rightPanel: 'build' })).toBe(false); // Build panel open
   });
   it('a press someone else already handled (placement, fleet pick) does nothing more', () => {
-    expect(escClearsStrip(esc({ defaultPrevented: true }), base(), false)).toBe(false);
-    expect(escClearsStrip(esc(), { ...base(), placementKind: 'connector' as never }, false)).toBe(false);
+    expect(escClearsStrip(esc({ defaultPrevented: true }), base())).toBe(false);
+    expect(escClearsStrip(esc(), { ...base(), placementKind: 'connector' as never })).toBe(false);
   });
   it('nothing selected, another key, or typing in a field: no-op', () => {
-    expect(escClearsStrip(esc(), { ...base(), selection: useUIStore.getState().selection }, false)).toBe(false);
-    expect(escClearsStrip(esc({ key: 'a' }), base(), false)).toBe(false);
+    expect(escClearsStrip(esc(), { ...base(), selection: useUIStore.getState().selection })).toBe(false);
+    expect(escClearsStrip(esc({ key: 'a' }), base())).toBe(false);
     const input = document.createElement('input');
-    expect(escClearsStrip(esc({ target: input }), base(), false)).toBe(false);
+    expect(escClearsStrip(esc({ target: input }), base())).toBe(false);
   });
   it('handleRailKeys clears through the given callback and marks the key handled', () => {
     const clear = vi.fn();

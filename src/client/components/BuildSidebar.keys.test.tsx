@@ -21,10 +21,15 @@ function press(key: string): void {
   act(() => { window.dispatchEvent(new KeyboardEvent('keydown', { key, code, cancelable: true })); });
 }
 
+/** The host passes `open` from the one flag (`rightPanel === 'build'`); mirror it here. */
 function renderSidebar(open = true): { onPick: ReturnType<typeof vi.fn>; rerender: (o: boolean) => void } {
   const onPick = vi.fn();
+  useUIStore.setState({ buildMode: true, rightPanel: open ? 'build' : null });
   const r = render(<BuildSidebar open={open} onClose={() => {}} onPick={onPick} />);
-  return { onPick, rerender: (o) => r.rerender(<BuildSidebar open={o} onClose={() => {}} onPick={onPick} />) };
+  return { onPick, rerender: (o) => {
+    useUIStore.setState({ rightPanel: o ? 'build' : null });
+    r.rerender(<BuildSidebar open={o} onClose={() => {}} onPick={onPick} />);
+  } };
 }
 
 let disposeFc: (() => void) | null = null;
@@ -44,7 +49,7 @@ describe('BuildSidebar keys', () => {
   afterEach(() => {
     disposeFc?.();
     cleanup();
-    useUIStore.setState({ currentSectorKey: null, fcGroups: [], activeGroupId: null });
+    useUIStore.setState({ currentSectorKey: null, fcGroups: [], activeGroupId: null, rightPanel: null, buildMode: false });
   });
 
   it('1–9 pick the Nth tile of the open category, the same as a click', () => {

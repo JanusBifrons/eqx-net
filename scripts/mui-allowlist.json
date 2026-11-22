@@ -7,7 +7,6 @@
   "src/client/components/BountyAction.tsx",
   "src/client/components/BuildKindTile.tsx",
   "src/client/components/BuildPlacingStrip.tsx",
-  "src/client/components/BuildSidebar.tsx",
   "src/client/components/CargoChip.tsx",
   "src/client/components/CargoPanel.tsx",
   "src/client/components/ConnectionDiagnostics.tsx",
@@ -87,5 +86,6 @@
   "src/client/layout/RotatePhoneOverlay.tsx",
   "src/client/layout/TopRightToolbar.tsx",
   "src/client/layout/useIsCompact.ts",
-  "src/client/main.tsx"
+  "src/client/main.tsx",
+  "src/client/panels/BuildPanel.tsx"
 ]

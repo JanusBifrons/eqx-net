@@ -16,7 +16,7 @@ import type {
   UIStore,
   UISelection,
 } from './storeTypes.js';
-import { rightPanelSlice } from './rightPanel.js';
+import { closeBuildPanel, rightPanelSlice } from './rightPanel.js';
 export { selectDrawerOpen } from './rightPanel.js';
 
 // Re-export the type surface so existing import sites (40+ files using
@@ -278,9 +278,9 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setHealthStats: (s) => set({ healthStats: s }),
   setDead: (dead) => set({ isDead: dead }),
   // Flying a ship again (welcome) ends Build; any write settles a pending command start.
-  setPilotMode: (mode) => set(mode === 'pilot' ? { pilotMode: mode, buildMode: false, pendingCommandStart: false } : { pilotMode: mode, pendingCommandStart: false }),
+  setPilotMode: (mode) => set((s) => (mode === 'pilot' ? { pilotMode: mode, buildMode: false, pendingCommandStart: false, ...closeBuildPanel(s) } : { pilotMode: mode, pendingCommandStart: false })),
   setPendingCommandStart: (on) => set({ pendingCommandStart: on }),
-  setBuildMode: (on) => set({ buildMode: on }),
+  setBuildMode: (on) => set((s) => (on ? { buildMode: on } : { buildMode: on, ...closeBuildPanel(s) })),
   setCurrentSectorKey: (key) => set({ currentSectorKey: key }),
   setTransitState: (s) => set({ transitState: s }),
   setTransitProgress: (p) => set({ transitProgress: p }),

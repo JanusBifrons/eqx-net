@@ -13,7 +13,7 @@ const sidebarOpen = (): boolean => screen.queryByTestId('build-rail') !== null;
 
 function pickSolar(): void {
   render(<BuildSidebarHost />);
-  act(() => useUIStore.getState().setBuildMode(true)); // Build mode: the only way in
+  act(() => { useUIStore.getState().setBuildMode(true); useUIStore.getState().setRightPanel('build'); }); // Build mode, then the rail's Build item
   fireEvent.click(screen.getByTestId('build-cat-economy'));
   fireEvent.click(screen.getByTestId('build-solar').querySelector('button')!); // the tile's button, as a tap hits it
 }
@@ -21,7 +21,7 @@ function pickSolar(): void {
 describe('BuildSidebarHost: cancelling a placement', () => {
   beforeEach(() => {
     cleanup();
-    useUIStore.setState({ phase: 'galaxy-map', isDead: false, placementKind: null, buildMode: false, fleetPick: null });
+    useUIStore.setState({ phase: 'galaxy-map', isDead: false, placementKind: null, buildMode: false, fleetPick: null, rightPanel: null });
   });
 
   it('Cancel brings the sidebar back on the same category and stays in Build', () => {

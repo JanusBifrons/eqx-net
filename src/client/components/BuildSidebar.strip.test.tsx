@@ -27,7 +27,7 @@ function renderStrip(): { onPick: ReturnType<typeof vi.fn>; onExpand: ReturnType
 
 describe('BuildSidebar strip mode', () => {
   beforeEach(() => {
-    useUIStore.setState({ placementKind: 'solar', fleetPick: null, packedStock: null, currentSectorKey: '0,0', structureSettingsOpen: false });
+    useUIStore.setState({ placementKind: 'solar', rightPanel: null, fleetPick: null, packedStock: null, currentSectorKey: '0,0', structureSettingsOpen: false });
   });
   afterEach(() => { cleanup(); isTouch.mockReturnValue(false); useUIStore.setState({ placementKind: null, currentSectorKey: null }); });
 
@@ -69,7 +69,6 @@ describe('BuildSidebar strip mode', () => {
     render(<BuildSidebar open strip onClose={() => {}} onPick={() => {}} />);
     expect(screen.queryByTestId('build-strip')).toBeNull();
     expect(screen.getByTestId('build-rail')).toBeTruthy();
-    expect(buildMenuKeysOpen()).toBe(true);
   });
 
   it('the strip size: auto height, vertically centred, slim, no notch (phone and desktop)', () => {
