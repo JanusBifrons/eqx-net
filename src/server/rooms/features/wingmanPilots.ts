@@ -28,7 +28,7 @@ import type { WeaponMountTicker } from '../WeaponMountTicker.js';
 import type { PlayerFireResolver } from '../PlayerFireResolver.js';
 import type { WorkerCmd } from '../PhysicsWorkerProxy.js';
 import { wireSwarmEntityId } from './fleetMessages.js';
-import { holdsLiveLock, WingmanKeptLocks } from './wingmanKeptLocks.js';
+import { WingmanKeptLocks } from './wingmanKeptLocks.js';
 
 /** RTS slice 4b — `fleet.detach` options when the owner takes a member's helm. */
 const KEEP_SQUAD = Object.freeze({ keepSquad: true });
@@ -125,6 +125,7 @@ export class WingmanPilots {
     // `instantLock` carries over. Fresh locks on every (re)attach.
     if (this.h.fleet.isAttached(shipInstanceId)) {
       this.h.wingmanLocks().forget(shipInstanceId);
+      this.keptLocks.forget(shipInstanceId);
       this.h.wingmanLocks().enable(shipInstanceId, this.h.locks().isInstant(ship.playerId), 'manual');
       // RTS Part B: the shared AI pilot brain flies the hull (players side,
       // the owner's, the hull's one energy pool), from the kind as this ship
@@ -539,11 +540,13 @@ export class WingmanPilots {
       for (let g = 0; g < gs.length; g++) {
         const grp = gs[g]!;
         if (grp.l.length === 1 && grp.l[0]!.t === key) continue;
-        // A live lock (the lock step drops a dead or out-of-range one) is kept
-        // unless an attack order names the target.
-        if (ordered === null && holdsLiveLock(grp)) continue;
+        // The pilot's live lock (the lock step drops a dead or out-of-range
+        // one) is kept unless an attack order names the target; the AI
+        // pilot's own lock follows its pick (spread targets).
+        if (ordered === null && this.keptLocks.holdsKeptLock(sid, grp)) continue;
         if (grp.l.length > 0) this.h.wingmanLocks().cancelLock(sid, grp.id);
         this.h.wingmanLocks().requestLock(sid, grp.id, key);
+        this.keptLocks.noteAiLock(sid, grp.id, key);
       }
     }
   }
