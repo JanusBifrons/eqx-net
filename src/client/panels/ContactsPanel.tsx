@@ -38,7 +38,7 @@ import { ENTITY_VISUALS, entityBadgePolygon, type EntityKind } from '../render/e
 import { FAILSAFE_COLOUR, THREAT_COLOUR_HEX, groupColourHex } from '../hud/groupColours';
 import { HUD } from '../hud/tokens';
 import {
-  CONTACTS_PAGE_SIZE, CONTACT_STANCE_LABEL, CONTACT_TYPE_LABEL, DEFAULT_CONTACT_SORT, NO_CONTACT_FILTER,
+  CONTACTS_PAGE_SIZE, CONTACT_STANCE_LABEL, STANCE_COLOUR, CONTACT_TYPE_LABEL, DEFAULT_CONTACT_SORT, NO_CONTACT_FILTER,
   buildContactRows, contactFactions, contactsSignature, filterContacts, formatContactKm,
   sortContacts, tapContactSort,
   type ContactFilter, type ContactRow, type ContactSort, type ContactSortKey, type ContactStance,
@@ -50,12 +50,6 @@ const FAILSAFE_HEX = `#${FAILSAFE_COLOUR.toString(16)}`;
 const ALL = 'all';
 const FACTION_PREFIX = 'f:';
 
-/** Row text colour per stance: the shared relationship colours (radar, icons). */
-export const STANCE_COLOUR: Readonly<Record<ContactStance, string>> = {
-  hostile: ENTITY_VISUALS.hostile.cssColor,
-  neutral: ENTITY_VISUALS.neutral.cssColor,
-  friendly: ENTITY_VISUALS.ship.cssColor,
-};
 
 const TYPE_OPTIONS = [
   { id: ALL, label: 'All' },

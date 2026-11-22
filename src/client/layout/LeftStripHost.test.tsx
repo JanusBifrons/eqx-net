@@ -23,6 +23,7 @@ vi.mock('../net/clientSingleton', () => ({
 
 import { LayoutProvider } from './LayoutProvider';
 import { LeftStripHost, stripFocusIdentity, stripHealth, stripIdentity } from './LeftStripHost';
+import { STANCE_COLOUR } from '../components/contactRows';
 
 function stubMedia(): void {
   vi.stubGlobal('matchMedia', (q: string) => ({
@@ -84,6 +85,29 @@ describe('LeftStripHost: ships selected + a not-mine focus (T2)', () => {
     expect(screen.getByTestId('left-strip-identity').getAttribute('aria-label')).toBe('2 ships selected');
   });
 
+  it('the focus icon wears its stance colour (the contacts table\'s), and its kind glyph', () => {
+    panelData = { name: 'Raider', hpPct: 100, shieldPct: null, stance: 'hostile' };
+    mount();
+    select(['a'], 'swarm-7', 'drone');
+    const focus = screen.getByTestId('left-strip-focus');
+    expect(focus.getAttribute('data-state')).toBe('hostile');
+    expect(STANCE_COLOUR.hostile).toBe('#ff6b6b');
+    expect(getComputedStyle(focus).color).toBe('rgb(255, 107, 107)');
+    expect(focus.querySelector('svg')?.getAttribute('data-icon')).toBe('ship');
+    // The fleet identity keeps its own (gold) look: only the focus is tinted.
+    expect(screen.getByTestId('left-strip-identity').getAttribute('data-state')).toBeNull();
+  });
+
+  it('a focus-only pick tints the one identity: a neutral structure reads yellow, structure glyph', () => {
+    panelData = { name: 'Depot', hpPct: 100, shieldPct: null, stance: 'neutral' };
+    mount();
+    select([], 'swarm-9', 'structure');
+    const id = screen.getByTestId('left-strip-identity');
+    expect(id.getAttribute('data-state')).toBe('neutral');
+    expect(getComputedStyle(id).color).toBe('rgb(255, 212, 121)');
+    expect(id.querySelector('svg')?.getAttribute('data-icon')).toBe('structure');
+  });
+
   it('Lock orders the selected ships to attack the focus (the renderer, like right-click)', () => {
     mount();
     select(['a'], 'p2', 'ship');
@@ -119,7 +143,7 @@ describe('stripFocusIdentity', () => {
     expect(stripFocusIdentity({ ids: [], focusId: 'p2', focusKind: 'ship' })).toBeNull();
     expect(stripFocusIdentity({ ids: ['a'], focusId: 'a', focusKind: 'ship' })).toBeNull();
     expect(stripFocusIdentity({ ids: ['a'], focusId: null, focusKind: null })).toBeNull();
-    expect(stripFocusIdentity({ ids: ['a'], focusId: 'swarm-3', focusKind: 'structure' })).toMatchObject({ icon: 'build', tooltip: 'Structure' });
+    expect(stripFocusIdentity({ ids: ['a'], focusId: 'swarm-3', focusKind: 'structure' })).toMatchObject({ icon: 'structure', tooltip: 'Structure' });
   });
 });
 

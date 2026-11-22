@@ -57,6 +57,17 @@ describe('EqxStripIdentity', () => {
     expect(seen.size).toBe(3);
   });
 
+  it('gold icon by default; iconColor tints it (the ring stays the hull); data-state passes through', () => {
+    const { rerender } = render(<EqxStripIdentity icon={<EqxIcon name="ship" />} tooltip="f" health="ok" data-testid="id" />);
+    const el = (): HTMLElement => screen.getByTestId('id');
+    expect(getComputedStyle(el()).color).toBe(computedColor(HUD.color.credits));
+    expect(el().dataset['state']).toBeUndefined();
+    rerender(<EqxStripIdentity icon={<EqxIcon name="ship" />} tooltip="f" health="ok" iconColor="#ff6b6b" data-state="hostile" data-testid="id" />);
+    expect(getComputedStyle(el()).color).toBe(computedColor('#ff6b6b'));
+    expect(getComputedStyle(el()).borderTopColor).toBe(computedColor(HUD.color.hullOk));
+    expect(el().dataset['state']).toBe('hostile');
+  });
+
   it('count > 1 shows a badge; 1 or none shows none', () => {
     const { rerender, container } = render(<EqxStripIdentity icon={<EqxIcon name="fleet" />} tooltip="f" health="ok" />);
     const badge = () => container.querySelector('.MuiBadge-badge');

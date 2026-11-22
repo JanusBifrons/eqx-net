@@ -19,7 +19,7 @@ import { factionDisplayName, type FactionId } from '@shared-types/factions';
 import { parseOwner } from '@shared-types/relations';
 import { allegianceOfKind, getShipKind } from '@shared-types/shipKinds';
 import { getStructureKind } from '@shared-types/structureKinds';
-import type { EntityKind } from '../render/entityVisuals';
+import { ENTITY_VISUALS, type EntityKind } from '../render/entityVisuals';
 import { farIconRelation } from '../render/relationToLocal';
 import { acquiringPct } from '../hud/lockPct';
 import { isOwnedByMe } from '../render/shipOwnership';
@@ -33,6 +33,13 @@ export type ContactStance = 'hostile' | 'neutral' | 'friendly';
 export const CONTACT_TYPE_LABEL: Readonly<Record<ContactType, string>> = { ship: 'Ship', structure: 'Structure' };
 export const CONTACT_STANCE_LABEL: Readonly<Record<ContactStance, string>> = {
   hostile: 'Hostile', neutral: 'Neutral', friendly: 'Friendly',
+};
+/** Stance colour: the shared relationship colours (radar, far icons). The
+ *  contacts table's row text and the left strip's focus icon both read it. */
+export const STANCE_COLOUR: Readonly<Record<ContactStance, string>> = {
+  hostile: ENTITY_VISUALS.hostile.cssColor,
+  neutral: ENTITY_VISUALS.neutral.cssColor,
+  friendly: ENTITY_VISUALS.ship.cssColor,
 };
 /** Ascending stance order: hostiles first. */
 export const CONTACT_STANCE_ORDER: readonly ContactStance[] = ['hostile', 'neutral', 'friendly'];
@@ -205,6 +212,40 @@ export function buildContactRows(
     add(`p:${key}`, 'ship', name, 'ship', s.displayName || UNKNOWN, true, s.kind, s.x, s.y, false);
   });
   return rows;
+}
+
+/** How hard the thing under lock key `key` is locking you: 0 no, 1 acquiring, 2 locked. */
+function lockingYouStage(mirror: RenderMirror, key: string): number {
+  let by = 0;
+  for (const l of mirror.localLockedBy ?? []) if (l.t === key && l.s > by) by = l.s;
+  return by;
+}
+
+/**
+ * Pure: the selection focus's stance to you, by the same inputs a contact row
+ * uses (`contactStance`), so the left strip's focus icon and the contacts table
+ * agree. Yours is friendly; a rock, a pod or a gone entity is null.
+ */
+export function focusStance(mirror: RenderMirror, focusId: string, focusKind: string): ContactStance | null {
+  const localId = mirror.localPlayerId;
+  if (!localId) return null;
+  if (focusKind === 'ship' || focusKind === 'lingering') {
+    const s = mirror.ships.get(focusId);
+    if (s === undefined) return null;
+    if (isOwnedByMe(mirror, focusId, s)) return 'friendly';
+    return contactStance(lockingYouStage(mirror, `p:${focusId}`) > 0, true, s.kind);
+  }
+  if ((focusKind !== 'drone' && focusKind !== 'structure') || !focusId.startsWith('swarm-')) return null;
+  const id = Number(focusId.slice(6));
+  const e = mirror.swarm?.get(id);
+  if (e === undefined) return null;
+  const lockingYou = lockingYouStage(mirror, `s:${id}`) > 0;
+  if (e.kind === 1) return contactStance(e.isHostileToLocal === true || lockingYou, false, e.shipKind);
+  if (e.kind !== 2) return null;
+  const st = mirror.structures?.get(id);
+  if (st?.owner !== undefined && st.owner === localId) return 'friendly';
+  const who = structureFaction(st?.owner, st?.ownerName, localId);
+  return contactStance(st?.turretTargetPlayerId === localId || lockingYou, who.player, undefined);
 }
 
 /** A sortable column. */

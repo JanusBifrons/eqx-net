@@ -201,8 +201,12 @@ export const HUD = {
   strip: {
     /** Strip / fly-out box paper. */
     bg: 'rgba(8,12,24,0.97)',
-    /** Tile / strip / separator edge (mock --edge2). */
-    edge: 'rgba(160,200,255,0.3)',
+    /** Tile / strip / separator edge (mock --edge2; raised from .3 so tiles stand off the world). */
+    edge: 'rgba(160,200,255,0.5)',
+    /** Plain tile icon: brighter than `color.ink` so strip icons don't blend into the world. */
+    ink: '#f4f8ff',
+    /** Strip icon line weight (heavier than `size.iconStroke.regular` for contrast at 18 px). */
+    iconStroke: 2.3,
     /** Tile well (mock --cell). */
     cell: '#0f1729',
     /** Icon on a filled green "ok" tile. */

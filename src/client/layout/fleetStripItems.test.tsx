@@ -11,6 +11,7 @@ import { applyFleetStatus, resetFleetStatus, type FleetStatusUpdate } from '../f
 import { resetFleetCommands, setFleetCommands } from '../fleet/fleetCommands';
 import { LayoutProvider } from './LayoutProvider';
 import { LeftStripHost } from './LeftStripHost';
+import { MOVE_ORDER_COLOUR, MOVE_ORDER_COLOUR_HEX } from '../render/orderMarkerColours';
 
 function stubMedia(): void {
   vi.stubGlobal('matchMedia', (q: string) => ({
@@ -113,6 +114,16 @@ describe('left strip fleet section (U3-4)', () => {
     fireEvent.click(move);
     expect(cmd.setMode).not.toHaveBeenCalled();
     expect(useUIStore.getState().fleetPick?.kind).toBe('move');
+  });
+
+  it('Move wears the in-world move-order green (the FleetOverlay marker colour) and its icon', () => {
+    mount();
+    select(['a']);
+    const move = screen.getByTestId('left-strip-move');
+    expect(move.getAttribute('data-accent')).toBe(MOVE_ORDER_COLOUR_HEX);
+    expect(MOVE_ORDER_COLOUR).toBe(0x7dff9a);
+    expect(getComputedStyle(move).color).toBe('rgb(125, 255, 154)');
+    expect(move.querySelector('svg')?.getAttribute('data-icon')).toBe('move');
   });
 
   it('Move shows it is armed (pressed) and a second tap disarms it', () => {

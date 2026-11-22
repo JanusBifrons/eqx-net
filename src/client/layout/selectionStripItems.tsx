@@ -26,6 +26,7 @@ import { useTargetLock } from '../components/targetLock.js';
 import { LootWindow } from '../components/LootWindow.js';
 import { sendPilotShip } from '../ships/shipActionsClient.js';
 import type { PanelData } from '../components/selectionPanelData.js';
+import { ACQUIRE_COLOUR_HEX } from '../hud/groupColours.js';
 
 export interface SelectionStripItems {
   items: ReactElement[];
@@ -58,12 +59,13 @@ export function useSelectionStripItems(data: PanelData | null, fleetLock: (() =>
   if (fleetLock !== null) {
     items.push(
       <EqxIconButton key="target" variant="strip" icon={<EqxIcon name="target" />} tooltip="Lock: selected ships attack"
-        onClick={fleetLock} data-testid="left-strip-lock" />,
+        accent={ACQUIRE_COLOUR_HEX} onClick={fleetLock} data-testid="left-strip-lock" />,
     );
   } else if (lock !== null) {
     items.push(
       <EqxIconButton key="target" variant="strip" icon={<EqxIcon name="target" />} tooltip={lock.tooltip}
-        tone={lock.state === 'blocked' ? 'danger' : 'secondary'} active={lock.state === 'unlock' || lock.state === 'cancel'}
+        tone={lock.state === 'blocked' ? 'danger' : 'secondary'}
+        {...(lock.state === 'blocked' ? {} : { accent: ACQUIRE_COLOUR_HEX })} active={lock.state === 'unlock' || lock.state === 'cancel'}
         onClick={lock.onClick} data-state={lock.state} data-testid="fc-target" />,
     );
   }

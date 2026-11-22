@@ -7,7 +7,7 @@
 import { describe, expect, it } from 'vitest';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import {
-  DEFAULT_CONTACT_SORT, NO_CONTACT_FILTER, buildContactRows, contactFactions, contactStance,
+  DEFAULT_CONTACT_SORT, NO_CONTACT_FILTER, buildContactRows, contactFactions, contactStance, focusStance,
   contactsSignature, filterContacts, formatContactKm, sortContacts, tapContactSort, type ContactSort,
 } from './contactRows';
 
@@ -278,5 +278,26 @@ describe('contactsSignature', () => {
     // A faction change shows too.
     const d = buildContactRows(mirror({ structures: new Map([[10, { owner: 'someone', ownerName: 'Hicks' }]]) }), 'guns', REACHES);
     expect(contactsSignature(d)).not.toBe(contactsSignature(a));
+  });
+});
+
+describe('focusStance (the left strip focus tint)', () => {
+  it('agrees with the contact row stance for every lockable focus', () => {
+    const m = mirror();
+    const rows = new Map(buildContactRows(m, 'guns', REACHES).map((r) => [r.key, r.stance]));
+    expect(focusStance(m, 'swarm-7', 'drone')).toBe(rows.get('s:7'));
+    expect(focusStance(m, 'swarm-7', 'drone')).toBe('hostile');
+    expect(focusStance(m, 'swarm-8', 'drone')).toBe(rows.get('s:8'));
+    expect(focusStance(m, 'swarm-10', 'structure')).toBe(rows.get('s:10'));
+    expect(focusStance(m, PLAYER_ID, 'ship')).toBe(rows.get('p:' + PLAYER_ID));
+  });
+
+  it('yours is friendly; a rock, a pod or a gone entity has none', () => {
+    const m = mirror();
+    expect(focusStance(m, 'swarm-11', 'structure')).toBe('friendly');
+    expect(focusStance(m, 'me', 'ship')).toBe('friendly');
+    expect(focusStance(m, 'swarm-9', 'asteroid')).toBeNull();
+    expect(focusStance(m, 'swarm-99', 'drone')).toBeNull();
+    expect(focusStance(m, 'nobody', 'ship')).toBeNull();
   });
 });

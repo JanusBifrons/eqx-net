@@ -28,3 +28,6 @@ export const Healthy: Story = {};
 export const Damaged: Story = { args: { health: 'warn' } };
 export const Critical: Story = { args: { health: 'crit' } };
 export const Group: Story = { args: { count: 4, tooltip: 'Fighter wing' } };
+/** A focused enemy ship: the icon wears the stance colour (hostile red), the ring stays the hull. */
+export const HostileShip: Story = { args: { icon: <EqxIcon name="ship" />, tooltip: 'Raider', iconColor: '#ff6b6b' } };
+export const NeutralStructure: Story = { args: { icon: <EqxIcon name="structure" />, tooltip: 'Depot', iconColor: '#ffd479' } };

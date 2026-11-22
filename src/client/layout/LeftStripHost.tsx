@@ -37,12 +37,13 @@ import { Slot } from './Slot';
 import { useFleetStripItems } from './fleetStripItems';
 import { useSelectionStripItems } from './selectionStripItems';
 import { useLeftStripFit } from './leftStripFit';
+import { STANCE_COLOUR } from '../components/contactRows';
 
 const FOCUS_LOOK: Readonly<Record<SelectionFocusKind, { icon: EqxIconName; tooltip: string }>> = {
   ship: { icon: 'ship', tooltip: 'Ship' },
   lingering: { icon: 'ship', tooltip: 'Parked hull' },
   drone: { icon: 'ship', tooltip: 'Drone' },
-  structure: { icon: 'build', tooltip: 'Structure' },
+  structure: { icon: 'structure', tooltip: 'Structure' },
   asteroid: { icon: 'rock', tooltip: 'Asteroid' },
   pod: { icon: 'pod', tooltip: 'Cargo pod' },
 };
@@ -100,15 +101,19 @@ export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
   // A single focus names itself ("Fighter", the building's name); a ship group keeps its count.
   const named = data !== null && data.name !== '' ? data.name : null;
   const tooltip = selection.ids.length === 0 && named !== null ? named : id.tooltip;
+  // The focus icon wears its stance colour (the contacts table's): red hostile, yellow neutral, green friendly.
+  const stance = data?.stance;
+  const tint = stance === undefined ? {} : { iconColor: STANCE_COLOUR[stance], 'data-state': stance };
   return (
     <Slot anchor="left-strip">
       <EqxStrip aria-label="Selection" open={!panelOpen} data-testid="left-strip">
-        <EqxStripIdentity icon={<EqxIcon name={id.icon} />} tooltip={tooltip} health={focus === null ? stripHealth(data) : 'ok'} count={id.count} data-testid="left-strip-identity" />
+        <EqxStripIdentity icon={<EqxIcon name={id.icon} />} tooltip={tooltip} health={focus === null ? stripHealth(data) : 'ok'} count={id.count}
+          {...(focus === null && selection.ids.length === 0 ? tint : {})} data-testid="left-strip-identity" />
         {fleetItems}
         {focus !== null && <EqxStrip.Separator key="focus-sep" />}
         {focus !== null && (
           <EqxStripIdentity icon={<EqxIcon name={focus.icon} />} tooltip={named ?? focus.tooltip} health={stripHealth(data)}
-            count={1} data-testid="left-strip-focus" />
+            count={1} {...tint} data-testid="left-strip-focus" />
         )}
         {quickItems}
         <EqxStrip.Separator />

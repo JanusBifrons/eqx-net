@@ -26,6 +26,7 @@ import { helmOrdersAllowed } from '../helm/helmModeGate.js';
 import { MODE_LABELS, STANCE_LABELS } from '../fleet/fleetView.js';
 import { modeNeedsPick } from '../fleet/fleetPickView.js';
 import { resolveFleetCommands, useFleetSelectionView } from '../fleet/useFleetSelectionView.js';
+import { MOVE_ORDER_COLOUR_HEX } from '../render/orderMarkerColours.js';
 
 const MODE_ICON: Readonly<Record<FleetMode, EqxIconName>> = {
   patrol: 'patrol', defend: 'defend', hunt: 'hunt', escort: 'escort', retreat: 'retreat',
@@ -73,7 +74,7 @@ export function useFleetStripItems(): ReactElement[] {
     <EqxStatusFlyout key="order" value={mode} emptyIcon={MIXED} options={MODE_OPTIONS} onChange={onMode}
       tooltip={`Order: ${mode === null ? 'mixed' : MODE_LABELS[mode]}`} data-testid="left-strip-order" />,
     <EqxIconButton key="move" variant="strip" icon={<EqxIcon name="move" />} tooltip="Move: tap a point"
-      active={moveArmed} onClick={onMove} data-testid="left-strip-move" />,
+      accent={MOVE_ORDER_COLOUR_HEX} active={moveArmed} onClick={onMove} data-testid="left-strip-move" />,
     <EqxStatusFlyout key="stance" value={stance} emptyIcon={MIXED} options={STANCE_OPTIONS} onChange={onStance}
       tooltip={`Stance: ${stance === null ? 'mixed' : STANCE_LABELS[stance]}`} data-testid="left-strip-stance" />,
     <EqxIconButton key="stop" variant="strip" icon={<EqxIcon name="stop" />} tooltip="Stop"

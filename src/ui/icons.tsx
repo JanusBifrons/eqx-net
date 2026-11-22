@@ -58,6 +58,7 @@ export const EQX_ICON_NAMES = [
   'power',
   // Selection identity (what the left strip names)
   'ship',
+  'structure',
   'pod',
   'rock',
   // Lists and tables
@@ -118,25 +119,22 @@ export const EQX_ICONS = {
       <circle cx="18" cy="12" r="1.2" />
     </>
   ),
-  // new: an arrow to a ringed point (move the selected ships to a point)
+  // new: the in-world move-order mark (render/FleetOverlay.ts): the ring that
+  // flashes at the point, its destination dot, and the order line from the ship
   move: (
     <>
-      <circle cx="18" cy="6" r="2.5" />
-      <path d="M4 20l11.5-11.5M9 8.5h6.5V15" />
+      <circle cx="15" cy="9" r="5" />
+      <circle cx="15" cy="9" r="1.2" />
+      <path d="M4 20l7.5-7.5" />
     </>
   ),
   // mock
   stop: <rect x="6" y="6" width="12" height="12" rx="1.5" />,
   // mock
   trade: <path d="M4 8h15l-3-3M20 16H5l3 3" />,
-  // new: bullseye (the mock's Target button borrows `contacts`, which is taken)
-  target: (
-    <>
-      <circle cx="12" cy="12" r="9" />
-      <circle cx="12" cy="12" r="5" />
-      <circle cx="12" cy="12" r="1.2" />
-    </>
-  ),
+  // new: the in-world LOCKED mark (render/AimFeedbackRenderer.ts), four corner
+  // brackets round the target (the mock's Target button borrows `contacts`, which is taken)
+  target: <path d="M4 9V4h5M15 4h5v5M20 15v5h-5M9 20H4v-5" />,
   // mock
   build: (
     <>
@@ -246,8 +244,15 @@ export const EQX_ICONS = {
       <path d="M12 3v7M12 14v7M3 12h7M14 12h7" />
     </>
   ),
-  // new: one dart (a single hull; `fleet` is a group of them)
-  ship: <path d="M12 3l7 17-7-4-7 4z" />,
+  // new: a fighter seen from above, nose up (a single hull; `fleet` is a group of them)
+  ship: <path d="M12 3l2 6 7 6.5v2L14 15l-1 4 2 2H9l2-2-1-4-7 2.5v-2L10 9z" />,
+  // new: a hexagon, the radar / contacts structure shape (render/entityVisuals.ts), with a core
+  structure: (
+    <>
+      <path d="M12 3l7.8 4.5v9L12 21l-7.8-4.5v-9z" />
+      <circle cx="12" cy="12" r="2.5" />
+    </>
+  ),
   // new: small crate with a strap (a cargo pod; `hold` is the ship's hold)
   pod: (
     <>

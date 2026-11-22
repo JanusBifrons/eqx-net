@@ -17,6 +17,7 @@ const sendPilotShip = vi.fn();
 vi.mock('../ships/shipActionsClient', () => ({ sendPilotShip: (id: string) => sendPilotShip(id) }));
 
 import { useSelectionStripItems } from './selectionStripItems';
+import { ACQUIRE_COLOUR, ACQUIRE_COLOUR_HEX } from '../hud/groupColours';
 
 function Harness({ data, fleetLock = null }: { data: PanelData | null; fleetLock?: (() => void) | null }): JSX.Element {
   const { items, loot } = useSelectionStripItems(data, fleetLock);
@@ -86,6 +87,19 @@ describe('selection strip quick actions (U3-1)', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
   });
 
+  it('both Locks wear the lock red (the in-world locking ring) and the locked-bracket icon', () => {
+    select('p2', 'ship');
+    const { unmount } = render(<Harness data={{ name: 'Fighter', hpPct: 100, shieldPct: null }} />);
+    const personal = screen.getByTestId('fc-target');
+    expect(personal.getAttribute('data-accent')).toBe(ACQUIRE_COLOUR_HEX);
+    expect(ACQUIRE_COLOUR).toBe(0xff4d5a);
+    expect(getComputedStyle(personal).color).toBe('rgb(255, 77, 90)');
+    expect(personal.querySelector('svg')?.getAttribute('data-icon')).toBe('target');
+    unmount();
+    render(<Harness data={{ name: 'Fighter', hpPct: 100, shieldPct: null }} fleetLock={vi.fn()} />);
+    expect(screen.getByTestId('left-strip-lock').getAttribute('data-accent')).toBe(ACQUIRE_COLOUR_HEX);
+  });
+
   it('a building lock that cannot progress reads blocked (danger) and a tap cancels it', () => {
     useUIStore.setState({
       selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' },
@@ -96,6 +110,7 @@ describe('selection strip quick actions (U3-1)', () => {
     const t = screen.getByTestId('fc-target');
     expect(t.getAttribute('data-state')).toBe('blocked');
     expect(t.getAttribute('data-tone')).toBe('danger');
+    expect(t.getAttribute('data-accent')).toBeNull();
     fireEvent.click(t);
     expect(cancelLock).toHaveBeenCalledWith('primary', 's:9');
   });
