@@ -14,6 +14,7 @@ raw `@mui/*` and `@emotion/*` imports live only inside `src/ui/`.
 | `EqxTooltip` | Tooltip: hover on desktop, press-and-hold on touch | `title`, `holdMs` |
 | `EqxSwitch` | On / off | `checked`, `onChange(checked)`, `label` (also the accessible name), `disabled`, `data-testid` |
 | `EqxStrip`, `EqxStripIdentity` | The left strip: one icon column, NO text except count badges; `EqxStrip.Separator` is a thin rule. Width = one button + theme gap; `open` slides it fully off to the left (HUD.motion, reduced-motion = instant); never positions itself. Identity = small ROUND icon, ring colour = health | Strip: `children` (icon buttons / identity / Separator only, else dev warning), `open`, `aria-label`, `data-testid`. Identity: `icon`, **required** `tooltip`, `health` (ok / warn / crit), `count` (badge when > 1), `onClick`, `holdMs`, `data-testid` |
+| `EqxStatusFlyout` | A left-strip status icon (current order, stance, power) whose options fly out to its right as same-size icon buttons, no text. A pick calls `onChange(id)` once and closes; outside tap or Esc (taken first, before other Esc handlers) closes without a change; current option marked active. Renders in place, so it takes the strip Slot's z-order | `value`, `options` (`id`, `icon`, `tooltip`, `tone`), `onChange(id)`, **required** `tooltip` (trigger name), `holdMs`, `disabled`, `data-testid` (options: `<id>-options`, `<id>-option-<optionId>`) |
 
 ## Extend, never hand-roll
 

@@ -1,6 +1,6 @@
 /**
  * EqxStrip: the left strip, one icon column (UI language plan A5).
- * - Children: EqxIconButton, EqxStripIdentity and EqxStrip.Separator only;
+ * - Children: EqxIconButton, EqxStripIdentity, EqxStatusFlyout and EqxStrip.Separator only;
  *   anything else warns in dev. No text at all except count badges.
  * - Width is exactly one button (`HUD.size.iconButton`) plus the theme gap
  *   (`theme.spacing(1)`, the same 8 px as the layout STACK_GAP); every button centred.
@@ -13,10 +13,11 @@ import { Box, Divider, Slide, useMediaQuery, useTheme } from '@mui/material';
 import { Children, isValidElement, type ReactNode } from 'react';
 import { HUD } from '../../client/hud/tokens.js';
 import { EqxIconButton } from '../EqxIconButton/EqxIconButton.js';
+import { EqxStatusFlyout } from '../EqxStatusFlyout/EqxStatusFlyout.js';
 import { EqxStripIdentity } from '../EqxStripIdentity/EqxStripIdentity.js';
 
 export interface EqxStripProps {
-  /** EqxIconButton / EqxStripIdentity / EqxStrip.Separator only. */
+  /** EqxIconButton / EqxStripIdentity / EqxStatusFlyout / EqxStrip.Separator only. */
   children: ReactNode;
   /** Slide in (true) / fully out of view (false). Omit: always shown, no slide. */
   open?: boolean;
@@ -40,7 +41,7 @@ function EqxStripSeparator({ 'data-testid': testId }: EqxStripSeparatorProps) {
   );
 }
 
-const ALLOWED: ReadonlySet<unknown> = new Set<unknown>([EqxIconButton, EqxStripIdentity, EqxStripSeparator]);
+const ALLOWED: ReadonlySet<unknown> = new Set<unknown>([EqxIconButton, EqxStripIdentity, EqxStatusFlyout, EqxStripSeparator]);
 
 function warnOnForeignChildren(children: ReactNode): void {
   if (!import.meta.env.DEV) return;
@@ -48,7 +49,7 @@ function warnOnForeignChildren(children: ReactNode): void {
     if (!isValidElement(child) || !ALLOWED.has(child.type)) {
       // eslint-disable-next-line no-console -- dev-only contract warning (left strip: icons only)
       console.warn(
-        '[EqxStrip] children must be EqxIconButton, EqxStripIdentity or EqxStrip.Separator (icons only, no labels).',
+        '[EqxStrip] children must be EqxIconButton, EqxStripIdentity, EqxStatusFlyout or EqxStrip.Separator (icons only, no labels).',
         child,
       );
     }

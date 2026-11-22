@@ -10,3 +10,4 @@ export { EqxTooltip, type EqxTooltipProps } from './EqxTooltip/EqxTooltip.js';
 export { EqxSwitch, type EqxSwitchProps } from './EqxSwitch/EqxSwitch.js';
 export { EqxStrip, type EqxStripProps, type EqxStripSeparatorProps } from './EqxStrip/EqxStrip.js';
 export { EqxStripIdentity, HEALTH_RING, type EqxStripIdentityProps, type EqxStripHealth } from './EqxStripIdentity/EqxStripIdentity.js';
+export { EqxStatusFlyout, type EqxStatusFlyoutProps, type EqxStatusOption } from './EqxStatusFlyout/EqxStatusFlyout.js';
