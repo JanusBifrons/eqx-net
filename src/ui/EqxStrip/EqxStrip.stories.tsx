@@ -68,3 +68,16 @@ export const Placing: Story = {
 /** Slides in (true) / fully out of view (false). */
 export const Sliding: Story = { args: { open: true, children: selection } };
 export const Closed: Story = { args: { open: false, children: selection } };
+
+/** One row of the same buttons (how EqxStatusFlyout shows its options). */
+export const Horizontal: Story = {
+  args: {
+    orientation: 'horizontal',
+    'aria-label': 'Stance',
+    children: [
+      <EqxIconButton key="stop" icon={<StopIcon />} tooltip="Stop" tone="danger" />,
+      <EqxIconButton key="r" icon={<RotateIcon />} tooltip="Rotate" active />,
+      <EqxIconButton key="ok" icon={<CheckIcon />} tooltip="Place" tone="primary" />,
+    ],
+  },
+};

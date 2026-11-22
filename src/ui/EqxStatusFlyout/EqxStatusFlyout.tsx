@@ -2,7 +2,8 @@
  * EqxStatusFlyout: a left-strip status icon whose options fly out beside it
  * (UI language plan A5 "Quick change").
  * Composes EqxIconButton (trigger + every option, so all share the one strip
- * box `HUD.size.iconButton`) inside an MUI `Popper` placed to the right.
+ * box `HUD.size.iconButton`) inside an MUI `Popper` placed to the right; the
+ * options sit in a horizontal EqxStrip, so the strip look lives in one place.
  * - The trigger shows the current option's icon and tone; `tooltip` is its name.
  * - Options are icon-only, tooltips on hover / hold; the current one is `active`.
  * - A pick calls `onChange(id)` once and closes. An outside tap or Esc closes
@@ -13,9 +14,9 @@
  */
 import { Box, ClickAwayListener, Popper, useTheme } from '@mui/material';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { HUD } from '../../client/hud/tokens.js';
 import type { EqxTone } from '../EqxButton/EqxButton.js';
 import { EqxIconButton } from '../EqxIconButton/EqxIconButton.js';
+import { EqxStrip } from '../EqxStrip/EqxStrip.js';
 
 export interface EqxStatusOption<Id extends string = string> {
   id: Id;
@@ -94,22 +95,10 @@ export function EqxStatusFlyout<Id extends string = string>({
           disablePortal
           modifiers={[{ name: 'offset', options: { offset: [0, gap] } }]}
         >
-          <Box
-            role="toolbar"
-            aria-orientation="horizontal"
+          <EqxStrip
+            orientation="horizontal"
             aria-label={tooltip}
-            data-testid={testId ? `${testId}-options` : undefined}
-            sx={{
-              display: 'flex',
-              flexDirection: 'row',
-              alignItems: 'center',
-              gap: `${gap / 2}px`,
-              padding: `${gap / 2}px`,
-              bgcolor: HUD.color.panel,
-              border: `1px solid ${HUD.color.panelEdge}`,
-              borderRadius: `${(HUD.size.iconButton + gap) / 2}px`,
-              pointerEvents: 'auto',
-            }}
+            {...(testId === undefined ? {} : { 'data-testid': `${testId}-options` })}
           >
             {options.map((o) => (
               <EqxIconButton
@@ -123,7 +112,7 @@ export function EqxStatusFlyout<Id extends string = string>({
                 {...(testId === undefined ? {} : { 'data-testid': `${testId}-option-${o.id}` })}
               />
             ))}
-          </Box>
+          </EqxStrip>
         </Popper>
       </Box>
     </ClickAwayListener>

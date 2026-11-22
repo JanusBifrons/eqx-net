@@ -129,4 +129,33 @@ describe('EqxStrip', () => {
     expect(strip.style.visibility).not.toBe('hidden');
     expect(strip.style.transform === '' || strip.style.transform === 'none').toBe(true);
   });
+
+  it('orientation=horizontal is one row, one button plus the gap tall, same button boxes', () => {
+    render(
+      <EqxStrip orientation="horizontal" aria-label="Options" data-testid="row">
+        <EqxIconButton icon={<StopIcon />} tooltip="Stop" />
+        <EqxIconButton icon={<SettingsIcon fontSize="large" />} tooltip="Menu" />
+        <EqxIconButton icon={<CloseIcon />} tooltip="Deselect" />
+      </EqxStrip>,
+    );
+    const row = screen.getByRole('toolbar', { name: 'Options' });
+    expect(row.getAttribute('aria-orientation')).toBe('horizontal');
+    const cs = getComputedStyle(row);
+    expect(cs.flexDirection).toBe('row');
+    expect(cs.alignItems).toBe('center');
+    expect(cs.height).toBe(`${HUD.size.iconButton + GAP}px`);
+    expect(cs.width).not.toBe(`${HUD.size.iconButton + GAP}px`);
+    const px = `${HUD.size.iconButton}px`;
+    const buttons = screen.getAllByRole('button');
+    expect(buttons.length).toBe(3);
+    for (const b of buttons) {
+      const bs = getComputedStyle(b);
+      expect({ w: bs.width, h: bs.height }).toEqual({ w: px, h: px });
+    }
+  });
+
+  it('defaults to vertical', () => {
+    render(<SelectionStrip />);
+    expect(screen.getByTestId('strip').getAttribute('aria-orientation')).toBe('vertical');
+  });
 });
