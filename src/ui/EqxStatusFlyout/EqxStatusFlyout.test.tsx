@@ -27,7 +27,7 @@ function Harness({ onChange = vi.fn() }: { onChange?: (id: Stance) => void }) {
       </button>
       <EqxStrip aria-label="Selection">
         <EqxStatusFlyout value="defend" options={OPTIONS} onChange={onChange} tooltip="Stance" data-testid="stance" />
-        <EqxIconButton icon={<PauseIcon />} tooltip="Stop" data-testid="stop" />
+        <EqxIconButton variant="strip" icon={<PauseIcon />} tooltip="Stop" data-testid="stop" />
       </EqxStrip>
     </div>
   );
@@ -42,7 +42,7 @@ describe('EqxStatusFlyout', () => {
   it('trigger shows the current option, named by its tooltip; closed by default', () => {
     render(<Harness />);
     const trigger = screen.getByRole('button', { name: 'Stance' });
-    expect(trigger.dataset['tone']).toBe('primary');
+    expect(trigger.dataset['status']).toBe('calm');
     expect(trigger.textContent).toBe('');
     expect(screen.queryByTestId('stance-options')).toBeNull();
   });
@@ -104,7 +104,7 @@ describe('EqxStatusFlyout', () => {
   it('options are the same box as the strip buttons, icon centred', () => {
     render(<Harness />);
     openFlyout();
-    const px = `${HUD.size.iconButton}px`;
+    const px = `${HUD.strip.tile}px`;
     const boxes = [screen.getByTestId('stop'), screen.getByTestId('stance'), ...OPTIONS.map((o) => screen.getByTestId(`stance-option-${o.id}`))];
     for (const b of boxes) {
       const cs = getComputedStyle(b);
@@ -125,6 +125,23 @@ describe('EqxStatusFlyout', () => {
       }
       expect(texts).toEqual([]);
     }
+  });
+
+  it('trigger is a status tile: calm, alert for a danger option, open marks it active; current option active', () => {
+    const { rerender } = render(
+      <EqxStatusFlyout value="defend" options={OPTIONS} onChange={vi.fn()} tooltip="Stance" data-testid="stance" />,
+    );
+    const trigger = screen.getByTestId('stance');
+    expect(trigger.dataset['variant']).toBe('strip');
+    expect(trigger.dataset['status']).toBe('calm');
+    expect(trigger.dataset['active']).toBe('false');
+    rerender(<EqxStatusFlyout value="attack" options={OPTIONS} onChange={vi.fn()} tooltip="Stance" data-testid="stance" />);
+    expect(screen.getByTestId('stance').dataset['status']).toBe('alert');
+    fireEvent.click(screen.getByTestId('stance'));
+    expect(screen.getByTestId('stance').dataset['active']).toBe('true');
+    expect(screen.getByTestId('stance-option-attack').dataset['active']).toBe('true');
+    expect(screen.getByTestId('stance-option-hold').dataset['active']).toBe('false');
+    expect(screen.getByTestId('stance-option-attack').dataset['variant']).toBe('strip');
   });
 
   it('is an allowed EqxStrip child (no dev warning)', () => {

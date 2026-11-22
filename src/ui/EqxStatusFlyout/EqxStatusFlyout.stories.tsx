@@ -1,11 +1,12 @@
 import type { Meta, StoryObj } from '@storybook/react';
-import { ThemeProvider } from '@mui/material';
+import { Box, ThemeProvider } from '@mui/material';
 import { useState } from 'react';
-import RocketIcon from '@mui/icons-material/RocketLaunch';
-import ShieldIcon from '@mui/icons-material/Shield';
-import GpsFixedIcon from '@mui/icons-material/GpsFixed';
-import PauseIcon from '@mui/icons-material/PauseCircle';
-import SettingsIcon from '@mui/icons-material/Settings';
+import RocketIcon from '@mui/icons-material/RocketLaunchOutlined';
+import DefendIcon from '@mui/icons-material/ShieldOutlined';
+import AggressiveIcon from '@mui/icons-material/GpsFixed';
+import HoldFireIcon from '@mui/icons-material/PauseCircleOutline';
+import StopIcon from '@mui/icons-material/StopCircleOutlined';
+import SettingsIcon from '@mui/icons-material/SettingsOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import { eqxTheme } from '../theme.js';
 import { EqxStatusFlyout, type EqxStatusOption } from './EqxStatusFlyout.js';
@@ -14,8 +15,9 @@ import { EqxIconButton } from '../EqxIconButton/EqxIconButton.js';
 import { EqxStripIdentity } from '../EqxStripIdentity/EqxStripIdentity.js';
 
 /**
- * EQX catalogue: a strip status whose options fly out to the right.
+ * EQX catalogue: a strip status whose options fly out to the right (mock .flyo).
  * Tap the stance icon to open; tap an option to pick; tap outside or press Esc to close.
+ * Shown inside a 915 x 412 sideways-phone frame, strip docked left and vertically centred.
  */
 const meta: Meta<typeof EqxStatusFlyout> = {
   title: 'EQX catalogue/EqxStatusFlyout',
@@ -23,7 +25,9 @@ const meta: Meta<typeof EqxStatusFlyout> = {
   decorators: [
     (Story) => (
       <ThemeProvider theme={eqxTheme}>
-        <Story />
+        <Box sx={{ width: 915, height: 412, bgcolor: '#05070e', display: 'flex', alignItems: 'center' }}>
+          <Story />
+        </Box>
       </ThemeProvider>
     ),
   ],
@@ -31,31 +35,40 @@ const meta: Meta<typeof EqxStatusFlyout> = {
 export default meta;
 type Story = StoryObj<typeof EqxStatusFlyout>;
 
-type Stance = 'hold' | 'defend' | 'attack';
+type Stance = 'aggressive' | 'defensive' | 'hold';
 const STANCES: readonly EqxStatusOption<Stance>[] = [
-  { id: 'hold', icon: <PauseIcon />, tooltip: 'Hold fire' },
-  { id: 'defend', icon: <ShieldIcon />, tooltip: 'Defensive', tone: 'primary' },
-  { id: 'attack', icon: <GpsFixedIcon />, tooltip: 'Aggressive', tone: 'danger' },
+  { id: 'aggressive', icon: <AggressiveIcon />, tooltip: 'Aggressive', tone: 'danger' },
+  { id: 'defensive', icon: <DefendIcon />, tooltip: 'Defensive' },
+  { id: 'hold', icon: <HoldFireIcon />, tooltip: 'Hold fire' },
 ];
 
 function InStrip({ initial }: { initial: Stance }) {
   const [stance, setStance] = useState<Stance>(initial);
   return (
     <EqxStrip aria-label="Selection">
-      <EqxStripIdentity icon={<RocketIcon />} tooltip="Fighter" health="ok" />
-      <EqxStatusFlyout value={stance} options={STANCES} onChange={setStance} tooltip="Stance" />
+      <EqxStripIdentity icon={<RocketIcon />} tooltip="5 ships selected" health="ok" count={5} />
+      <EqxStatusFlyout value={stance} options={STANCES} onChange={setStance} tooltip="Stance" data-testid="stance" />
       <EqxStrip.Separator />
-      <EqxIconButton icon={<SettingsIcon />} tooltip="Full menu" />
-      <EqxIconButton icon={<CloseIcon />} tooltip="Deselect" />
+      <EqxIconButton variant="strip" tone="danger" icon={<StopIcon />} tooltip="Stop" />
+      <EqxIconButton variant="strip" icon={<SettingsIcon />} tooltip="All orders and details" />
+      <EqxIconButton variant="strip" icon={<CloseIcon />} tooltip="Deselect" />
     </EqxStrip>
   );
 }
 
-/** Defensive stance in a selection strip. */
-export const Defensive: Story = { render: () => <InStrip initial="defend" /> };
+/** Opens the fly-out once the story mounts (plain DOM click, no extra addon). */
+const openOnMount: Story['play'] = async ({ canvasElement }) => {
+  canvasElement.querySelector<HTMLElement>('[data-testid="stance"]')?.click();
+};
 
-/** Aggressive stance: the trigger takes the option's danger tone. */
-export const Aggressive: Story = { render: () => <InStrip initial="attack" /> };
+/** Defensive stance in a five-ship selection strip, fly-out closed. */
+export const Defensive: Story = { render: () => <InStrip initial="defensive" /> };
+
+/** Aggressive stance: the status icon turns red. */
+export const Aggressive: Story = { render: () => <InStrip initial="aggressive" /> };
+
+/** Fly-out open: cyan box to the right, current option cyan, trigger ringed. */
+export const Open: Story = { render: () => <InStrip initial="defensive" />, play: openOnMount };
 
 /** Disabled: the trigger does not open. */
 export const Disabled: Story = {

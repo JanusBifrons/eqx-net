@@ -14,6 +14,15 @@ function computedColor(c: string): string {
   return v;
 }
 
+function computedBg(c: string): string {
+  const probe = document.createElement('div');
+  probe.style.backgroundColor = c;
+  document.body.appendChild(probe);
+  const v = getComputedStyle(probe).backgroundColor;
+  probe.remove();
+  return v;
+}
+
 describe('EqxStripIdentity', () => {
   it('is a round icon-only button whose aria-label is the tooltip', () => {
     render(<EqxStripIdentity icon={<RocketIcon />} tooltip="Fighter" health="ok" data-testid="id" />);
@@ -23,10 +32,10 @@ describe('EqxStripIdentity', () => {
     expect(getComputedStyle(b).borderRadius).toBe('50%');
   });
 
-  it('has the same outer box as EqxIconButton, icon centred', () => {
+  it('has the same outer box as a strip tile, icon centred', () => {
     render(<EqxStripIdentity icon={<RocketIcon />} tooltip="Fighter" health="ok" data-testid="id" />);
     const cs = getComputedStyle(screen.getByTestId('id'));
-    const px = `${HUD.size.iconButton}px`;
+    const px = `${HUD.strip.tile}px`;
     expect({ w: cs.width, h: cs.height }).toEqual({ w: px, h: px });
     expect(cs.alignItems).toBe('center');
     expect(cs.justifyContent).toBe('center');
@@ -42,6 +51,7 @@ describe('EqxStripIdentity', () => {
       expect(el.dataset['health']).toBe(h);
       const ring = getComputedStyle(el).borderTopColor;
       expect(ring).toBe(computedColor(HEALTH_RING[h]));
+      expect(getComputedStyle(el).boxShadow).toContain('inset');
       seen.add(ring);
     }
     expect(seen.size).toBe(3);
@@ -54,6 +64,7 @@ describe('EqxStripIdentity', () => {
     rerender(<EqxStripIdentity icon={<RocketIcon />} tooltip="f" health="ok" count={4} />);
     expect(badge()?.className).not.toContain('MuiBadge-invisible');
     expect(badge()?.textContent).toBe('4');
+    expect(getComputedStyle(badge() as HTMLElement).backgroundColor).toBe(computedBg(HUD.color.credits));
     rerender(<EqxStripIdentity icon={<RocketIcon />} tooltip="f" health="ok" count={1} />);
     expect(badge()?.className).toContain('MuiBadge-invisible');
   });

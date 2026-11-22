@@ -1,20 +1,24 @@
 import type { Meta, StoryObj } from '@storybook/react';
-import { ThemeProvider } from '@mui/material';
-import RocketIcon from '@mui/icons-material/RocketLaunch';
-import StopIcon from '@mui/icons-material/Stop';
-import SettingsIcon from '@mui/icons-material/Settings';
+import { Box, ThemeProvider } from '@mui/material';
+import RocketIcon from '@mui/icons-material/RocketLaunchOutlined';
+import DefendIcon from '@mui/icons-material/ShieldOutlined';
+import AggressiveIcon from '@mui/icons-material/GpsFixed';
+import StopIcon from '@mui/icons-material/StopCircleOutlined';
+import SettingsIcon from '@mui/icons-material/SettingsOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import CheckIcon from '@mui/icons-material/Check';
 import RotateIcon from '@mui/icons-material/RotateRight';
-import FactoryIcon from '@mui/icons-material/Factory';
+import MirrorIcon from '@mui/icons-material/Flip';
+import FactoryIcon from '@mui/icons-material/FactoryOutlined';
 import { eqxTheme } from '../theme.js';
 import { EqxStrip } from './EqxStrip.js';
 import { EqxIconButton } from '../EqxIconButton/EqxIconButton.js';
 import { EqxStripIdentity } from '../EqxStripIdentity/EqxStripIdentity.js';
 
 /**
- * EQX catalogue: the left strip. One icon column, no text except count badges,
- * tooltips on hover / tap-and-hold. Toggle `open` to see the slide.
+ * EQX catalogue: the left strip (mock .lbar). One icon column docked to the
+ * left edge, no text except count badges, tooltips on hover / tap-and-hold.
+ * Shown inside a 915 x 412 sideways-phone frame, vertically centred like the mock.
  */
 const meta: Meta<typeof EqxStrip> = {
   title: 'EQX catalogue/EqxStrip',
@@ -22,7 +26,9 @@ const meta: Meta<typeof EqxStrip> = {
   decorators: [
     (Story) => (
       <ThemeProvider theme={eqxTheme}>
-        <Story />
+        <Box sx={{ width: 915, height: 412, bgcolor: '#05070e', display: 'flex', alignItems: 'center' }}>
+          <Story />
+        </Box>
       </ThemeProvider>
     ),
   ],
@@ -30,54 +36,73 @@ const meta: Meta<typeof EqxStrip> = {
 export default meta;
 type Story = StoryObj<typeof EqxStrip>;
 
-const selection = [
-  <EqxStripIdentity key="id" icon={<RocketIcon />} tooltip="Fighter" health="ok" />,
-  <EqxIconButton key="stop" icon={<StopIcon />} tooltip="Stop" tone="danger" />,
+const fleet5 = [
+  <EqxStripIdentity key="id" icon={<RocketIcon />} tooltip="5 ships selected" health="ok" count={5} />,
+  <EqxIconButton key="order" variant="strip" status="calm" icon={<DefendIcon />} tooltip="Order: Defend" />,
+  <EqxIconButton key="stance" variant="strip" status="alert" icon={<AggressiveIcon />} tooltip="Stance: Aggressive" />,
   <EqxStrip.Separator key="sep" />,
-  <EqxIconButton key="menu" icon={<SettingsIcon />} tooltip="Full menu" />,
-  <EqxIconButton key="x" icon={<CloseIcon />} tooltip="Deselect" />,
+  <EqxIconButton key="stop" variant="strip" tone="danger" icon={<StopIcon />} tooltip="Stop" />,
+  <EqxIconButton key="menu" variant="strip" icon={<SettingsIcon />} tooltip="All orders and details" />,
+  <EqxIconButton key="x" variant="strip" icon={<CloseIcon />} tooltip="Deselect" />,
 ];
 
-/** Selection mode: identity, a quick action, separator, menu, deselect. */
-export const Selection: Story = { args: { 'aria-label': 'Selection', children: selection } };
+/** Five ships selected: identity + count, order and stance status, separator, actions. */
+export const Selection: Story = { args: { 'aria-label': 'Selection', children: fleet5 } };
 
-/** A damaged group of four. */
-export const Group: Story = {
+/** One damaged ship: gold ring, no count. */
+export const ShipDamaged: Story = {
   args: {
+    'aria-label': 'Selection',
     children: [
-      <EqxStripIdentity key="id" icon={<RocketIcon />} tooltip="Fighter wing" health="crit" count={4} />,
-      <EqxIconButton key="stop" icon={<StopIcon />} tooltip="Stop" tone="danger" />,
+      <EqxStripIdentity key="id" icon={<RocketIcon />} tooltip="Fighter, hull 64%" health="warn" />,
+      <EqxIconButton key="order" variant="strip" status="calm" icon={<DefendIcon />} tooltip="Order: Defend" />,
       <EqxStrip.Separator key="sep" />,
-      <EqxIconButton key="x" icon={<CloseIcon />} tooltip="Deselect" />,
+      <EqxIconButton key="menu" variant="strip" icon={<SettingsIcon />} tooltip="Details" />,
+      <EqxIconButton key="x" variant="strip" icon={<CloseIcon />} tooltip="Deselect" />,
     ],
   },
 };
 
-/** Doing mode: placing a building. */
+/** A critically damaged ship: red ring. */
+export const ShipCritical: Story = {
+  args: {
+    'aria-label': 'Selection',
+    children: [
+      <EqxStripIdentity key="id" icon={<RocketIcon />} tooltip="Fighter, hull 18%" health="crit" />,
+      <EqxStrip.Separator key="sep" />,
+      <EqxIconButton key="x" variant="strip" icon={<CloseIcon />} tooltip="Deselect" />,
+    ],
+  },
+};
+
+/** Placing a building: place (ok), rotate, mirror, separator, stop placing (no). */
 export const Placing: Story = {
   args: {
+    'aria-label': 'Placing',
     children: [
-      <EqxIconButton key="b" icon={<FactoryIcon />} tooltip="Factory" active tone="primary" />,
-      <EqxIconButton key="ok" icon={<CheckIcon />} tooltip="Place" tone="primary" />,
-      <EqxIconButton key="r" icon={<RotateIcon />} tooltip="Rotate" />,
-      <EqxIconButton key="x" icon={<CloseIcon />} tooltip="Stop placing" tone="danger" />,
+      <EqxStripIdentity key="id" icon={<FactoryIcon />} tooltip="Placing: Refinery" health="ok" />,
+      <EqxIconButton key="ok" variant="strip" tone="primary" icon={<CheckIcon />} tooltip="Place" />,
+      <EqxIconButton key="r" variant="strip" icon={<RotateIcon />} tooltip="Rotate (R)" />,
+      <EqxIconButton key="m" variant="strip" icon={<MirrorIcon />} tooltip="Mirror (F)" />,
+      <EqxStrip.Separator key="sep" />,
+      <EqxIconButton key="x" variant="strip" tone="danger" icon={<CloseIcon />} tooltip="Stop placing" />,
     ],
   },
 };
 
 /** Slides in (true) / fully out of view (false). */
-export const Sliding: Story = { args: { open: true, children: selection } };
-export const Closed: Story = { args: { open: false, children: selection } };
+export const Sliding: Story = { args: { open: true, children: fleet5 } };
+export const Closed: Story = { args: { open: false, children: fleet5 } };
 
-/** One row of the same buttons (how EqxStatusFlyout shows its options). */
+/** One row of strip tiles in the cyan fly-out box (how EqxStatusFlyout shows its options). */
 export const Horizontal: Story = {
   args: {
     orientation: 'horizontal',
     'aria-label': 'Stance',
     children: [
-      <EqxIconButton key="stop" icon={<StopIcon />} tooltip="Stop" tone="danger" />,
-      <EqxIconButton key="r" icon={<RotateIcon />} tooltip="Rotate" active />,
-      <EqxIconButton key="ok" icon={<CheckIcon />} tooltip="Place" tone="primary" />,
+      <EqxIconButton key="aggr" variant="strip" icon={<AggressiveIcon />} tooltip="Aggressive" />,
+      <EqxIconButton key="defn" variant="strip" icon={<DefendIcon />} tooltip="Defensive" active />,
+      <EqxIconButton key="stop" variant="strip" icon={<StopIcon />} tooltip="Hold fire" />,
     ],
   },
 };

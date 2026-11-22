@@ -1,18 +1,22 @@
 /**
  * EqxStatusFlyout: a left-strip status icon whose options fly out beside it
  * (UI language plan A5 "Quick change").
- * Composes EqxIconButton (trigger + every option, so all share the one strip
- * box `HUD.size.iconButton`) inside an MUI `Popper` placed to the right; the
- * options sit in a horizontal EqxStrip, so the strip look lives in one place.
- * - The trigger shows the current option's icon and tone; `tooltip` is its name.
- * - Options are icon-only, tooltips on hover / hold; the current one is `active`.
+ * Composes EqxIconButton `variant="strip"` (trigger + every option, so all share
+ * the one strip tile `HUD.strip.tile`) inside an MUI `Popper` placed to the right,
+ * `HUD.strip.flyOffset` away; the options sit in a horizontal EqxStrip (the cyan
+ * fly-out box, mock .flyo), so the strip look lives in one place.
+ * - The trigger is a cyan status tile showing the current option's icon (a
+ *   `danger` option turns the icon red); open = cyan ring. `tooltip` is its name.
+ * - Options are plain icon-only tiles, tooltips on hover / hold; the current one is
+ *   `active` (cyan edge + icon).
  * - A pick calls `onChange(id)` once and closes. An outside tap or Esc closes
  *   without calling it. Esc is taken in the capture phase while open, so the
  *   fly-out closes before anything else Esc would close (plan B4 Esc order).
  * - The fly-out renders in place (no portal), so it takes the z-order of the
  *   Slot the strip is mounted in. It never positions the strip itself.
  */
-import { Box, ClickAwayListener, Popper, useTheme } from '@mui/material';
+import { Box, ClickAwayListener, Popper } from '@mui/material';
+import { HUD } from '../../client/hud/tokens.js';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import type { EqxTone } from '../EqxButton/EqxButton.js';
 import { EqxIconButton } from '../EqxIconButton/EqxIconButton.js';
@@ -24,7 +28,7 @@ export interface EqxStatusOption<Id extends string = string> {
   icon: ReactNode;
   /** Required: shown on hover / long-press and used as aria-label. */
   tooltip: string;
-  /** Default `secondary`. */
+  /** Default `secondary`. `danger` (e.g. Aggressive) turns the trigger icon red while current. */
   tone?: EqxTone;
 }
 
@@ -54,8 +58,6 @@ export function EqxStatusFlyout<Id extends string = string>({
 }: EqxStatusFlyoutProps<Id>) {
   const [open, setOpen] = useState(false);
   const anchorRef = useRef<HTMLSpanElement>(null);
-  const theme = useTheme();
-  const gap = Number.parseFloat(theme.spacing(1));
   const current = options.find((o) => o.id === value);
   const hold = holdMs === undefined ? {} : { holdMs };
 
@@ -81,7 +83,8 @@ export function EqxStatusFlyout<Id extends string = string>({
         <EqxIconButton
           icon={current?.icon}
           tooltip={tooltip}
-          tone={current?.tone ?? 'secondary'}
+          variant="strip"
+          status={current?.tone === 'danger' ? 'alert' : 'calm'}
           active={open}
           disabled={disabled}
           onClick={() => setOpen((o) => !o)}
@@ -93,7 +96,7 @@ export function EqxStatusFlyout<Id extends string = string>({
           anchorEl={anchorRef.current}
           placement="right"
           disablePortal
-          modifiers={[{ name: 'offset', options: { offset: [0, gap] } }]}
+          modifiers={[{ name: 'offset', options: { offset: [0, HUD.strip.flyOffset] } }]}
         >
           <EqxStrip
             orientation="horizontal"
@@ -105,7 +108,7 @@ export function EqxStatusFlyout<Id extends string = string>({
                 key={o.id}
                 icon={o.icon}
                 tooltip={o.tooltip}
-                tone={o.tone ?? 'secondary'}
+                variant="strip"
                 active={o.id === value}
                 onClick={() => pick(o.id)}
                 {...hold}
