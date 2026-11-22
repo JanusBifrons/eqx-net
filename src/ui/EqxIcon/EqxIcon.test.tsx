@@ -1,25 +1,24 @@
 import { describe, expect, it } from 'vitest';
 import { render, screen } from '@testing-library/react';
+import { renderToStaticMarkup } from 'react-dom/server';
 import { EqxIcon } from './EqxIcon.js';
 import { EQX_ICONS, EQX_ICON_NAMES, type EqxIconName } from '../icons.js';
 import { HUD } from '../../client/hud/tokens.js';
 
 describe('EqxIcon registry', () => {
-  it('every name resolves to a component, and the registry has no extra keys', () => {
+  it('every name has shapes, and the registry has no extra keys', () => {
     for (const name of EQX_ICON_NAMES) {
-      const c: unknown = EQX_ICONS[name];
-      expect(c, name).toBeTruthy();
-      expect(['function', 'object'], name).toContain(typeof c);
+      expect(renderToStaticMarkup(<svg>{EQX_ICONS[name]}</svg>).length, name).toBeGreaterThan('<svg></svg>'.length);
     }
     expect(Object.keys(EQX_ICONS).sort()).toEqual([...EQX_ICON_NAMES].sort());
   });
 
-  it('one icon means one thing: no two names share a component', () => {
-    const owner = new Map<unknown, EqxIconName>();
+  it('one icon means one thing: no two names draw the same shapes', () => {
+    const owner = new Map<string, EqxIconName>();
     for (const name of EQX_ICON_NAMES) {
-      const c = EQX_ICONS[name];
-      expect(owner.get(c), `${name} shares its icon with ${String(owner.get(c))}`).toBeUndefined();
-      owner.set(c, name);
+      const markup = renderToStaticMarkup(<svg>{EQX_ICONS[name]}</svg>);
+      expect(owner.get(markup), `${name} shares its icon with ${String(owner.get(markup))}`).toBeUndefined();
+      owner.set(markup, name);
     }
     expect(owner.size).toBe(EQX_ICON_NAMES.length);
   });
@@ -43,6 +42,23 @@ describe('EqxIcon', () => {
       expect(svg, name).not.toBeNull();
       expect(svg?.getAttribute('data-icon')).toBe(name);
       unmount();
+    }
+  });
+
+  it('is a line icon: no fill, currentColor stroke, round caps; weight from HUD.size.iconStroke', () => {
+    render(
+      <>
+        <EqxIcon name="patrol" data-testid="r" />
+        <EqxIcon name="patrol" stroke="light" data-testid="l" />
+      </>,
+    );
+    for (const [id, w] of [['r', HUD.size.iconStroke.regular], ['l', HUD.size.iconStroke.light]] as const) {
+      const cs = getComputedStyle(screen.getByTestId(id));
+      expect(['none', 'rgba(0, 0, 0, 0)']).toContain(cs.fill); // jsdom reports none as transparent
+      expect(cs.stroke).toBe(cs.color); // currentColor, resolved by jsdom
+      expect(cs.strokeLinecap).toBe('round');
+      expect(cs.strokeLinejoin).toBe('round');
+      expect(cs.strokeWidth).toBe(String(w));
     }
   });
 

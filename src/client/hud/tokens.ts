@@ -73,6 +73,8 @@ export const HUD = {
     iconButton: 44,
     /** EqxIcon glyph sizes; medium is the glyph inside an EqxIconButton. */
     iconGlyph: { small: 18, medium: 24, large: 32 },
+    /** EqxIcon line weight (mock-ups: 2 in strips and panels, 1.7 on the rail). */
+    iconStroke: { regular: 2, light: 1.7 },
   },
   /** Motion (UI language plan B3). Honour prefers-reduced-motion at the call site. */
   motion: {

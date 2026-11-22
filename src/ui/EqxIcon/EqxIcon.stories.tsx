@@ -19,10 +19,11 @@ const meta: Meta<typeof EqxIcon> = {
       </ThemeProvider>
     ),
   ],
-  args: { name: 'patrol', size: 'medium' },
+  args: { name: 'patrol', size: 'medium', stroke: 'regular' },
   argTypes: {
     name: { control: 'select', options: EQX_ICON_NAMES },
     size: { control: 'inline-radio', options: ['small', 'medium', 'large'] },
+    stroke: { control: 'inline-radio', options: ['regular', 'light'] },
   },
 };
 export default meta;
@@ -31,8 +32,10 @@ type Story = StoryObj<typeof EqxIcon>;
 export const Default: Story = {};
 export const Small: Story = { args: { size: 'small' } };
 export const Large: Story = { args: { size: 'large' } };
+/** The right rail's lighter line (mock: stroke 1.7). */
+export const Light: Story = { args: { stroke: 'light' } };
 
-/** Every registered name with its icon. */
+/** Every registered name with its line icon. */
 export const AllIcons: Story = {
   render: () => (
     <Box
