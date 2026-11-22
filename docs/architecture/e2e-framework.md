@@ -93,6 +93,8 @@ The cost of the current bag-of-specs setup is concrete: every E2E run shoulders 
 
 **`@gate`** if the spec is meaningless without a baseline comparison — it does not run usefully standalone, only via a driver that supplies the baseline arm. Currently exactly one spec (`netcode-health.spec.ts`) which `skip`s itself when `NETGATE_ARMS` is unset.
 
+Netgate print-only INFO lines (logged per arm, never gated, in no budget): drone display delay min/mean/max + target mean (`getSwarmDisplayDelayMs` / `getSwarmDisplayDelayTargetMs` via the DEV `window.__eqxSwarmDelay` hook), drone playback-rate min/max (`1 − Δdelay/Δt` over ≥100 ms windows; expected 0.9–1.1), and mean other-ship correction (`remoteCorrTotalUnits / remoteCorrSamples` from `data-pred-stats`). Formatter: `formatPrintOnlyInfo` in `tests/netgate/netHealthBudget.ts`.
+
 **`@diag`** if the spec's own docstring or test title says "capture", "probe", "diagnostic", or "data only, not a regression lock" — i.e. it's instrumentation, not assertion. These are kept (often invaluable for debugging) but moved to `tests/diag/` and excluded from CI so they don't bloat the suite wall-clock.
 
 ### Test at the level the bug lives — the mock-seam anti-pattern (Invariant #13)

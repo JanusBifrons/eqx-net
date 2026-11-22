@@ -306,16 +306,26 @@ export class Reconciler {
       // decays to zero with no overshoot at the half-life chosen for this
       // drift magnitude. Velocity is zeroed at the start so the spring's
       // first step is governed purely by the offset (no kick).
-      this._springX.x = before.x - after.x;
+      // Continuity (netgap plan 3.3 / 6.2): the new offset also carries the
+      // offset still in effect, so the drawn pose (physics + offset) does
+      // not step when a correction lands while the previous one is easing.
+      // The threshold still uses the RAW drift; the half-life uses the larger
+      // of the raw drift and the carried offset, so a large leftover keeps
+      // its long glide instead of collapsing at a small drift's half-life.
+      const remX = this._lerping ? this._springX.x : 0;
+      const remY = this._lerping ? this._springY.x : 0;
+      const remA = this._lerping ? this._springA.x : 0;
+      this._springX.x = before.x + remX - after.x;
       this._springX.v = 0;
-      this._springY.x = before.y - after.y;
+      this._springY.x = before.y + remY - after.y;
       this._springY.v = 0;
-      this._springA.x = normalizeAngle(before.angle - after.angle);
+      this._springA.x = normalizeAngle(before.angle + remA - after.angle);
       this._springA.v = 0;
       this.lerpOffset.x = this._springX.x;
       this.lerpOffset.y = this._springY.x;
       this.lerpAngleOffset = this._springA.x;
-      this.lerpHalfLifeMs = playerCorrectionHalfLifeMs(drift);
+      const carried = Math.hypot(this._springX.x, this._springY.x);
+      this.lerpHalfLifeMs = playerCorrectionHalfLifeMs(Math.max(drift, carried));
       this._lerping = true;
     }
     // Prediction world now holds the corrected state.

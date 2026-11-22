@@ -52,6 +52,12 @@
  * wider than its 0.6 ceiling. It counts corrections in a short rolling
  * window, so a handful of events flips it. Drift (`maxDriftUnits`,
  * `meanDriftUnits`) still gates the correction behaviour itself.
+ *
+ * `NetHealthPrintOnly` (drone display delay, drone playback-rate range, mean
+ * other-ship correction; netcode gap smoothing, 2026-11-21) is PRINT-ONLY from
+ * birth: logged as INFO lines by `formatPrintOnlyInfo`, never read by
+ * `evaluateNetHealth`. It shows how the slewed drone delay behaves on real
+ * runs; gating it would need its own same-code spread data first.
  */
 
 /**
@@ -74,6 +80,42 @@ export interface NetHealthArm {
   snapshotCount: number;
   /** Liveness: the heavy diagnostic path was OFF for this arm (Mechanism 1). */
   diagEnabled: boolean;
+}
+
+/**
+ * PRINT-ONLY, NEVER GATED (see header). One arm's aggregate over its reps.
+ * NaN = not measured (e.g. a baseline ref that predates the page hook).
+ */
+export interface NetHealthPrintOnly {
+  /** Slewed drone display delay (`getSwarmDisplayDelayMs`, wall ms): min /
+   *  mean / max over the sampled run. */
+  droneDelayMinMs: number;
+  droneDelayMeanMs: number;
+  droneDelayMaxMs: number;
+  /** Where the slewed delay was heading (`getSwarmDisplayDelayTargetMs`), mean. */
+  droneDelayTargetMeanMs: number;
+  /** Drone read-point speed vs real time, `1 − d(delay)/dt`, min and max.
+   *  The 10 % slew bound should keep it within 0.9–1.1. */
+  dronePlaybackRateMin: number;
+  dronePlaybackRateMax: number;
+  /** Mean other-ship (remote) correction, world units:
+   *  `remoteCorrTotalUnits / remoteCorrSamples` from `PredictionStats`. */
+  remoteCorrMeanUnits: number;
+}
+
+function fmt(n: number, digits: number): string {
+  return Number.isFinite(n) ? n.toFixed(digits) : 'n/a';
+}
+
+/** The INFO line for one arm's print-only numbers. Pure; never affects pass/fail. */
+export function formatPrintOnlyInfo(armName: string, p: NetHealthPrintOnly): string {
+  return (
+    `  INFO (print-only, not gated) ${armName}: ` +
+    `droneDelayMs min/mean/max=${fmt(p.droneDelayMinMs, 1)}/${fmt(p.droneDelayMeanMs, 1)}/${fmt(p.droneDelayMaxMs, 1)} ` +
+    `target mean=${fmt(p.droneDelayTargetMeanMs, 1)} | ` +
+    `dronePlaybackRate min/max=${fmt(p.dronePlaybackRateMin, 3)}/${fmt(p.dronePlaybackRateMax, 3)} | ` +
+    `remoteCorrMean=${fmt(p.remoteCorrMeanUnits, 3)}u`
+  );
 }
 
 export interface MetricBudget {
