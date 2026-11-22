@@ -542,9 +542,10 @@ const ROCK: DestructionProfile = {
  *  rock's, collide with each other and settle; shots never shove them
  *  (knock 0). A piece wears and re-splits like a sub-capital's: halves into
  *  two, a quarter or less becomes salvage, its whole hull worth √area ÷ 3
- *  (a fighter-sized hull 10, a destroyer-sized one the capital's 200). */
+ *  (a fighter-sized hull 10, a destroyer-sized one the capital's 200).
+ *  Never a clean snap in two (snapChance 0): it reaches its cap. */
 const STRUCTURE_FRACTURE: DestructionFractureOptions = {
-  maxPieces: 6, snapChance: 0.2, fanCracks: false, farCrack: false, chunkyPieces: false,
+  maxPieces: 6, snapChance: 0, fanCracks: false, farCrack: false, chunkyPieces: false,
   jag: { depth: 2, roughness: 0.12 }, pieceSide: 30, radialCracks: true,
 };
 const STRUCTURE: DestructionProfile = {

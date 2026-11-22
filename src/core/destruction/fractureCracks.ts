@@ -73,29 +73,54 @@ export function primaryCut(p: NonNullable<FracturePlan['primary']>, kind = EDGE_
   return { nx, ny, c: nx * p.point.x + ny * p.point.y, kind };
 }
 
-/** Radial cracks fan this far either side of the kill point's inward line,
- *  as tan(θ/2) (θ ≈ ±65°), so none runs along the struck face. */
-const RADIAL_HALF_SPREAD = 0.64;
-/** Seeded jitter of each radial crack within its slot (a share of it). */
+/** Seeded jitter of each radial crack's area station, as a share of one
+ *  wedge's even share (±half of it), so no two cracks pinch a wedge under
+ *  1 − RADIAL_JITTER of an even share. */
 const RADIAL_JITTER = 0.6;
 
 /**
  * Radial cracks (`radialCracks`, structures): `n` straight cracks through
- * the kill point, spread evenly (seeded jitter) either side of the line from
- * it to the hull's centroid, so a squarish hull shatters into n + 1 wedges
- * from the hit. Directions by the rational half-angle form (no trig, #15).
- * Its own seeded stream.
+ * the kill point (on the outline) that cut the hull into n + 1 wedges of
+ * near-even AREA (each crack at a seeded station within its share), so a
+ * squarish hull shatters into n + 1 fair wedges wherever it is hit, a face,
+ * a corner or near the middle. The stations come from the fan of triangles
+ * the kill point makes with the outline's edges (exact for a hull the kill
+ * point sees whole; arithmetic only, no trig, #15). Its own seeded stream.
  */
 export function radialCracks(hull: P[], seed: number, kill: Vec2, n: number): FractureLine[] {
   const out: FractureLine[] = [];
-  if (n <= 0) return out;
-  const cen = ringCentroid(hull);
-  let vx = cen.x - kill.x;
-  let vy = cen.y - kill.y;
-  const vl = Math.sqrt(vx * vx + vy * vy);
-  if (vl < 1e-9) return out;
-  vx /= vl;
-  vy /= vl;
+  const m = hull.length;
+  if (n <= 0 || m < 3) return out;
+  // The edge the kill point lies on (the nearest; the first wins a tie).
+  let e = 0;
+  let bestD = Infinity;
+  for (let i = 0; i < m; i++) {
+    const a = hull[i]!;
+    const b = hull[(i + 1) % m]!;
+    const ex = b.x - a.x;
+    const ey = b.y - a.y;
+    const l2 = ex * ex + ey * ey;
+    let t = l2 > 0 ? ((kill.x - a.x) * ex + (kill.y - a.y) * ey) / l2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const dx = a.x + ex * t - kill.x;
+    const dy = a.y + ey * t - kill.y;
+    const d = dx * dx + dy * dy;
+    if (d < bestD) { bestD = d; e = i; }
+  }
+  // The outline walked from the kill point's edge end round to its start:
+  // triangle k is (kill, w[k], w[k + 1]).
+  const w: P[] = [];
+  for (let k = 1; k <= m; k++) w.push(hull[(e + k) % m]!);
+  const tri: number[] = [];
+  let total = 0;
+  for (let k = 0; k + 1 < w.length; k++) {
+    const a = w[k]!;
+    const b = w[k + 1]!;
+    const t = ((a.x - kill.x) * (b.y - kill.y) - (a.y - kill.y) * (b.x - kill.x)) / 2;
+    tri.push(t);
+    total += t;
+  }
+  if (!(total > 0)) return out;
   const rng = new Rng(fnvMixU32(seed ^ 0x7ad1a, 0xb));
   // Centre-out order (j = middle, then alternating out), so dropping the
   // last line first (the cap / sliver loop) drops the outermost wedge.
@@ -105,13 +130,20 @@ export function radialCracks(hull: P[], seed: number, kill: Vec2, n: number): Fr
       ? (q % 2 === 0 ? lo - q / 2 : lo + (q + 1) / 2)
       : (q % 2 === 0 ? lo - q / 2 : lo + 1 + (q - 1) / 2);
     const jit = (rng.u32() / 4294967296 - 0.5) * RADIAL_JITTER;
-    const s = RADIAL_HALF_SPREAD * (-1 + (2 * (j + 0.5 + jit)) / n);
-    const k = 1 / (1 + s * s);
-    const ca = (1 - s * s) * k;
-    const sa = 2 * s * k;
-    // v rotated by θ: (cos θ, sin θ) = ((1 − s²), 2s) / (1 + s²).
-    const dx = vx * ca - vy * sa;
-    const dy = vx * sa + vy * ca;
+    const want = (total * (j + 1 + jit)) / (n + 1);
+    let acc = 0;
+    let k = 0;
+    while (k < tri.length - 1 && acc + tri[k]! < want) acc += tri[k++]!;
+    const tk = tri[k]!;
+    const f = tk > 0 ? Math.min(1, Math.max(0, (want - acc) / tk)) : 0.5;
+    const a = w[k]!;
+    const b = w[k + 1]!;
+    let dx = a.x + (b.x - a.x) * f - kill.x;
+    let dy = a.y + (b.y - a.y) * f - kill.y;
+    const dl = Math.sqrt(dx * dx + dy * dy);
+    if (dl < 1e-9) continue;
+    dx /= dl;
+    dy /= dl;
     const nx = -dy;
     const ny = dx;
     out.push({ nx, ny, c: nx * kill.x + ny * kill.y, kind: EDGE_CRACK });
