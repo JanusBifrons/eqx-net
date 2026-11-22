@@ -34,6 +34,18 @@
  * `STAMPED_HOLD_MARGIN_MS`, capped by `matchedHoldMs`. Shell matching
  * (`onShellEnd`, `releaseHitAt`) never touches a stamped entry.
  *
+ * Blasts (off-pilot event timing, slice 4/6): a siege shell's `shell_blast`
+ * arrives with its damage, ahead of the drawn shell, like a hit.
+ * `maybeHoldBlast` holds it the same way (on a live shell's path, matched by
+ * its `shell_end` at the same point, released the frame the burst is drawn).
+ * Its entry has `blastRadius` > 0 and no target, so kill / beam / target
+ * matching never picks it; `flush` drops it (a blast from before a welcome
+ * is stale). A mine's `mine_detonated` (slice 4b) follows its damage event at
+ * the mine's point: `holdBlastWithHit` holds the blast exactly when that hit
+ * was held on a stamp (a drone-timeline target), with the hit's stamp and
+ * deadline, so blast and flash show together; a pilot hull's hit (the local
+ * ship included) is not held, and neither is its blast.
+ *
  * Entries are pooled and mutated in place; no allocation once warm (#14).
  */
 import type { ShellSalvoRenderInfo } from '@core/contracts/IRenderer';
@@ -66,6 +78,15 @@ export function matchedHoldMs(offPilot: boolean): number {
  *  headroom `MAX_HOLD_MS` has over the largest pilot delay (1500 − 400). */
 export const STAMPED_HOLD_MARGIN_MS = MAX_HOLD_MS - MAX_TOTAL_DISPLAY_DELAY_MS;
 
+/** A stamped hold's game-ms deadline from game `nowGameMs`: the current
+ *  drone display delay (game ms) + `STAMPED_HOLD_MARGIN_MS`, capped by
+ *  `matchedHoldMs`. Also bounds a swept drone or scrap piece kept drawn
+ *  (`DrawnShellTiming.linger`). */
+export function stampedHoldDeadlineMs(nowGameMs: number, offPilot: boolean): number {
+  const delayGameMs = getSwarmDisplayDelayMs() * getSwarmDisplaySpeed();
+  return nowGameMs + Math.min(delayGameMs + STAMPED_HOLD_MARGIN_MS, matchedHoldMs(offPilot));
+}
+
 /** The drones' read point at wall `nowMs` (`swarmArrivalStampMs` units): the
  *  time every drone read targets (`interpolateSwarmPose`: now − the held
  *  display delay). A stamped hit is drawn once this reaches its stamp.
@@ -89,6 +110,9 @@ export interface HeldDamage {
   stampTick: number;
   /** That tick's stamp on the drone tick clock (wall ms), else NaN. */
   stampMs: number;
+  /** A held `shell_blast` (`maybeHoldBlast`): its radius, centre at
+   *  `evt.hitX/Y`; 0 for a damage hit. */
+  blastRadius: number;
 }
 
 export interface HeldDamageSink {
@@ -109,6 +133,20 @@ function onShellPath(r: ShellSalvoRenderInfo, hx: number, hy: number): boolean {
   return dx * dx + dy * dy <= tol * tol;
 }
 
+/** Is (hx, hy) on the path of a live, not-yet-ended shell in `shells`? */
+function onLiveShellPath(shells: ReadonlyMap<string, ShellSalvoRenderInfo>, hx: number, hy: number): boolean {
+  for (const r of shells.values()) {
+    if (r.endTick < 0 && onShellPath(r, hx, hy)) return true;
+  }
+  return false;
+}
+
+/** The event a held blast's entry copies: no target, never a kill. */
+const BLAST_EVT: DamageEvent = {
+  type: 'damage', targetId: '', damage: 0, newHealth: 1, shooterId: '',
+  newShield: 0, shieldMax: 0, hullMax: 0, hitLayer: 'hull',
+};
+
 export class NavalHitHold {
   private readonly held: HeldDamage[] = [];
   private count = 0;
@@ -124,12 +162,25 @@ export class NavalHitHold {
     shells: ReadonlyMap<string, ShellSalvoRenderInfo>, nowGameMs: number,
   ): boolean {
     if (evt.hitX === undefined || evt.hitY === undefined || shells.size === 0) return false;
-    let onPath = false;
-    for (const r of shells.values()) {
-      if (r.endTick < 0 && onShellPath(r, evt.hitX, evt.hitY)) { onPath = true; break; }
-    }
-    if (!onPath) return false;
+    if (!onLiveShellPath(shells, evt.hitX, evt.hitY)) return false;
     this.push(evt, suppressNumber, nowGameMs + UNMATCHED_HOLD_MS);
+    return true;
+  }
+
+  /**
+   * Hold a `shell_blast` at (x, y) until its shell's burst is drawn, if (x, y)
+   * is on a live, unended shell's path in `shells` (as `maybeHold`). The
+   * release hands the sink an entry with `blastRadius` = `radius`. Returns
+   * whether held.
+   */
+  maybeHoldBlast(
+    x: number, y: number, radius: number,
+    shells: ReadonlyMap<string, ShellSalvoRenderInfo>, nowGameMs: number,
+  ): boolean {
+    if (radius <= 0 || shells.size === 0 || !onLiveShellPath(shells, x, y)) return false;
+    BLAST_EVT.hitX = x;
+    BLAST_EVT.hitY = y;
+    this.push(BLAST_EVT, true, nowGameMs + UNMATCHED_HOLD_MS).blastRadius = radius;
     return true;
   }
 
@@ -146,12 +197,33 @@ export class NavalHitHold {
   ): boolean {
     const stampMs = swarmTickToStampMs(stampTick, nowWallMs);
     if (Number.isNaN(stampMs)) return false;
-    const delayGameMs = getSwarmDisplayDelayMs() * getSwarmDisplaySpeed();
-    const h = this.push(evt, suppressNumber,
-      nowGameMs + Math.min(delayGameMs + STAMPED_HOLD_MARGIN_MS, matchedHoldMs(offPilot)));
+    const h = this.push(evt, suppressNumber, stampedHoldDeadlineMs(nowGameMs, offPilot));
     h.stampTick = stampTick;
     h.stampMs = stampMs;
     return true;
+  }
+
+  /**
+   * Hold a blast at (x, y) with the stamp of a STAMPED hit held at that exact
+   * point (a mine's damage event, sent just before its `mine_detonated`):
+   * released with it, at the drones' read point or the hit's deadline.
+   * Returns false (draw it now) when no such hit is held.
+   */
+  holdBlastWithHit(x: number, y: number, radius: number): boolean {
+    if (radius <= 0) return false;
+    for (let i = 0; i < this.count; i++) {
+      const hit = this.held[i]!;
+      if (hit.stampTick < 0 || hit.blastRadius > 0 || hit.evt.hitX !== x || hit.evt.hitY !== y) continue;
+      const { stampTick, stampMs, deadline } = hit;
+      BLAST_EVT.hitX = x;
+      BLAST_EVT.hitY = y;
+      const h = this.push(BLAST_EVT, true, deadline);
+      h.stampTick = stampTick;
+      h.stampMs = stampMs;
+      h.blastRadius = radius;
+      return true;
+    }
+    return false;
   }
 
   /** Copy `evt` into a pooled entry (unmatched, unstamped). */
@@ -164,6 +236,7 @@ export class NavalHitHold {
           newShield: 0, shieldMax: 0, hullMax: 0, hitLayer: 'hull',
         },
         suppressNumber: false, endTick: -1, deadline: 0, stampTick: -1, stampMs: Number.NaN,
+        blastRadius: 0,
       };
       this.held[this.count] = h;
     }
@@ -178,6 +251,7 @@ export class NavalHitHold {
     h.deadline = deadline;
     h.stampTick = -1;
     h.stampMs = Number.NaN;
+    h.blastRadius = 0;
     return h;
   }
 
@@ -216,8 +290,21 @@ export class NavalHitHold {
     }
   }
 
-  /** Release everything now (shell events switched off / sector handoff). */
+  /** Release every held hit now and drop every held blast (shell events
+   *  switched off / sector handoff: a blast drawn after it would be stale). */
   flush(sink: HeldDamageSink): void {
+    let i = 0;
+    while (i < this.count) {
+      const h = this.held[i]!;
+      if (h.blastRadius > 0) {
+        const last = this.count - 1;
+        this.held[i] = this.held[last]!;
+        this.held[last] = h;
+        this.count = last;
+        continue;
+      }
+      i++;
+    }
     this.release(Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, sink, Number.POSITIVE_INFINITY);
   }
 

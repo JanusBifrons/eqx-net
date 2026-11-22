@@ -132,10 +132,14 @@ export function handleDamage(ctx: DamagePathCtx, evt: DamageEvent, suppressNumbe
   // Visuals (flash / number / health bar / spark). A naval shell hit waits
   // for the frame its shell's burst is drawn at the display tick, so the
   // flash coincides with the drawn impact instead of leading it by the
-  // display delay + RTT/2 (navalHitHold.ts). State above is never held.
-  if (!showFx) return;
-  if (ctx.shellTiming.holdHit(evt, suppressNumber)) return;
-  applyDamageFx(ctx, evt, suppressNumber);
+  // display delay + RTT/2 (navalHitHold.ts). Any other hit on a target drawn
+  // on the drone timeline waits for the drawn target (`holdDrawnHit`); so
+  // does a zero-damage KILLING event there, so its death waits too
+  // (`deferKill`). State above is never held.
+  if (!showFx && evt.newHealth > 0) return;
+  if (showFx && ctx.shellTiming.holdHit(evt, suppressNumber)) return;
+  if (ctx.shellTiming.holdDrawnHit(evt, suppressNumber)) return;
+  if (showFx) applyDamageFx(ctx, evt, suppressNumber);
 }
 
 /** The FX half of a damage event with positive damage: hull flash,

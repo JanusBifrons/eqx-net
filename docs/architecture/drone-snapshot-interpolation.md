@@ -172,6 +172,19 @@ the server only emits an entry when there is mount/shield content. This cut
 the JSON snapshot ~90 % in the `network-bandwidth` baseline (312 878 →
 31 415 bytes for the 100-drone scenario).
 
+### Leaving without a destroy: swept, then drawn out (2026-11-22)
+
+A full binary snapshot that omits a drone, scrap or wreck piece removes it
+from `mirror.swarm` (the decoder's sweep). Since the entity is drawn the
+display delay in the past, the sweep no longer deletes a moving kind on
+arrival: it stays until the drones' read point passes its newest sample
+(`latestArrivalMs`), so a picked-up scrap piece or a leaving drone
+vanishes at the moment the drawn timeline reaches its last pose, piloting
+and off pilot alike. Bounded by the stamped-hit deadline; welcome / sector
+flush clear it. Mechanism and bound:
+[shell-events](shell-events.md#stamped-release-holding-for-the-drone-timeline-2026-11-22)
+slice 5 (`DrawnShellTiming.linger`). Lock: `drawnShellTiming.sweep.test.ts`.
+
 ## The feel core — display delay sized to the *binary* cadence
 
 `DISPLAY_DELAY_MS` 0 → **100 ms**. The old "0 ms aligns render with the
