@@ -1,6 +1,6 @@
 import { useUIStore } from '../../state/store.js';
 import { logEvent, isFullDiagMode, isRammingProbeEnabled } from '../../debug/ClientLogger.js';
-import { DEAD_RECKON_BACK_MS, DEAD_RECKON_CAP_MS } from '../renderTickPhase.js';
+import { renderTickElapsedMs } from '../renderTickPhase.js';
 import { resolvePlacementPreviewStatus } from '../../structures/structurePlacementClient.js';
 import type { MirrorPassCtx } from './mirrorPassCtx.js';
 
@@ -81,9 +81,7 @@ export function updateLocalShipMirror(ctx: MirrorPassCtx, frameNowMs: number | u
       // From the frame's timestamp; a tick that fell due after the frame
       // started (during this frame's work) makes it slightly negative, i.e.
       // the pose a fraction of a tick before the state: still continuous.
-      const tickElapsedMs = ctx.lastLocalTickAtMs >= 0
-        ? Math.max(-DEAD_RECKON_BACK_MS, Math.min(DEAD_RECKON_CAP_MS, ctx.gameClock.at(frameNowMs ?? ctx.clock.now()) - ctx.lastLocalTickAtMs))
-        : 0;
+      const tickElapsedMs = renderTickElapsedMs(ctx.lastLocalTickAtMs, ctx.gameClock.at(frameNowMs ?? ctx.clock.now()));
       const dtSec = tickElapsedMs / 1000;
       const drX = state.x + state.vx * dtSec;
       const drY = state.y + state.vy * dtSec;

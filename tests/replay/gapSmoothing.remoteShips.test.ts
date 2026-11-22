@@ -44,10 +44,14 @@ import {
 } from './captureHarness.js';
 import {
   countMotionArtefacts,
+  MOTION_MOVING_SPEED_U_PER_S,
   MOTION_SNAP_TOLERANCE_U,
+  MOTION_STILL_EPSILON_U,
   type MotionCounters,
   type MotionFrame,
 } from '../scenarios/assertions.js';
+
+import { DEAD_RECKON_CAP_MS } from '../../src/client/net/renderTickPhase.js';
 
 const CAPTURE = 'diag/captures/2026-05-21T16-04-16Z-2q0jxw';
 const REMOTE_ID = 'remote-pilot';
@@ -203,6 +207,27 @@ function rounded(c: MotionCounters): MotionCounters {
   };
 }
 
+/**
+ * Frames that ran no physics tick (same `inputTick` as the frame before),
+ * while the truth moves and the catch-up time is under its cap, on which the
+ * drawn ship did not move at all. A frame past the cap holds by design (the
+ * cap stops a stall from flinging the ship), so it is left out.
+ */
+function stillNoTickFrames(tl: Timeline, track: TrackPoint[], frames: RemoteDrawnPoseSample[]): number {
+  let n = 0;
+  for (let i = 1; i < frames.length; i++) {
+    const a = frames[i - 1]!;
+    const b = frames[i]!;
+    if (b.inputTick !== a.inputTick || !(b.tickElapsedMs < DEAD_RECKON_CAP_MS)) continue;
+    const ta = trueAt(tl, track, a.atMs);
+    const tb = trueAt(tl, track, b.atMs);
+    const trueSpeed = (Math.hypot(tb.x - ta.x, tb.y - ta.y) * 1000) / (b.atMs - a.atMs);
+    if (trueSpeed <= MOTION_MOVING_SPEED_U_PER_S) continue;
+    if (Math.hypot(b.x - a.x, b.y - a.y) <= MOTION_STILL_EPSILON_U) n++;
+  }
+  return n;
+}
+
 function drawnStepU(frames: RemoteDrawnPoseSample[], i: number): number {
   return Math.hypot(frames[i]!.x - frames[i - 1]!.x, frames[i]!.y - frames[i - 1]!.y);
 }
@@ -249,17 +274,23 @@ describe('other players\' ships through gaps and corrections — today\'s number
       // S2-1 (continuous offset), re-recorded on the netgap tip (lead held
       // at 5): snaps 27 -> 31, largest 74.534 -> 19.159 u, total
       // 151.972 -> 131.603 u, freeze 39 -> 38, mean -247.562 -> -260.789.
-      expect(counters.snaps).toBe(31);
+      // Remote catch-up between ticks: snaps 31 -> 35, total 131.603 ->
+      // 144.853 u, mean -260.789 -> -241.924, freeze 38 (unchanged). Every
+      // frame here sits past the catch-up cap (render due time 60-156 ms
+      // behind on this capture), so the ship draws a fixed 32 ms ahead and
+      // a snapshot's velocity change adds dv x 32 ms to that frame's step
+      // (the local ship does the same); the new snaps are snapshot frames.
+      expect(counters.snaps).toBe(35);
       expect(counters.largestSnapU).toBeCloseTo(19.159, 2);
-      expect(counters.totalSnapU).toBeCloseTo(131.603, 2);
+      expect(counters.totalSnapU).toBeCloseTo(144.853, 2);
       expect(counters.freezeFrames).toBe(38);
       expect(counters.backwardSteps).toBe(0);
       // Negative: drawn ahead of the truth, which is read at the snapshots'
       // ARRIVAL times (one-way delay late) while remotes are forward-predicted.
-      expect(counters.meanLatenessMs).toBeCloseTo(-260.789, 2);
+      expect(counters.meanLatenessMs).toBeCloseTo(-241.924, 2);
       // Not investigated: on a turning track the lateness search (2 s either
       // side) may match a point the truth passed much earlier.
-      expect(counters.maxLatenessMs).toBeCloseTo(1492.427, 2);
+      expect(counters.maxLatenessMs).toBeCloseTo(1467.404, 2);
     });
   });
 
@@ -369,14 +400,18 @@ describe('other players\' ships through gaps and corrections — today\'s number
       // 4-frame glide (snaps 62, largest 527.93, backward steps 6) the jump
       // now lands in one frame (step ~1994.7 u), snaps 62 -> 60, backward
       // steps 6 -> 2; the largest snap is the jump itself.
+      // Remote catch-up between ticks: the ship moves on frames that run no
+      // physics tick (freeze 60 -> 28, snaps 60 -> 40, total 1583.485 ->
+      // 1529.626 u, mean -77.704 -> -100.878); the 28 left sit past the
+      // catch-up cap.
       expect(glideFrames).toBe(0);
       expect(arrivalStepU).toBeCloseTo(1994.7, 0);
-      expect(counters.snaps).toBe(60);
-      expect(counters.largestSnapU).toBeCloseTo(1426.681, 2);
-      expect(counters.totalSnapU).toBeCloseTo(1583.485, 2);
-      expect(counters.freezeFrames).toBe(60);
+      expect(counters.snaps).toBe(40);
+      expect(counters.largestSnapU).toBeCloseTo(1426.273, 2);
+      expect(counters.totalSnapU).toBeCloseTo(1529.626, 2);
+      expect(counters.freezeFrames).toBe(28);
       expect(counters.backwardSteps).toBe(2);
-      expect(counters.meanLatenessMs).toBeCloseTo(-77.704, 2);
+      expect(counters.meanLatenessMs).toBeCloseTo(-100.878, 2);
       expect(counters.maxLatenessMs).toBeCloseTo(19.6, 2);
     });
 
@@ -384,6 +419,30 @@ describe('other players\' ships through gaps and corrections — today\'s number
     // not glided (was 8 frames drawn more than 100 u off).
     it('a real teleport snaps in one frame', () => {
       expect(glideFrames).toBe(0);
+    });
+  });
+
+  describe('(d) a clean stretch: the ship thrusts straight, no gap, no correction scripted', () => {
+    let still = 0;
+    let noTickFrames = 0;
+
+    beforeAll(async () => {
+      const track = await buildTrack(tl, { inputAt: () => THRUST, editAt: () => null }, 0, 0);
+      const res = await replayCapture(CAPTURE, {
+        remoteShip: { id: REMOTE_ID, kind: KIND, stateAt: (t) => wireAt(tl, track, t) },
+      });
+      const frames = windowFrames(res);
+      for (let i = 1; i < frames.length; i++) if (frames[i]!.inputTick === frames[i - 1]!.inputTick) noTickFrames++;
+      still = stillNoTickFrames(tl, track, frames);
+    });
+
+    // About one frame in three runs no physics tick (~90 Hz frames, 60 Hz
+    // physics). The drawn ship moves on each of them, by velocity × the time
+    // since the latest tick fell due, as the local ship does (was 0 u on
+    // every such frame with no correction easing: the ship stood still).
+    it('moves on every frame that runs no physics tick', () => {
+      expect(noTickFrames).toBeGreaterThan(60);
+      expect(still).toBe(0);
     });
   });
 });

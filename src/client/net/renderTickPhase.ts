@@ -6,6 +6,20 @@ export const DEAD_RECKON_CAP_MS = 32;
 export const DEAD_RECKON_BACK_MS = 1000 / 60;
 
 /**
+ * Game ms a frame draws past the latest predicted physics state: frame time
+ * minus the due time that state stands for (`lastLocalTickAtMs`), clamped to
+ * [-DEAD_RECKON_BACK_MS, DEAD_RECKON_CAP_MS]; 0 before the first tick. Every
+ * predWorld body the input loop steps (the local ship, remote ships) draws at
+ * `state + velocity × this`, so a frame that runs no tick (90 Hz display, 60 Hz
+ * physics) still moves the ship. Lock: `gapSmoothing.remoteShips.test.ts`.
+ */
+export function renderTickElapsedMs(lastLocalTickAtMs: number, frameGameMs: number): number {
+  return lastLocalTickAtMs >= 0
+    ? Math.max(-DEAD_RECKON_BACK_MS, Math.min(DEAD_RECKON_CAP_MS, frameGameMs - lastLocalTickAtMs))
+    : 0;
+}
+
+/**
  * When a predicted physics tick boundary was DUE on the wall clock.
  *
  * `tickPhysics` is wall-clock anchored: tick `i` falls due at

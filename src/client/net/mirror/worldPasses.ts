@@ -9,6 +9,7 @@ import { isRemoteMovingSwarmKind } from '../snapshotRemoteSync.js';
 import { slewDisplayMountAngles } from '../displayMountAngles.js';
 import { getShipKind } from '@shared-types/shipKinds';
 import { stepRemoteShipOffset } from '../remoteLerpOffsets.js';
+import { renderTickElapsedMs } from '../renderTickPhase.js';
 import { liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../../combat/LocalBeam.js';
 import { updateRemoteBeamDists } from '../../combat/remoteBeamRay.js';
 import { stepMissileDisplayDelay } from '../../combat/MissileMirror.js';
@@ -141,9 +142,13 @@ export function updateSwarmMirror(ctx: MirrorPassCtx): void {
 }
 
 /** `updateMirror` pass: remote ships from predWorld plus their lerp offsets. */
-export function updateRemoteShipsMirror(ctx: MirrorPassCtx, localId: string | null): void {
+export function updateRemoteShipsMirror(ctx: MirrorPassCtx, localId: string | null, frameNowMs: number | undefined): void {
   // Remote ships — read from predWorld at 60 Hz with decaying lerp offsets.
   if (ctx.predWorld) {
+    // Remote bodies step in the same input loop as the local ship, so they
+    // draw past their latest state by the same capped time: a frame that runs
+    // no tick (90 Hz display, 60 Hz physics) still moves them.
+    const dtSec = renderTickElapsedMs(ctx.lastLocalTickAtMs, ctx.gameClock.at(frameNowMs ?? ctx.clock.now())) / 1000;
     for (const remoteId of ctx.predRemoteShipIds) {
       if (remoteId === localId) continue;
       const s = ctx.predWorld.getShipState(remoteId);
@@ -167,19 +172,19 @@ export function updateRemoteShipsMirror(ctx: MirrorPassCtx, localId: string | nu
       let entry = ctx.mirror.ships.get(remoteId);
       if (!entry) {
         entry = {
-          x: s.x + ox,
-          y: s.y + oy,
+          x: s.x + s.vx * dtSec + ox,
+          y: s.y + s.vy * dtSec + oy,
           vx: s.vx,
           vy: s.vy,
-          angle: s.angle + oa,
+          angle: s.angle + (s.angvel ?? 0) * dtSec + oa,
         };
         ctx.mirror.ships.set(remoteId, entry);
       } else {
-        entry.x = s.x + ox;
-        entry.y = s.y + oy;
+        entry.x = s.x + s.vx * dtSec + ox;
+        entry.y = s.y + s.vy * dtSec + oy;
         entry.vx = s.vx;
         entry.vy = s.vy;
-        entry.angle = s.angle + oa;
+        entry.angle = s.angle + (s.angvel ?? 0) * dtSec + oa;
       }
     }
   }
