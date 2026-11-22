@@ -220,8 +220,9 @@ test('construction works while spectating (place a structure with no ship)', asy
   // (non-touch) the placement model is one-click-place; the ghost anchors to the
   // CAMERA CENTRE in spectator (no ship to anchor ahead of), so a click on the
   // canvas commits the placement there.
-  // Build mode is the only way to build (owner 2026-11-22): the switch opens the sidebar.
+  // Build mode is the only way to build (owner 2026-11-22): the switch enters it.
   await page.locator('[data-testid="build-toggle"]').click();
+  await page.locator('[data-testid="right-rail-build"]').click(); // no auto-open: the rail's Build item opens the panel
   await page.locator('[data-testid="build-cat-economy"]').click();
   await expect(page.locator('[data-testid="build-solar"]')).toBeVisible({ timeout: 5_000 });
   await page.locator('[data-testid="build-solar"] button').click();

@@ -43,8 +43,9 @@ async function openBuildWhileSpectating(page: Page): Promise<void> {
     () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'spectator', undefined,
     { timeout: 5_000 },
   );
-  // Build mode is the only way to build (owner 2026-11-22): the switch opens the sidebar.
+  // Build mode is the only way to build (owner 2026-11-22): the switch enters it.
   await page.locator('[data-testid="build-toggle"]').click();
+  await page.locator('[data-testid="right-rail-build"]').click(); // no auto-open: the rail's Build item opens the panel
   await page.locator('[data-testid="build-rail"]').waitFor({ timeout: 10_000 });
 }
 

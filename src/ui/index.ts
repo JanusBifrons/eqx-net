@@ -27,3 +27,5 @@ export { EqxSegmented, type EqxSegmentedProps, type EqxSegmentedOption } from '.
 export { EqxPanel, EQX_PANEL_SIZE, type EqxPanelProps, type EqxPanelApply } from './EqxPanel/EqxPanel.js';
 export { EqxRail, RAIL_MAX_ITEMS, RAIL_COG_ID, railWidthFor, useRailCompact, type EqxRailProps, type EqxRailItem, type EqxRailCog } from './EqxRail/EqxRail.js';
 export { EqxBar, barColor, type EqxBarProps, type EqxBarTone } from './EqxBar/EqxBar.js';
+export { EqxSection, type EqxSectionProps } from './EqxSection/EqxSection.js';
+export { EqxListRow, type EqxListRowProps } from './EqxListRow/EqxListRow.js';

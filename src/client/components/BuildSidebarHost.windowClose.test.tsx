@@ -34,22 +34,26 @@ function Harness(): JSX.Element {
 
 const sidebarOpen = (): boolean => screen.queryByTestId('build-rail') !== null;
 
+/** Enter Build, then tap the rail's Build item (entering Build opens nothing). */
+const openBuild = (): void => { useUIStore.getState().setBuildMode(true); useUIStore.getState().setRightPanel('build'); };
+
 describe('BuildSidebarHost closes when a game window opens', () => {
   beforeEach(() => {
-    useUIStore.setState({ phase: 'galaxy-map', isDead: false, isGalaxyMapOpen: false, buildMode: false, placementKind: null });
+    useUIStore.setState({ phase: 'galaxy-map', isDead: false, isGalaxyMapOpen: false, buildMode: false, placementKind: null, rightPanel: null });
   });
 
   it('closes the Build sidebar when a GameWindow opens', () => {
     render(<Harness />);
-    act(() => useUIStore.getState().setBuildMode(true));
+    act(() => openBuild());
     expect(sidebarOpen()).toBe(true);
     act(() => openWindow());
     expect(sidebarOpen()).toBe(false);
+    expect(useUIStore.getState().rightPanel).toBeNull(); // the one flag clears
   });
 
   it('closes the placing strip when a GameWindow opens', () => {
     render(<Harness />);
-    act(() => useUIStore.getState().setBuildMode(true));
+    act(() => openBuild());
     fireEvent.click(screen.getByTestId('build-cat-economy'));
     fireEvent.click(screen.getByTestId('build-solar').querySelector('button')!);
     expect(screen.getByTestId('build-strip')).toBeTruthy();
@@ -74,7 +78,7 @@ describe('BuildSidebarHost closes when a game window opens', () => {
       );
     }
     render(<PanelHarness />);
-    act(() => useUIStore.getState().setBuildMode(true));
+    act(() => openBuild());
     expect(sidebarOpen()).toBe(true);
     act(() => openPanel());
     expect(screen.getByTestId('structure-settings')).toBeTruthy();
@@ -86,5 +90,6 @@ describe('BuildSidebarHost closes when a game window opens', () => {
     expect(sidebarOpen()).toBe(true);
     expect(panelOpen).toBe(false);
     expect(useUIStore.getState().structureSettingsOpen).toBe(false);
+    expect(useUIStore.getState().rightPanel).toBe('build');
   });
 });

@@ -9,7 +9,7 @@ import { getShipKind } from '@shared-types/shipKinds';
 import { sendCommand, sendPilotShip } from '../ships/shipActionsClient';
 import { isOwnedByMe, isParkedHull } from '../render/shipOwnership';
 import { leaveBuildMode } from '../structures/buildModeView';
-import { requestBuildSidebar } from './BuildSidebar';
+import { requestBuildPanel } from '../panels/BuildPanel';
 import { EqxSegmented } from '../../ui/index.js';
 
 /**
@@ -94,7 +94,7 @@ export function PilotSpectatorToggle(): JSX.Element | null {
   // the Build sidebar back after a ✕ (the only way in since the dial stopped
   // building, owner 2026-11-22).
   const onBuildClick = (): void => {
-    if (controlMode === 'build') requestBuildSidebar();
+    if (controlMode === 'build') requestBuildPanel();
   };
 
   const onFlyClick = (button: HTMLElement): void => {

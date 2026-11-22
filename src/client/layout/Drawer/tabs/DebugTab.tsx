@@ -1,47 +1,37 @@
 import { useState } from 'react';
-import { Box, Button, Stack, TextField, Typography } from '@mui/material';
+import { Box, Button, FormControlLabel, Stack, Switch, TextField, Typography } from '@mui/material';
 import BugReportOutlinedIcon from '@mui/icons-material/BugReportOutlined';
 import { useUIStore } from '../../../state/store';
-import { selectDrawerOpen } from '../../../state/rightPanel';
+import { selectDrawerTabShown } from '../../../state/rightPanel';
 import { ConnectionDiagnostics } from '../../../components/ConnectionDiagnostics';
 import { DevOverlay } from '../../../components/DevOverlay';
 import { LogPanel } from '../../../components/LogPanel';
 import { captureDiagnostic } from '../../../debug/diagCapture';
 
 /**
- * Mobile-drawer Debug tab.
+ * The cog panel's Developer page (`panels/CogPanel.tsx` drill-down,
+ * `drawerTab = 'debug'`): the diagnostic capture, the debug switches (debug
+ * overlay, server log, server ghost), ConnectionDiagnostics, DevOverlay and
+ * LogPanel. DevOverlay and LogPanel draw only while their switches are on.
  *
- * Hosts the diagnostic surfaces that used to clutter the always-visible
- * HUD: ConnectionDiagnostics + DevOverlay + LogPanel. The latter two are
- * gated by their existing Zustand toggles (`showDevOverlay`, `showLogPanel`)
- * so the user can declutter without leaving the tab.
- *
- * **Snapshot-rate gate** (2026-05-14): returns `null` when the drawer is
- * closed. With `ModalProps.keepMounted: true` on AdvancedDrawer
- * (2026-05-13, commit `2aa7d4f`), drawer-tab content stays in DOM even
- * when the drawer is closed — without this gate, the snapshot-rate
- * Zustand subscriptions inside `ConnectionDiagnostics`, `DevOverlay`,
- * and `LogPanel` would fire 17×/s for any user who has switched to the
- * Debug tab once during a session (`drawerTab` persists in Zustand).
- * See `docs/LESSONS.md` 2026-05-13 §3.
- *
- * The Capture Diagnostic block (formerly inside `SettingsModal`) lives at
- * the top — it's the most action-oriented thing in this tab.
- *
- * Sticky-bottom positioning of the Debug tab in the rail is handled by
- * `AdvancedDrawer`, not here.
+ * **Snapshot-rate gate:** returns `null` unless the Developer page is on
+ * screen (`selectDrawerTabShown('debug')`). Panels are persistent Drawers whose
+ * children stay mounted while closed, and `drawerTab` persists in Zustand;
+ * without this gate the snapshot-rate subscriptions inside
+ * `ConnectionDiagnostics`, `DevOverlay` and `LogPanel` would fire 17×/s for
+ * anyone who opened the page once. See `docs/LESSONS.md` 2026-05-13 §3.
  */
 export function DebugTab(): JSX.Element | null {
   // Hooks must be called unconditionally (React rules of hooks); the
-  // `useState` slots below are preserved across drawer-close/open cycles,
+  // `useState` slots below are preserved across panel close/open cycles,
   // so a user typing a diagnostic note doesn't lose it if they
-  // accidentally close the drawer.
-  const isDrawerOpen = useUIStore(selectDrawerOpen);
+  // accidentally close the panel.
+  const shown = useUIStore(selectDrawerTabShown('debug'));
   const [note, setNote] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);
 
-  if (!isDrawerOpen) return null;
+  if (!shown) return null;
 
   const onCapture = async (): Promise<void> => {
     setCapturing(true);
@@ -89,9 +79,59 @@ export function DebugTab(): JSX.Element | null {
         </Stack>
       </Box>
 
+      <DebugSwitches />
       <ConnectionDiagnostics />
       <DevOverlay />
       <LogPanel />
     </Box>
+  );
+}
+
+interface SwitchRowProps {
+  checked: boolean;
+  onChange: (on: boolean) => void;
+  label: string;
+  caption: string;
+  aria: string;
+  testId: string;
+}
+
+function SwitchRow({ checked, onChange, label, caption, aria, testId }: SwitchRowProps): JSX.Element {
+  return (
+    <FormControlLabel
+      control={
+        <Switch
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          inputProps={{ 'aria-label': aria, 'data-testid': testId } as React.InputHTMLAttributes<HTMLInputElement>}
+        />
+      }
+      label={
+        <Box>
+          <Typography variant="body2">{label}</Typography>
+          <Typography variant="caption" color="text.secondary">{caption}</Typography>
+        </Box>
+      }
+    />
+  );
+}
+
+/** The debug switches (once in SettingsModal and the drawer's Settings page). */
+function DebugSwitches(): JSX.Element {
+  const showDevOverlay = useUIStore((s) => s.showDevOverlay);
+  const showLogPanel = useUIStore((s) => s.showLogPanel);
+  const showServerGhost = useUIStore((s) => s.showServerGhost);
+  const setShowDevOverlay = useUIStore((s) => s.setShowDevOverlay);
+  const setShowLogPanel = useUIStore((s) => s.setShowLogPanel);
+  const setShowServerGhost = useUIStore((s) => s.setShowServerGhost);
+  return (
+    <Stack spacing={1}>
+      <SwitchRow checked={showDevOverlay} onChange={setShowDevOverlay} label="Debug overlay" aria="Show debug overlay"
+        testId="settings-toggle-dev-overlay" caption="RTT, drift, prediction stats. Shows on this page." />
+      <SwitchRow checked={showLogPanel} onChange={setShowLogPanel} label="Server log" aria="Show server log"
+        testId="settings-toggle-log-panel" caption="Recent corrections and snapshots. Shows on this page." />
+      <SwitchRow checked={showServerGhost} onChange={setShowServerGhost} label="Server ghost" aria="Show server ghost"
+        testId="settings-toggle-server-ghost" caption="Orange diamond showing the server’s authoritative ship position." />
+    </Stack>
   );
 }

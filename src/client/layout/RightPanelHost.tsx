@@ -8,19 +8,23 @@
  *   camera focus insets (`railWidthPx`) all make room for it.
  * - Driven by the store's `rightPanel` flag: a rail pick sets it, a second pick
  *   of the open item, ✕ or Esc clears it. Renders the panels the flag opens,
- *   including today's advanced drawer (moved here from App.tsx) and the
+ *   including today's advanced drawer (moved here from App.tsx), the Trade
+ *   drill-down (`panels/TradePanel.tsx`), the cog panel (`panels/CogPanel.tsx`) and the
  *   selection's Details panel (opened from the left strip's ⚙, not a rail item).
+ *   The Build panel (`build`) is mounted by GameHud (BuildSidebarHost) and opens
+ *   on the same flag.
  */
 import { useEffect, useMemo } from 'react';
 import { EqxIcon, EqxRail, railWidthFor, useRailCompact, type EqxRailItem } from '../../ui/index.js';
 import { selectControlMode, useShouldRenderHud, useUIStore } from '../state/store';
 import { panelForDrawerTab } from '../state/rightPanel';
 import type { UIStore } from '../state/storeTypes';
-import { requestBuildSidebar } from '../components/BuildSidebar';
 import { AdvancedDrawer } from './Drawer/AdvancedDrawer';
 import { HoldPanel } from '../panels/HoldPanel';
+import { TradePanel } from '../panels/TradePanel';
 import { FleetRailPanel } from '../panels/FleetPanel';
 import { DetailsPanel } from '../panels/DetailsPanel';
+import { CogPanel } from '../panels/CogPanel';
 import { Slot } from './Slot';
 import { RAIL_COG, railItemById, railTools, RAIL_COMMON, type RailItemSpec } from './railItems';
 
@@ -32,7 +36,6 @@ export function pickRailItem(id: string, s: PickState): void {
   if (spec === undefined) return;
   const open = spec.open;
   if (open.kind === 'contacts') { s.setContactsOpen(!s.contactsOpen); return; }
-  if (open.kind === 'build') { s.setRightPanel(null); requestBuildSidebar(); return; }
   if (s.rightPanel === spec.id) { s.setRightPanel(null); return; }
   // A drawer page: keep the page already shown in that panel, else its first page.
   if (open.kind === 'drawer' && panelForDrawerTab(s.drawerTab) !== spec.id) { s.setDrawerTab(open.page); return; }
@@ -73,9 +76,11 @@ export function RightPanelHost(): JSX.Element {
         </Slot>
       )}
       <AdvancedDrawer />
+      <TradePanel />
       <HoldPanel />
       <FleetRailPanel />
       <DetailsPanel />
+      <CogPanel />
     </>
   );
 }

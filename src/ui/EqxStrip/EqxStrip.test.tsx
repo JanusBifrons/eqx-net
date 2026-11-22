@@ -70,7 +70,9 @@ describe('EqxStrip', () => {
     expect(cs.flexDirection).toBe('column');
     expect(cs.alignItems).toBe('center');
     expect(cs.boxSizing).toBe('border-box');
-    expect(cs.width).toBe(`${STRIP_WIDTH}px`);
+    // One tile plus padding, widened by the camera band (safe-area-inset-left)
+    // so the strip can sit flush on the edge with its buttons clear of the band.
+    expect(strip.style.width || cs.width).toContain(`${STRIP_WIDTH}px`);
     expect(cs.position).not.toBe('fixed');
     expect(cs.position).not.toBe('absolute');
   });
@@ -81,7 +83,10 @@ describe('EqxStrip', () => {
     expect(cs.borderLeftWidth === '0' || cs.borderLeftWidth === '0px' || cs.borderLeftStyle === 'none').toBe(true);
     expect(cs.borderRightWidth).toBe('1px');
     expect(cs.borderRadius).toBe(`0 ${HUD.strip.radius}px ${HUD.strip.radius}px 0`);
-    expect(cs.padding).toBe(`${HUD.strip.pad}px`);
+    expect(cs.paddingTop).toBe(`${HUD.strip.pad}px`);
+    expect(cs.paddingRight).toBe(`${HUD.strip.pad}px`);
+    // Flush on the edge: the left padding also steps the buttons past a phone's camera band.
+    expect(cs.paddingLeft).toContain('safe-area-inset-left');
     expect(cs.gap).toBe(`${HUD.strip.gap}px`);
   });
 

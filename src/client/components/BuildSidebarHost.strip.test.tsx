@@ -21,6 +21,9 @@ const mode = (): string | null =>
 const strip = (): HTMLElement | null => screen.queryByTestId('build-strip');
 const full = (): boolean => screen.queryByTestId('build-rail') !== null;
 
+/** Enter Build, then tap the rail's Build item (entering Build opens nothing). */
+const openBuild = (): void => { useUIStore.getState().setBuildMode(true); useUIStore.getState().setRightPanel('build'); };
+
 function pick(cat: string, kind: string): void {
   fireEvent.click(screen.getByTestId(`build-cat-${cat}`));
   fireEvent.click(screen.getByTestId(`build-${kind}`).querySelector('button')!);
@@ -29,12 +32,12 @@ function pick(cat: string, kind: string): void {
 describe('BuildSidebarHost: the placing strip', () => {
   beforeEach(() => {
     cleanup();
-    useUIStore.setState({ phase: 'galaxy-map', isDead: false, placementKind: null, buildMode: false, packedStock: null });
+    useUIStore.setState({ phase: 'galaxy-map', isDead: false, placementKind: null, buildMode: false, packedStock: null, rightPanel: null });
   });
 
   it('a pick folds the sidebar to the strip with the picked kind; Confirm keeps it', () => {
     render(<BuildSidebarHost />);
-    act(() => useUIStore.getState().setBuildMode(true));
+    act(() => openBuild());
     expect(mode()).toBe('full');
     pick('economy', 'solar');
     expect(useUIStore.getState().placementKind).toBe('solar');
@@ -48,7 +51,7 @@ describe('BuildSidebarHost: the placing strip', () => {
 
   it('the portrait expands with placement live; another pick folds back on the new kind', () => {
     render(<BuildSidebarHost />);
-    act(() => useUIStore.getState().setBuildMode(true));
+    act(() => openBuild());
     pick('economy', 'solar');
     fireEvent.click(screen.getByTestId('build-strip-portrait').querySelector('button')!);
     expect(full()).toBe(true);
@@ -66,7 +69,7 @@ describe('BuildSidebarHost: the placing strip', () => {
 
   it('the full sidebar ✕ while placing folds to the strip; with nothing placed it closes', () => {
     render(<BuildSidebarHost />);
-    act(() => useUIStore.getState().setBuildMode(true));
+    act(() => openBuild());
     pick('economy', 'solar');
     fireEvent.click(screen.getByTestId('build-strip-portrait').querySelector('button')!);
     fireEvent.click(screen.getByTestId('build-sidebar-close'));
@@ -82,7 +85,7 @@ describe('BuildSidebarHost: the placing strip', () => {
 
   it('the strip ✕ cancels placing and the full list comes back; Build stays', () => {
     render(<BuildSidebarHost />);
-    act(() => useUIStore.getState().setBuildMode(true));
+    act(() => openBuild());
     pick('economy', 'solar');
     fireEvent.click(screen.getByTestId('build-strip-cancel'));
     expect(useUIStore.getState().placementKind).toBeNull();
@@ -94,7 +97,7 @@ describe('BuildSidebarHost: the placing strip', () => {
 
   it('a place-once kind ends placement: the strip goes, the full list comes back', () => {
     render(<BuildSidebarHost />);
-    act(() => useUIStore.getState().setBuildMode(true));
+    act(() => openBuild());
     pick('core', 'capital');
     expect(strip()).toHaveAttribute('data-kind', 'capital');
     act(() => { commitPlacement('capital'); });
@@ -104,7 +107,7 @@ describe('BuildSidebarHost: the placing strip', () => {
 
   it('leaving Build closes the strip', () => {
     render(<BuildSidebarHost />);
-    act(() => useUIStore.getState().setBuildMode(true));
+    act(() => openBuild());
     pick('economy', 'solar');
     act(() => { useUIStore.getState().setPlacementKind(null); useUIStore.getState().setBuildMode(false); });
     expect(strip()).toBeNull();
