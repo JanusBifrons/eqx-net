@@ -27,6 +27,13 @@ describe('focusPanelDock / focusPanelInsets', () => {
     // Upright: 40 %, capped.
     expect(focusPanelInsets('bottom', 412, 915, true)).toEqual({ top: 0, right: 0, bottom: SHEET_MAX_H });
   });
+
+  it('the right rail adds to the right inset; at 0 nothing moves', () => {
+    expect(focusPanelInsets('right', 1440, 900, false, 0)).toEqual(focusPanelInsets('right', 1440, 900, false));
+    expect(focusPanelInsets('right', 1440, 900, false, 56)).toEqual({ top: APP_BAR_H, right: PANEL_RIGHT_W + 56, bottom: 0 });
+    expect(focusPanelInsets('right', 915, 412, true, 48)).toEqual({ top: 0, right: 275 + 48, bottom: 0 });
+    expect(focusPanelInsets('bottom', 412, 915, true, 48)).toEqual({ top: 0, right: 48, bottom: SHEET_MAX_H });
+  });
 });
 
 describe('hopArrow', () => {

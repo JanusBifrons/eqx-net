@@ -24,6 +24,9 @@
            phone in landscape the user's grip naturally curls inward, so the
            media query below kicks the controls further from the bezel. */
         --mobile-edge-inset: 16px;
+        /* Right rail width (UI language plan B2). Right-edge HUD and camera
+           framing sit in by it (layout/railWidth.ts). 0 until the rail mounts. */
+        --rail-w: 0px;
       }
       @media (pointer: coarse) {
         :root { --app-bar-h: 0px; }
