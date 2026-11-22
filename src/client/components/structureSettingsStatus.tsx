@@ -12,12 +12,10 @@ import { selectionStats } from '../net/selectionStats';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { HUD } from '../hud/tokens';
 import { WINDOW_EDGE } from './GameWindow';
+import { structureOwnerLabel } from './ownerLabel';
 
-/** Whose building, for display: "you", the owner's name, or "Unknown" for an
- *  orphan (the owner did not resolve to a user). NEVER a raw playerId. */
-export function structureOwnerLabel(owner: string, ownerName: string | undefined, localId: string | null): string {
-  return owner === localId ? 'you' : (ownerName ?? 'Unknown');
-}
+// The owner label rule lives in the pure `ownerLabel.ts`; re-exported for callers.
+export { structureOwnerLabel };
 
 export interface SettingsStatusView {
   owner: string | undefined;

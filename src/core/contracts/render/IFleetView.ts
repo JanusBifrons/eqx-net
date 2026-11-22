@@ -1,12 +1,7 @@
-/** RTS / fleet overlays: order mode, squad overlay, map picks, selection. Part of `IRenderer`. */
+import type { RendererFeedback } from './RendererFeedback.js';
+
+/** RTS / fleet overlays: squad overlay, map picks, selection. Part of `IRenderer`. */
 export interface IFleetView {
-  /**
-   * RTS command view (slice 12): what a TOUCH tap with a fleet selection
-   * orders — 'move' to the tap point, or 'attack' the entity under it. The
-   * fleet strip's discrete toggle, pushed on change (worker
-   * `SET_FLEET_ORDER_MODE`). Mouse orders stay on right-click.
-   */
-  setFleetOrderMode(mode: 'move' | 'attack'): void;
   /**
    * RTS command view (slice 15a): squads + order markers of the local
    * player's own ships, built on the main thread from `fleet/fleetStatus.ts`
@@ -17,7 +12,8 @@ export interface IFleetView {
   setFleetOverlayModel(model: FleetOverlayModel): void;
   /**
    * RTS slice 14b: start picking a mode's target on the map (patrol route,
-   * ship to escort, retreat point), or cancel with null. While picking, a
+   * ship to escort, retreat point; tap rule T3: a move point, sent as a move
+   * order like a right-click), or cancel with null. While picking, a
    * map tap goes to the pick instead of the selection (worker
    * `SET_FLEET_PICK`). Points are dropped on every call.
    */
@@ -32,7 +28,25 @@ export interface IFleetView {
    * they warped: the same shipInstanceIds, re-selected in the new sector.
    */
   selectFleetShips(ids: readonly string[]): void;
+  /**
+   * Focus (select) this entity, exactly as a map tap on it does (the one
+   * selection the renderer owns; the left strip then shows its icons). Id and
+   * kind in the map pick's form (`selectedPickId/Kind`). Used by the Contacts
+   * panel's row tap (worker `FOCUS_ENTITY`).
+   */
+  focusEntity(id: string, kind: FocusEntityKind): void;
+  /**
+   * Tap rule T2: the left strip's Lock (and the T key) with ships selected —
+   * order the selected ships to attack the focus, through the same order path
+   * as a right-click (feedback `orderSeq` + order flash). A no-op unless ships
+   * are selected and the focus is attackable and not mine (worker
+   * `ATTACK_FOCUS`).
+   */
+  attackFocus(): void;
 }
+
+/** A map pick's kind (`RendererFeedback.selectedPickKind`, never null). */
+export type FocusEntityKind = NonNullable<RendererFeedback['selectedPickKind']>;
 
 /** One own ship's squad + order, as the renderer needs it (RTS slice 15a). */
 export interface FleetOverlayShip {
@@ -50,8 +64,8 @@ export interface FleetOverlayShip {
   route?: [number, number][];
 }
 
-/** RTS slice 14b: what a map pick is for. */
-export type FleetPickKindWire = 'patrol' | 'escort' | 'retreat';
+/** RTS slice 14b: what a map pick is for (`move`: tap rule T3, one point). */
+export type FleetPickKindWire = 'move' | 'patrol' | 'escort' | 'retreat';
 
 /** RTS slice 14b: a finished map pick (game space). Plain data. */
 export type FleetPickResultWire =

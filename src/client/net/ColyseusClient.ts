@@ -2099,7 +2099,7 @@ export class ColyseusGameClient {
    *  removed from the mirror. Ghost projectiles (`isGhost: true`) are
    *  preserved; the GhostManager re-adds them per-frame anyway. */
   private syncProjectiles(projectiles: SnapshotMessage['projectiles']): void {
-    syncProjectiles(this.mirror, projectiles, this._syncProjectilesSeenScratch);
+    syncProjectiles(this.mirror, projectiles, this._syncProjectilesSeenScratch, this.ghostManager.stoppedBolts);
   }
 
   // ── State mirror ────────────────────────────────────────────────────────
