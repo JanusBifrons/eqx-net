@@ -128,7 +128,7 @@ export function PilotSpectatorToggle(): JSX.Element | null {
         label="Fly a ship, command your fleet or build"
         data-testid="pilot-spectator-toggle"
         options={[
-          { id: 'fly', label: 'Fly', icon: <FlightIcon />, testId: 'pilot-toggle', onPress: onFlyClick },
+          { id: 'fly', label: 'Fly', ariaLabel: 'Fly a ship', icon: <FlightIcon />, testId: 'pilot-toggle', onPress: onFlyClick },
           { id: 'command', label: 'Command', icon: <ExploreIcon />, testId: 'spectator-toggle' },
           { id: 'build', label: 'Build', icon: <ConstructionIcon />, testId: 'build-toggle', onPress: onBuildClick },
         ]}

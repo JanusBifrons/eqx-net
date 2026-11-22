@@ -6,7 +6,8 @@
  * `onPress` fires on EVERY press (re-clicks too) with the button element, for
  * a menu anchored to it. The group carries `data-value` (the current id).
  * Fewer than 2 or more than 4 options throws in dev. `hud` is the variant that
- * floats over the game: compact, on the HUD panel backing. Colours and font
+ * floats over the game: the frozen mode-switch look (`HUD.segmentedHud`).
+ * Colours and font
  * from `hud/tokens.ts`; no sx / style / className.
  */
 import { ToggleButton, ToggleButtonGroup } from '@mui/material';
@@ -23,7 +24,15 @@ interface EqxSegmentedOptionBase {
 }
 
 export type EqxSegmentedOption = EqxSegmentedOptionBase &
-  ({ label: string; icon?: ReactNode } | { icon: ReactNode; tooltip: string });
+  (
+    | {
+        label: string;
+        icon?: ReactNode;
+        /** Accessible name when it differs from the label. */
+        ariaLabel?: string;
+      }
+    | { icon: ReactNode; tooltip: string }
+  );
 
 export interface EqxSegmentedProps {
   /** 2 to 4 options. */
@@ -33,7 +42,7 @@ export interface EqxSegmentedProps {
   /** Accessible name of the group. */
   label: string;
   disabled?: boolean;
-  /** Floats over the game: compact, HUD panel backing, no touch-min height. */
+  /** Floats over the game: the frozen mode-switch look (`HUD.segmentedHud`). */
   hud?: boolean;
   'data-testid'?: string;
 }
@@ -51,20 +60,24 @@ const BASE_SX = {
   '& .MuiToggleButton-root.Mui-selected': { color: HUD.color.brand, bgcolor: HUD.color.cell },
 } as const;
 
+const SH = HUD.segmentedHud;
+/** `hud`: exactly the pre-catalogue mode-switch look (tokens `HUD.segmentedHud`). */
 const HUD_SX = {
-  bgcolor: HUD.color.panel,
+  bgcolor: SH.bg,
+  borderRadius: SH.radius,
   '& .MuiToggleButton-root': {
-    typography: 'caption',
-    ...BASE_SX['& .MuiToggleButton-root'],
-    minHeight: 0,
-    px: { xs: 0.75, sm: 1.25 },
-    py: { xs: 0.25, sm: 0.5 },
-    lineHeight: 1.1,
+    px: { xs: SH.padXPhone, sm: SH.padXDesktop },
+    py: { xs: SH.padYPhone, sm: SH.padYDesktop },
+    fontSize: { xs: SH.fontPhone, sm: SH.fontDesktop },
+    lineHeight: SH.lineHeight,
+    color: SH.ink,
+    borderColor: SH.edge,
     textTransform: 'none' as const,
-    gap: 0.5,
+    gap: SH.gap,
   },
-  '& .MuiToggleButton-root.Mui-selected': BASE_SX['& .MuiToggleButton-root.Mui-selected'],
-  '& .MuiSvgIcon-root': { fontSize: '1.25em' },
+  '& .MuiToggleButton-root.Mui-selected': { color: HUD.color.brand, bgcolor: SH.selectedBg },
+  '& .MuiToggleButton-root.Mui-selected:hover': { bgcolor: SH.selectedHoverBg },
+  '& .MuiSvgIcon-root': { fontSize: { xs: SH.iconPhone, sm: SH.iconDesktop }, mr: SH.iconGap },
 } as const;
 
 export function EqxSegmented({
@@ -102,7 +115,7 @@ export function EqxSegmented({
           onClick: o.onPress ? (e: MouseEvent<HTMLElement>) => o.onPress?.(e.currentTarget) : undefined,
         };
         return 'label' in o ? (
-          <ToggleButton key={o.id} {...common}>
+          <ToggleButton key={o.id} {...common} aria-label={o.ariaLabel}>
             {o.icon}
             {o.label}
           </ToggleButton>

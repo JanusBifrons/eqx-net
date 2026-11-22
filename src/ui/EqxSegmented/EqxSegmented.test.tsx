@@ -119,4 +119,16 @@ describe('EqxSegmented', () => {
     expect(screen.getByRole('button', { name: 'Fly' }).contains(screen.getByTestId('ico'))).toBe(true);
     expect(screen.getByRole('button', { name: 'Build' }).getAttribute('aria-pressed')).toBe('false');
   });
+  it('a text option may set its own accessible name (ariaLabel)', () => {
+    render(
+      <EqxSegmented
+        options={[{ id: 'a', label: 'Fly', ariaLabel: 'Fly a ship' }, { id: 'b', label: 'Build' }]}
+        value="a"
+        onChange={() => {}}
+        label="Mode"
+      />,
+    );
+    expect(screen.getByRole('button', { name: 'Fly a ship' }).textContent).toBe('Fly');
+    expect(screen.getByRole('button', { name: 'Build' })).toBeTruthy();
+  });
 });

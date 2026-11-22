@@ -83,6 +83,28 @@ export const HUD = {
     /** A dragged panel snapping back to docked, ms. */
     snapBackMs: 160,
   },
+  /** The compact segmented switch floating over the game (EqxSegmented `hud`;
+   *  the Fly / Command / Build mode switch). Frozen from its pre-catalogue look.
+   *  Sizes in px; pad / gap in MUI spacing units; phone = xs, desktop = sm up. */
+  segmentedHud: {
+    bg: 'rgba(8,12,22,0.72)',
+    ink: '#9aa0b4',
+    edge: 'rgba(255,255,255,0.12)',
+    selectedBg: 'rgba(0,255,136,0.12)',
+    selectedHoverBg: 'rgba(0,255,136,0.18)',
+    radius: 1,
+    fontPhone: 10,
+    fontDesktop: 12,
+    iconPhone: 14,
+    iconDesktop: 16,
+    iconGap: 0.4,
+    lineHeight: 1.1,
+    padXPhone: 0.75,
+    padXDesktop: 1.25,
+    padYPhone: 0.25,
+    padYDesktop: 0.5,
+    gap: 0.5,
+  },
 } as const;
 
 export function hullColor(pct: number): string {

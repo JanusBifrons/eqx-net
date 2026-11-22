@@ -134,6 +134,7 @@ describe('PilotSpectatorToggle — Fly / Command / Build', () => {
     render(<PilotSpectatorToggle />);
     expect(screen.getByTestId('spectator-toggle')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId('pilot-toggle')).toHaveAttribute('aria-pressed', 'false');
+    expect(screen.getByTestId('pilot-toggle')).toHaveAttribute('aria-label', 'Fly a ship');
     expect(screen.getByTestId('pilot-spectator-toggle')).toHaveAttribute('data-value', 'command');
   });
 
