@@ -17,7 +17,6 @@ export const DRAWER_TAB_PANEL: Readonly<Record<string, RailId>> = {
   'trade-offers': 'trade',
   'trade-deals': 'trade',
   'trade-history': 'trade',
-  'trade-gift': 'trade',
   'trade-blueprints': 'trade',
   contracts: 'jobs',
   bounties: 'jobs',
