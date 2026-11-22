@@ -80,7 +80,6 @@ import { TradeToasts } from './components/TradeToasts';
 import { WhileAwayDialog } from './components/WhileAwayDialog';
 import { WarpInWarningBanner } from './components/WarpInWarningBanner';
 import { PilotSpectatorToggle } from './components/PilotSpectatorToggle';
-import { ControlModeBadge } from './components/SpectatorIndicator';
 import { GalaxyPickerChrome, type GalaxyPickerApi } from './components/GalaxyPickerChrome';
 import { LayoutProvider } from './layout/LayoutProvider';
 import { Slot } from './layout/Slot';
@@ -953,12 +952,12 @@ function GameSurface({
       {/* Phase 5 — the top-right X/Y · hull · ammo · speed · heading stat card
        *  (ShipStatsCard) was REMOVED entirely (user request); the hull/shield
        *  HUD bars + the in-world stat panel carry that info. */}
-      {/* Phase 5 — always-visible Pilot/Spectate toggle (out of the speed-dial)
-       *  + a spectator-mode status badge. */}
+      {/* Phase 5 — always-visible Pilot/Spectate toggle (out of the speed-dial).
+       *  No separate mode label: the switch itself shows the active mode
+       *  (owner 2026-11-22). */}
       {/* The top-centre column carries status + lock warnings, so on a wide screen the
           toggle sits under the sector chip instead of over the ship. */}
       <PilotToggleSlot />
-      <ControlModeBadge />
       <AdvancedDrawer />
       {/* Phase 4 WS-A1 (D3) — the blocking DeathOverlay "You Died/Respawn" modal
        *  is removed. Death transitions INSTANTLY into spectator (free-roam
