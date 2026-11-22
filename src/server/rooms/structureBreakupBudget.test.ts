@@ -33,8 +33,10 @@ const PIECES_PER_STRUCTURE_MAX = 6;
  *  base fits in 40 % of the sub-cap FIFO (800 of 2000), so two worst bases
  *  dying back to back still fit before any eviction. */
 const BASE_PIECE_BUDGET = Math.floor(MAX_LIVE_SUBCAP_WRECK_PIECES * 0.4);
-/** Collider vertices for one whole base (measured worst 7,465, citadel bloomgate/b0; ~20 % headroom). */
-const BASE_VERTEX_BUDGET = 9_000;
+/** Collider vertices for one whole base (measured worst 9,189, citadel bloomgate/b0, since
+ *  the radial cracks fan from an inner centre: chunkier wedges, longer jagged seams; 7,870
+ *  before; ~20 % headroom). */
+const BASE_VERTEX_BUDGET = 11_000;
 
 /** Wreck bodies one blast may spawn in one tick (the death path has no
  *  per-tick budget): measured worst 38 at the cap (citadel) with the 320 u splash. */
