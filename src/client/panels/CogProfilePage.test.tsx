@@ -4,7 +4,7 @@
  * out" in place of Log out; no dialog). Cancel backs out without logging out.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 import { useAuthStore } from '../auth/authStore.js';
 import { useUIStore } from '../state/store.js';
 
@@ -47,6 +47,18 @@ describe('CogProfilePage (U2-8b)', () => {
     expect(logout).not.toHaveBeenCalled();
     expect(screen.getByTestId('cog-profile-logout')).toBeTruthy();
     expect(screen.queryByTestId('cog-profile-logout-confirm')).toBeNull();
+  });
+
+  it('closing the cog drops a half-made confirm, so reopening shows Log out', () => {
+    openCogProfile();
+    render(<CogProfilePage />);
+    fireEvent.click(screen.getByTestId('cog-profile-logout'));
+    expect(screen.getByTestId('cog-profile-logout-confirm')).toBeTruthy();
+    act(() => { useUIStore.getState().setRightPanel(null); });
+    act(() => { openCogProfile(); });
+    expect(screen.getByTestId('cog-profile-logout')).toBeTruthy();
+    expect(screen.queryByTestId('cog-profile-logout-confirm')).toBeNull();
+    expect(logout).not.toHaveBeenCalled();
   });
 
   it('a guest gets Sign in, which goes to the auth phase and closes the panel', () => {

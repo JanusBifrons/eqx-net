@@ -17,6 +17,7 @@ import { useAuthStore } from '../auth/authStore';
 import { useLogout } from '../auth/useLogout';
 import { apiUpdateProfile } from '../auth/authApi';
 import { useUIStore } from '../state/store';
+import { selectDrawerTabShown } from '../state/rightPanel';
 import { COG_SECTION_STYLE } from './cogRows';
 
 /** Opens the cog panel on the Profile page (header avatar, touch badge). */
@@ -87,6 +88,10 @@ function GuestProfile(): JSX.Element {
 function LogoutRow(): JSX.Element {
   const logout = useLogout();
   const [confirming, setConfirming] = useState(false);
+  // Leaving the page (closing the cog or opening another page) drops a
+  // half-made confirm, so reopening never lands on "Confirm log out".
+  const shown = useUIStore(selectDrawerTabShown('profile'));
+  useEffect(() => { if (!shown) setConfirming(false); }, [shown]);
   if (!confirming) {
     return <EqxButton tone="danger" fullWidth onClick={() => setConfirming(true)} data-testid="cog-profile-logout">Log out</EqxButton>;
   }
