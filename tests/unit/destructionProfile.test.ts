@@ -42,10 +42,12 @@ describe('destructionProfile: every ship kind', () => {
     expect(destructionProfile({ type: 'ship', kindId: 'no-such-ship' })).toBe('none');
   });
 
-  it('structures map to `none` until that work picks their profiles', () => {
+  it('every structure kind breaks (`structure`) but the gates; an unknown one is `none`', () => {
     for (const s of STRUCTURE_KINDS_LIST) {
-      expect(destructionProfile({ type: 'structure', kindId: s.id })).toBe('none');
+      const gate = s.id === 'shield_gate' || s.id === 'shield_airlock';
+      expect(destructionProfile({ type: 'structure', kindId: s.id })).toBe(gate ? 'none' : 'structure');
     }
+    expect(destructionProfile({ type: 'structure', kindId: 'no-such-structure' })).toBe('none');
   });
 });
 

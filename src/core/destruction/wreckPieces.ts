@@ -140,8 +140,8 @@ export interface WreckDeathPose {
 }
 
 export interface WreckBuildInput {
-  /** The dead hull's ship kind, or any wreck source (`WreckSource`: a rock,
-   *  later a structure); a kind id reads exactly as its `shipWreckSource`. */
+  /** The dead hull's ship kind, or any wreck source (`WreckSource`: a rock
+   *  or a structure); a kind id reads exactly as its `shipWreckSource`. */
   kindId: ShipKindId | WreckSource;
   pose: WreckDeathPose;
   /** World point the killing blow landed (projected onto the hull). */
@@ -424,9 +424,10 @@ export function buildWreckPieces(input: WreckBuildInput): WreckBuild {
     && input.killWorld !== null;
   const cutPoint = burnedGap ? hullLocalPoint(src, pose, target) : killLocal;
 
-  // A ship names its kind; any other source its rock (exactly one of them).
+  // A ship names its kind, a rock its rock, a structure its structure
+  // (exactly one of them).
   const fracture: WreckFractureInputs = {
-    ...(src.ship !== null ? { kindId: src.ship } : { rock: src.rock! }),
+    ...(src.ship !== null ? { kindId: src.ship } : src.structure !== null ? { structure: src.structure } : { rock: src.rock! }),
     seed: input.seed >>> 0,
     killX: cutPoint.x,
     killY: cutPoint.y,

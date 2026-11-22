@@ -4,16 +4,17 @@
  *
  * Takes an entity, not just a ship kind id, so a structure kind
  * (`structureKinds.ts`) can map to a profile later (owner 2026-11-13: "This
- * includes structures as well in the future"). Until that work decides it
- * (a base's capital a spectacle, a solar panel quiet), structures are `none`:
- * they keep today's behaviour.
+ * includes structures as well in the future"). Every structure kind breaks
+ * (`structure`) but the gates (`NO_WRECK_STRUCTURE_KINDS`); an unknown
+ * structure kind id is `none`.
  *
  * Kept out of `destruction.ts`, which `tuning.ts` (and so the catalogue)
  * imports: this one reads the catalogue.
  */
 import { getShipKind, isShipKindId } from '../shipKinds.js';
+import { isStructureKindId } from '../structureKinds.js';
 import { shipTuning } from './tuning.js';
-import { DESTRUCTION_PROFILES, type DestructionProfile, type DestructionProfileId } from './destruction.js';
+import { DESTRUCTION_PROFILES, NO_WRECK_STRUCTURE_KINDS, type DestructionProfile, type DestructionProfileId } from './destruction.js';
 
 /** A dying thing, by entity type and its kind within that type. */
 export type DestructionEntity =
@@ -27,7 +28,7 @@ export function destructionProfile(entity: DestructionEntity): DestructionProfil
     case 'ship':
       return isShipKindId(entity.kindId) ? shipTuning(getShipKind(entity.kindId)).destruction : 'none';
     case 'structure':
-      return 'none';
+      return isStructureKindId(entity.kindId) && !NO_WRECK_STRUCTURE_KINDS.has(entity.kindId) ? 'structure' : 'none';
   }
 }
 

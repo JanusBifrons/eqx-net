@@ -9,13 +9,14 @@ import { shipScrapGroups } from '../geometry/shipScrapGroups.js';
 
 /** Read from the kind's destruction profile (#18): `capital` with
  *  `capitalWrecksOn`; `subcap` with `subcapWrecksOn`, except composite kinds
- *  (havok), which keep their per-component scrap; `none` / `rock` never.
+ *  (havok), which keep their per-component scrap; `none` / `rock` /
+ *  `structure` never (never a ship's profile).
  *  Per hit: reads the tuning directly, no allocation (#14). */
 export function wreckKindAllowed(kindId: string, capitalWrecksOn: boolean, subcapWrecksOn: boolean): boolean {
   if (!isShipKindId(kindId)) return false;
   switch (shipTuning(getShipKind(kindId)).destruction) {
     case 'capital': return capitalWrecksOn;
     case 'subcap': return subcapWrecksOn && shipScrapGroups(kindId).length === 0;
-    case 'none': case 'rock': return false;
+    case 'none': case 'rock': case 'structure': return false;
   }
 }
