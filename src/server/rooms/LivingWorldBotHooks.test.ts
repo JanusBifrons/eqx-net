@@ -28,6 +28,8 @@ import { LivingWorldBotHooks, type LivingWorldBotHooksDeps } from './LivingWorld
 import { DEFAULT_SHIP_KIND } from '../../shared-types/shipKinds.js';
 import type { BotAggroEvent, WarpOutEvent } from '../../shared-types/messages.js';
 import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
+import type { WarpTarget } from '../../core/galaxy/warpTarget.js';
+import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import {
   SLOT_X_OFF,
   SLOT_Y_OFF,
@@ -40,6 +42,11 @@ import {
 
 /** Build a hooks instance over hand-rolled deps; expose the captured side
  *  effects (markHostile ledger writes + bot_aggro broadcasts). */
+/** The warp route rule the hooks see (tests swap it); default: line clear. */
+let warpRule: LivingWorldBotHooksDeps['warpTargetFor'] = (_k, _fx, _fy, tx, ty, out) =>
+  Object.assign(out, { x: tx, y: ty, blocked: false, shortBy: 0, reachable: true });
+const posted: WorkerCmd[] = [];
+
 function makeHooks(): {
   hooks: LivingWorldBotHooks;
   marks: Array<{ droneId: string; targetId: string }>;
@@ -65,7 +72,8 @@ function makeHooks(): {
     sabU32: new Uint32Array(sab.buffer),
     solar: () => false,
     landingPoint: (_id, x, y) => ({ x, y }),
-    postToWorker: () => {},
+    warpTargetFor: (k, fx, fy, tx, ty, out) => warpRule(k, fx, fy, tx, ty, out),
+    postToWorker: (cmd) => { posted.push(cmd); },
     playerToSlot: [],
     getActiveShip: () => undefined,
     swarmHealth: new Map<string, number>(),
@@ -241,5 +249,42 @@ describe('LivingWorldBotHooks.despawnBot — carries the live SAB world pose (WS
 
   it('returns null when the bot is not in the registry (already gone)', () => {
     expect(env.hooks.despawnBot('lwbot-unknown')).toBeNull();
+  });
+});
+
+describe('LivingWorldBotHooks.warpBot — warp route check (warp S2)', () => {
+  function bot(env: ReturnType<typeof makeHooks>): void {
+    env.registry.set('fs-1', { id: 'fs-1', entityId: 7, slot: 3, kind: 1, shipKind: DEFAULT_SHIP_KIND } as unknown as SwarmEntityRecord);
+    env.sab[slotBase(3) + SLOT_X_OFF] = 100; env.sab[slotBase(3) + SLOT_Y_OFF] = -50;
+  }
+  const saved = warpRule;
+  beforeEach(() => { posted.length = 0; warpRule = saved; });
+
+  it('warps to the near side the route check gives, from its own pose', () => {
+    const env = makeHooks(); bot(env);
+    const seen: number[] = [];
+    warpRule = (_k, fx, fy, tx, ty, out: WarpTarget) => {
+      seen.push(fx, fy, tx, ty);
+      return Object.assign(out, { x: 4_000, y: 0, blocked: true, shortBy: 6_000, reachable: true });
+    };
+    expect(env.hooks.warpBot('fs-1', 10_000, 0)).toBe(true);
+    expect(seen).toEqual([100, -50, 10_000, 0]);
+    expect(posted).toEqual([{ type: 'BOT_WARP', slot: 3, x: 4_000, y: 0 }]);
+  });
+
+  it('clamps the destination to the sector before the route check', () => {
+    const env = makeHooks(); bot(env);
+    let tx = 0;
+    warpRule = (_k, _fx, _fy, x, y, out) => { tx = x; return Object.assign(out, { x, y, blocked: false, shortBy: 0, reachable: true }); };
+    env.hooks.warpBot('fs-1', 1e12, 0);
+    expect(tx).toBeLessThan(1e12);
+  });
+
+  it('refuses an unreachable target: no warp posted, no NPC warp tracked', () => {
+    const env = makeHooks(); bot(env);
+    warpRule = (_k, fx, fy, _tx, _ty, out) => Object.assign(out, { x: fx + 10, y: fy, blocked: true, shortBy: 9_000, reachable: false });
+    expect(env.hooks.warpBot('fs-1', 10_000, 0)).toBe(false);
+    expect(posted).toEqual([]);
+    expect(env.hooks.npcWarps.has('fs-1')).toBe(false);
   });
 });

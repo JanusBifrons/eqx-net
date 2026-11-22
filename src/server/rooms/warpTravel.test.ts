@@ -54,4 +54,31 @@ describe('WarpTravelTracker', () => {
     expect(t.arrivedRecently('p', 2)).toBe(false);
     expect(t.interestPoint('p')).toBeNull();
   });
+
+  it('accepted: only the exact point of a spool or run in progress', () => {
+    const { t, set } = harness((x, y) => ({ x, y }));
+    t.noteRequest('p', 1000, 0);
+    expect(t.accepted('p', 1000, 0)).toBe(false); // not spooling yet
+    set(1); t.tick(1);
+    expect(t.accepted('p', 1000, 0)).toBe(true);
+    expect(t.accepted('p', 1000, 1)).toBe(false);
+    expect(t.accepted('q', 1000, 0)).toBe(false);
+    set(2); t.tick(2);
+    expect(t.accepted('p', 1000, 0)).toBe(true);
+    set(0); t.tick(3);
+    expect(t.accepted('p', 1000, 0)).toBe(false); // landed: a new warp is checked afresh
+  });
+
+  it('a short hop that ends in the spool (got there on its own engines): no run, no drop, forgotten', () => {
+    const { t, log, set } = harness((x, y) => ({ x, y }));
+    t.noteRequest('p', 1000, 0);
+    set(1); t.tick(1);
+    expect(t.accepted('p', 1000, 0)).toBe(true);
+    set(0); t.tick(2); // spool → idle (warpReached): never ran
+    expect(t.accepted('p', 1000, 0)).toBe(false);
+    expect(t.isTravelling('p')).toBe(false);
+    expect(t.arrivedRecently('p', 2)).toBe(false); // nothing to draw: it never left
+    expect(t.interestPoint('p')).toBeNull();
+    expect(log).toEqual([]);
+  });
 });

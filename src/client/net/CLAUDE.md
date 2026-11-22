@@ -17,4 +17,5 @@ Rules for the client network layer. `ColyseusClient.ts` is at its size cap (`scr
 - **The teleport bound** (`isImplausibleJump`, `TELEPORT_MAX_PLAUSIBLE_SPEED`, `TELEPORT_FLOOR_U`): one home, `plausibleSpeed.ts`; every interpolator that snaps imports it, never redefines it.
 - **Display-delay slew + stall hold:** one home, `displayDelayHold.ts`, one record per stream; never copy it (modes: `swarmDelayMode.ts`).
 - **The local ship's own fire** (`sendFire`, the live beam) lives in `fireControl/LocalFireClient.ts`; **damage and death** (`handleDamage`, `killEntity`, ...) in `damagePath.ts`. Each takes a host/ctx built once in `ColyseusClient`.
+- **Net-health HUD** (`hud/netHealth.ts`) reads only existing net counters; extend them, never a second stats pipeline.
 - **Judge a playtest's network** with `pnpm phone:verdict`: [network-quality](../../../docs/ops/network-quality.md).
