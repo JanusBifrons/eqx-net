@@ -560,7 +560,9 @@ const STRUCTURE: DestructionProfile = {
   settlePerRadius: 0.125,
   settleSpin: 0.3,
   piecesCollide: true,
-  fx: { ...NONE.fx, glowStyle: 'simple', glowSeconds: 1, cutGlowStyle: 'full' },
+  // Its pieces wear the structure's own art, burnt like a dead capital's
+  // (owner: "go dark like a dead hull"; `burntTint`).
+  fx: { ...NONE.fx, glowStyle: 'simple', glowSeconds: 1, cutGlowStyle: 'full', burntArt: true },
 };
 
 export const DESTRUCTION_PROFILES: Readonly<Record<DestructionProfileId, DestructionProfile>> = {

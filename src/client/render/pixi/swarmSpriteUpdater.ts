@@ -32,7 +32,6 @@ import type { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind, type WeaponMount } from '../../../shared-types/shipKinds';
 import { getStructureKind } from '../../../shared-types/structureKinds';
-import { destructionProfileOf } from '../../../shared-types/shipScale/destructionProfile';
 import { wrapPi, rotateMountToward } from '../../../core/ai/WeaponMountController';
 import {
   DAMAGE_FLASH_COLOR,
@@ -58,7 +57,7 @@ type BatteryText = Text & { shownStored?: number; shownMax?: number };
 import { minerRangeForKind } from '../minerRangeRing.js';
 import {
   buildArtShipSprite, isMachinedSprite, scrapHandleFor, shipArtSwap, structHandleFor,
-  updateArtShipLight, shipArtHandleForEntity, wreckArtHandleFor,
+  updateArtShipLight, shipArtHandleForEntity,
 } from '../art/shipArtSprites.js';
 import { MachinedShipSprite } from '../art/MachinedShipSprite.js';
 import {
@@ -68,23 +67,13 @@ import { resolveEntityDisplayPose } from '../../net/swarmDisplayPose';
 import { wreckSourceKindOf } from '../../net/wreckRootSource';
 import { mainThreadNowMs } from '../mainThreadNow.js';
 import { WreckPieceSprite, coolWreckInfo, wreckPieceSpeckColor } from './wreckArt.js';
+import { wreckPieceArtHandle, wreckPieceArtOf } from './wreckPieceArtHandle.js';
 import { buildRockPieceArt, classicRockTint, isRockWreck } from './rockPieceArt.js';
 import { isFieldRockMesh } from '../field/CutFieldLayer.js';
 import { placedRockMeshData } from '../field/placedRockMesh.js';
 
 /** S2b: an empty wreck map for frames whose mirror carries none. */
 const NO_WRECKS: ReadonlyMap<number, unknown> = new Map();
-/** Per parent kind: do its wreck pieces draw the dead bake (`fx.deadArt`)?
- *  Filled once per kind (the profile lookup allocates its argument). */
-const wreckDeadArt = new Map<string, boolean>();
-function wreckDeadArtFor(kindId: string): boolean {
-  let v = wreckDeadArt.get(kindId);
-  if (v === undefined) {
-    v = destructionProfileOf({ type: 'ship', kindId }).fx.deadArt;
-    wreckDeadArt.set(kindId, v);
-  }
-  return v;
-}
 
 import type { SpriteBuildSig, SwarmSpriteCtx } from './swarmSpriteCtx.js';
 import { RIG_TICKS_PER_SEC, type StructureRigView } from './structureRigs.js';
@@ -219,16 +208,16 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     const wreckShip = wreckDesc !== undefined && wreckSourceKindOf(wreckDesc.parentKind) === 'ship';
     const wreckRock = isRockWreck(wreckDesc);
     const wreckParent = wreckDesc !== undefined ? (wreckShip ? entry.shipKind ?? wreckDesc.parentKind : wreckDesc.parentKind) : '';
-    const wreckArtHandle = wreckShip && ctx.art.art
-      ? wreckArtHandleFor(ctx.art, spriteKey, wreckParent, wreckDesc!.owner ?? entry.faction, wreckDeadArtFor(wreckParent))
-      : null;
+    // A structure's piece wears the structure's own bake (its root's kind, `wreckPieceArtHandle`).
+    const wreckSrc = wreckDesc !== undefined && !wreckShip && !wreckRock ? ctx.wrecks!.sourceOf(entry.wreckId!) : undefined; // no alloc (a rock's keys a string: build time only)
+    const wreckArtHandle = wreckDesc !== undefined ? wreckPieceArtHandle(ctx.art, spriteKey, wreckDesc, wreckParent, entry.faction, wreckSrc) : null;
+    const pieceArt = wreckPieceArtOf(wreckArtHandle);
     // A rock's piece draws the uncut rock's surface (the field rock shader,
     // in the root rock's rest frame); built once, no bake to wait for.
     const pieceRock = wreckRock ? ctx.wrecks!.rockOf(entry.wreckId!) : undefined;
     if (
       sprite instanceof WreckPieceSprite &&
-      wreckArtHandle !== null &&
-      wreckArtHandle.state === 'ready' && wreckArtHandle.ship !== null && sprite.art !== wreckArtHandle.ship
+      pieceArt !== null && sprite.art !== pieceArt
     ) {
       ctx.shipContainer.removeChild(sprite);
       ctx.spriteBuildSigs.delete(spriteKey);
@@ -311,11 +300,10 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         const info = ctx.wreckArt !== undefined
           ? ctx.wreckArt.infoFor(desc, pieces, index, pose, entry.firstTick ?? entry.lastUpdateTick, fxNow) // age at first receipt, not this (maybe stalled) frame
           : coolWreckInfo(desc);
-        const shipArt = wreckArtHandle !== null && wreckArtHandle.state === 'ready' ? wreckArtHandle.ship : null;
         if (wreckRock && pieceRock === undefined) continue; // rock piece without its rock: not drawn
         sprite = new WreckPieceSprite(
-          g, wreckParent, shipArt, info, index, pieceRock !== undefined ? buildRockPieceArt(g, pieceRock, ctx.fieldRocks ?? null) : null,
-          shipArt !== null ? wreckPieceSpeckColor(wreckParent, wreckArtHandle!.job) : null, wreckShip ? null : ctx.wrecks!.sourceOf(entry.wreckId!) ?? null,
+          g, wreckParent, pieceArt, info, index, pieceRock !== undefined ? buildRockPieceArt(g, pieceRock, ctx.fieldRocks ?? null) : null,
+          pieceArt !== null ? wreckPieceSpeckColor(wreckParent, wreckArtHandle!.job) : null, wreckShip ? null : wreckSrc ?? ctx.wrecks!.sourceOf(entry.wreckId!) ?? null,
         );
       } else {
         // An awake cut-field rock keeps its cut shape and rock surface; a

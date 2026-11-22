@@ -53,6 +53,7 @@ import { BufferImageSource, Container, Geometry, Mesh, MeshGeometry, Sprite, Tex
 import { WRECK_CRACK_MS } from '../../../shared-types/wreckTiming.js';
 import { LitShipMesh } from '../art/litShipShader.js';
 import { litPass } from '../art/litPass.js';
+import { flatLook } from '../art/lightingSettings.js';
 import type { ShipArt } from '../art/ArtService.js';
 import { sunFrameBlend, type SunBlend } from '../art/machinedShipLight.js';
 import { buildWreckPieceGfx, wreckPieceColors } from './spriteBuilders.js';
@@ -1161,17 +1162,21 @@ export class WreckPieceSprite extends Container {
       const L = wreckTexLayout(art);
       const lit = art.lit;
       const tint = info.fx.burntArt ? burntTint(piece, info) : 0xffffff;
+      // A structure's piece (its bake via `structArtAsShipArt`) is lit as
+      // the structure was (`flatLook`: real-length shadows).
+      const flat = source !== null && source.structure !== null;
       for (const m of wreckPieceMeshes(piece, L)) {
         const tex = art.frames[m.tile]!;
-        const mesh = new LitShipMesh({ tex, w: lit.w, rows: tex.frame.height, y0: m.tile * art.tileH, hullH: lit.h, ppu: lit.ppu, maxH: lit.maxH, emisMax: lit.emisMax }, settings);
+        const mesh = new LitShipMesh({ tex, w: lit.w, rows: tex.frame.height, y0: m.tile * art.tileH, hullH: lit.h, ppu: lit.ppu, maxH: lit.maxH, emisMax: lit.emisMax }, flat ? flatLook(settings) : settings);
         mesh.geometry = litPieceGeometry(m, tex, piece);
         mesh.position.set(-piece.cx, piece.cy);
-        mesh.capitalHull = true;
+        mesh.capitalHull = !flat; // a structure's, like the live structure, is shaded by capitals
         // Wreck-piece art (the dead bake) casts no self shadow: the shader
         // marches the PARENT's whole height map, so a piece sat in the
         // shadow of hull the break removed (beam take 7 review: one half of
         // a sliced frigate black, the other lit).
-        if (info.fx.deadArt) mesh.selfShadow = false;
+        // Likewise a structure's piece (its height map is the whole structure).
+        if (info.fx.deadArt || flat) mesh.selfShadow = false;
         mesh.tint = tint;
         this.addChild(mesh);
         litPass.register(mesh);

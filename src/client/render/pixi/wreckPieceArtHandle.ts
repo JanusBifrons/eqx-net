@@ -1,0 +1,83 @@
+/**
+ * Which baked art a wreck piece wears, by what the wreck was cut from
+ * (`wreckSourceKindOf`): a ship's piece the bake its live hull wore
+ * (`wreckArtHandleFor`), a structure's piece the structure's own bake
+ * (`structHandleFor`), a rock's none (it draws the field rock shader).
+ * No new bake job and no new texture: a structure's one lit frame is handed
+ * to `WreckPieceSprite` in `ShipArt`'s shape (`structArtAsShipArt`).
+ *
+ * Per frame: map lookups and compares only (invariant #14); the adapter
+ * allocates once per structure bake (memoised on the `StructArt`).
+ */
+import { destructionProfileOf } from '../../../shared-types/shipScale/destructionProfile.js';
+import type { WreckDescriptor } from '../../../shared-types/messages/wreckDescriptor.js';
+import type { WreckSource } from '../../../core/destruction/wreckSource.js';
+import type { ArtHandle, ShipArt, StructArt } from '../art/ArtService.js';
+import { structHandleFor, wreckArtHandleFor, type ShipArtCtx } from '../art/shipArtSprites.js';
+import { wreckSourceKindOf } from '../../net/wreckRootSource.js';
+
+/** Per parent kind: do its wreck pieces draw the dead bake (`fx.deadArt`)?
+ *  Filled once per kind (the profile lookup allocates its argument). */
+const wreckDeadArt = new Map<string, boolean>();
+export function wreckDeadArtFor(kindId: string): boolean {
+  let v = wreckDeadArt.get(kindId);
+  if (v === undefined) {
+    v = destructionProfileOf({ type: 'ship', kindId }).fx.deadArt;
+    wreckDeadArt.set(kindId, v);
+  }
+  return v;
+}
+
+/**
+ * A wreck piece's parent art handle (null: no art, the plain piece).
+ *  - ship: the live hull's bake (owner: the descriptor's, else `faction`);
+ *  - structure: the structure kind's bake (`source.structure.k`, the root's,
+ *    so a re-split child finds it too) at quarter turn 0 (its pieces spin
+ *    freely; GPU-lit art, the default, is lit live whatever the turn) and
+ *    the descriptor's owner if it carries one (the live structure's livery),
+ *    else no owner: `structHandleFor`'s catalogue-colour bake;
+ *  - rock: none.
+ */
+export function wreckPieceArtHandle(
+  actx: ShipArtCtx, key: string, desc: WreckDescriptor, parent: string, faction: string | undefined, source: WreckSource | undefined,
+): ArtHandle | null {
+  if (actx.art === null) return null;
+  switch (wreckSourceKindOf(desc.parentKind)) {
+    case 'ship':
+      return wreckArtHandleFor(actx, key, parent, desc.owner ?? faction, wreckDeadArtFor(parent));
+    case 'structure': {
+      const k = source?.structure?.k;
+      return k !== undefined ? structHandleFor(actx, key, k, 0, desc.owner) : null;
+    }
+    default:
+      return null;
+  }
+}
+
+const asShipArt = new WeakMap<StructArt, ShipArt>();
+
+/**
+ * A structure's bake in `ShipArt`'s shape, for `WreckPieceSprite`: one
+ * untiled frame (`tex`, the lit map frame on GPU-lit art), the same size,
+ * density and lit facts. The bake is centred on the structure (`gridFor` is
+ * symmetric) in its Pixi-down local frame, as `MachinedFlatSprite` draws it,
+ * so `wreckTexLayout` / `wreckPieceMeshes` map a piece's outline frame into
+ * it exactly as they map a ship's. Memoised: the same object per bake, so
+ * the updater's "already wearing this art" check is an identity compare.
+ */
+export function structArtAsShipArt(s: StructArt): ShipArt {
+  let a = asShipArt.get(s);
+  if (a === undefined) {
+    a = { frames: [s.tex], w: s.w, h: s.h, tiles: 1, tileH: s.h, density: s.density, nozzles: [], navLights: s.navLights, ...(s.lit ? { lit: s.lit } : {}) };
+    asShipArt.set(s, a);
+  }
+  return a;
+}
+
+/** The ready art a piece wears: a ship's bake, or a structure's adapted;
+ *  null while the handle is missing or not ready (the plain piece). */
+export function wreckPieceArtOf(h: ArtHandle | null): ShipArt | null {
+  if (h === null || h.state !== 'ready') return null;
+  if (h.ship !== null) return h.ship;
+  return h.struct !== null ? structArtAsShipArt(h.struct) : null;
+}
