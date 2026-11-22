@@ -12,6 +12,7 @@ import CloseIcon from '@mui/icons-material/Close';
 import { useUIStore } from '../../state/store';
 import { selectDrawerOpen } from '../../state/rightPanel';
 import { RAIL_W_CSS } from '../railWidth';
+import { Z } from '../zIndex';
 import { useFreshPressSurface } from '../../components/touchClickActivate';
 import { ProfileTab } from './tabs/ProfileTab';
 import { SettingsTab } from './tabs/SettingsTab';
@@ -82,6 +83,9 @@ const RAIL_WIDTH = 56;
 // truly-dynamic styles (and even then prefer `useMemo`).
 // --------------------------------------------------------------------------
 const DRAWER_SX = {
+  // The panel tier, UNDER the rail (owner 2026-11-22: it slides in beneath the
+  // rail, never over it), as EqxPanel does.
+  zIndex: Z.panel,
   '& .MuiDrawer-paper': {
     // Docked left of the right rail (UI plan U1-5), which stays in view beside it.
     right: RAIL_W_CSS,

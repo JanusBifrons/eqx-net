@@ -11,6 +11,7 @@ import { AdvancedDrawer } from './AdvancedDrawer';
 import { MENU_ARM_MS } from '../../components/touchClickActivate';
 import { useUIStore } from '../../state/store';
 import { selectDrawerOpen } from '../../state/rightPanel';
+import { Z } from '../zIndex';
 
 /** A tap's synthesized click carries detail 1 (a keyboard click carries 0). */
 const tapClick = (el: Element): void => { fireEvent.click(el, { detail: 1 }); };
@@ -62,5 +63,14 @@ describe('AdvancedDrawer: the opening press never acts inside it', () => {
     openByPress();
     fireEvent.click(screen.getByTestId('drawer-close'));
     expect(selectDrawerOpen(useUIStore.getState())).toBe(false);
+  });
+});
+
+describe('AdvancedDrawer: docked under the right rail', () => {
+  it('sits on the panel tier, below the rail, so it slides in beneath it', () => {
+    openByPress();
+    const root = screen.getByTestId('advanced-drawer');
+    expect(getComputedStyle(root).zIndex).toBe(String(Z.panel));
+    expect(Z.panel).toBeLessThan(Z.railStrip);
   });
 });
