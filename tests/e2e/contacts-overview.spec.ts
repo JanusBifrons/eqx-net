@@ -26,7 +26,9 @@ async function boot(page: Page): Promise<void> {
   await waitForFireControlHud(page);
 }
 
-async function lockFromList(page: Page, open: () => Promise<void>): Promise<void> {
+// The weapon chips hide while a right-side panel (Contacts) is open, so each
+// chip check runs with the panel closed.
+async function lockFromList(page: Page, open: () => Promise<void>, close: () => Promise<void>): Promise<void> {
   const gid = await activeGroupId(page);
   const chip = page.locator(`[data-testid="fc-chip-${gid}"]`);
   await expect(chip).toHaveAttribute('data-locked', '0');
@@ -44,11 +46,15 @@ async function lockFromList(page: Page, open: () => Promise<void>): Promise<void
   await target.click();
   await expect(target).toHaveAttribute('data-lock', 'locked', { timeout: 10_000 });
   await expect(target).toHaveAttribute('data-lock-group', gid);
+  await close();
+  await expect(panel).toBeHidden();
   await expect(chip).toHaveAttribute('data-locked', '1');
 
   // Tap again: the lock is cancelled.
+  await open();
   await target.click();
   await expect(target).toHaveAttribute('data-lock', 'none', { timeout: 10_000 });
+  await close();
   await expect(chip).toHaveAttribute('data-locked', '0');
 }
 
@@ -57,7 +63,7 @@ test('desktop: O opens the contacts list; a click locks with the active group, a
   const page = await ctx.newPage();
   try {
     await boot(page);
-    await lockFromList(page, async () => { await page.keyboard.press('o'); });
+    await lockFromList(page, async () => { await page.keyboard.press('o'); }, async () => { await page.keyboard.press('Escape'); });
     await page.screenshot({ path: 'diag/e2e-screenshots/contacts-overview/desktop.png' });
   } finally {
     await ctx.close();
@@ -90,6 +96,9 @@ test('another player\'s AI-flown ship is listed and locks like any player\'s shi
     await expect(row).toHaveAttribute('data-kind', 'ship');
     await row.click();
     await expect(row).toHaveAttribute('data-lock', 'locked', { timeout: 15_000 });
+    // The weapon chips hide while the panel is open.
+    await page.keyboard.press('Escape');
+    await expect(panel).toBeHidden();
     await expect(page.locator(`[data-testid="fc-chip-${gid}"]`)).toHaveAttribute('data-locked', '1');
   } finally {
     await a.ctx.close();
@@ -102,10 +111,10 @@ test("touch landscape: the rail's Contacts item opens the list; a tap locks", as
   const page = await ctx.newPage();
   try {
     await boot(page);
-    await lockFromList(page, async () => { await page.locator('[data-testid="right-rail-contacts"]').tap(); });
     // The panel's ✕ closes it (the rightPanel flag clears).
-    await page.locator('[data-testid="contacts-panel-close"]').tap();
-    await expect(page.locator('[data-testid="contacts-panel"]')).toBeHidden();
+    await lockFromList(page,
+      async () => { await page.locator('[data-testid="right-rail-contacts"]').tap(); },
+      async () => { await page.locator('[data-testid="contacts-panel-close"]').tap(); });
     await page.screenshot({ path: 'diag/e2e-screenshots/contacts-overview/touch-landscape.png' });
   } finally {
     await ctx.close();
