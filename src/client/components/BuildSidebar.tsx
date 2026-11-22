@@ -22,6 +22,10 @@
  * bottom build hotbar): 1–9 pick the Nth tile of the open category (a tile click),
  * Q / E step to the previous / next category. The fire-control keys stand down
  * meanwhile, so 1–9 do not also switch weapon groups.
+ *
+ * Strip mode (`strip`, while placing): the same panel folds to a slim strip on
+ * the right edge (BuildPlacingStrip.tsx, SidePanel BUILD_STRIP_SIZE): the picked
+ * kind, a portrait tap to expand, a ✕ to cancel. No rail, no tiles, no keys.
  */
 import { useEffect, useState } from 'react';
 import { Box } from '@mui/material';
@@ -32,7 +36,8 @@ import { useUIStore } from '../state/store';
 import { usePackedStock } from '../structures/usePackedStock';
 import { BUILD_CATEGORIES, CATEGORY_ICON, categoryById, type BuildCategoryId } from './buildCategories';
 import { BuildKindDetails, BuildKindTile } from './BuildKindTile';
-import { BUILD_PANEL_SIZE, SidePanel } from './SidePanel';
+import { BUILD_PANEL_SIZE, BUILD_STRIP_SIZE, SidePanel } from './SidePanel';
+import { BuildPlacingStrip } from './BuildPlacingStrip';
 import { WINDOW_ROOT_SX } from './GameWindow';
 import { buildMenuKeyAction, setBuildMenuKeysOpen, stepCategory } from '../input/buildMenuKeys';
 
@@ -60,12 +65,20 @@ export interface BuildSidebarProps {
   open: boolean;
   onClose: () => void;
   onPick: (kind: StructureKindId) => void;
+  /** Folded to the placing strip (only while a kind is picked; `open` wins). */
+  strip?: boolean;
+  /** The strip's portrait tap: back to the full sidebar. */
+  onExpand?: () => void;
+  /** The strip's ✕: cancel placing. */
+  onCancel?: () => void;
 }
 
-export function BuildSidebar({ open, onClose, onPick }: BuildSidebarProps): JSX.Element {
+export function BuildSidebar({ open, onClose, onPick, strip = false, onExpand, onCancel }: BuildSidebarProps): JSX.Element {
   const [category, setCategory] = useState<BuildCategoryId>(BUILD_CATEGORIES[0]!.id);
   // Stock keeps polling while placing: the keep-placing rule reads it (placementCancel.ts).
-  const placing = useUIStore((s) => s.placementKind !== null);
+  const placingKind = useUIStore((s) => s.placementKind);
+  const placing = placingKind !== null;
+  const stripShown = !open && strip && placingKind !== null;
   const packedStock = usePackedStock(open || placing);
   const inSector = useUIStore((s) => s.currentSectorKey !== null); // no sector = no crate rule
   useEffect(() => {
@@ -98,9 +111,18 @@ export function BuildSidebar({ open, onClose, onPick }: BuildSidebarProps): JSX.
       setBuildMenuKeysOpen(false);
     };
   }, [open, category, cat, packedStock, inSector, onPick]);
+  if (stripShown) {
+    return (
+      <SidePanel open onClose={onClose} testId="build-sidebar" size={BUILD_STRIP_SIZE}
+        paperAttrs={{ 'data-open': '0', 'data-mode': 'strip' }}>
+        <BuildPlacingStrip kind={placingKind} onExpand={onExpand ?? noop} onCancel={onCancel ?? noop} />
+      </SidePanel>
+    );
+  }
   return (
     <SidePanel open={open} onClose={onClose} testId="build-sidebar" size={BUILD_PANEL_SIZE} closeOnEscape
-      paperAttrs={{ 'data-open': open ? '1' : '0' }} title="Build" headerTestId="build-sidebar-head" closeTestId="build-sidebar-close">
+      paperAttrs={{ 'data-open': open ? '1' : '0', 'data-mode': 'full' }} title="Build" headerTestId="build-sidebar-head"
+      closeTestId="build-sidebar-close">
       {open && (
         <Box sx={WINDOW_ROOT_SX}>
           <Box sx={BODY_SX}>
@@ -132,6 +154,7 @@ export function BuildSidebar({ open, onClose, onPick }: BuildSidebarProps): JSX.
   );
 }
 
+const noop = (): void => {};
 const C = HUD.color;
 const RAIL_ICON_PX = 40;
 const BODY_SX = { flex: '1 1 auto', minHeight: 0, display: 'flex' } as const;
