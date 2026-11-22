@@ -83,10 +83,12 @@ test('tap a drone shows the selection bracket + a stats panel; empty tap clears 
   );
   expect(await surface.getAttribute('data-selected-pick-kind')).toBe('drone');
 
-  // The stats panel appears (drone hp read from the mirror, no server channel).
+  // The stats panel appears in Details (drone hp read from the mirror, no server channel).
+  // The readout lives in the Details panel: ⚙ on the left strip opens it.
+  await page.locator('[data-testid="left-strip-cog"]').click();
   await expect(page.locator('[data-testid="entity-stats-panel"]')).toBeVisible({ timeout: 5000 });
 
-  // Re-select empty space far away → selection clears, panel hides.
+  // Re-select empty space far away → selection clears, Details closes.
   await page.evaluate(() => {
     (window as unknown as { __eqxSelectAtWorld?: (x: number, y: number) => string | null })
       .__eqxSelectAtWorld!(999999, 999999);
@@ -165,6 +167,8 @@ test('selecting a structure shows a NON-ZERO hull bar + power/build stats (playt
   );
   expect(await surface.getAttribute('data-selected-pick-kind')).toBe('structure');
 
+  // The readout lives in the Details panel: ⚙ on the left strip opens it.
+  await page.locator('[data-testid="left-strip-cog"]').click();
   const panel = page.locator('[data-testid="entity-stats-panel"]');
   await expect(panel).toBeVisible({ timeout: 5000 });
 

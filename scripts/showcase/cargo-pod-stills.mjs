@@ -90,7 +90,6 @@ try {
       if (at === null) throw new Error('no pod in the mirror');
       await page.evaluate(([x, y]) => globalThis.__eqxSelectAtWorld(x, y), [at.x, at.y]);
       await page.getByTestId('pod-open').waitFor({ timeout: 5_000 });
-      console.log('pod in reach:', await page.getByTestId('pod-open').getAttribute('data-in-reach'));
       await page.getByTestId('pod-open').click();
       await page.getByTestId('cargo-panel').waitFor({ timeout: 5_000 });
       await page.waitForTimeout(400);

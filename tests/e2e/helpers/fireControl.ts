@@ -3,7 +3,7 @@ import { expect, type Page } from '@playwright/test';
 /**
  * Fire control (lock-to-fire, universal since 2026-11-09): a weapon group fires
  * ONLY at a target it has a COMPLETED lock on. Specs that are ABOUT locking use
- * `lockOn` (select → LOCK in the info box → chip `data-locked="1"`); specs that
+ * `lockOn` (select → Target on the left strip → chip `data-locked="1"`); specs that
  * merely need to shoot something should join with `instantLock` instead (the
  * AUTO group then locks a hostile target in front within ~0.1 s and fires on its
  * own; add `anyTarget` for it to pick neutral NPCs / structures too).
@@ -73,7 +73,7 @@ export async function toAuto(page: Page, groupId: string): Promise<void> {
 /**
  * Lock `target` with the active weapon group through the real UI: select it
  * (Zustand selection — the same state a tap sets, renderer-independent so it
- * works with the worker renderer too), press LOCK in its info box
+ * works with the worker renderer too), press Target on the left strip
  * (`[data-testid="fc-target"]`) and wait for the group's chip to read
  * `data-locked="1"`. Returns the group id. A target the AUTO group already
  * locked (button reads UNLOCK) counts as done.
@@ -110,8 +110,8 @@ export async function lockOn(page: Page, target: LockTarget, opts: { timeoutMs?:
   const btn = page.locator('[data-testid="fc-target"]');
   await expect(btn).toHaveAttribute('data-state', /^(lock|unlock|cancel)$/, { timeout: 5_000 });
   // dispatchEvent, not click(): kept from when the selection card was
-  // world-anchored (moved every frame); it now docks top-centre, and a
-  // dispatched click works either way.
+  // world-anchored (moved every frame); Target is now on the left strip (which
+  // slides in), and a dispatched click works either way.
   if ((await btn.getAttribute('data-state')) === 'lock') await btn.dispatchEvent('click');
   await expect(page.locator(`[data-testid="fc-chip-${groupId}"]`)).toHaveAttribute('data-locked', '1', {
     // Real lock time when the target is not hostile and instantLock is off: the

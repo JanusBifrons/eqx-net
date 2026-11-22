@@ -87,7 +87,7 @@ the target's true hull (`mountInReach`). So:
   ("lock range is the NPC ship's longest gun", "outside it the lock holds but the refresh stops"),
   `npcLockParity.test.ts`, `navalReal/longRangeLock.test.ts`,
   `capitalLockGate.test.ts`, `ColyseusClient.longRangeLock.test.ts`,
-  `TargetAction.test.tsx`, `contactRows.test.ts`.
+  `targetLock.test.tsx`, `contactRows.test.ts`.
 
 **Neutral terrain locks** (plan partitioned-chasing-lark, PR 2). Mining lasers
 and tractors lock what they work on (#19), so terrain is lockable: asteroids
@@ -489,7 +489,7 @@ Target keys: `s:<entityId>` (swarm) or `p:<id>`, a player's ship: an ACTIVE
 ship by its pilot's playerId, or a parked hull flown by an AI pilot by its
 shipInstanceId (owner: "lock it like any player's ship"). The `p:` id is the
 ship's key in the client's one ship list, so the lock line, contacts,
-`lockSelected`, `TargetAction` and every mark resolve it through
+`lockSelected`, `useTargetLock` and every mark resolve it through
 `mirror.ships.get` with no second lookup. `FireControlLocks.resolveLockTarget` is the
 one resolver for both (hull: `lingeringSlots` + `isLingeringHull`, pose from
 `lingeringPoseCache`); the rules are the same (another player's ship runs the
@@ -565,7 +565,7 @@ Locks: `tests/integration/sectorRoom/lockAiFlownHull.test.ts`,
   (`threatPointerRadius`); the faint full ring stays.
   Lock: `lockMarkFrame.test.ts`.
 - HUD: `WeaponStrip`, `LockStatusBand` (polls the mirror at 10 Hz, re-renders on
-  change), `TargetAction` (LOCK / CANCEL LOCK / UNLOCK), `MouseLock` (desktop).
+  change), the left strip's Target button (`useTargetLock` in `components/targetLock.ts`: lock / cancel lock / unlock, `data-state`), `MouseLock` (desktop).
 - Contacts overview (`ContactsOverview`, O key / CONTACTS tab, left edge): an
   EVE-style list of lockable contacts with distance, reach and lock state;
   a tap sends `lock_request` for the active group, a tap on its own lock

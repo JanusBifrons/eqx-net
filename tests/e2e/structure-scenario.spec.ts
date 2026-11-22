@@ -88,6 +88,7 @@ test("clicking another player's structure shows its OWNER in the inspector (not 
       undefined,
       { timeout: 8_000 },
     );
+    await page.locator('[data-testid="left-strip-cog"]').click(); // the readout is in Details
     const panel = page.locator('[data-testid="entity-stats-panel"]');
     await expect(panel).toBeVisible({ timeout: 8_000 });
     const owner = page.locator('[data-testid="entity-stats-owner"]');

@@ -83,7 +83,7 @@ export const FEATURE_TRIGGERS = [
     area: 'fire control and combat',
     paths: ['src/server/rooms/LockSubsystem', 'src/server/rooms/NpcLockSubsystem', 'src/server/rooms/PlayerFireResolver',
       'src/server/rooms/AiFireResolver', 'src/server/rooms/WeaponMountTicker',
-      'src/core/combat/lock', 'src/shared-types/combat/lockProfile', 'src/client/hud/WeaponStrip', 'src/client/components/TargetAction',
+      'src/core/combat/lock', 'src/shared-types/combat/lockProfile', 'src/client/hud/WeaponStrip', 'src/client/components/targetLock',
       'src/client/input/MouseLock', 'tests/e2e/helpers/fireControl', 'src/client/components/ContactsOverview',
       'src/client/components/contactRows'],
     specs: ['lock-to-fire-default', 'fire-control-lock', 'contacts-overview', 'auto-fire', 'auto-fire-multitouch', 'fx-weapons', 'drone-destruction'],
