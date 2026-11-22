@@ -347,9 +347,100 @@ Safety deadline: the current delay (game ms) + `STAMPED_HOLD_MARGIN_MS`
 (`MAX_HOLD_MS` − `MAX_TOTAL_DISPLAY_DELAY_MS`), capped by `matchedHoldMs`.
 Stamped entries share the pool, `holdsKill` (so `deferKill` holds their
 deaths), `flushTarget` and the welcome flush; shell matching (`onShellEnd`,
-`releaseHitAt`) skips them. Nothing calls it yet; later slices route
-non-shell damage FX, missile detonations, `shell_blast` / `mine_detonated`
-and the swarm sweep through it. Lock: `navalHitHold.stamped.test.ts`.
+`releaseHitAt`) skips them. Lock: `navalHitHold.stamped.test.ts`.
+
+**Slice 2: non-shell damage FX on drone-timeline targets.** Owner decision
+(2026-11-22): hits line up with the drawn target in BOTH views, piloting and
+Command/Build; no mode switch. `handleDamage` (`damagePath.ts`) first tries
+the shell hold (`holdHit`), then `DrawnShellTiming.holdDrawnHit`: a hit on a
+`swarm-<id>` target still in `mirror.swarm` (drone, scrap, rock, wreck
+piece) is held with `holdStamped(…, anchorTick(), wall now, game now,
+offPilot)`. Pilot hulls (`mirror.ships`: the local ship, remote ships on
+their own lerp offset) are never held. Missiles take no `damage` event
+(they are not damage targets); their detonation is slice 3. A zero-damage
+event that KILLS (`newHealth <= 0`, the state carrier for a destruction)
+is held too, so `holdsKill` makes `deferKill` hold a beam / ram / missile
+drone kill until the drawn drone gets there (the sink skips FX for
+`damage <= 0`); `deferKill` no longer needs shell events on. Release:
+`DrawnShellTiming.place(displayTick, frameWallMs)` now runs EVERY frame
+(`updateProjectilesMirror`; `displayTick` is NaN without shell events) and
+passes `swarmReadPointMs(frame RAF time)`. Number and spark stay at the
+event's `hitX/Y`: once released, the drawn drone is at the stamped tick's
+pose, which is where the server hit it (one snapshot interval of slack, as
+the stamp is the newest tick heard, not the hit tick). Tick-clock re-seed
+while held: the stamp taken at hold time is kept (it is the same basis as
+the drone ring samples already drawn); a read point that never reaches it
+falls to the deadline. HP / shield state is never held. Lock:
+`ColyseusClient.droneHitHold.test.ts`. Later slices: missile detonations,
+`shell_blast` / `mine_detonated`, the swarm sweep.
+
+**Slice 3: missile detonations** use the same stamp and deadline but not
+the `NavalHitHold` pool (the FX are not a damage event): the missile mirror
+keeps the detonated entry flying and releases it in its own per-frame step
+(`stepMissileDisplayDelay`) when the MISSILE read point (now − the missile
+stream delay, not `swarmReadPointMs`) reaches the stamp. See
+[missile-simulation](missile-simulation.md#detonation-waits-for-the-drawn-missile-off-pilot-event-timing-slice-3).
+
+## Blasts wait for the drawn timeline (2026-11-22)
+
+Slice 4 of 6. A siege shell's `shell_blast` (`ProjectilePipeline.blast` →
+`onBlast`) is broadcast in the hit's tick, before that tick's `shell_end`,
+so it arrived a display delay ahead of the drawn shell (~150 ms piloting,
+up to seconds off pilot); the client ignores the `shell_end` blast radius,
+so the big explosion was never tied to the drawn burst. It now rides the
+same hold as a naval hit, not a stamp: `NavalHitHold.maybeHoldBlast` holds
+it when its centre is on a live, unended shell's path (handler
+`handlers/shellHandlers.ts`, `holdBlast` in the handler ctx, shells as
+events only); the `shell_end` at the same point gives it the hit tick, and
+the per-frame `release` in `DrawnShellTiming.place` hands it to the sink
+(`pushBlastExplosion`) the frame the burst is drawn, with the hit's safety
+deadlines. The entry has `blastRadius` > 0 and no target, so `holdsKill`,
+`releaseHitAt` and `flushTarget` never pick it; `flush` (welcome, shell
+events off) drops it rather than drawing a stale blast.
+
+Lock: `navalHitHold.blast.test.ts`.
+
+**Slice 4b: mines and missile fence hits.** `wall_hit` for a bolt stays
+immediate (bolts are drawn at the present from snapshots, and the fence is
+static). `wall_hit` for a missile is sent in the tick its missile's
+`missile_detonated` is, and missiles are drawn on the missile delay, not the
+drone one, so it rides slice 3's detonation path, not `holdStamped`:
+`MissileMirror.holdMissileWallHit` gives it the detonation's stamp and
+deadline (`missileEventStampMs` / `missileEventDeadlineMs`) and
+`releaseMissileDetonations` frees it against the missile read point, the
+same frame the drawn missile explodes (pooled list in
+`combat/missileWallHits.ts`; the event names no missile; shown at once when
+no missile is drawn or there is no timeline yet; dropped by
+`clearMissileDetonations`). A mine's damage event (hit point = the mine)
+is sent just before its `mine_detonated`; `NavalHitHold.holdBlastWithHit`
+holds the blast exactly when that hit was stamped-held (a drone-timeline
+target, `DrawnShellTiming.holdDrawnHit`), with the hit's stamp and deadline,
+so blast and flash release together in `place` at the drones' read point.
+A pilot hull's hit is not held (the local ship's included), so its blast is
+immediate, as before. Left over: the mine sprite still leaves with the room
+state patch, ahead of a held blast (keeping it needs `MineSync` to keep a
+row while a blast is held at its point). Locks:
+`impactFxHandlers.mineHold.test.ts`, `combat/missileWallHits.test.ts`.
+
+**Slice 5: swept drones and scrap stay until drawn out.** A drone or scrap
+/ wreck piece that leaves with no destroy (scrap picked up or expired, a
+drone leaving) has no event: the next full binary snapshot omits it, and
+`decodeSwarmPacket`'s sweep deleted it on arrival, a display delay before
+the drawn timeline got there. The sweep now asks its `keep`
+(`SwarmSweepKeep`, the same `DrawnShellTiming` object whose `has` keeps
+held deaths) to `linger` each omitted entity (live client only,
+`stampByTick`): a moving kind (`isRemoteMovingSwarmKind`) whose newest
+sample (`latestArrivalMs`, on the tick-stamp clock) the drones' read point
+has not reached stays in the mirror, recorded in `swarmKills` with
+`sweptTick` = its `lastUpdateTick` (no new queue). The per-frame `place`
+removes it (plain delete, no FX) once `swarmReadPointMs` passes that
+sample, or at `stampedHoldDeadlineMs` (the stamped-hit deadline: delay +
+`STAMPED_HOLD_MARGIN_MS`, capped by `matchedHoldMs`). A newer pose for the
+id (it came back) or a recycled id drops the record and keeps the entity.
+Welcome and sector reset (`onWelcome`, `reset`) delete lingering entries.
+Not guarded while lingering: the entity stays targetable / lockable, and
+its predWorld body stays, for at most the display delay (the same as a held
+death). Lock: `drawnShellTiming.sweep.test.ts`.
 
 ## Client rules in detail
 

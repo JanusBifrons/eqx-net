@@ -52,4 +52,4 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 ### Mines (Mine Layer)
 
 - `mirror.mines` is filled ONLY from room state `mines` by `ColyseusClient.syncMines` (in place, generation sweep, alloc-free once rows exist). `ConnectorRenderer.drawMines` draws each on the per-frame layer: the trigger ring plus a blinking canister, cyan for own and red for anyone else's.
-- `mine_detonated` pushes a `pendingMissileExplosions` entry (`missileId: -1`) for the blast. It is an accelerator: the mine leaving room state is the truth.
+- `mine_detonated` pushes a `pendingMissileExplosions` entry (`missileId: -1`) for the blast. It is an accelerator: the mine leaving room state is the truth. On a drone-timeline target the blast waits with its held damage hit (shell-events.md "Blasts wait for the drawn timeline").

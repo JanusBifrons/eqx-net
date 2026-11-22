@@ -16,18 +16,26 @@
  *
  * Records are pooled and mutated in place; no allocation once warm (#14).
  */
-import type { RenderMirror } from '@core/contracts/IRenderer';
+import type { RenderMirror, SwarmRenderState } from '@core/contracts/IRenderer';
 import type { DamageEvent, LaserFiredEvent } from '@shared-types/messages';
 import type { ShellEnd, ShellSalvo } from '@shared-types/messages/shellEvents';
-import { matchedHoldMs, type HeldDamageSink, type NavalHitHold } from './navalHitHold';
+import {
+  matchedHoldMs, stampedHoldDeadlineMs, swarmReadPointMs, type HeldDamageSink, type NavalHitHold,
+} from './navalHitHold';
+import type { SwarmSweepKeep } from './BinarySwarmDecoder';
+import { isRemoteMovingSwarmKind } from './snapshotRemoteSync';
 import { isSwarmDelayOffPilotActive } from './swarmInterpolation';
 import type { ShellSalvoStore } from './shellSalvoStore';
 import { isParkedHull } from '../render/shipOwnership.js';
 
 /** A ship's death held for its drawn shell: its wire id, the kind it was (an
  *  id recycled meanwhile is not killed), the game-ms deadline, and whether
- *  its destroy said `vaporised` (re-marked on the release frame). */
-interface DeferredKill { wireId: string; kind: number; shipKind: string | undefined; deadline: number; vaporised: boolean }
+ *  its destroy said `vaporised` (re-marked on the release frame).
+ *  `sweptTick` >= 0: not a death but a swept drone / scrap piece kept drawn
+ *  (`linger`), the `lastUpdateTick` it was swept at; -1 for a death. */
+interface DeferredKill {
+  wireId: string; kind: number; shipKind: string | undefined; deadline: number; vaporised: boolean; sweptTick: number;
+}
 
 /** Ticks before the newest snapshot tick from which a held death's wreck
  *  pieces wait (`RenderMirror.wreckRevealFromTick`): the kill tick is at or
@@ -45,6 +53,8 @@ export interface DrawnShellTimingHost {
   shellEvents(): boolean;
   /** Game-clock ms. */
   now(): number;
+  /** Wall ms on the drone pose clock (`performance.now()` in the client). */
+  wallNow(): number;
   /** Newest snapshot server tick heard of. */
   anchorTick(): number;
   killSwarmEntity(wireId: string): void;
@@ -53,10 +63,10 @@ export interface DrawnShellTimingHost {
   despawnLinger(id: string): void;
 }
 
-export class DrawnShellTiming {
+export class DrawnShellTiming implements SwarmSweepKeep {
   /** Swarm ships killed by an event shell, still drawn alive, keyed by entity
    *  id (the decoder's full-snapshot sweep skips them: `decodeSwarmPacket`
-   *  `keep`). */
+   *  `keep`, this object), and swept drones / scrap kept drawn (`linger`). */
   readonly swarmKills = new Map<number, DeferredKill>();
   /** Pilot hulls (parked, or another pilot's) whose death is held, keyed by
    *  wire id; the snapshot routing keeps them meanwhile (`keepLingering`,
@@ -73,6 +83,7 @@ export class DrawnShellTiming {
     const mirror = this.host.mirror();
     store.clear();
     this.host.hold().flush(this.host.sink());
+    this.dropSwept();
     if (this.pending) this.release();
     if (shellEvents) {
       mirror.shellSalvos = store.map;
@@ -89,6 +100,25 @@ export class DrawnShellTiming {
       && this.host.hold().maybeHold(evt, suppressNumber, this.host.store().map, this.host.now());
   }
 
+  /**
+   * A hit on a target drawn on the DRONE timeline (a swarm entity: drone,
+   * scrap, rock, wreck piece; drawn up to the off-pilot display delay in the
+   * past) waits until the drones' read point reaches the newest snapshot
+   * tick at its arrival (`NavalHitHold.holdStamped`), in every view: owner
+   * 2026-11-22, hits line up with the drawn target piloting and in
+   * Command/Build alike. A zero-damage KILLING event is held too, so
+   * `deferKill` holds the death (its FX are skipped at release). Not held:
+   * pilot hulls (mirror.ships), a target not drawn, or before the drone tick
+   * clock is seeded. Returns whether held.
+   */
+  holdDrawnHit(evt: DamageEvent, suppressNumber: boolean): boolean {
+    if (!evt.targetId.startsWith('swarm-')) return false;
+    const entityId = parseInt(evt.targetId.slice('swarm-'.length), 10);
+    if (Number.isNaN(entityId) || this.host.mirror().swarm?.has(entityId) !== true) return false;
+    return this.host.hold().holdStamped(evt, suppressNumber, this.host.anchorTick(),
+      this.host.wallNow(), this.host.now(), isSwarmDelayOffPilotActive());
+  }
+
   /** A `shell_end`: mark the shells, and match held naval hits to it. */
   onShellEnd(msg: ShellEnd): void {
     const store = this.host.store();
@@ -103,17 +133,58 @@ export class DrawnShellTiming {
     for (const e of msg.e) hold.onShellEnd(store.hitTick(e[0], e[1], e[2], e[3]), e[2], e[3], now, offPilot);
   }
 
-  /** One frame of event shells at `displayTick`: draw, burst, and release
-   *  the held hits whose burst is now drawn (or whose safety ran out), and
-   *  the deaths held for them. */
-  place(displayTick: number): void {
+  /** One frame, every frame: draw and burst the event shells at
+   *  `displayTick` (NaN: shells are not events), and release the held hits
+   *  whose burst is now drawn, whose stamp the drones' read point at wall
+   *  `frameWallMs` (the frame's pose time) has reached, or whose safety ran
+   *  out, and the deaths held for them. */
+  place(displayTick: number, frameWallMs = Number.NaN): void {
     const mirror = this.host.mirror();
     const hold = this.host.hold();
-    if (mirror.projectiles) {
+    if (mirror.projectiles && !Number.isNaN(displayTick)) {
       this.host.store().place(mirror.projectiles, displayTick, mirror.pendingShellEnds ??= []);
     }
-    if (hold.size > 0) hold.release(displayTick, this.host.now(), this.host.sink());
-    if (this.pending) this.release();
+    const readPointMs = swarmReadPointMs(frameWallMs);
+    if (hold.size > 0) hold.release(displayTick, this.host.now(), this.host.sink(), readPointMs);
+    if (this.pending) this.release(readPointMs);
+  }
+
+  /** Is the swarm entity `id` kept from the full-snapshot sweep (a held
+   *  death, or a swept entity still lingering)? `SwarmSweepKeep`. */
+  has(id: number): boolean {
+    return this.swarmKills.has(id);
+  }
+
+  /**
+   * Off-event slice 5 (shell-events.md "Stamped release"): a full snapshot
+   * omits a drone or scrap / wreck piece that left with no destroy (scrap
+   * picked up or expired, a drone leaving). Its drawn pose is the display
+   * delay behind its newest sample, so keep it in the mirror until the
+   * drones' read point passes that sample (`latestArrivalMs`, on the same
+   * tick-stamp clock), then `release` removes it, with no FX. Safety bound
+   * `stampedHoldDeadlineMs`. Returns whether kept; false (swept now) for a
+   * still kind, or one the read point has already passed.
+   */
+  linger(id: number, entry: SwarmRenderState): boolean {
+    if (!isRemoteMovingSwarmKind(entry.kind)) return false;
+    if (swarmReadPointMs(this.host.wallNow()) >= entry.latestArrivalMs) return false;
+    const k = this.free.pop() ?? { wireId: '', kind: 0, shipKind: undefined, deadline: 0, vaporised: false, sweptTick: -1 };
+    k.wireId = ''; k.kind = entry.kind; k.shipKind = entry.shipKind; k.vaporised = false;
+    k.sweptTick = entry.lastUpdateTick;
+    k.deadline = stampedHoldDeadlineMs(this.host.now(), isSwarmDelayOffPilotActive());
+    this.swarmKills.set(id, k);
+    return true;
+  }
+
+  /** Remove every lingering swept entity now (welcome, new sector). */
+  private dropSwept(): void {
+    const swarm = this.host.mirror().swarm;
+    for (const [entityId, k] of this.swarmKills) {
+      if (k.sweptTick < 0) continue;
+      this.swarmKills.delete(entityId);
+      this.free.push(k);
+      swarm?.delete(entityId);
+    }
   }
 
   /** Any death held? */
@@ -123,7 +194,8 @@ export class DrawnShellTiming {
 
   /**
    * A `destroy` for `wireId` while a hit on it is still held for its drawn
-   * shell: keep it drawn alive and kill it when that hit is released.
+   * shell, or (drone timeline, `holdDrawnHit`) for the drawn drone to reach
+   * it: keep it drawn alive and kill it when that hit is released.
    * Returns whether it was deferred. Only the KILLING hit counts
    * (`holdsKill`): shells still in flight to it that did not kill it never
    * hold a death (heavy-beam take 8: a beam kill waited ~0.9 s for unrelated
@@ -132,17 +204,17 @@ export class DrawnShellTiming {
    */
   deferKill(wireId: string, vaporised: boolean): boolean {
     const hold = this.host.hold();
-    if (!this.host.shellEvents() || hold.size === 0 || !hold.holdsKill(wireId)) return false;
+    if (hold.size === 0 || !hold.holdsKill(wireId)) return false;
     if (!wireId.startsWith('swarm-')) return this.deferShipKill(wireId, vaporised);
     const entityId = parseInt(wireId.slice('swarm-'.length), 10);
     const entry = Number.isNaN(entityId) ? undefined : this.host.mirror().swarm?.get(entityId);
     if (entry === undefined) return false;
     let k = this.swarmKills.get(entityId);
     if (k === undefined) {
-      k = this.free.pop() ?? { wireId: '', kind: 0, shipKind: undefined, deadline: 0, vaporised: false };
+      k = this.free.pop() ?? { wireId: '', kind: 0, shipKind: undefined, deadline: 0, vaporised: false, sweptTick: -1 };
       this.swarmKills.set(entityId, k);
     }
-    k.wireId = wireId; k.kind = entry.kind; k.shipKind = entry.shipKind; k.vaporised = vaporised;
+    k.wireId = wireId; k.kind = entry.kind; k.shipKind = entry.shipKind; k.vaporised = vaporised; k.sweptTick = -1;
     k.deadline = this.host.now() + matchedHoldMs(isSwarmDelayOffPilotActive());
     this.holdWrecks();
     return true;
@@ -163,10 +235,10 @@ export class DrawnShellTiming {
     if (!mirror.ships.has(wireId)) return false;
     let k = this.shipKills.get(wireId);
     if (k === undefined) {
-      k = this.free.pop() ?? { wireId: '', kind: 0, shipKind: undefined, deadline: 0, vaporised: false };
+      k = this.free.pop() ?? { wireId: '', kind: 0, shipKind: undefined, deadline: 0, vaporised: false, sweptTick: -1 };
       this.shipKills.set(wireId, k);
     }
-    k.wireId = wireId; k.kind = 0; k.shipKind = undefined; k.vaporised = vaporised;
+    k.wireId = wireId; k.kind = 0; k.shipKind = undefined; k.vaporised = vaporised; k.sweptTick = -1;
     k.deadline = this.host.now() + matchedHoldMs(isSwarmDelayOffPilotActive());
     this.holdWrecks();
     return true;
@@ -198,12 +270,13 @@ export class DrawnShellTiming {
   /** Kill each deferred ship whose killing hit has been released (its drawn
    *  shell reached it) or whose deadline passed, in this frame; a vaporised
    *  one goes into `mirror.vaporisedShips` in that same frame. */
-  release(): void {
+  release(readPointMs = Number.NaN): void {
     const host = this.host;
     const hold = host.hold();
     const mirror = host.mirror();
     const now = host.now();
     for (const [entityId, k] of this.swarmKills) {
+      if (k.sweptTick >= 0) { this.releaseSwept(entityId, k, now, readPointMs); continue; }
       if (now < k.deadline && hold.holdsKill(k.wireId)) continue;
       this.swarmKills.delete(entityId);
       this.free.push(k);
@@ -225,11 +298,33 @@ export class DrawnShellTiming {
       const hull = mirror.ships.get(id);
       if (hull !== undefined && isParkedHull(mirror, id, hull)) host.despawnLinger(id);
     }
-    if (!this.pending) mirror.wreckRevealFromTick = undefined;
+    if (mirror.wreckRevealFromTick !== undefined && !this.holdsDeath()) mirror.wreckRevealFromTick = undefined;
   }
 
-  /** A new sector: held deaths belong to the old one. */
+  /** Any DEATH held (not counting lingering swept entities)? */
+  private holdsDeath(): boolean {
+    if (this.shipKills.size > 0) return true;
+    for (const k of this.swarmKills.values()) if (k.sweptTick < 0) return true;
+    return false;
+  }
+
+  /** A lingering swept entity: gone once the read point passes its newest
+   *  sample or its deadline passes; kept (record dropped) if it came back
+   *  (a newer pose: not gone after all) or its id was recycled. */
+  private releaseSwept(entityId: number, k: DeferredKill, now: number, readPointMs: number): void {
+    const swarm = this.host.mirror().swarm;
+    const e = swarm?.get(entityId);
+    const same = e !== undefined && e.lastUpdateTick === k.sweptTick && e.kind === k.kind && e.shipKind === k.shipKind;
+    if (same && now < k.deadline && !(readPointMs >= e.latestArrivalMs)) return;
+    this.swarmKills.delete(entityId);
+    this.free.push(k);
+    if (same) swarm?.delete(entityId);
+  }
+
+  /** A new sector: held deaths belong to the old one; lingering swept
+   *  entities go with it. */
   reset(): void {
+    this.dropSwept();
     for (const k of this.swarmKills.values()) this.free.push(k);
     this.swarmKills.clear();
     for (const k of this.shipKills.values()) this.free.push(k);

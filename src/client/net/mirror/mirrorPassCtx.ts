@@ -52,6 +52,8 @@ export interface MirrorPassCtx {
   readonly aiController: AiController;
   /** This frame's length in GAME ms (time scale). */
   gameFrameMs(): number;
-  placeShells(displayTick: number): void;
+  /** Event shells at `displayTick` (NaN: off) + held-hit release at the
+   *  frame's wall time (`DrawnShellTiming.place`). Every frame. */
+  placeShells(displayTick: number, frameWallMs: number): void;
   displayHitscan(): DisplayPoseHitscan;
 }
