@@ -66,7 +66,8 @@ const meta: Meta<typeof EqxPanel> = {
   ],
   parameters: {
     layout: 'fullscreen',
-    viewport: { viewports: PHONE_VIEWPORTS, defaultViewport: 'phoneLandscape' },
+    // No default viewport: the story fills whatever screen opens it (a real phone included).
+    viewport: { viewports: PHONE_VIEWPORTS },
   },
   args: {
     open: true, testId: 'panel', title: '5 ships selected', closeOnEscape: true, onClose: () => {}, size: EQX_PANEL_SIZE,

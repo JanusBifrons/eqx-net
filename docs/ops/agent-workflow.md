@@ -18,6 +18,7 @@ The owner tracks every stream by its session window and name, often from the pho
 - **The session's job.** Keep `.resume/<slug>.md` current at every milestone, so the summary and the handoff agree.
 - **The reminder.** `scripts/dev/context-nudge.mjs` (a project PostToolUse hook) reminds the session at 250k and 400k.
 - **Limit.** Claude Code cannot start a fresh session or `/clear` itself. The `eqx-resume` launcher stays for relaunching parked streams after a reboot.
+- **Helper agent prompt.** `.claude/agents/general-purpose.md` is the built-in helper minus the `Artifact` tool (~14k tokens a call); keep its prompt in step with the built-in.
 
 ## Commit cadence
 
