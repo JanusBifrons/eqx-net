@@ -19,8 +19,8 @@ import { stripIdentity } from '../layout/LeftStripHost';
 import { pickRailItem } from '../layout/RightPanelHost';
 import { railItemsFor } from '../layout/railItems';
 
-type EscState = Pick<UIStore, 'placementKind' | 'fleetPick' | 'rightPanel' | 'contactsOpen' | 'selection'
-  | 'drawerTab' | 'setRightPanel' | 'setDrawerTab' | 'setContactsOpen'>
+type EscState = Pick<UIStore, 'placementKind' | 'fleetPick' | 'rightPanel' | 'selection'
+  | 'drawerTab' | 'setRightPanel' | 'setDrawerTab'>
   & Parameters<typeof selectControlMode>[0];
 
 /** Pure: does this Esc press clear the strip (deselect)? Any open panel,
@@ -30,7 +30,6 @@ export function escClearsStrip(e: Pick<KeyboardEvent, 'key' | 'defaultPrevented'
   const t = e.target as HTMLElement | null;
   if (t !== null && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return false;
   if (s.placementKind !== null || s.fleetPick !== null || s.rightPanel !== null) return false;
-  if (s.contactsOpen && selectControlMode(s) === 'fly') return false;
   return stripIdentity(s.selection) !== null;
 }
 

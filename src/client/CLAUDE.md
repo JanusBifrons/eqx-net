@@ -120,7 +120,7 @@ How it works: [webrtc-datachannel-snapshot-transport](../../docs/architecture/we
 - **Every group fires only at a LOCKED target;** `fcFireTick` is the only client fire path. There is one HUD, `hud/GameHud.tsx`.
 - **Lock line:** the pick uses the shared `lockLineScore`, alloc-free per candidate; `lock_track` carries `b` and the server re-checks it (#15).
 - **`fcTickMountAngles` is THE client mount-angle path** (#12); the client sends no `aim` input.
-- **Contacts overview:** only `contactsOpen` is in Zustand; never add a `contactsOverview.ts` beside `ContactsOverview.tsx` (case-insensitive FS). Detail: [contacts-overview](../../docs/features/contacts-overview.md).
+- **Contacts** is the `contacts` right panel (`panels/ContactsPanel.tsx`; rail item in every mode, O key); only `rightPanel` is in Zustand. Detail: [contacts-overview](../../docs/features/contacts-overview.md).
 - **Boost is a facing-direction impulse:** energy-gate the boost bit before `predWorld.applyInput` AND the send (per-tick and sentinel paths). Detail: [auto-fire-and-boost](../../docs/features/auto-fire-and-boost.md).
 
 ## Mounts and beams

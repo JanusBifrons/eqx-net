@@ -1,6 +1,7 @@
 /**
- * Contacts overview (EVE-style lock list): open the list, tap a contact, see
- * the active weapon group lock it; tap it again to cancel.
+ * Contacts panel (EVE-style lock list, the right panel opened by the rail's
+ * Contacts item or the O key): open the list, tap a contact, see the active
+ * weapon group lock it; tap it again to cancel.
  *
  * `fc-duel` room (two fighters and a heavy, idle without `startHostile`),
  * spawned at y 1250 so all three sit ~300-350 u away, inside the guns' reach.
@@ -96,19 +97,15 @@ test('another player\'s AI-flown ship is listed and locks like any player\'s shi
   }
 });
 
-test('touch landscape: the CONTACTS tab opens the list, clear of the thumb sticks; a tap locks', async ({ browser }) => {
+test('touch landscape: the rail's Contacts item opens the list; a tap locks', async ({ browser }) => {
   const ctx = await browser.newContext({ viewport: { width: 844, height: 390 }, hasTouch: true, isMobile: true });
   const page = await ctx.newPage();
   try {
     await boot(page);
-    await lockFromList(page, async () => { await page.locator('[data-testid="contacts-toggle"]').tap(); });
-    // The open list ends above the move stick's home and never reaches BOOST.
-    const panel = await page.locator('[data-testid="contacts-panel"]').boundingBox();
-    const home = await page.locator('[data-testid="hud-move-home"]').boundingBox();
-    const boost = await page.locator('[data-testid="hud-boost"]').boundingBox();
-    expect(panel && home && boost).toBeTruthy();
-    expect(panel!.y + panel!.height).toBeLessThan(home!.y);
-    expect(panel!.x + panel!.width).toBeLessThan(boost!.x);
+    await lockFromList(page, async () => { await page.locator('[data-testid="right-rail-contacts"]').tap(); });
+    // The panel's ✕ closes it (the rightPanel flag clears).
+    await page.locator('[data-testid="contacts-panel-close"]').tap();
+    await expect(page.locator('[data-testid="contacts-panel"]')).toBeHidden();
     await page.screenshot({ path: 'diag/e2e-screenshots/contacts-overview/touch-landscape.png' });
   } finally {
     await ctx.close();

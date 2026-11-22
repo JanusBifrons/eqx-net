@@ -9,7 +9,8 @@
  * - Driven by the store's `rightPanel` flag: a rail pick sets it, a second pick
  *   of the open item, ✕ or Esc clears it. Renders the panels the flag opens:
  *   Galaxy (`panels/GalaxyPanel.tsx`), the Trade drill-down (`panels/TradePanel.tsx`),
- *   Jobs (`panels/JobsPanel.tsx`), Faction (`panels/FactionPanel.tsx`), the cog
+ *   Jobs (`panels/JobsPanel.tsx`), Faction (`panels/FactionPanel.tsx`), Contacts
+ *   (`panels/ContactsPanel.tsx`; the O key too), the cog
  *   panel (`panels/CogPanel.tsx`) and the
  *   selection's Details panel (opened from the left strip's ⚙, not a rail item).
  *   The Build panel (`build`) is mounted by GameHud (BuildSidebarHost) and opens
@@ -28,17 +29,17 @@ import { FleetRailPanel } from '../panels/FleetPanel';
 import { DetailsPanel } from '../panels/DetailsPanel';
 import { CogPanel } from '../panels/CogPanel';
 import { FactionPanel } from '../panels/FactionPanel';
+import { ContactsPanel } from '../panels/ContactsPanel';
 import { Slot } from './Slot';
 import { RAIL_COG, railItemById, railTools, RAIL_COMMON, type RailItemSpec } from './railItems';
 
-type PickState = Pick<UIStore, 'rightPanel' | 'drawerTab' | 'contactsOpen' | 'setRightPanel' | 'setDrawerTab' | 'setContactsOpen'>;
+type PickState = Pick<UIStore, 'rightPanel' | 'drawerTab' | 'setRightPanel' | 'setDrawerTab'>;
 
 /** What a rail tap does (pure over the store slice; unit-tested). */
 export function pickRailItem(id: string, s: PickState): void {
   const spec = railItemById(id);
   if (spec === undefined) return;
   const open = spec.open;
-  if (open.kind === 'contacts') { s.setContactsOpen(!s.contactsOpen); return; }
   if (s.rightPanel === spec.id) { s.setRightPanel(null); return; }
   // A drawer page: keep the page already shown in that panel, else its first page.
   if (open.kind === 'drawer' && panelForDrawerTab(s.drawerTab) !== spec.id) { s.setDrawerTab(open.page); return; }
@@ -62,14 +63,13 @@ export function RightPanelHost(): JSX.Element {
   const shown = useShouldRenderHud();
   const mode = useUIStore(selectControlMode);
   const rightPanel = useUIStore((s) => s.rightPanel);
-  const contactsOpen = useUIStore((s) => s.contactsOpen);
   // The Trade item carries the unread-offers badge (it moved off the old drawer column).
   const tradeUnread = useUIStore((s) => s.tradeUnread);
   const items = useMemo(() => COMMON.map((it) => (it.id === 'trade' ? { ...it, badge: tradeUnread } : it)), [tradeUnread]);
   const compact = useRailCompact();
   useRailWidthVar(shown ? railWidthFor(compact) : 0);
   const tools = railTools(mode).map(toRail);
-  const activeId = rightPanel ?? (contactsOpen && mode === 'fly' ? 'contacts' : undefined);
+  const activeId = rightPanel ?? undefined;
   return (
     <>
       {shown && (
@@ -86,6 +86,7 @@ export function RightPanelHost(): JSX.Element {
       <DetailsPanel />
       <CogPanel />
       <FactionPanel />
+      <ContactsPanel />
     </>
   );
 }

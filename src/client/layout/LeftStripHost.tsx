@@ -22,7 +22,7 @@
  */
 import { EqxIcon, EqxIconButton, EqxStrip, EqxStripIdentity, type EqxIconName } from '../../ui/index.js';
 import type { IFleetView } from '@core/contracts/render/IFleetView';
-import { selectControlMode, useShouldRenderHud, useUIStore } from '../state/store';
+import { useShouldRenderHud, useUIStore } from '../state/store';
 import type { RightPanel } from '../state/rightPanel';
 import type { SelectionFocusKind, UISelection } from '../state/storeTypes';
 import { useSelectionPanelData, type PanelData } from '../components/selectionPanelData';
@@ -70,7 +70,7 @@ interface Props {
 export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
   const shown = useShouldRenderHud();
   const selection = useUIStore((s) => s.selection);
-  const panelOpen = useUIStore((s) => s.rightPanel !== null || (s.contactsOpen && selectControlMode(s) === 'fly'));
+  const panelOpen = useUIStore((s) => s.rightPanel !== null);
   const setRightPanel = useUIStore((s) => s.setRightPanel);
   const fleetItems = useFleetStripItems();
   const data = useSelectionPanelData();
