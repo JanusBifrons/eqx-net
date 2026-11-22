@@ -3,6 +3,7 @@ import type { FleetOverlayShip, RenderMirror } from '@core/contracts/IRenderer';
 import type { BoxRect, HoldArmed } from './input/commandPointerRouter.js';
 import type { FleetPickState } from './input/fleetPick.js';
 import { traceRoute, routeDots } from './routeLine.js';
+import { MOVE_ORDER_COLOUR } from './orderMarkerColours.js';
 
 /**
  * Command-view fleet overlay (RTS stream slice 13a).
@@ -23,7 +24,7 @@ import { traceRoute, routeDots } from './routeLine.js';
  * screen through the injected `project` (pixi-world in, so y is negated).
  */
 const BOX_COLOR = 0x7dff9a;
-const MOVE_FLASH_COLOR = 0x7dff9a;
+const MOVE_FLASH_COLOR = MOVE_ORDER_COLOUR;
 const ATTACK_FLASH_COLOR = 0xff5a4a;
 export const ORDER_FLASH_MS = 450;
 /** Hold cue: ring grows from HOLD_RING_R0 by HOLD_RING_GROW px over HOLD_RING_MS. */
@@ -31,7 +32,7 @@ export const HOLD_RING_MS = 300;
 const HOLD_RING_R0 = 18;
 const HOLD_RING_GROW = 14;
 const HOLD_COLOR = 0x7dff9a;
-const ORDER_LINE_COLOR = 0x7dff9a;
+const ORDER_LINE_COLOR = MOVE_ORDER_COLOUR;
 const ATTACK_LINE_COLOR = 0xff5a4a;
 const DEST_DOT_PX = 3;
 /** Draw-cost guard: order segments (lines + dest dots) per frame. */

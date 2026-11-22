@@ -170,7 +170,6 @@ export const useUIStore = create<UIStore>((set, get) => ({
   structureSettingsOpen: false,
   warpHeldTo: null,
   selection: EMPTY_SELECTION,
-  fleetOrderMode: 'move',
   fleetPick: null,
   helmAvailable: false,
   helmActive: false,
@@ -299,7 +298,6 @@ export const useUIStore = create<UIStore>((set, get) => ({
       : { ids: ids.length === 0 ? EMPTY_IDS : [...ids], focusId, focusKind: focusId === null ? null : focusKind };
     set(ids.length === 0 ? { selection, fleetPick: null } : { selection });
   },
-  setFleetOrderMode: (mode) => set({ fleetOrderMode: mode }),
   setFleetPick: (kind) => set({ fleetPick: kind === null ? null : { kind, points: 0, doneSeq: 0 } }),
   setFleetPickPoints: (points) => set((s) => (
     s.fleetPick === null || s.fleetPick.points === points ? {} : { fleetPick: { ...s.fleetPick, points } }

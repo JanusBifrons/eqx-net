@@ -42,6 +42,9 @@ export interface EqxIconButtonProps {
   variant?: EqxIconButtonVariant;
   /** Strip variant only: a status tile (current order / stance). */
   status?: EqxStripStatus;
+  /** Strip variant only: the colour this action has in the world (`#rrggbb`, e.g. the move-order
+   *  green), so the button and its mark read as one thing. Overrides tone / status colour. */
+  accent?: string;
   'data-testid'?: string;
   /** Round / strip only: a machine-readable state for tests (`data-state`), e.g. a lock's stage. Never shown. */
   'data-state'?: string;
@@ -58,6 +61,7 @@ export function EqxIconButton({
   disabled = false,
   variant = 'round',
   status,
+  accent,
   'data-testid': testId,
   'data-state': dataState,
 }: EqxIconButtonProps) {
@@ -94,10 +98,11 @@ export function EqxIconButton({
           data-variant={variant}
           {...(dataState !== undefined ? { 'data-state': dataState } : {})}
           {...(strip && status !== undefined ? { 'data-status': status } : {})}
+          {...(strip && accent !== undefined ? { 'data-accent': accent } : {})}
           disableRipple={strip}
           sx={
             strip
-              ? stripTileSx(tone, active, status)
+              ? stripTileSx(tone, active, status, accent)
               : {
                   width: box,
                   height: box,

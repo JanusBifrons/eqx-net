@@ -12,7 +12,7 @@ vi.mock('../net/clientSingleton', () => ({
   }),
 }));
 
-import { useTargetLock } from './targetLock';
+import { fleetLockApplies, lockFocus, useTargetLock } from './targetLock';
 /** The hook drawn as a bare button (the strip draws it as an EqxIconButton: selectionStripItems.test.tsx). */
 /** The hook drawn as a bare button (the strip draws it as an EqxIconButton, ). */
 function TargetAction({ isOwn }: { isOwn: boolean }): JSX.Element | null {
@@ -102,5 +102,50 @@ describe('useTargetLock', () => {
     expect(un.getAttribute('data-state')).toBe('unlock');
     fireEvent.click(un);
     expect(cancelLock).toHaveBeenCalledWith('mining', 's:42');
+  });
+});
+
+/**
+ * Tap rule T2 (UI plan D10): ONE Lock. With my ships selected and a focus
+ * that is not mine and can be attacked (ship, parked hull, drone, structure),
+ * Lock orders the ships to attack it (the renderer's `attackFocus`, the
+ * right-click path). Otherwise it is today's personal lock with the active
+ * weapon group: no ships selected, or a rock / pod.
+ */
+describe('fleetLockApplies', () => {
+  it('ships selected + a not-mine attackable focus: the fleet Lock', () => {
+    for (const k of ['ship', 'lingering', 'drone', 'structure'] as const) {
+      expect(fleetLockApplies({ ids: ['a', 'b'], focusId: 'x', focusKind: k })).toBe(true);
+    }
+  });
+  it('no ships, a rock or pod, no focus, or the focus is one of the selected ships: not the fleet Lock', () => {
+    expect(fleetLockApplies({ ids: [], focusId: 'p2', focusKind: 'ship' })).toBe(false);
+    expect(fleetLockApplies({ ids: ['a'], focusId: 'swarm-4', focusKind: 'asteroid' })).toBe(false);
+    expect(fleetLockApplies({ ids: ['a'], focusId: 'swarm-5', focusKind: 'pod' })).toBe(false);
+    expect(fleetLockApplies({ ids: ['a'], focusId: null, focusKind: null })).toBe(false);
+    expect(fleetLockApplies({ ids: ['a', 'b'], focusId: 'a', focusKind: 'ship' })).toBe(false);
+  });
+});
+
+describe('lockFocus (the strip Lock and the T key)', () => {
+  it('fleet Lock: asks the renderer to attack the focus, never the personal lock', () => {
+    const attackFocus = vi.fn();
+    const personal = vi.fn(() => true);
+    expect(lockFocus({ ids: ['a'], focusId: 'swarm-7', focusKind: 'drone' }, { attackFocus }, personal)).toBe(true);
+    expect(attackFocus).toHaveBeenCalledOnce();
+    expect(personal).not.toHaveBeenCalled();
+  });
+  it('no ships selected, or a rock: the personal lock', () => {
+    const attackFocus = vi.fn();
+    const personal = vi.fn(() => true);
+    expect(lockFocus({ ids: [], focusId: 'p2', focusKind: 'ship' }, { attackFocus }, personal)).toBe(true);
+    expect(lockFocus({ ids: ['a'], focusId: 'swarm-4', focusKind: 'asteroid' }, { attackFocus }, personal)).toBe(true);
+    expect(personal).toHaveBeenCalledTimes(2);
+    expect(attackFocus).not.toHaveBeenCalled();
+  });
+  it('fleet Lock with no renderer yet: nothing happens (false)', () => {
+    const personal = vi.fn(() => true);
+    expect(lockFocus({ ids: ['a'], focusId: 'p2', focusKind: 'ship' }, null, personal)).toBe(false);
+    expect(personal).not.toHaveBeenCalled();
   });
 });

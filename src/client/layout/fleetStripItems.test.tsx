@@ -11,6 +11,7 @@ import { applyFleetStatus, resetFleetStatus, type FleetStatusUpdate } from '../f
 import { resetFleetCommands, setFleetCommands } from '../fleet/fleetCommands';
 import { LayoutProvider } from './LayoutProvider';
 import { LeftStripHost } from './LeftStripHost';
+import { MOVE_ORDER_COLOUR, MOVE_ORDER_COLOUR_HEX } from '../render/orderMarkerColours';
 
 function stubMedia(): void {
   vi.stubGlobal('matchMedia', (q: string) => ({
@@ -61,7 +62,7 @@ describe('left strip fleet section (U3-4)', () => {
   it('own ships in Command: Order, Stance and Stop, each with a tooltip, no text', () => {
     mount();
     select(['a', 'b']);
-    for (const t of ['order', 'stance', 'stop']) {
+    for (const t of ['order', 'move', 'stance', 'stop']) {
       const el = screen.getByTestId(`left-strip-${t}`);
       expect(el.getAttribute('aria-label'), t).toBeTruthy();
       expect(el.textContent, t).toBe('');
@@ -103,6 +104,38 @@ describe('left strip fleet section (U3-4)', () => {
     pick('order', 'patrol');
     expect(cmd.setMode).not.toHaveBeenCalled();
     expect(useUIStore.getState().fleetPick?.kind).toBe('patrol');
+  });
+
+  it('Move (tap rule T3) arms a one-point move pick, sends nothing yet', () => {
+    mount();
+    select(['a']);
+    const move = screen.getByTestId('left-strip-move');
+    expect(move.getAttribute('aria-label')).toBe('Move: tap a point');
+    fireEvent.click(move);
+    expect(cmd.setMode).not.toHaveBeenCalled();
+    expect(useUIStore.getState().fleetPick?.kind).toBe('move');
+  });
+
+  it('Move wears the in-world move-order green (the FleetOverlay marker colour) and its icon', () => {
+    mount();
+    select(['a']);
+    const move = screen.getByTestId('left-strip-move');
+    expect(move.getAttribute('data-accent')).toBe(MOVE_ORDER_COLOUR_HEX);
+    expect(MOVE_ORDER_COLOUR).toBe(0x7dff9a);
+    expect(getComputedStyle(move).color).toBe('rgb(125, 255, 154)');
+    expect(move.querySelector('svg')?.getAttribute('data-icon')).toBe('move');
+  });
+
+  it('Move shows it is armed (pressed) and a second tap disarms it', () => {
+    mount();
+    select(['a']);
+    const move = (): HTMLElement => screen.getByTestId('left-strip-move');
+    expect(move().getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(move());
+    expect(move().getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(move());
+    expect(useUIStore.getState().fleetPick).toBeNull();
+    expect(move().getAttribute('aria-pressed')).toBe('false');
   });
 
   it('shows the shared value; a mixed selection is neutral (no option active)', () => {
