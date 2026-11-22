@@ -17,14 +17,18 @@
  *  3. each frame, a held hit is released when the display tick reaches its
  *     hit tick, the same frame the burst is pushed (`release`).
  * Safety: an unmatched hit is released `UNMATCHED_HOLD_MS` game ms after it
- * arrived and a matched one after `MAX_HOLD_MS`, so a lost `shell_end` never
- * swallows the flash. Presentation only: HP / shield state is never held.
+ * arrived and a matched one after `matchedHoldMs` (`MAX_HOLD_MS` piloting,
+ * `OFF_PILOT_MAX_HOLD_MS` off pilot, where the display delay may grow to
+ * `OFF_PILOT_MAX_TOTAL_DISPLAY_DELAY_MS`), so a lost `shell_end` never
+ * swallows the flash and a slow drawn shell is never overtaken by its hit.
+ * Presentation only: HP / shield state is never held.
  *
  * Entries are pooled and mutated in place; no allocation once warm (#14).
  */
 import type { ShellSalvoRenderInfo } from '@core/contracts/IRenderer';
 import { shellPathEndTick, SHELL_TICK_DT_S } from '@core/combat/shellFlight';
 import type { DamageEvent } from '@shared-types/messages';
+import { MAX_TOTAL_DISPLAY_DELAY_MS, OFF_PILOT_MAX_TOTAL_DISPLAY_DELAY_MS } from './swarmDelaySizing.js';
 
 /** Game ms an unmatched held hit waits for its `shell_end` (sent in the same
  *  server flush as the damage, so a few wall ms later at most). */
@@ -32,6 +36,20 @@ export const UNMATCHED_HOLD_MS = 300;
 /** Game ms a matched hit may wait for the display to reach it (display delay
  *  100 game ms + RTT/2 in game ms; generous so only a stalled display hits it). */
 export const MAX_HOLD_MS = 1500;
+/** Game ms a matched hit may wait OFF PILOT (Command, Build, spectate, or the
+ *  catch-up after it), where shells are drawn on a display delay of up to
+ *  OFF_PILOT_MAX_TOTAL_DISPLAY_DELAY_MS game ms (pilot: MAX_TOTAL_DISPLAY_DELAY_MS).
+ *  The same headroom over the largest delay as `MAX_HOLD_MS` has piloting
+ *  (1500 + 4000 − 400 = 5100). Game ms like the delay maxima, so it holds at
+ *  any speed. */
+export const OFF_PILOT_MAX_HOLD_MS =
+  MAX_HOLD_MS + OFF_PILOT_MAX_TOTAL_DISPLAY_DELAY_MS - MAX_TOTAL_DISPLAY_DELAY_MS;
+
+/** The matched-hit (and held-death) deadline, game ms: `MAX_HOLD_MS` while
+ *  the display delay is on its pilot bounds, else `OFF_PILOT_MAX_HOLD_MS`. */
+export function matchedHoldMs(offPilot: boolean): number {
+  return offPilot ? OFF_PILOT_MAX_HOLD_MS : MAX_HOLD_MS;
+}
 /** How close (u) the `shell_end` point must be to the damage hit point.
  *  Both are the server's same `bestHitX/Y`, so they are equal up to JSON. */
 const END_MATCH_EPS = 0.5;
@@ -106,14 +124,15 @@ export class NavalHitHold {
     return true;
   }
 
-  /** A `shell_end` tuple: held hits at (x, y) take its hit tick. */
-  onShellEnd(endTick: number, x: number, y: number, nowGameMs: number): void {
+  /** A `shell_end` tuple: held hits at (x, y) take its hit tick. `offPilot`:
+   *  the display delay is on its off-pilot bounds (`matchedHoldMs`). */
+  onShellEnd(endTick: number, x: number, y: number, nowGameMs: number, offPilot = false): void {
     for (let i = 0; i < this.count; i++) {
       const h = this.held[i]!;
       if (h.endTick >= 0) continue;
       if (Math.abs(h.evt.hitX! - x) <= END_MATCH_EPS && Math.abs(h.evt.hitY! - y) <= END_MATCH_EPS) {
         h.endTick = endTick;
-        h.deadline = nowGameMs + MAX_HOLD_MS;
+        h.deadline = nowGameMs + matchedHoldMs(offPilot);
       }
     }
   }

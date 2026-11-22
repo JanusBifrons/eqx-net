@@ -16,8 +16,11 @@
  *  - a lost `shell_end` never swallows the flash (safety timeout);
  *  - non-shell damage (a beam with no shell on its line) is unchanged.
  */
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { ColyseusGameClient } from './ColyseusClient.js';
+import { MAX_HOLD_MS, OFF_PILOT_MAX_HOLD_MS, matchedHoldMs } from './navalHitHold.js';
+import { resetSwarmDisplayDelay, setSwarmDisplayDelayMode } from './swarmInterpolation.js';
+import { OFF_PILOT_MAX_TOTAL_DISPLAY_DELAY_MS } from './swarmDelaySizing.js';
 import { MockClock } from '../../core/clock/Clock.js';
 import type { DamageEvent } from '../../shared-types/messages.js';
 import type { ShellEnd, ShellSalvo } from '../../shared-types/messages/shellEvents.js';
@@ -157,5 +160,76 @@ describe('naval hit flash waits for the drawn shell (display tick)', () => {
     expect(internals._damageFlashFrames.has('second')).toBe(false);
     internals.placeShells(1020);
     expect(internals._damageFlashFrames.has('second')).toBe(true);
+  });
+});
+
+/**
+ * Off pilot (Command, Build, spectate; #1206) the display delay the shells
+ * are drawn at may grow to OFF_PILOT_MAX_TOTAL_DISPLAY_DELAY_MS (4 s game).
+ * The 1.5 s matched deadline then fired the hit FX before the drawn shell got
+ * there. Off pilot the matched deadline covers the largest delay; piloting it
+ * is unchanged.
+ */
+describe('naval hit hold deadline follows the display-delay mode', () => {
+  let clock: MockClock;
+  let internals: Internals;
+
+  beforeEach(() => {
+    resetSwarmDisplayDelay();
+    clock = new MockClock(10_000);
+    internals = asInternals(new ColyseusGameClient(clock));
+    internals.mirror.localPlayerId = 'bb-1';
+    internals.mirror.ships.set('cruiser', { x: HIT_X, y: HIT_Y, vx: 0, vy: 0, angle: 0 });
+    internals.mirror.projectiles = new Map();
+    internals.mirror.pendingDamageNumbers = [];
+    internals.mirror.pendingHealthBarHits = [];
+    internals.mirror.pendingEffectTriggers = [];
+    internals.mirror.pendingShellEnds = [];
+    internals._shellEvents = true;
+    internals._shellStore.applySalvo(SALVO);
+  });
+  afterEach(() => { resetSwarmDisplayDelay(); });
+
+  it('the off-pilot deadline covers the largest off-pilot display delay', () => {
+    expect(matchedHoldMs(false)).toBe(MAX_HOLD_MS);
+    expect(matchedHoldMs(true)).toBe(OFF_PILOT_MAX_HOLD_MS);
+    expect(OFF_PILOT_MAX_HOLD_MS).toBeGreaterThan(OFF_PILOT_MAX_TOTAL_DISPLAY_DELAY_MS);
+  });
+
+  it('off pilot, a matched hit drawn 2.5 s late is still held at 2 s and released by its shell_end', () => {
+    setSwarmDisplayDelayMode('offPilot');
+    internals.handleDamage(shellHit());
+    internals.applyShellEnd(END);
+    clock.advance(2000);
+    internals.placeShells(1045); // the drawn shell is still in flight
+    expect(internals._damageFlashFrames.has('cruiser')).toBe(false);
+    expect(internals.mirror.pendingDamageNumbers).toHaveLength(0);
+    clock.advance(500);
+    internals.placeShells(1050); // the display reaches the shell_end
+    expect(internals._damageFlashFrames.get('cruiser')).toBe(6);
+    expect(internals.mirror.pendingDamageNumbers).toHaveLength(1);
+  });
+
+  it('piloting, a matched hit still releases at MAX_HOLD_MS (unchanged)', () => {
+    internals.handleDamage(shellHit());
+    internals.applyShellEnd(END);
+    clock.advance(MAX_HOLD_MS - 1);
+    internals.placeShells(1045);
+    expect(internals._damageFlashFrames.has('cruiser')).toBe(false);
+    clock.advance(1);
+    internals.placeShells(1045);
+    expect(internals._damageFlashFrames.get('cruiser')).toBe(6);
+  });
+
+  it('off pilot, a matched hit whose display never reaches it is released at OFF_PILOT_MAX_HOLD_MS', () => {
+    setSwarmDisplayDelayMode('offPilot');
+    internals.handleDamage(shellHit());
+    internals.applyShellEnd(END);
+    clock.advance(OFF_PILOT_MAX_HOLD_MS - 1);
+    internals.placeShells(1045);
+    expect(internals._damageFlashFrames.has('cruiser')).toBe(false);
+    clock.advance(1);
+    internals.placeShells(1045);
+    expect(internals._damageFlashFrames.get('cruiser')).toBe(6);
   });
 });

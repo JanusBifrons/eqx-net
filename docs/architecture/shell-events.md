@@ -258,7 +258,12 @@ Now (`net/drawnShellTiming.ts`, `DrawnShellTiming.deferKill` / `release`):
   `deathTick` is on or after it until no death is held; pieces already drawn
   are never hidden. The dying-hull hold then hands over as before.
 - Bounded (#16): the held hit's own safety deadline (`UNMATCHED_HOLD_MS` /
-  `MAX_HOLD_MS`) and the deferral's `MAX_HOLD_MS` game-ms deadline; a welcome
+  `matchedHoldMs`) and the deferral's `matchedHoldMs` game-ms deadline. The
+  matched deadline is `MAX_HOLD_MS` (1500) piloting and `OFF_PILOT_MAX_HOLD_MS`
+  (5100 = 1500 + the off-pilot max delay 4000 − the pilot max 400) while the
+  display delay is on its off-pilot bounds (Command, Build, spectate, catch-up):
+  there the drawn shell may lag up to 4 s, and a 1.5 s deadline fired the hit
+  before it arrived. A welcome
   or sector handoff releases or clears them. Snapshots still say the ship is
   dead; the event only sets WHEN it is drawn dying. A death with no held hit
   (a beam, a hit already drawn) dies on arrival as before. An id recycled
