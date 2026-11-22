@@ -1,8 +1,8 @@
 /**
  * The Galaxy right panel (UI language plan A4, job U2-2a): one scrolling page
  * with small section headings, opened by the rail's Galaxy item
- * (`rightPanel = 'galaxy'`). It merges the old drawer's Galaxy tab with the
- * WarpPicker card's list:
+ * (`rightPanel = 'galaxy'`). It is the only place the in-system warp list
+ * lives (the old drawer Galaxy tab and WarpPicker card are folded in here):
  *
  *  - **Sector:** where you are; "Open full map" toggles the galaxy map Window
  *    (`isGalaxyMapOpen`, drawn by App.tsx / `app/galaxyOverlay.ts`; M too).
@@ -17,7 +17,8 @@
  * The map and warp rows are hidden mid-transit (an action that can't work is
  * hidden). The ship pose is read from the render mirror at 4 Hz only while the
  * panel is open (`usePolledShip`, the card's sanctioned low-cadence read).
- * The old WarpPicker card stays until U2-2b folds `warpPickerOpen` in here.
+ * In Command view there is no flown ship, so no pose and no warp rows: a fleet
+ * warps by sector from the full map (`sendWarpHere`, `engage_transit.shipIds`).
  */
 import { useCallback, useMemo, type CSSProperties } from 'react';
 import { EQX_PANEL_SIZE, EqxListRow, EqxPanel, EqxSection } from '../../ui/index.js';
@@ -33,7 +34,7 @@ import { GalaxyArrivalSection } from './galaxyArrival';
 const PAPER_ATTRS = { 'data-testid': 'galaxy-panel' } as const;
 const BODY_STYLE: CSSProperties = { display: 'flex', flexDirection: 'column', gap: HUD.panel.bodyGap, minWidth: 0 };
 const EMPTY: readonly WarpDestination[] = [];
-/** The panel's own reused destination list (the card keeps its own). */
+/** The panel's own reused destination list. */
 const panelDests: WarpDestination[] = [];
 
 /** A row's dim second line: the transit pad, then why it is short or refused. */
@@ -48,7 +49,8 @@ function WarpRow({ d, onWarp }: { d: WarpDestination; onWarp: (d: WarpDestinatio
   const canPick = !d.here && d.reachable;
   return (
     <EqxListRow primary={d.label} secondary={warpRowNote(d)} side={d.here ? 'here' : formatKm(d.distKm)}
-      onOpen={canPick ? () => onWarp(d) : undefined} data-testid={`galaxy-warp-${d.id}`} />
+      onOpen={canPick ? () => onWarp(d) : undefined} dataAttrs={{ 'warp-state': d.state, km: Math.round(d.distKm) }}
+      data-testid={`galaxy-warp-${d.id}`} />
   );
 }
 

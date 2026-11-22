@@ -1,7 +1,7 @@
 /**
  * UI plan U2-2a: Galaxy is its own right panel. "Open full map" toggles the
- * map Window and folds the panel; the Nearby / Far rows (the WarpPicker list,
- * moved here from the drawer's "Warp in this system" button) warp to a pocket's
+ * map Window and folds the panel; the Nearby / Far rows (the only in-system
+ * warp list) warp to a pocket's
  * target and show the held-warp chip; the rows hide mid-transit, outside a
  * solar-system build and with no current sector; the Arrival section clamps
  * typed X/Y on blur.
@@ -37,7 +37,7 @@ beforeEach(() => {
   requestWarp.mockClear(); warping = false;
   useUIStore.setState({
     rightPanel: 'galaxy', drawerTab: 'galaxy', currentSectorKey: 'sol-prime', transitState: 'DOCKED',
-    isGalaxyMapOpen: false, warpHeldTo: null, warpPickerOpen: false, arrivalMode: 'same',
+    isGalaxyMapOpen: false, warpHeldTo: null, arrivalMode: 'same',
   });
 });
 afterEach(() => {
@@ -74,10 +74,12 @@ describe('GalaxyPanel (U2-2a)', () => {
     render(<><GalaxyPanel /><WarpStatusChip /></>);
     const target = warpDestinations('sol-prime', 0, 0).find((d) => !d.here && d.reachable)!;
     const section = target.far ? 'galaxy-far' : 'galaxy-nearby';
-    fireEvent.click(within(screen.getByTestId(section)).getByTestId(`galaxy-warp-${target.id}`));
+    const row = within(screen.getByTestId(section)).getByTestId(`galaxy-warp-${target.id}`);
+    expect(row.getAttribute('data-warp-state')).toBe(target.state); // e2e reads these
+    expect(row.getAttribute('data-km')).toBe(String(Math.round(target.distKm)));
+    fireEvent.click(row);
     expect(requestWarp).toHaveBeenCalledWith(target.targetX, target.targetY);
     expect(useUIStore.getState().rightPanel).toBeNull();
-    expect(useUIStore.getState().warpPickerOpen).toBe(false); // the old card is not involved
     expect(screen.getByTestId('warp-status').textContent).toContain(target.label);
   });
 

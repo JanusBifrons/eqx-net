@@ -59,7 +59,7 @@ import { logEvent } from './debug/ClientLogger';
 import { captureDeviceInfo } from './debug/deviceInfo';
 import { useMountLog } from './debug/useMountLog';
 import { useWarpOrchestration } from './useWarpOrchestration';
-import { WarpPicker, WarpStatusChip } from './components/WarpPicker';
+import { WarpStatusChip } from './components/WarpPicker';
 import { StructurePlacementBanner } from './components/StructurePlacementBanner';
 import { PlacementFenceHint } from './components/PlacementFenceHint';
 import { PlacementLinkHint } from './components/PlacementLinkHint';
@@ -953,8 +953,6 @@ function GameSurface({
        *  is removed. Death transitions INSTANTLY into spectator (free-roam
        *  construction camera); re-entry is via the galaxy map or (WS-A2) an
        *  owned ship's in-world Pilot action. */}
-      {/* Phase 4 warp-to destination picker (portalled; solar sectors only). */}
-      <WarpPicker />
       {/* Phase 4 WS-B2 — ship stat-upgrade modal. Opens on the local ship's
        *  level-up (the WS-B1 `pendingLevelUp` seam) to spend the earned point. */}
       <UpgradeModalHost />
