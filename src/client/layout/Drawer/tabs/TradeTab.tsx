@@ -9,8 +9,8 @@
  *   Gift     send goods or credits to a side for standing
  *
  * Truth = `GET /trade/economy` + `/trade/offers` (#16), polled only while the
- * tab is on screen (drawer-perf rule: gate on `drawerTab === 'trade' &&
- * isDrawerOpen`) and refetched at once on every `trade_notice`. The base picker
+ * tab is on screen (drawer-perf rule: gate on
+ * `selectDrawerTabShown('trade')`) and refetched at once on every `trade_notice`. The base picker
  * reads the render mirror at that same low cadence (`getGameClient()`).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
@@ -18,6 +18,7 @@ import {
   Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, Select, Tab, Tabs, TextField, Typography,
 } from '@mui/material';
 import { useUIStore } from '../../../state/store';
+import { selectDrawerTabShown } from '../../../state/rightPanel';
 import { getGameClient } from '../../../net/clientSingleton';
 import { loadStoredPlayerId } from '../../../identity/token';
 import { loadToken } from '../../../auth/tokenStorage';
@@ -62,7 +63,7 @@ function repColor(rep: number): string {
 }
 
 export function TradeTab(): JSX.Element {
-  const visible = useUIStore((s) => s.drawerTab === 'trade' && s.isDrawerOpen);
+  const visible = useUIStore(selectDrawerTabShown('trade'));
   const noticeSeq = useUIStore((s) => s.tradeNoticeSeq);
   // Economy v2 W1 — buys and gifts are paid from the wallet (credits are virtual).
   const wallet = useUIStore((s) => s.wallet);

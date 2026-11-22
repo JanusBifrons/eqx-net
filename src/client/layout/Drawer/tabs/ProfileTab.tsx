@@ -33,7 +33,7 @@ function initials(displayName: string | null, email: string | null): string {
 export function ProfileTab(): JSX.Element {
   const { user, token, setAuth } = useAuthStore();
   const setPhase = useUIStore((s) => s.setPhase);
-  const setDrawerOpen = useUIStore((s) => s.setDrawerOpen);
+  const setRightPanel = useUIStore((s) => s.setRightPanel);
   const logout = useLogout();
 
   const [displayName, setDisplayName] = useState('');
@@ -55,7 +55,7 @@ export function ProfileTab(): JSX.Element {
         <Button
           variant="outlined"
           data-testid="profile-tab-signin"
-          onClick={() => { setPhase('auth'); setDrawerOpen(false); }}
+          onClick={() => { setPhase('auth'); setRightPanel(null); }}
           sx={{ color: '#00ff88', borderColor: '#1f7a4d' }}
         >
           Sign in

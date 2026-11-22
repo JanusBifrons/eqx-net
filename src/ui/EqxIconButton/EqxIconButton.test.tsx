@@ -95,4 +95,27 @@ describe('EqxIconButton', () => {
     rerender(<EqxIconButton icon={<PublicIcon />} tooltip="g" badge={0} />);
     expect(badge()?.className).toContain('MuiBadge-invisible');
   });
+
+  it('variant rail: borderless rounded-square tile, cyan well and inset bar when active, badge kept', () => {
+    const { rerender, container } = render(
+      <EqxIconButton variant="rail" icon={<PublicIcon />} tooltip="g" badge={2} data-testid="ib" />,
+    );
+    const b = () => screen.getByTestId('ib');
+    const cs = () => getComputedStyle(b());
+    expect(boxOf(b())).toEqual({ w: `${HUD.size.railItem}px`, h: `${HUD.size.railItem}px` });
+    expect(cs().borderRadius).toBe(`${HUD.rail.radius}px`);
+    expect(cs().borderStyle).not.toBe('solid');
+    expect(cs().boxShadow).toBe('none');
+    expect(b().dataset['variant']).toBe('rail');
+    expect(container.querySelector('.MuiBadge-badge')?.textContent).toBe('2');
+    rerender(<EqxIconButton variant="railTool" icon={<PublicIcon />} tooltip="g" active data-testid="ib" />);
+    expect(b().dataset['variant']).toBe('railTool');
+    expect(b().getAttribute('aria-pressed')).toBe('true');
+    expect(cs().boxShadow).toContain('inset');
+  });
+
+  it('variant round (default) keeps the outlined circle', () => {
+    render(<EqxIconButton icon={<PublicIcon />} tooltip="g" data-testid="ib" />);
+    expect(getComputedStyle(screen.getByTestId('ib')).borderRadius).toBe('50%');
+  });
 });

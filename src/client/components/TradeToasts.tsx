@@ -51,8 +51,7 @@ export const TradeToasts = memo(function TradeToasts(): JSX.Element | null {
   if (toasts.length === 0) return null;
   const openTrade = (): void => {
     const st = useUIStore.getState();
-    st.setDrawerTab('trade');
-    st.setDrawerOpen(true);
+    st.setDrawerTab('trade'); // opens the Trade panel too
   };
   return (
     <Box sx={STACK_SX} data-testid="trade-toasts">

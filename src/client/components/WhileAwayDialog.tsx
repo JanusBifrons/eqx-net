@@ -46,8 +46,7 @@ export const WhileAwayDialog = memo(function WhileAwayDialog(): JSX.Element | nu
   const openTrade = (): void => {
     close();
     const st = useUIStore.getState();
-    st.setDrawerTab('trade');
-    st.setDrawerOpen(true);
+    st.setDrawerTab('trade'); // opens the Trade panel too
   };
   return (
     <Dialog open onClose={close} maxWidth="xs" fullWidth PaperProps={PAPER_PROPS} data-testid="while-away-dialog">

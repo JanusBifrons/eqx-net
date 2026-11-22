@@ -15,11 +15,11 @@ describe('ContractsTab (P4c)', () => {
   beforeEach(() => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => BOARD })));
     useUIStore.getState().setDrawerTab('contracts');
-    useUIStore.getState().setDrawerOpen(true);
+    useUIStore.getState().setRightPanel('jobs');
   });
   afterEach(() => {
     vi.unstubAllGlobals();
-    useUIStore.getState().setDrawerOpen(false);
+    useUIStore.getState().setRightPanel(null);
   });
 
   it('renders the board from GET /galaxy/contracts (no raw ids)', async () => {
@@ -33,7 +33,7 @@ describe('ContractsTab (P4c)', () => {
   });
 
   it('does not poll while hidden', () => {
-    useUIStore.getState().setDrawerOpen(false);
+    useUIStore.getState().setRightPanel(null);
     render(<ContractsTab />);
     expect(fetch).not.toHaveBeenCalled();
   });
