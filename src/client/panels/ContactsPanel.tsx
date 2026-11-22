@@ -3,7 +3,9 @@
  * of what you can lock, for picking far targets without zooming out (owner,
  * 2026-11-10: "lock and pick targets like you do in Eve where you're reduced
  * to a list view like you use when you warp to"). Columns (owner, 2026-11-22):
- * Name (kind icon, locking-you, lock state), Type, Faction, Stance, Distance.
+ * Name (kind icon), Lock (locking-you, lock state), Type, Faction, Stance,
+ * Distance. The lock marks get their own narrow column so the name never
+ * loses width to them on a phone.
  * Every header taps to sort (the tapped column becomes the primary key, the
  * previous one the tie-break: `tapContactSort`); default nearest first. Row
  * text is the stance colour. Paged (`CONTACTS_PAGE_SIZE`); the filter button
@@ -69,10 +71,16 @@ const HEAD_STYLE: CSSProperties = { display: 'flex', alignItems: 'center', gap: 
 const GROW_STYLE: CSSProperties = { flex: 1, minWidth: 0 };
 const NAME_STYLE: CSSProperties = { display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 };
 const NAME_TEXT_STYLE: CSSProperties = { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' };
+const LOCK_CELL_STYLE: CSSProperties = { display: 'flex', alignItems: 'center', gap: 3, minWidth: 0 };
 const LOCK_STYLE: CSSProperties = { flex: 'none', fontWeight: 700, fontSize: HUD.table.smallFont };
 const THREAT_STYLE: CSSProperties = { flex: 'none', color: THREAT_COLOUR_HEX, fontWeight: 700 };
 const ICON_STYLE: CSSProperties = { display: 'block', flex: 'none' };
 const REACH_STYLE: CSSProperties = { marginRight: 3 };
+
+/** Column widths, px (a ~305 px table body on a phone held sideways: 36vw of
+ *  915, minus padding). Name takes 2.5 shares of what is left, Faction 1. */
+const COL_W = { lock: 44, type: 46, stance: 46, dist: 50 } as const;
+const NAME_GROW = 2.5;
 
 /** The kind icon: the shared visual-language shape, no count. */
 function KindIcon({ kind }: { kind: EntityKind }): JSX.Element {
@@ -227,12 +235,13 @@ function rowAttrs(r: ContactRow): Record<string, string | number> {
 function contactColumns(groups: ReadonlyArray<{ id: string }>, activeIdx: number): EqxTableColumn<ContactRow>[] {
   const reachCol = activeIdx >= 0 ? groupColourHex(activeIdx) : HUD.color.inkDim;
   return [
-    { id: 'name', label: 'Name', grow: 1.4, cell: (r) => <NameCell r={r} groups={groups} /> },
-    { id: 'type', label: 'Type', width: 52, cell: (r) => CONTACT_TYPE_LABEL[r.type] },
+    { id: 'name', label: 'Name', grow: NAME_GROW, cell: (r) => <NameCell r={r} /> },
+    { id: 'lock', label: 'Lock', width: COL_W.lock, cell: (r) => <LockCell r={r} groups={groups} /> },
+    { id: 'type', label: 'Type', width: COL_W.type, cell: (r) => CONTACT_TYPE_LABEL[r.type] },
     { id: 'faction', label: 'Faction', grow: 1, cell: (r) => r.faction },
-    { id: 'stance', label: 'Stance', width: 52, cell: (r) => CONTACT_STANCE_LABEL[r.stance] },
+    { id: 'stance', label: 'Stance', width: COL_W.stance, cell: (r) => CONTACT_STANCE_LABEL[r.stance] },
     {
-      id: 'dist', label: 'Dist', width: 56, alignRight: true, numeric: true,
+      id: 'dist', label: 'Dist', width: COL_W.dist, alignRight: true, numeric: true,
       cell: (r) => {
         const mark = r.inActiveReach ? '●' : r.inAnyReach ? '○' : '·';
         const title = r.inActiveReach ? 'in fire range of the active group' : r.inAnyReach ? 'in fire range of another group' : 'out of fire range (still lockable)';
@@ -247,14 +256,23 @@ function contactColumns(groups: ReadonlyArray<{ id: string }>, activeIdx: number
   ];
 }
 
-function NameCell({ r, groups }: { r: ContactRow; groups: ReadonlyArray<{ id: string }> }): JSX.Element {
-  const lock = r.lock;
-  const lockIdx = lock ? groups.findIndex((g) => g.id === lock.groupId) : -1;
-  const lockCol = lock ? (lock.stage === 0 ? FAILSAFE_HEX : groupColourHex(lockIdx)) : undefined;
+function NameCell({ r }: { r: ContactRow }): JSX.Element {
   return (
     <span style={NAME_STYLE}>
       <KindIcon kind={r.icon} />
       <span style={NAME_TEXT_STYLE}>{r.name}</span>
+    </span>
+  );
+}
+
+/** Locking you (⚠ locked / ◎ locking, threat colour), then your lock (LOCK or
+ *  the acquiring percent, in the holding group's colour); empty otherwise. */
+function LockCell({ r, groups }: { r: ContactRow; groups: ReadonlyArray<{ id: string }> }): JSX.Element {
+  const lock = r.lock;
+  const lockIdx = lock ? groups.findIndex((g) => g.id === lock.groupId) : -1;
+  const lockCol = lock ? (lock.stage === 0 ? FAILSAFE_HEX : groupColourHex(lockIdx)) : undefined;
+  return (
+    <span style={LOCK_CELL_STYLE}>
       {r.lockingYou > 0 && (
         <span title={r.lockingYou === 2 ? 'has you locked' : 'locking you'} style={THREAT_STYLE}>
           {r.lockingYou === 2 ? '⚠' : '◎'}

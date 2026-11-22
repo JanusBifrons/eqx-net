@@ -208,7 +208,7 @@ export function buildContactRows(
 }
 
 /** A sortable column. */
-export type ContactSortKey = 'name' | 'type' | 'faction' | 'stance' | 'dist';
+export type ContactSortKey = 'name' | 'lock' | 'type' | 'faction' | 'stance' | 'dist';
 export type ContactSortDir = 'asc' | 'desc';
 /** Primary key first, then the secondary (the previously tapped column). */
 export type ContactSort = ReadonlyArray<{ readonly key: ContactSortKey; readonly dir: ContactSortDir }>;
@@ -225,6 +225,11 @@ export function tapContactSort(sort: ContactSort, key: ContactSortKey): ContactS
   return [{ key, dir: 'asc' }, primary];
 }
 
+/** Lock column rank: your lock (locked over acquiring) first, then how hard it is locking you. */
+function lockRank(r: ContactRow): number {
+  return (r.lock === null ? 0 : r.lock.stage === 2 ? 2 : 1) * 3 + r.lockingYou;
+}
+
 function compareBy(key: ContactSortKey, a: ContactRow, b: ContactRow): number {
   switch (key) {
     case 'dist': return a.dist - b.dist;
@@ -232,6 +237,7 @@ function compareBy(key: ContactSortKey, a: ContactRow, b: ContactRow): number {
     case 'type': return CONTACT_TYPE_LABEL[a.type].localeCompare(CONTACT_TYPE_LABEL[b.type]);
     case 'faction': return a.faction.localeCompare(b.faction);
     case 'name': return a.name.localeCompare(b.name);
+    case 'lock': return lockRank(b) - lockRank(a);
   }
 }
 

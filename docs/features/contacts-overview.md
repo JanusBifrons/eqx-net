@@ -16,7 +16,8 @@ nearest first, type, faction and stance columns, rows coloured by stance):
 
 | Column | Meaning |
 |---|---|
-| Name | Kind icon (the shared visual language, `render/entityVisuals.ts`: red star hostile NPC, amber diamond neutral NPC, green triangle pilot, blue hexagon structure), then the kind or elite name (a pilot's ship by its hull, a structure by its kind). Then ⚠ / ◎ in red when it has you locked / is locking you (`localLockedBy`), and `LOCK` or the acquiring percent (capped at 99, like the lock band) in the colour of the group holding the lock, yellow while a failsafe runs. Never an id |
+| Name | Kind icon (the shared visual language, `render/entityVisuals.ts`: red star hostile NPC, amber diamond neutral NPC, green triangle pilot, blue hexagon structure), then the kind or elite name (a pilot's ship by its hull, a structure by its kind). Never an id. Nothing else shares the cell, so the name keeps its width on a phone held sideways |
+| Lock | ⚠ / ◎ in red when it has you locked / is locking you (`localLockedBy`), then `LOCK` or the acquiring percent (capped at 99, like the lock band) in the colour of the group holding the lock, yellow while a failsafe runs; empty otherwise. Sorting by it (ascending) lists your locks first (locked, then acquiring), then whatever is locking you |
 | Type | Ship or Structure |
 | Faction | Whose it is: an NPC patrol's faction, else its kind's allegiance (Drones, Robots, Traders, ...); a pilot's name for a pilot's ship; a structure's owner (NPC faction, player name, or "Unknown"). Never an id |
 | Stance | Hostile / Neutral / Friendly, from the same rule as the radar and far-zoom icons (`farIconRelation`, `render/relationToLocal.ts`): anything aggro on you, aiming at you or locking you is Hostile first; other pilots and their structures are Friendly; the rest (trade haulers too) Neutral |
@@ -32,6 +33,9 @@ nearest first, type, faction and stance columns, rows coloured by stance):
   then friendlies, each nearest first. Stance ascending is hostile first.
   Default: distance ascending. Remaining ties fall back to distance, then the
   lock key, so rows never swap between refreshes.
+- **Widths:** Name and Faction share what the fixed columns leave (2.5 : 1;
+  Faction ellipsizes first); Lock 44 px, Type 46, Stance 46, Dist 50. Sized
+  for a ~305 px table on a phone held sideways (the panel is 36vw).
 - **Pages:** 8 rows a page; ‹ Prev / Next › and "Page X of Y" show when there
   is more than one page. A sort or filter change goes back to page 1.
 - **Filters:** the funnel button next to the group line shows or hides them

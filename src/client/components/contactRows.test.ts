@@ -215,6 +215,14 @@ describe('sortContacts', () => {
     expect(keysOf(sortContacts([...rows].reverse(), [{ key: 'name', dir: 'asc' }]))).toEqual(['s:22', 's:20', 's:21']);
   });
 
+  it('lock asc: locked, then acquiring, then locking you, then the rest', () => {
+    const byLock: ContactSort = [{ key: 'lock', dir: 'asc' }];
+    expect(keysOf(sortContacts(buildContactRows(mirror(), 'guns', REACHES), byLock))).toEqual(['s:8', 's:7', 'p:' + PLAYER_ID, 's:10']);
+    const m = mirror({ localGroups: [{ id: 'guns', m: 1, l: [{ t: 's:8', s: 2, p: 100 }] }], localLockedBy: [{ t: 's:10', s: 2, p: 100 }] });
+    expect(keysOf(sortContacts(buildContactRows(m, 'guns', REACHES), byLock))).toEqual(['s:8', 's:10', 's:7', 'p:' + PLAYER_ID]);
+    expect(keysOf(sortContacts(buildContactRows(m, 'guns', REACHES), [{ key: 'lock', dir: 'desc' }]))).toEqual(['s:7', 'p:' + PLAYER_ID, 's:10', 's:8']);
+  });
+
   it('no cap: every contact is kept (the panel pages them)', () => {
     const swarm = new Map<number, unknown>();
     for (let i = 0; i < 60; i++) swarm.set(100 + i, { kind: 1, shipKind: 'fighter', x: i * 10, y: 0 });

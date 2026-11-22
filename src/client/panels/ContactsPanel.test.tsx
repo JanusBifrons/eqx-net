@@ -38,6 +38,7 @@ beforeEach(() => {
   requestLock.mockReset();
   cancelLock.mockReset();
   fakeMirror.localGroups[0]!.l = [];
+  fakeMirror.localLockedBy = [];
   useUIStore.setState({
     rightPanel: 'contacts',
     activeGroupId: 'guns',
@@ -220,6 +221,35 @@ describe('ContactsPanel: the table', () => {
     fireEvent.click(row);
     expect(cancelLock).toHaveBeenCalledWith('guns', 's:7');
     expect(requestLock).not.toHaveBeenCalled();
+  });
+
+  it('the lock marks sit in their own Lock column, not in the name cell', () => {
+    fakeMirror.localGroups[0]!.l = [{ t: 's:7', s: 2, p: 100 }];
+    fakeMirror.localLockedBy = [{ t: 's:7', s: 2, p: 100 }, { t: 's:8', s: 1, p: 40 }];
+    render(<ContactsPanel />);
+    const heads = within(screen.getByTestId('contacts-list')).getAllByRole('columnheader').map((h) => h.textContent);
+    const nameIdx = heads.indexOf('Name');
+    const lockIdx = heads.indexOf('Lock');
+    expect(lockIdx).toBeGreaterThanOrEqual(0);
+    const cells = (key: string): HTMLElement[] => within(screen.getByTestId(`contact-row-${key}`)).getAllByRole('cell');
+    const both = cells('s:7');
+    expect(both[nameIdx]!.textContent).toBe('Fighter');
+    expect(both[lockIdx]!.textContent).toContain('⚠');
+    expect(both[lockIdx]!.textContent).toContain('LOCK');
+    expect(within(both[lockIdx]!).getByTitle('has you locked')).toBeTruthy();
+    const lockingOnly = cells('s:8');
+    expect(lockingOnly[nameIdx]!.textContent).toBe('Heavy');
+    expect(lockingOnly[lockIdx]!.textContent).toBe('◎');
+    expect(cells(`p:${PLAYER_ID}`)[lockIdx]!.textContent).toBe('');
+    expect(screen.getByTestId('contact-row-s:7').getAttribute('data-locking-you')).toBe('2');
+  });
+
+  it('the Lock header sorts locked rows first, then rows locking you', () => {
+    fakeMirror.localGroups[0]!.l = [{ t: `p:${PLAYER_ID}`, s: 2, p: 100 }];
+    fakeMirror.localLockedBy = [{ t: 's:8', s: 1, p: 40 }];
+    render(<ContactsPanel />);
+    fireEvent.click(screen.getByTestId('contacts-list-sort-lock'));
+    expect(rowKeys()).toEqual([`p:${PLAYER_ID}`, 's:8', 's:7']);
   });
 
   it('acquiring shows a capped percent, and refreshes from the mirror while open', () => {
