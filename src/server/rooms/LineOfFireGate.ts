@@ -87,7 +87,7 @@ export class LineOfFireGate<R extends LineOfFireBody> {
    *
    * A MOVING shot (`shotSpeed` > 0, u/s; the shooter's velocity
    * (`svx`, `svy`), which the shot inherits): each friendly is ALSO tested
-   * where it will be, relative to the shot, when the shot reaches it, so a
+   * against the shot's path relative to it over the whole flight, so a
    * friend crossing the line during the shot's flight holds it too. Absent
    * (0) ⇒ the pose at the grid build only.
    */
@@ -117,13 +117,19 @@ export class LineOfFireGate<R extends LineOfFireBody> {
       let cx = bp.x[i]!, cy = bp.y[i]!;
       let hit = d.rayHit(rec, fx, fy, dx, dy, maxDist, cx, cy, bp.angle[i]!) !== null;
       if (!hit && moving) {
-        // Where it will be (in the shot's frame) when the shot is level with it.
-        const along = (cx - fx) * dx + (cy - fy) * dy;
-        const t = (along > 0 ? (along < maxDist ? along : maxDist) : 0) / shotSpeed;
-        cx += (this.vx[i]! - svx) * t;
-        cy += (this.vy[i]! - svy) * t;
-        this.narrow++;
-        hit = d.rayHit(rec, fx, fy, dx, dy, maxDist, cx, cy, bp.angle[i]!) !== null;
+        // The shot's path as the friend sees it (the friend held still): the
+        // shot flies at (shooter v + dir × speed) − friend v for its whole
+        // flight (maxDist / shotSpeed). Exact for a friend on a straight
+        // course, whichever way it flies. (It sampled the friend once, at
+        // along / speed: a friend flying along the line meets the shot later
+        // than that, so a friend sliding onto the line ahead of it was missed.)
+        const rx = dx * shotSpeed + svx - this.vx[i]!;
+        const ry = dy * shotSpeed + svy - this.vy[i]!;
+        const rl = Math.sqrt(rx * rx + ry * ry);
+        if (rl > 1e-6) {
+          this.narrow++;
+          hit = d.rayHit(rec, fx, fy, rx / rl, ry / rl, rl * (maxDist / shotSpeed), cx, cy, bp.angle[i]!) !== null;
+        }
       }
       if (hit) {
         this.lastBlockerId = rec.id;
