@@ -145,7 +145,10 @@ const FOOT_SX = {
   // in reach (a phone's 8 rows push it below the fold otherwise).
   position: 'sticky',
   bottom: 0,
-  bgcolor: HUD.color.sidePanelBg,
+  // Solid (the panel glass colour without its alpha) so the row scrolled
+  // underneath never ghosts through the arrows.
+  bgcolor: 'rgb(8,12,24)',
+  zIndex: 1,
   fontFamily: HUD.font.num,
   fontSize: T.smallFont,
   color: HUD.color.inkDim,
