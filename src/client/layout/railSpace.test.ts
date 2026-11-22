@@ -31,10 +31,10 @@ describe('rail space anchors', () => {
     expect(r.zIndex).toBe(Z.railStrip);
   });
 
-  it('left-strip hugs the left edge, clear of the top-left corner', () => {
+  it('left-strip sits flush on the left edge (the strip pads past the camera band), clear of the top-left corner', () => {
     const s = ANCHOR_STYLES['left-strip'];
     expect(s.position).toBe('fixed');
-    expect(String(s.left)).toContain('safe-area-inset-left');
+    expect(s.left).toBe(0);
     // Centred at 57% while it fits, never above the top-left HUD (leftStripFit.ts).
     expect(String(s.top)).toContain('57%');
     expect(String(s.top)).toContain('--hud-tl-bottom');
