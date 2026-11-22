@@ -222,6 +222,9 @@ export interface DestructionProfile {
    *  speed at which every shared cut opens (`wreckBreakKicks`' seam pass,
    *  mass-weighted impulses), so no cut closes, hinges or overlaps. */
   readonly separateScale: number;
+  /** Wedges from the kill point (`radialCracks`): each seam's guard is what
+   *  it opens at when both pieces leave the kill point at half the guard. */
+  readonly separateFromKill?: boolean;
   /** Multiplier on `shipTuning(kind).wreckCrack`, the impulse each shared
    *  cut throws its faces apart with (`wreckBreakKicks`). The push runs
    *  away from the break point, so it moves the pieces off TOGETHER; this is
@@ -538,11 +541,12 @@ const ROCK: DestructionProfile = {
  *  and fan cracks of a long hull left it in 2), in fixed-count mode (no
  *  damage inputs, like a rock), capped by area (`pieceSide` 30: a 64 u
  *  connector 2 pieces, a 120-160 u turret or pylon 4-5, anything from
- *  ~180 u up 6). A structure stands still, so its pieces part gently like a
- *  rock's, collide with each other and settle; shots never shove them
- *  (knock 0). A piece wears and re-splits like a sub-capital's: halves into
- *  two, a quarter or less becomes salvage, its whole hull worth √area ÷ 3
- *  (a fighter-sized hull 10, a destroyer-sized one the capital's 200).
+ *  ~180 u up 6). Its pieces part, drift and settle like a sub-cap ship
+ *  wreck's (its parting numbers per radius, each wedge at a sub-cap half's
+ *  speed: `separateFromKill`; lock: server/rooms/structureWreckDrift.test.ts)
+ *  and collide with each other; shots never shove them (knock 0). A piece
+ *  wears and re-splits like a sub-capital's: halves into two, a quarter or
+ *  less becomes salvage, a whole hull worth √area ÷ 3 (fighter 10, destroyer 200).
  *  Never a clean snap in two (snapChance 0): it reaches its cap. */
 const STRUCTURE_FRACTURE: DestructionFractureOptions = {
   maxPieces: 6, snapChance: 0, fanCracks: false, farCrack: false, chunkyPieces: false,
@@ -553,12 +557,13 @@ const STRUCTURE: DestructionProfile = {
   fracture: STRUCTURE_FRACTURE,
   resplit: { ...SUBCAP.resplit!, salvagePerSqrtArea: 1 / 3 },
   holdMs: 0,
-  pushScale: 2,
-  separateScale: 20,
-  crackScale: 0,
-  spinScale: 0.3,
-  cutPartSpeed: 0,
-  dampingScale: 10,
+  pushScale: SUBCAP.pushScale,
+  separateScale: SUBCAP.separateScale,
+  separateFromKill: true,
+  crackScale: SUBCAP.crackScale,
+  spinScale: SUBCAP.spinScale,
+  cutPartSpeed: SUBCAP.cutPartSpeed,
+  dampingScale: SUBCAP.dampingScale,
   knockScale: 0,
   knockMaxScale: 0,
   knockWakeScale: 0,
