@@ -1,9 +1,11 @@
 /**
- * EqxSegmented: pick one of 2-4 views or values. Wraps MUI `ToggleButtonGroup`
+ * EqxSegmented: pick one of 2-5 views or values. Wraps MUI `ToggleButtonGroup`
  * (exclusive). Each option is text (`label`) or an icon with a required
  * `tooltip` (also its aria-label). `onChange` fires once per pick, never on a
- * re-click of the current option. Fewer than 2 or more than 4 options throws
- * in dev. Colours and font from `hud/tokens.ts`; no sx / style / className.
+ * re-click of the current option. Fewer than 2 or more than 5 options throws
+ * in dev. Panel look (mock `.seg`): full width, equal segments, selected =
+ * cyan wash; with `appliedValue` set and differing from `value`, the selected
+ * option shows the amber "changed" wash (not yet applied). Colours and font from `hud/tokens.ts`; no sx / style / className.
  */
 import { ToggleButton, ToggleButtonGroup } from '@mui/material';
 import type { ReactNode } from 'react';
@@ -15,24 +17,29 @@ export type EqxSegmentedOption =
   | { id: string; icon: ReactNode; tooltip: string };
 
 export interface EqxSegmentedProps {
-  /** 2 to 4 options. */
+  /** 2 to 5 options. */
   options: readonly EqxSegmentedOption[];
   value: string;
   onChange: (id: string) => void;
   /** Accessible name of the group. */
   label: string;
+  /** The value in force now; when `value` differs, the selected option shows amber (changed). */
+  appliedValue?: string;
   disabled?: boolean;
   'data-testid'?: string;
 }
 
 export const SEGMENTED_MIN = 2;
-export const SEGMENTED_MAX = 4;
+export const SEGMENTED_MAX = 5;
+
+const SEG = HUD.segmented;
 
 export function EqxSegmented({
   options,
   value,
   onChange,
   label,
+  appliedValue,
   disabled = false,
   'data-testid': testId,
 }: EqxSegmentedProps) {
@@ -41,6 +48,7 @@ export function EqxSegmented({
       `EqxSegmented takes ${SEGMENTED_MIN}-${SEGMENTED_MAX} options, got ${options.length}; use EqxDropdown for more.`,
     );
   }
+  const changed = appliedValue !== undefined && appliedValue !== value;
   return (
     <ToggleButtonGroup
       exclusive
@@ -52,14 +60,35 @@ export function EqxSegmented({
       disabled={disabled}
       size="small"
       data-testid={testId}
+      data-changed={changed ? 'true' : undefined}
       sx={{
-        '& .MuiToggleButton-root': {
+        display: 'flex',
+        width: '100%',
+        border: 1,
+        borderColor: HUD.color.edge2,
+        borderRadius: `${SEG.radius}px`,
+        overflow: 'hidden',
+        // Grouped selectors match MUI's own specificity so these win (sx comes last).
+        '& .MuiToggleButtonGroup-grouped, & .MuiToggleButtonGroup-grouped:not(:first-of-type)': {
+          flex: 1,
           fontFamily: HUD.font.label,
+          fontWeight: 500,
+          fontSize: SEG.font,
+          textTransform: 'none',
           color: HUD.color.inkDim,
-          borderColor: HUD.color.edge2,
-          minHeight: HUD.touchMin,
+          border: 0,
+          borderRadius: 0,
+          borderLeft: 1,
+          borderLeftColor: HUD.color.panelEdge,
+          py: `${SEG.padY}px`,
+          px: `${SEG.padX}px`,
+          minHeight: SEG.minHeight,
+          ml: 0,
         },
-        '& .MuiToggleButton-root.Mui-selected': { color: HUD.color.brand, bgcolor: HUD.color.cell },
+        '& .MuiToggleButtonGroup-grouped:first-of-type': { borderLeft: 0 },
+        '& .MuiToggleButtonGroup-grouped.Mui-selected, & .MuiToggleButtonGroup-grouped.Mui-selected:hover': changed
+          ? { color: HUD.color.manual, bgcolor: SEG.changedBg }
+          : { color: HUD.color.auto, bgcolor: SEG.selectedBg },
       }}
     >
       {options.map((o) =>

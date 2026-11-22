@@ -16,7 +16,7 @@ raw `@mui/*` and `@emotion/*` imports live only inside `src/ui/`.
 | `EqxDropdown` | Pick from a list; `searchable` = type to filter (MUI Autocomplete), plain = MUI Select | `options` (`id`, `label`), `value` (id or null; ids array if `multiple`), `onChange`, `label` (also the accessible name), `searchable`, `multiple`, `placeholder`, `disabled`, `data-testid` |
 | `EqxTextField` | Text input | `label` (also the accessible name), `value`, `onChange(text)`, `error` (message; sets the error state), `placeholder`, `disabled`, `data-testid` |
 | `EqxSlider` | Range | `min`, `max`, `step` (default 1), `marks` (`true` or `{ value, label? }[]`), `value`, `onChange(number)`, `label` (aria-label), `disabled`, `data-testid` |
-| `EqxSegmented` | Pick one of 2-4 views or values (throws in dev outside 2-4); `onChange` once per pick | `options` (`id` + `label`, or `id` + `icon` + `tooltip`), `value`, `onChange(id)`, `label` (group name), `disabled`, `data-testid` |
+| `EqxSegmented` | Pick one of 2-5 views or values (throws in dev outside 2-5); full width, equal segments; selected = cyan, changed (not yet applied) = amber; `onChange` once per pick | `options` (`id` + `label`, or `id` + `icon` + `tooltip`), `value`, `onChange(id)`, `label` (group name), `appliedValue` (the value in force; a differing `value` shows amber, group gets `data-changed`), `disabled`, `data-testid` |
 
 ## Extend, never hand-roll
 
