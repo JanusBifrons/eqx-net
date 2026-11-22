@@ -76,7 +76,10 @@ export {
   SPLINTER_GLOW_WIDTH_MUL, WRECK_GLOW_EMBER_S, WRECK_GLOW_END_S, WRECK_GLOW_TINTS, glowTintOf, glowWidthMul,
   simpleGlowAt, wreckGlowAt, type WreckGlow,
 } from './wreckGlowCurves.js';
-import { drawnSpan, insideWidth, lastChamferRatio, onDrawnHull, pointInRing, stripInside, writeStrip, type InsideTest } from './wreckGlowStrip.js';
+import {
+  drawnSpan, insideWidth, lastChamferRatio, onDrawnHull, pointInRing, simpleGlowStraddles, simpleGlowWidth, stripInside, writeStrip,
+  type InsideTest,
+} from './wreckGlowStrip.js';
 import type { WreckDescriptor } from '../../../shared-types/messages/wreckDescriptor.js';
 import type { WreckSource } from '../../../core/destruction/wreckSource.js';
 import { wreckFrameScale, wreckProfileOf, wreckSourceKindOf } from '../../net/wreckRootSource.js';
@@ -118,14 +121,6 @@ export const WRECK_FRONT_HIDDEN_SHARE = 0.2;
  *  2026-11-13: the glow over an opening gap read as a thin dark sliver
  *  piece that then "faded away"). */
 const GLOW_CORE_R = 0.018;
-/** The simple (sub-capital) glow's band into the piece, share of the wreck
- *  radius. Round 3 (2026-11-13): at 0.4 it filmed as an opaque orange
- *  crescent over much of each piece, not a line along the cut; 0.1 reads as
- *  an edge line (~2–3 px at fleet-fight zoom, 0.45). */
-const SIMPLE_GLOW_W_R = 0.1;
-/** ...but never under 2 px at fleet-fight zoom (2 / 0.45 ≈ 4.4 u), so the
- *  smallest hulls still show it (round 2: "a thin orange line"). */
-const SIMPLE_GLOW_MIN_W = 4.5;
 const GLOW_HEAD_MUL = 1.8;
 /** The head's length along the crack (share of the wreck radius). */
 const GLOW_HEAD_LEN_R = 0.06;
@@ -1239,7 +1234,8 @@ export class WreckPieceSprite extends Container {
     // The simple glow's band is a share of the hull (a small hull's core
     // alone is a hairline at fleet-fight zoom: round-2 review, "a thin orange
     // line on one edge"); `insideWidth` keeps it inside the piece.
-    this.simpleW = Math.max(SIMPLE_GLOW_MIN_W, info.hullR * SIMPLE_GLOW_W_R);
+    // A structure's is capped at the widest ship's (`simpleGlowWidth`).
+    this.simpleW = simpleGlowWidth(info.hullR, wreckSourceKindOf(this.parentKind));
     const reach = this.simple ? Math.max(this.halfHalo, this.simpleW) : this.halfHalo;
     let k = 0;
     // On the piece AS DRAWN (`wreckGlowStrip`): a capital's outline spans
@@ -1362,6 +1358,8 @@ export class WreckPieceSprite extends Container {
     const uvs = new Float32Array(S * 8);
     const indices = new Uint32Array(S * 6);
     const u0 = simpleGlowU(0);
+    // A structure's band lies wholly on its piece (`simpleGlowStraddles`).
+    const straddle = simpleGlowStraddles(wreckSourceKindOf(this.parentKind));
     for (let k = 0; k < S; k++) {
       const v0 = k * 4, ii = k * 6, q = k * SEG_STRIDE;
       indices[ii] = v0; indices[ii + 1] = v0 + 1; indices[ii + 2] = v0 + 2;
@@ -1369,11 +1367,11 @@ export class WreckPieceSprite extends Container {
       const v = simpleGlowV(this.segTint[k]!);
       for (let c = 0; c < 4; c++) { uvs[(v0 + c) * 2] = u0; uvs[(v0 + c) * 2 + 1] = v; }
       const mx = s[q + 10]!, my = s[q + 11]!;
-      const half = (this.simpleW / 2) * s[q + 14]!;
+      const half = (this.simpleW / 2) * s[q + 14]!, out = straddle ? half : 0;
       writeStrip(
         positions, v0,
-        s[q]! - mx * half, s[q + 1]! - my * half, s[q + 2]! - mx * half, s[q + 3]! - my * half,
-        mx, my, half + Math.min(half, s[q + 12]!), half + Math.min(half, s[q + 13]!), s[q + 15]!, s[q + 16]!,
+        s[q]! - mx * out, s[q + 1]! - my * out, s[q + 2]! - mx * out, s[q + 3]! - my * out,
+        mx, my, out + Math.min(half, s[q + 12]!), out + Math.min(half, s[q + 13]!), s[q + 15]!, s[q + 16]!,
       );
     }
     this.grown = true;
