@@ -25,4 +25,6 @@ type Story = StoryObj<typeof EqxListRow>;
 export const Readout: Story = {};
 export const DrillDown: Story = { args: { primary: 'Offers', side: '12', onOpen: () => {} } };
 export const WithSecondary: Story = { args: { primary: 'Deals', secondary: '2 active', onOpen: () => {} } };
+export const Action: Story = { args: { primary: 'Fighter', side: '400 m', onTap: () => {} } };
+export const ActionDimSelected: Story = { args: { primary: 'Heavy', side: '1.5 km', onTap: () => {}, dim: true, selected: true } };
 export const WithIcon: Story = { args: { primary: 'History', icon: <EqxIcon name="trade" size="small" />, onOpen: () => {} } };
