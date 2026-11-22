@@ -24,6 +24,7 @@ import type { ShipKindId } from '../../shared-types/shipKinds.js';
 import { WEAPONS, WRECK_DEFAULT_TARGET_FACTOR, weaponTargetFactor, type WeaponId } from '../combat/WeaponCatalogue.js';
 import { asWreckSource, type WreckSource } from './wreckSource.js';
 import { salvageTierMass } from '../combat/salvageTargeting.js';
+import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
 
 /** Least radius of a piece that may still split, per unit of the kind's
  *  radius (#18). Below it the worn-out piece becomes salvage. */
@@ -79,12 +80,27 @@ export function wreckCanResplit(source: ShipKindId | WreckSource, area: number, 
     && radius >= WRECK_RESPLIT_MIN_RADIUS_PER_RADIUS * src.radius;
 }
 
-/** Salvage units a worn-out piece too small to split leaves: its mass share
- *  of the kind's `salvagePerHull`, at least 1. */
-export function wreckSalvageQty(source: ShipKindId | WreckSource, pieceMass: number): number {
+/** Most salvage a whole hull is worth: the capital profile's (a battleship). */
+const WRECK_SALVAGE_MAX_PER_HULL = DESTRUCTION_PROFILES.capital.resplit?.salvagePerHull ?? 0;
+
+/** Salvage units the whole hull is worth: the profile's `salvagePerHull`
+ *  (a sub-capital 10, a capital 200), or with `salvagePerSqrtArea` (a
+ *  structure) round(√area × it) clamped 1..the capital's, so a structure
+ *  pays about what a ship hull of its size does. Ships and rocks unchanged. */
+export function wreckSalvagePerHull(source: ShipKindId | WreckSource): number {
   const src = asWreckSource(source);
   const rs = src.profile.resplit;
+  if (rs === null) return 0;
+  if (rs.salvagePerSqrtArea === undefined) return rs.salvagePerHull;
+  const q = Math.round(Math.sqrt(Math.max(0, src.area)) * rs.salvagePerSqrtArea);
+  return Math.max(1, Math.min(WRECK_SALVAGE_MAX_PER_HULL, q));
+}
+
+/** Salvage units a worn-out piece too small to split leaves: its mass share
+ *  of the hull's worth (`wreckSalvagePerHull`), at least 1. */
+export function wreckSalvageQty(source: ShipKindId | WreckSource, pieceMass: number): number {
+  const src = asWreckSource(source);
   const bodyMass = src.bodyMass;
-  if (rs === null || !(bodyMass > 0)) return 1;
-  return Math.max(1, Math.round((pieceMass / bodyMass) * rs.salvagePerHull));
+  if (src.profile.resplit === null || !(bodyMass > 0)) return 1;
+  return Math.max(1, Math.round((pieceMass / bodyMass) * wreckSalvagePerHull(src)));
 }

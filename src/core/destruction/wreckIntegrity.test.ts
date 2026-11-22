@@ -4,7 +4,9 @@
  * the per-weapon wear factor.
  */
 import { describe, expect, it } from 'vitest';
-import { wreckCanResplit, wreckHullArea, wreckPieceIntegrity, wreckSalvageQty, wreckWearFactor, WRECK_RESPLIT_MIN_RADIUS_PER_RADIUS } from './wreckIntegrity.js';
+import { wreckCanResplit, wreckHullArea, wreckPieceIntegrity, wreckSalvagePerHull, wreckSalvageQty, wreckWearFactor, WRECK_RESPLIT_MIN_RADIUS_PER_RADIUS } from './wreckIntegrity.js';
+import { shipWreckSource, structureBreaks, structureWreckSource, type WreckSource } from './wreckSource.js';
+import { STRUCTURE_KINDS_LIST } from '../../shared-types/structureKinds.js';
 import { wreckPieceGeometry } from './wreckPieces.js';
 import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
@@ -59,6 +61,47 @@ describe('wreckCanResplit / wreckSalvageQty', () => {
     expect(wreckSalvageQty('battleship', 0.01 * m)).toBe(Math.round(0.01 * cap.salvagePerHull));
     expect(wreckSalvageQty('battleship', 0)).toBe(1);
     expect(wreckSalvageQty('fighter', 0.1 * shipBodyMass(getShipKind('fighter')))).toBe(1);
+  });
+});
+
+describe('wreckSalvagePerHull: a structure pays by its size (structure break-up T7)', () => {
+  const breaking = STRUCTURE_KINDS_LIST.filter((k) => structureBreaks(k.id, true)).map((k) => structureWreckSource({ k: k.id }));
+  const whole = (s: WreckSource): number => wreckSalvageQty(s, s.bodyMass);
+
+  it('ships keep their profile salvagePerHull (sub-capital 10, capital 200)', () => {
+    expect(wreckSalvagePerHull('fighter')).toBe(sub.salvagePerHull);
+    expect(wreckSalvagePerHull('battleship')).toBe(cap.salvagePerHull);
+    expect(whole(shipWreckSource('fighter'))).toBe(10);
+    expect(whole(shipWreckSource('battleship'))).toBe(200);
+  });
+
+  it('is monotonic in mass across every breaking kind, within 1..the capital\'s', () => {
+    const sorted = [...breaking].sort((a, b) => a.bodyMass - b.bodyMass);
+    for (let i = 1; i < sorted.length; i++) expect(whole(sorted[i]!), sorted[i]!.structure!.k).toBeGreaterThanOrEqual(whole(sorted[i - 1]!));
+    for (const s of breaking) {
+      expect(whole(s)).toBeGreaterThanOrEqual(1);
+      expect(whole(s)).toBeLessThanOrEqual(cap.salvagePerHull);
+    }
+    expect(whole(sorted[sorted.length - 1]!)).toBeGreaterThan(whole(sorted[0]!));
+  });
+
+  it('is calibrated against ships of a similar size', () => {
+    const connector = whole(structureWreckSource({ k: 'connector' }));
+    expect(connector).toBeGreaterThanOrEqual(1);
+    expect(connector).toBeLessThan(cap.salvagePerHull / 4);
+    // The base Capital (~290k u², a destroyer is ~460k) and the shipyard
+    // (~570k u²) pay in the capital-ship range.
+    expect(whole(structureWreckSource({ k: 'capital' }))).toBeGreaterThanOrEqual(cap.salvagePerHull / 2);
+    expect(whole(structureWreckSource({ k: 'shipyard' }))).toBe(cap.salvagePerHull);
+    // A structure the size of a fighter or a destroyer would pay what they do.
+    const asStructure = (area: number): number => Math.max(1, Math.min(cap.salvagePerHull, Math.round(Math.sqrt(area) * DESTRUCTION_PROFILES.structure.resplit!.salvagePerSqrtArea!)));
+    expect(asStructure(shipWreckSource('fighter').area)).toBe(sub.salvagePerHull);
+    expect(asStructure(shipWreckSource('destroyer').area)).toBe(cap.salvagePerHull);
+  });
+
+  it('a piece pays its mass share of the hull\'s worth', () => {
+    const s = structureWreckSource({ k: 'shipyard' });
+    expect(wreckSalvageQty(s, s.bodyMass / 4)).toBe(Math.round(wreckSalvagePerHull(s) / 4));
   });
 });
 

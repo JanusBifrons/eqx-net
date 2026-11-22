@@ -105,6 +105,9 @@ export interface DestructionResplit {
   /** Salvage units a whole hull's mass is worth (a pod carries its piece's
    *  mass share of this). */
   readonly salvagePerHull: number;
+  /** Set: a whole hull is worth round(√area × this) in place of
+   *  `salvagePerHull`, clamped 1..the capital's (`wreckSalvagePerHull`). */
+  readonly salvagePerSqrtArea?: number;
   /** The child fracture's options (`maxPieces`: 2-3 children per split). */
   readonly fracture: DestructionFractureOptions;
 }
@@ -538,7 +541,8 @@ const ROCK: DestructionProfile = {
  *  ~180 u up 6). A structure stands still, so its pieces part gently like a
  *  rock's, collide with each other and settle; shots never shove them
  *  (knock 0). A piece wears and re-splits like a sub-capital's: halves into
- *  two, a quarter or less becomes salvage. */
+ *  two, a quarter or less becomes salvage, its whole hull worth √area ÷ 3
+ *  (a fighter-sized hull 10, a destroyer-sized one the capital's 200). */
 const STRUCTURE_FRACTURE: DestructionFractureOptions = {
   maxPieces: 6, snapChance: 0.2, fanCracks: false, farCrack: false, chunkyPieces: false,
   jag: { depth: 2, roughness: 0.12 }, pieceSide: 30, radialCracks: true,
@@ -546,7 +550,7 @@ const STRUCTURE_FRACTURE: DestructionFractureOptions = {
 const STRUCTURE: DestructionProfile = {
   id: 'structure',
   fracture: STRUCTURE_FRACTURE,
-  resplit: SUBCAP.resplit,
+  resplit: { ...SUBCAP.resplit!, salvagePerSqrtArea: 1 / 3 },
   holdMs: 0,
   pushScale: 2,
   separateScale: 20,
