@@ -220,13 +220,23 @@ export function wreckArrivalSpots(site: SectorSite): Array<{ x: number; y: numbe
  * Computed by the client; the server only checks it with `isWarpDropPoint`.
  */
 export function warpDropPoint(site: SectorSite, x: number, y: number): { x: number; y: number } {
+  return warpDropPointInto(site, x, y, { x: 0, y: 0 });
+}
+
+/** `warpDropPoint` written into `out` (no allocation: the server checks each
+ *  warp request against every pocket's drop point). Returns `out`. */
+export function warpDropPointInto(site: SectorSite, x: number, y: number, out: { x: number; y: number }): { x: number; y: number } {
   const dx = x - site.x, dy = y - site.y, len = Math.hypot(dx, dy) || 1;
   if (site.wreckCentre) {
+    // The spot `wreckArrivalSpots` lists at index i.
     const n = WRECK_ARRIVAL.spots, step = (2 * Math.PI) / n;
     const i = ((Math.round(Math.atan2(dy, dx) / step) % n) + n) % n;
-    return wreckArrivalSpots(site)[i]!;
+    const a = (i / n) * 2 * Math.PI;
+    out.x = Math.round(site.x + Math.cos(a) * site.r); out.y = Math.round(site.y + Math.sin(a) * site.r);
+    return out;
   }
-  return { x: Math.round(site.x + (dx / len) * site.r), y: Math.round(site.y + (dy / len) * site.r) };
+  out.x = Math.round(site.x + (dx / len) * site.r); out.y = Math.round(site.y + (dy / len) * site.r);
+  return out;
 }
 
 /** True when (x, y) lies on some pocket's rim in `sectorKey` (within

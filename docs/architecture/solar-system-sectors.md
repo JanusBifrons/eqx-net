@@ -24,8 +24,8 @@ So in Sol Prime the Vega Reach gate is due east of Home, and warping there flies
 
 ## Moving around
 
-- **Warp-to** crosses the sector: spool 3 s, run at 20,000 u/s, drop at the pocket's rim facing the ship. The server accepts a warp only to a pocket rim (`isWarpDropPoint`). Player-facing story: [docs/features/warp-to.md](../features/warp-to.md).
-- **The destination picker** (speed dial, Warp ▸) lists the pockets by name and distance.
+- **Warp-to** crosses the sector: spool 3 s, run at 20,000 u/s, drop at the pocket's rim facing the ship. A warp never crosses the asteroid field's rock body or a structure: when one is on the line, the destination is the near side of it, and a near side closer than `WARP_MIN_DISTANCE` can't be warped to (`warpTargetFor`). The server accepts only a pocket rim with a clear line, or that near-side point (`isWarpTarget`, `server/rooms/warpRouteCheck.ts`). See [travel-state.md](travel-state.md). Player-facing story: [docs/features/warp-to.md](../features/warp-to.md).
+- **The destination picker** (speed dial, Warp ▸) lists the pockets by name and distance; a blocked one offers its near side, and an unreachable one is greyed with the reason.
 - **Transit pads** link Home to one other pocket in about a third of systems: instant, free and safe. The rarity was the user's call (2026-11-08). See `pocketPadPair` and [docs/features/warp-to.md](../features/warp-to.md).
 - **A warp run is out of the world**, and so is a sector-to-sector trip: the ship is hidden, can't be targeted and collides with nothing ([travel-state.md](travel-state.md)).
 - **Sector-to-sector** arrivals land at the gate pocket facing the system they came from.
@@ -64,6 +64,7 @@ Measured on the same machine in the same session (2026-11-08):
 
 - `src/core/galaxy/sectorSites.test.ts`: the layout rules, the pads' rarity, and the gate search at solar extents.
 - `tests/integration/sectorRoom/warpTo.test.ts`: the warp lands on the rim it asked for, in any direction; a non-rim point is refused; an onlooker sees the run.
+- `src/server/rooms/warpRouteCheck.test.ts`: the server accepts a clear rim or the near side, refuses a point through a structure, and keeps a warp already accepted when a structure is placed mid-spool.
 - `tests/integration/sectorRoom/pocketPads.test.ts`: pads are seeded, paired, and carry a pilot.
 - `src/server/livingworld/population.solar.test.ts`: arrivals land on gate pockets.
 
@@ -72,6 +73,10 @@ Measured on the same machine in the same session (2026-11-08):
 - **Server:** `EQX_SOLAR_SECTORS=0`.
 - **Page:** `?solar=0`. The renderer worker gets `;solar=0` in its name so it agrees with the page.
 - **A single test room:** the room option `solarSectors: false`. This sets the room's own rules (warp drop points, the placement clamp); process-wide placement (arrivals, convoys) follows the env switch.
+
+## History
+
+- 2026-11-21, warp route check (#1210–#1223): warps stop at the near side of an asteroid field or structure instead of passing through.
 
 ## Server implementation notes
 

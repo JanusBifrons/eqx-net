@@ -8,7 +8,10 @@
  *    ship; tap a pocket, then Warp.
  * An option acts only on a fresh, full press after the picker is up
  * (`useFreshPress`): the release of the press that opened it never picks.
- * Picking asks the server to warp to the pocket's rim (`requestWarp`).
+ * Picking asks the server to warp to the destination's warp TARGET
+ * (`requestWarp`): its rim point when the line is clear, else the near side
+ * of the asteroid field or structure in the way (warp route check, S3). A
+ * near side too close to warp to stays listed, greyed, with the reason.
  * `WarpStatusChip` (top-centre slot, under the energy bar) shows where a held
  * warp goes, with a Cancel.
  *
@@ -20,8 +23,12 @@ import { memo, useEffect, useMemo, useState } from 'react';
 import { Box, Button, Paper, Portal, Typography } from '@mui/material';
 import { useUIStore } from '../state/store';
 import { getGameClient } from '../net/clientSingleton';
-import { formatKm, warpDestinations, type WarpDestination } from './warpDestinations';
+import { formatKm, warpDestinations, warpStateLabel, type WarpDestination, type WarpRouteInputs } from './warpDestinations';
+import { WarpRouteClient, type WarpRouteMirror } from './warpRoute';
+import { BLOCKED_COLOUR, NEAR_COLOUR, WarpMapRoute } from './WarpMapRoute';
 import { SOLAR_HALF_EXTENT } from '../../core/galaxy/sectorSites';
+import { warpStopMargin } from '../../core/galaxy/warpTarget';
+import { getShipKind } from '../../shared-types/shipKinds';
 import { isTouchDevice } from '../input/TouchInput';
 import { useFreshPress, type FreshPressProps } from './touchClickActivate';
 
@@ -50,15 +57,31 @@ const CHIP_SX = {
   color: '#e8f4ff', backgroundColor: 'rgba(20,60,120,0.9)', border: '1px solid #5aa8ff', pointerEvents: 'auto' as const,
 };
 
-interface ShipPose { x: number; y: number; angle: number }
+interface ShipPose { x: number; y: number; angle: number; kind?: string }
 
 /** The local ship's pose from the render mirror, or null. */
 function shipPose(): ShipPose | null {
   const c = getGameClient();
   const id = c?.mirror.localPlayerId;
-  const s = id ? (c?.mirror.ships.get(id) as { x: number; y: number; angle?: number } | undefined) : undefined;
-  return s ? { x: s.x, y: s.y, angle: s.angle ?? 0 } : null;
+  const s = id ? (c?.mirror.ships.get(id) as { x: number; y: number; angle?: number; kind?: string } | undefined) : undefined;
+  return s ? { x: s.x, y: s.y, angle: s.angle ?? 0, kind: s.kind } : null;
 }
+
+/** The picker's route check and its reused destination list (one picker). */
+const route = new WarpRouteClient();
+const routeIn: WarpRouteInputs = { field: null, structures: null, margin: 0 };
+const destList: WarpDestination[] = [];
+
+/** The destinations from `pose`, each with its warp target (field + structures). */
+function destinationsFrom(sectorKey: string, pose: ShipPose): WarpDestination[] {
+  const c = getGameClient();
+  routeIn.field = route.fieldMap(c?.cutFieldOpts ?? null);
+  routeIn.structures = route.gather(c?.mirror as WarpRouteMirror | undefined);
+  routeIn.margin = warpStopMargin(getShipKind(pose.kind));
+  return warpDestinations(sectorKey, pose.x, pose.y, routeIn, destList);
+}
+
+const SUB_SX = { display: 'block', fontSize: 11 };
 
 /** Poll the ship pose and warp state at 4 Hz while `on`. */
 function usePolledShip(on: boolean): { pose: ShipPose | null; warping: boolean } {
@@ -83,24 +106,32 @@ export const WarpPicker = memo(function WarpPicker(): JSX.Element | null {
   const { pose } = usePolledShip(open);
   const press = useFreshPress(open);
 
-  const dests = useMemo(() => (sectorKey && pose ? warpDestinations(sectorKey, pose.x, pose.y) : []), [sectorKey, pose]);
+  const dests = useMemo(() => (sectorKey && pose ? destinationsFrom(sectorKey, pose) : []), [sectorKey, pose]);
 
   if (!open || !sectorKey) return null;
 
   const warpTo = (d: WarpDestination): void => {
-    getGameClient()?.requestWarp(d.dropX, d.dropY);
+    if (!d.reachable) return;
+    getGameClient()?.requestWarp(d.targetX, d.targetY);
     setHeldTo(d.label);
     setOpen(false);
     setTarget(null);
   };
 
   const near = dests.filter((d) => !d.far), far = dests.filter((d) => d.far);
-  const row = (d: WarpDestination): JSX.Element => (
-    <Button key={d.id} sx={ROW_SX} disabled={d.here} disableRipple {...press(() => warpTo(d))} data-testid={`warp-dest-${d.id}`} data-km={Math.round(d.distKm)}>
-      <span>{d.label}{d.padTo && <span style={{ color: '#5ad7ff', fontSize: 11 }} data-testid={`warp-pad-${d.id}`}>{` · pad to ${d.padTo} (instant)`}</span>}</span>
-      <span style={{ color: '#8fa0b8' }}>{d.here ? 'here' : formatKm(d.distKm)}</span>
-    </Button>
-  );
+  const row = (d: WarpDestination): JSX.Element => {
+    const sub = d.here ? null : warpStateLabel(d);
+    return (
+      <Button key={d.id} sx={{ ...ROW_SX, opacity: d.state === 'blocked' ? 0.5 : 1 }} disabled={d.here || !d.reachable} disableRipple
+        {...press(() => warpTo(d))} data-testid={`warp-dest-${d.id}`} data-km={Math.round(d.distKm)} data-warp-state={d.state}>
+        <span style={{ textAlign: 'left' }}>
+          {d.label}{d.padTo && <span style={{ color: '#5ad7ff', fontSize: 11 }} data-testid={`warp-pad-${d.id}`}>{` · pad to ${d.padTo} (instant)`}</span>}
+          {sub && <Box component="span" sx={{ ...SUB_SX, color: d.state === 'blocked' ? BLOCKED_COLOUR : NEAR_COLOUR }} data-testid={`warp-sub-${d.id}`}>{sub}</Box>}
+        </span>
+        <span style={{ color: '#8fa0b8', textDecoration: d.state === 'blocked' ? 'line-through' : 'none' }}>{d.here ? 'here' : formatKm(d.distKm)}</span>
+      </Button>
+    );
+  };
 
   return (
     <Portal>
@@ -160,7 +191,10 @@ function SystemMap({ dests, pose, target, onPick, onWarp, press }: {
   press: (fn: () => void) => FreshPressProps;
 }): JSX.Element {
   const H = SOLAR_HALF_EXTENT;
-  const sel = dests.find((d) => d.id === target) ?? null;
+  // A blocked pocket is never the selection (no ring, no Go), as the list greys its row.
+  const picked = dests.find((d) => d.id === target);
+  const sel = picked !== undefined && picked.reachable ? picked : null;
+  const on = (d: WarpDestination): boolean => d === sel;
   const font = H / 7, edge = H * 0.97, dotR = H / 22;
   // Each label sits just under its own dot (above it when there's no room
   // below, or when a label already sits there), anchored inward at the edges.
@@ -187,24 +221,27 @@ function SystemMap({ dests, pose, target, onPick, onWarp, press }: {
             strokeDasharray={`${H / 40} ${H / 60}`} opacity={0.7} data-testid="warp-map-pad" /> : null;
         })}
         {dests.map((d) => (
-          <g key={d.id} {...press(() => { if (!d.here) onPick(d.id); })} style={{ cursor: d.here ? 'default' : 'pointer' }} data-testid={`warp-map-${d.id}`}>
+          <g key={d.id} {...press(() => { if (!d.here && d.reachable) onPick(d.id); })} style={{ cursor: d.here || !d.reachable ? 'default' : 'pointer' }}
+            opacity={d.reachable ? 1 : 0.5} data-testid={`warp-map-${d.id}`} data-warp-state={d.state}>
             <circle cx={d.x} cy={-d.y} r={H / 9} fill="transparent" />
-            <circle cx={d.x} cy={-d.y} r={Math.max(d.r, dotR)} fill={KIND_COLOUR[d.kind]} fillOpacity={d.id === target ? 0.95 : 0.5}
-              stroke={d.id === target ? '#ffffff' : 'none'} strokeWidth={H / 90} />
+            <circle cx={d.x} cy={-d.y} r={Math.max(d.r, dotR)} fill={KIND_COLOUR[d.kind]} fillOpacity={on(d) ? 0.95 : 0.5}
+              stroke={on(d) ? '#ffffff' : 'none'} strokeWidth={H / 90} />
           </g>
         ))}
         {labels.map(({ d, lx, ly, anchor }) => (
-          <text key={`l-${d.id}`} x={lx} y={ly} fontSize={font} fill={d.id === target ? '#ffffff' : '#c8d4e6'} textAnchor={anchor}
-            fontWeight={d.id === target ? 700 : 400} style={{ pointerEvents: 'none' }}>{d.label}</text>
+          <text key={`l-${d.id}`} x={lx} y={ly} fontSize={font} fill={on(d) ? '#ffffff' : '#c8d4e6'} textAnchor={anchor}
+            fontWeight={on(d) ? 700 : 400} style={{ pointerEvents: 'none' }}>{d.label}</text>
         ))}
         {pose && (
           <g transform={`translate(${pose.x} ${-pose.y}) rotate(${(-pose.angle * 180) / Math.PI})`} data-testid="warp-map-ship">
             <polygon points={`0,${-H / 20} ${H / 32},${H / 26} ${-H / 32},${H / 26}`} fill="#ffffff" stroke="#070b14" strokeWidth={H / 200} />
           </g>
         )}
+        {/* Over the ship marker: a short hop's landing ring sits under it. */}
+        {pose && sel && <WarpMapRoute sel={sel} shipX={pose.x} shipY={pose.y} h={H} />}
       </svg>
       <Button fullWidth size="small" variant="contained" disabled={!sel} sx={{ mt: 0.5, fontSize: 12, fontWeight: 700, color: '#04130a', textTransform: 'none' }}
-        {...press(() => { if (sel) onWarp(sel); })} data-testid="warp-map-go">
+        {...press(() => { if (sel) onWarp(sel); })} data-testid="warp-map-go" data-warp-state={sel?.state}>
         {sel ? `Warp: ${sel.label} (${formatKm(sel.distKm)})` : 'Pick a destination'}
       </Button>
     </Box>

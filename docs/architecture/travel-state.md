@@ -5,6 +5,8 @@ Plan prancy-squishing-donut, Phase 4. The user's direction: a warp should look l
 ## In-system (shipped)
 
 - **Mechanic** (`core/physics/warpDrive.ts`, `World.applyInput`): spool → run → drop, driven by the input stream so the server worker and the client prediction run it identically. During the spool `World.alignToWarp` turns the ship to its target. During the run the colliders are off.
+- **Route check** (`core/galaxy/warpTarget.ts`, `core/nav/warpLineStop.ts`, `server/rooms/warpRouteCheck.ts`): a warp never passes through the asteroid field's rock body (`CoarseFieldMap.solidAt`) or any structure (player and NPC bases, alien gates); wrecks, nebulae and ships don't block. `warpLineStop` marches the line and stops `warpStopMargin(kind)` short of the first solid point. `warpTargetFor` gives a destination's target: its drop point when the line is clear, else that near-side stop, with `reachable` false when the stop is closer than `WARP_MIN_DISTANCE`. There is no partial warp: the menu offers the near side as the destination, or no warp at all. The server accepts a requested point only by `isWarpTarget` from the pilot's SAB pose (`WarpRouteCheck.valid`, the `validWarpPoint` hook); a point the tracker already accepted for the spool or run passes without a recompute (`WarpTravelTracker.accepted`), so a structure placed mid-spool never cancels a warp. `warpBot` clamps an NPC warp to the same near side, or refuses it when unreachable.
+- **Short hop:** a ship that reaches its point under its own engines during the spool ends the warp where it is, with no run (`warpReached`, `WARP_ARRIVE_RADIUS`).
 - **Server tracker** (`server/rooms/warpTravel.ts`, `WarpTravelTracker`), ticked after the pending-join drain:
   - into the run → `ShipState.travelling = true`: no AI targeting (`aiTickRunner`), no damage (`applyDamage`), the pilot's interest window moves to the landing point (`SwarmBroadcaster.interestPointOf`), and the landing point is moved to the nearest clear spot if blocked (`warpLandingPoint` → `WARP_RETARGET`);
   - out of the run → `travelling = false`, "just arrived" for 30 ticks, and a `poseEpoch` bump if the landing moved (the pilot's client re-seeds with no correction slide).
@@ -36,6 +38,10 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 - Nothing fades: the old sector is flown out of (the room swap waits for it), the new one is flown into. Never add a fade or a cut to hide loading; stretch the trip instead.
 - A new jump of the local ship during a trip must add to `mirror.travelJumpX/Y` so the sky carries across it.
 - Story: [docs/architecture/travel-state.md](travel-state.md).
+## History
+
+- 2026-11-21, warp route check (#1210, #1212, #1214, #1218, #1223): warps stop at the near side of a field or structure. An earlier plan sent the raw rim point and cut the run short at engage; the owner ruled out partial warps, so the near side is the destination itself.
+
 ## Server implementation notes
 
 > Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.
