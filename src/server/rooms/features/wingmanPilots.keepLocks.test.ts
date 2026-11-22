@@ -77,6 +77,26 @@ describe('tickWingmanTargets keeps held locks (capital S2)', () => {
     expect(t.keys()).toEqual([['p:tA'], ['p:tB']]);
   });
 
+  it('a kept lock never stops the ship engaging: with every group held, the first yields to the AI target', () => {
+    const t = setup();
+    t.handOver('p:tA', 'p:tC');
+    t.brain.target = 'tB';
+    t.pilots.tickWingmanTargets();
+    t.pilots.tickWingmanTargets();
+    expect(t.keys()).toEqual([['p:tB'], ['p:tC']]);
+  });
+
+  it('a one-group fighter whose AI target moves on locks the new target (CI: last cube survived)', () => {
+    const t = setup();
+    t.locks.groups.set(HULL, [{ id: 'A', m: 1, l: [] }]);
+    t.brain.target = 'tA';
+    t.pilots.tickWingmanTargets();
+    expect(t.keys()).toEqual([['p:tA']]);
+    t.brain.target = 'tB';
+    t.pilots.tickWingmanTargets();
+    expect(t.keys()).toEqual([['p:tB']]);
+  });
+
   it('an attack order retargets every group', () => {
     const t = setup();
     t.handOver('p:tA', 'p:tB');

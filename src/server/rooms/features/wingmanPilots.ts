@@ -40,6 +40,22 @@ function holdsLiveLock(grp: WireGroup): boolean {
   return false;
 }
 
+/** Some group holds (or is acquiring) a live lock on `key`. */
+function locksKey(gs: ReadonlyArray<WireGroup>, key: string): boolean {
+  for (let g = 0; g < gs.length; g++) {
+    const l = gs[g]!.l;
+    for (let i = 0; i < l.length; i++) if (l[i]!.t === key && l[i]!.r !== 1) return true;
+  }
+  return false;
+}
+
+/** The group the brain's target takes: -1 when some group is free (it takes
+ *  the target anyway), else 0 (every group holds a live lock elsewhere). */
+function yieldGroupIndex(gs: ReadonlyArray<WireGroup>): number {
+  for (let g = 0; g < gs.length; g++) if (!holdsLiveLock(gs[g]!)) return -1;
+  return gs.length > 0 ? 0 : -1;
+}
+
 /** What the wingman pilots need from the room; getters read the live field. */
 export interface WingmanPilotsHost {
   state(): { ships: MapSchema<ShipState> };
@@ -488,8 +504,9 @@ export class WingmanPilots {
    * weapon groups' locks (MAN groups: `requestLock`). A group already
    * holding a lock KEEPS it (owner rule 2026-11-22: the pilot's locks, moved
    * here when they hand the hull over, stay until the target dies or leaves
-   * lock range; the lock step drops those); only an empty group takes the AI
-   * pilot brain's target (`getTargetId`). An attack order is obeyed: every
+   * lock range; the lock step drops those); an empty group takes the AI
+   * pilot brain's target (`getTargetId`), and with no empty group the first
+   * yields to it (a kept lock never stops the ship engaging). An attack order is obeyed: every
    * group retargets to it. Hold fire locks only an ordered target, else every
    * lock is cancelled (RTS Part B slice 2). The trigger is the brain's
    * `intent.fire` (`tickWingmanFire`). The lock still takes the time a
@@ -540,12 +557,17 @@ export class WingmanPilots {
       }
       const gs = groups ?? this.h.wingmanLocks().ensureGroups(sid);
       if (gs === undefined) continue;
+      // A kept lock must never stop the ship engaging: when every group holds
+      // a live lock on something else, the first group yields to the brain's
+      // target (a one-group fighter otherwise chased one target with its only
+      // lock pinned on another and never fired at either).
+      const yieldGroup = ordered === null && !locksKey(gs, key) ? yieldGroupIndex(gs) : -1;
       for (let g = 0; g < gs.length; g++) {
         const grp = gs[g]!;
         if (grp.l.length === 1 && grp.l[0]!.t === key) continue;
         // A live lock (the lock step drops a dead or out-of-range one) is kept
         // unless an attack order names the target.
-        if (ordered === null && holdsLiveLock(grp)) continue;
+        if (ordered === null && g !== yieldGroup && holdsLiveLock(grp)) continue;
         if (grp.l.length > 0) this.h.wingmanLocks().cancelLock(sid, grp.id);
         this.h.wingmanLocks().requestLock(sid, grp.id, key);
       }
