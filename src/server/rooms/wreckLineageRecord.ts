@@ -18,7 +18,8 @@ import { FRACTURE_ALGO_VERSION } from '../../core/destruction/fractureHull.js';
 import { ASTEROID_RESOURCE_IDS } from '../../shared-types/asteroidResources.js';
 import {
   MAX_WRECK_EXTRA_CUTS, MAX_WRECK_OWNER_LEN, MAX_WRECK_PIECE_INDEX, MAX_WRECK_ROCK_ID_LEN,
-  WRECK_ID_END, WRECK_ROCK_PARENT_KIND, WreckExtraCutSchema, WreckRockRefSchema,
+  WRECK_ID_END, WRECK_ROCK_PARENT_KIND, WRECK_STRUCTURE_PARENT_KIND, WreckExtraCutSchema, WreckRockRefSchema,
+  WreckStructureRefSchema,
   type WreckExtraCut,
 } from '../../shared-types/messages/wreckDescriptor.js';
 import type { LiveWreck } from './capitalWreckTypes.js';
@@ -54,6 +55,7 @@ const NodeDescSchema = z
     parentPiece: pieceIndex.optional(),
     owner: z.string().min(1).max(MAX_WRECK_OWNER_LEN).optional(),
     rock: WreckRockRefSchema.optional(),
+    structure: WreckStructureRefSchema.optional(),
   })
   .strict();
 
@@ -120,12 +122,14 @@ const RecordSchema = z
       const n = r.nodes[i]!;
       const d = n.desc;
       if (i === 0) {
-        // The root: no parent, no steps, no parentPiece; a rock only here.
+        // The root: no parent, no steps, no parentPiece; a rock or a
+        // structure only here (never both).
         if (n.parent !== -1 || n.steps.length !== 0 || d.parentPiece !== undefined) return false;
         if (d.rock !== undefined && d.parentKind !== WRECK_ROCK_PARENT_KIND) return false;
+        if (d.structure !== undefined && (d.parentKind !== WRECK_STRUCTURE_PARENT_KIND || d.rock !== undefined)) return false;
       } else {
         // Parent-before-child; one more step than the parent; the step's piece.
-        if (n.parent < 0 || n.parent >= i || d.rock !== undefined) return false;
+        if (n.parent < 0 || n.parent >= i || d.rock !== undefined || d.structure !== undefined) return false;
         const p = r.nodes[n.parent]!;
         if (n.steps.length !== p.steps.length + 1) return false;
         if (d.parentPiece === undefined || n.steps[n.steps.length - 1]!.pieceIndex !== d.parentPiece) return false;
@@ -171,6 +175,7 @@ function nodeOf(w: WreckLineageView, parent: number): WreckLineageNode {
       ...(d.parentPiece !== undefined ? { parentPiece: d.parentPiece } : {}),
       ...(d.owner !== undefined ? { owner: d.owner } : {}),
       ...(d.rock !== undefined ? { rock: { ...d.rock } } : {}),
+      ...(d.structure !== undefined ? { structure: { k: d.structure.k } } : {}),
     },
     steps: w.chain.steps.map((s) => ({
       pieceIndex: s.pieceIndex, killX: s.killX, killY: s.killY,

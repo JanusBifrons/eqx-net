@@ -41,11 +41,11 @@ export function fieldHullUnits(kindId: ShipKindId): number {
 }
 
 /** A saved lineage's restore cost: its root hull's (`fieldHullUnits`, the
- *  same resolve + spawn work); a rock-cut lineage's pieces ride the sub-cap
- *  FIFO, so it costs a sub-cap hull's. */
+ *  same resolve + spawn work); a rock-cut or structure lineage's pieces
+ *  ride the sub-cap FIFO, so it costs a sub-cap hull's. */
 export function lineageUnits(rec: WreckLineageRecord): number {
   const d = rec.nodes[0]?.desc;
-  if (d === undefined || d.rock !== undefined) return FIELD_HULL_UNITS.subcap;
+  if (d === undefined || d.rock !== undefined || d.structure !== undefined) return FIELD_HULL_UNITS.subcap;
   return fieldHullUnits(d.parentKind as ShipKindId);
 }
 

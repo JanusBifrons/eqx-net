@@ -23,6 +23,7 @@ import type { WreckPieceGeometry } from '@core/destruction/wreckPieces';
 import type { FieldRockBody } from '@core/terrain/chunkStreamer';
 import type { ChunkOpts } from '@core/terrain/fieldLayout';
 import type { WreckRockRef } from '@shared-types/messages/wreckDescriptor';
+import type { WreckSource } from '@core/destruction/wreckSource';
 import type { StructureBodyFacts } from '@core/structures/structureBody';
 
 /** The exact predWorld surface a leaf touches — a structural subset of
@@ -42,6 +43,10 @@ export interface WreckGeometrySource {
   /** Rock cut: the rock a wreck (or its root) was cut from, else undefined
    *  (a ship's wreck). Optional: absent ⇒ every wreck is a ship's. */
   rockOf?(wreckId: number): WreckRockRef | undefined;
+  /** What a wreck (or its root) was cut from (ship, rock or structure:
+   *  `rootSourceOf`), else undefined (unknown / not resolvable yet).
+   *  Optional: absent ⇒ every wreck is a ship's. */
+  sourceOf?(wreckId: number): WreckSource | undefined;
   /** The room's cut-field options a field rock (`rock.fk`) is rebuilt
    *  from; absent or null: no field. */
   readonly field?: ChunkOpts | null;

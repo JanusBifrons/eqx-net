@@ -9,8 +9,8 @@
 import { BurnLines, BURN_LINE_MERGE_GAP_PER_RADIUS, hullPointInto } from '../../core/destruction/burnLines.js';
 import { WEAPONS, type WeaponId } from '../../core/combat/WeaponCatalogue.js';
 import { unitDirFromSteps } from '../../core/geometry/unitDir.js';
-import { shipShapeScale } from '../../core/geometry/shipHullOutline.js';
-import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
+import type { ShipKindId } from '../../shared-types/shipKinds.js';
+import { asWreckSource, type WreckSource } from '../../core/destruction/wreckSource.js';
 import { killCutStripWidth } from '../../shared-types/shipScale/destruction.js';
 import type { WreckDeathPose } from '../../core/destruction/wreckPieces.js';
 import type { CapitalWreckDeps, PieceKnock } from './capitalWreckTypes.js';
@@ -30,19 +30,19 @@ function cutWidthOf(weaponId: WeaponId | null | undefined): number {
   return kc === undefined ? -1 : killCutStripWidth(kc);
 }
 
-/** A hit on a live hull (`noteHit`): a cutting beam burns its line into the
- *  hull (hull frame, at the hull's pose now). Returns the hull's lines:
+/** A hit on a live hull (`noteHit`; a ship kind or any `WreckSource`): a
+ *  cutting beam burns its line into the hull (hull frame, at the hull's pose now). Returns the hull's lines:
  *  `burn` itself, or a new `BurnLines` on its first cutting hit. */
 export function burnHullHit(
-  burn: BurnLines | null, d: Pick<CapitalWreckDeps, 'hullPoseInto' | 'serverTick'>, targetId: string, kindId: ShipKindId,
+  burn: BurnLines | null, d: Pick<CapitalWreckDeps, 'hullPoseInto' | 'serverTick'>, targetId: string, source: ShipKindId | WreckSource,
   shooterId: string, hitX: number | undefined, hitY: number | undefined, dirX?: number, dirY?: number, weaponId?: WeaponId,
 ): BurnLines | null {
   const cw = cutWidthOf(weaponId);
   if (cw >= 0 && hitX !== undefined && hitY !== undefined && dirX !== undefined && dirY !== undefined
     && (dirX !== 0 || dirY !== 0) && d.hullPoseInto?.(targetId, BURN_POSE) === true) {
-    const kind = getShipKind(kindId);
-    const s = shipShapeScale(kind);
-    const gap = (BURN_LINE_MERGE_GAP_PER_RADIUS * kind.radius) / s;
+    const src = asWreckSource(source);
+    const s = src.scale;
+    const gap = (BURN_LINE_MERGE_GAP_PER_RADIUS * src.radius) / s;
     if (burn === null) burn = new BurnLines(gap); // once per pooled entry
     else burn.mergeGap = gap;
     burn.record(shooterId, d.serverTick(), BURN_POSE.x, BURN_POSE.y, BURN_POSE.angle, s, hitX, hitY, dirX, dirY, cw);
@@ -82,10 +82,10 @@ export function burnPieceHit(
  *  dropped (`BurnLines.extraCuts`' `main`): `main.w` becomes its width and
  *  `kill` moves onto its centre line (in place). */
 export function deathExtraCuts(
-  burn: BurnLines, pose: WreckDeathPose, kindId: ShipKindId, kill: { x: number; y: number }, tick: number, cutAng: number,
+  burn: BurnLines, pose: WreckDeathPose, source: ShipKindId | WreckSource, kill: { x: number; y: number }, tick: number, cutAng: number,
   main: { w: number },
 ): ReturnType<BurnLines['extraCuts']> {
-  const s = shipShapeScale(getShipKind(kindId));
+  const s = asWreckSource(source).scale;
   hullPointInto(pose.x, pose.y, pose.angle, s, kill.x, kill.y, BURN_PT);
   const extra = burn.extraCuts(tick, BURN_PT.x, BURN_PT.y, cutAng, main.w, MAIN_STRIP);
   if (!(MAIN_STRIP.w > main.w)) return extra;

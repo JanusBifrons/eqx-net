@@ -20,6 +20,12 @@
  *    its chunk's `rocksInChunk` entry, the outline it collides and draws
  *    with), so the room's field options (`cutFieldOpts` of the welcome's
  *    seed and clearings) must ride with it (`WreckRockSource.field`).
+ *  - A structure source is its kind's socket outline (`structureOutline(k,
+ *    SOCKET_OUTLINE_STYLE)`, the edge players see, inside the footprint box
+ *    it collides with), y flipped into the Pixi-up frame exactly as
+ *    `structureRenderVerts` draws it, at scale 1: what you see is what
+ *    breaks. Its quarter-turn is the body's angle (the death pose), so the
+ *    source is per kind (`structureWreckSource`).
  *
  * Not hot-loop code: read at a break or a spawn; a rock source allocates once
  * per rock (shape, radius, id) on first use.
@@ -32,9 +38,13 @@ import {
 } from '../../shared-types/shipScale/tuning.js';
 import { shipHullOutline, shipShapeScale } from '../geometry/shipHullOutline.js';
 import { generateAsteroidVertices, polygonArea } from '../swarm/asteroidShape.js';
-import { WRECK_ROCK_PARENT_KIND, type WreckRockRef } from '../../shared-types/messages/wreckDescriptor.js';
+import {
+  WRECK_ROCK_PARENT_KIND, WRECK_STRUCTURE_PARENT_KIND, type WreckRockRef, type WreckStructureRef,
+} from '../../shared-types/messages/wreckDescriptor.js';
 import { rocksInChunk, unpackRockKey, type ChunkOpts } from '../terrain/fieldLayout.js';
 import { fieldRockBody } from '../terrain/chunkStreamer.js';
+import { getStructureKind, SOCKET_OUTLINE_STYLE, structureOutline, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { destructionProfile } from '../../shared-types/shipScale/destructionProfile.js';
 
 /** The descriptor's `parentKind` of a rock's wreck (not a ship kind). */
 export const ROCK_WRECK_PARENT_KIND = WRECK_ROCK_PARENT_KIND;
@@ -56,10 +66,27 @@ export const ROCK_INTEGRITY_PER_AREA = 0.2;
  *  the wire: each side attaches its own (the welcome's, on a client). */
 export type WreckRockSource = WreckRockRef & { readonly field?: ChunkOpts | null };
 
+/** The structure a wreck was broken from (the descriptor's `structure`,
+ *  as it rides the wire): its kind (`k`). */
+export type { WreckStructureRef };
+
+/** The descriptor's `parentKind` of a structure's wreck (not a ship kind). */
+export const STRUCTURE_WRECK_PARENT_KIND = WRECK_STRUCTURE_PARENT_KIND;
+
+/** A structure's body mass per world unit² of outline: one density with a
+ *  cut rock's (`ROCK_WRECK_DENSITY`), so a structure's piece weighs like
+ *  rock of its size (the tractor and re-split rules read mass). The live
+ *  structure body's mass (`STRUCTURE_DEFAULT_MASS`, 5000 for every kind)
+ *  is an "immovable" stand-in, not a catalogue number. */
+export const STRUCTURE_WRECK_DENSITY = ROCK_WRECK_DENSITY;
+
 export interface WreckSource {
-  /** The ship kind, or null for a rock. */
+  /** The ship kind, or null for a rock or a structure. */
   readonly ship: ShipKindId | null;
   readonly rock: WreckRockSource | null;
+  /** The structure, or null for a ship or a rock. Exactly one of the three
+   *  is set. */
+  readonly structure: WreckStructureRef | null;
   /** The whole outline in the 1× Pixi-up frame (the fracture's input). */
   readonly outline: ReadonlyArray<readonly [number, number]>;
   /** World units per 1× unit (a rock's: 1). */
@@ -101,7 +128,7 @@ export function shipWreckSource(kindId: ShipKindId): WreckSource {
   const sc = shipShapeScale(kind);
   const outline = shipHullOutline(kind);
   s = {
-    ship: kindId, rock: null, outline, scale: sc, area: ringArea(outline) * sc * sc,
+    ship: kindId, rock: null, structure: null, outline, scale: sc, area: ringArea(outline) * sc * sc,
     bodyMass: shipBodyMass(kind), maxHull: kind.maxHealth, radius: kind.radius, inset: t.wreckColliderInset,
     profile: DESTRUCTION_PROFILES[t.destruction],
     pushMin: t.wreckPushMin, pushMax: t.wreckPushMax, separate: t.wreckSeparate, crack: t.wreckCrack,
@@ -152,7 +179,7 @@ export function rockWreckSource(rock: WreckRockSource, field: ChunkOpts | null |
   const r = fo !== null ? fo.radius : rock.r;
   const ref: WreckRockRef = fk !== undefined ? { id: rock.id, shape: rock.shape, r: rock.r, fk } : { id: rock.id, shape: rock.shape, r: rock.r };
   s = {
-    ship: null, rock: ref, outline, scale: 1, area,
+    ship: null, rock: ref, structure: null, outline, scale: 1, area,
     bodyMass: Math.max(1e-3, area * ROCK_WRECK_DENSITY), maxHull: area * ROCK_INTEGRITY_PER_AREA, radius: r,
     inset: WRECK_COLLIDER_INSET_PER_RADIUS * r, profile: DESTRUCTION_PROFILES.rock,
     pushMin: WRECK_PUSH_MIN_PER_RADIUS * r, pushMax: WRECK_PUSH_MAX_PER_RADIUS * r,
@@ -163,14 +190,56 @@ export function rockWreckSource(rock: WreckRockSource, field: ChunkOpts | null |
   return s;
 }
 
+const structureCache = new Map<StructureKindId, WreckSource>();
+
+/** A structure kind's source (memoised per kind). Area from its outline;
+ *  mass `STRUCTURE_WRECK_DENSITY` × area; "max hull" the kind's catalogue
+ *  `maxHealth` (base, unlevelled: the integrity scale of its pieces);
+ *  radius the outline's farthest vertex; inset and parting per radius like
+ *  a rock's. */
+export function structureWreckSource(ref: WreckStructureRef): WreckSource {
+  let s = structureCache.get(ref.k);
+  if (s !== undefined) return s;
+  const kind = getStructureKind(ref.k);
+  const verts = structureOutline(kind.id, SOCKET_OUTLINE_STYLE);
+  // Game Y-up → the fracture's Pixi-up frame (`structureRenderVerts`' flip).
+  const outline: Array<readonly [number, number]> = [];
+  let r2 = 0;
+  for (const v of verts) {
+    outline.push([v.x, -v.y] as const);
+    r2 = Math.max(r2, v.x * v.x + v.y * v.y);
+  }
+  const area = polygonArea(verts);
+  const r = Math.sqrt(r2);
+  s = {
+    ship: null, rock: null, structure: { k: kind.id }, outline, scale: 1, area,
+    bodyMass: Math.max(1e-3, area * STRUCTURE_WRECK_DENSITY), maxHull: kind.maxHealth, radius: r,
+    inset: WRECK_COLLIDER_INSET_PER_RADIUS * r, profile: DESTRUCTION_PROFILES.structure,
+    pushMin: WRECK_PUSH_MIN_PER_RADIUS * r, pushMax: WRECK_PUSH_MAX_PER_RADIUS * r,
+    separate: WRECK_SEPARATE_PER_RADIUS * r, crack: WRECK_CRACK_PER_RADIUS * r,
+  };
+  structureCache.set(ref.k, s);
+  return s;
+}
+
+/** Whether a destroyed structure breaks into wreck pieces: a built one of
+ *  any kind with the `structure` profile (every kind but the gates, whose
+ *  colliders are split posts). An unbuilt one (a blueprint or a frame under
+ *  construction) just goes. */
+export function structureBreaks(kindId: string, built: boolean): boolean {
+  return built && destructionProfile({ type: 'structure', kindId }) === 'structure';
+}
+
 /** A source from a ship kind or a source (the wreck helpers take either). */
 export function asWreckSource(k: ShipKindId | WreckSource): WreckSource {
   return typeof k === 'string' ? shipWreckSource(k) : k;
 }
 
-/** The source of a wreck's root fracture inputs: its rock, else its kind. */
-export function wreckSourceOf(root: { kindId?: ShipKindId; rock?: WreckRockSource }): WreckSource {
+/** The source of a wreck's root fracture inputs: its rock, its structure,
+ *  else its kind. */
+export function wreckSourceOf(root: { kindId?: ShipKindId; rock?: WreckRockSource; structure?: WreckStructureRef }): WreckSource {
   if (root.rock !== undefined) return rockWreckSource(root.rock, root.rock.field);
-  if (root.kindId === undefined) throw new Error('wreck inputs name neither a ship kind nor a rock');
+  if (root.structure !== undefined) return structureWreckSource(root.structure);
+  if (root.kindId === undefined) throw new Error('wreck inputs name no ship kind, rock or structure');
   return shipWreckSource(root.kindId);
 }

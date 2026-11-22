@@ -79,6 +79,11 @@ export interface FractureInput {
   /** With `chunkyPieces` (rocks): a cut kill moves like the sound primary
    *  (across a long piece), unburned: no strip. */
   readonly sweepCuts?: boolean;
+  /** Structures: in place of the zone cracks, target − 1 straight cracks
+   *  through the kill point (`radialCracks`), so a squarish hull shatters
+   *  into wedges from the hit; the primary line stands only as a kill cut.
+   *  Absent: the v7 layout (every ship and rock, unchanged). */
+  readonly radialCracks?: boolean;
   /** Jagged cut edges: most midpoint-subdivision levels per edge and the
    *  displacement per level as a fraction of the sub-segment (defaults
    *  `JAG_MAX_DEPTH` 4, `JAG_ROUGHNESS` 0.22). Sub-capitals use a shorter,

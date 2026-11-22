@@ -73,6 +73,52 @@ export function primaryCut(p: NonNullable<FracturePlan['primary']>, kind = EDGE_
   return { nx, ny, c: nx * p.point.x + ny * p.point.y, kind };
 }
 
+/** Radial cracks fan this far either side of the kill point's inward line,
+ *  as tan(θ/2) (θ ≈ ±65°), so none runs along the struck face. */
+const RADIAL_HALF_SPREAD = 0.64;
+/** Seeded jitter of each radial crack within its slot (a share of it). */
+const RADIAL_JITTER = 0.6;
+
+/**
+ * Radial cracks (`radialCracks`, structures): `n` straight cracks through
+ * the kill point, spread evenly (seeded jitter) either side of the line from
+ * it to the hull's centroid, so a squarish hull shatters into n + 1 wedges
+ * from the hit. Directions by the rational half-angle form (no trig, #15).
+ * Its own seeded stream.
+ */
+export function radialCracks(hull: P[], seed: number, kill: Vec2, n: number): FractureLine[] {
+  const out: FractureLine[] = [];
+  if (n <= 0) return out;
+  const cen = ringCentroid(hull);
+  let vx = cen.x - kill.x;
+  let vy = cen.y - kill.y;
+  const vl = Math.sqrt(vx * vx + vy * vy);
+  if (vl < 1e-9) return out;
+  vx /= vl;
+  vy /= vl;
+  const rng = new Rng(fnvMixU32(seed ^ 0x7ad1a, 0xb));
+  // Centre-out order (j = middle, then alternating out), so dropping the
+  // last line first (the cap / sliver loop) drops the outermost wedge.
+  for (let q = 0; q < n; q++) {
+    const lo = (n - 1) >> 1; // the middle line (the lower middle for even n)
+    const j = n % 2 === 1
+      ? (q % 2 === 0 ? lo - q / 2 : lo + (q + 1) / 2)
+      : (q % 2 === 0 ? lo - q / 2 : lo + 1 + (q - 1) / 2);
+    const jit = (rng.u32() / 4294967296 - 0.5) * RADIAL_JITTER;
+    const s = RADIAL_HALF_SPREAD * (-1 + (2 * (j + 0.5 + jit)) / n);
+    const k = 1 / (1 + s * s);
+    const ca = (1 - s * s) * k;
+    const sa = 2 * s * k;
+    // v rotated by θ: (cos θ, sin θ) = ((1 − s²), 2s) / (1 + s²).
+    const dx = vx * ca - vy * sa;
+    const dy = vx * sa + vy * ca;
+    const nx = -dy;
+    const ny = dx;
+    out.push({ nx, ny, c: nx * kill.x + ny * kill.y, kind: EDGE_CRACK });
+  }
+  return out;
+}
+
 /**
  * Sub-capital extra chunk (`chunkyPieces`): with a seeded chance (rising
  * with violence) one crack across the keel on the LONGER side of the primary

@@ -100,6 +100,22 @@ describe('wreck lineage record', () => {
     expect(parseLineageRecord(roundTrip(rec))).toEqual(rec);
   });
 
+  it('round-trips a structure lineage (structure break-up)', () => {
+    const root = view({ ...base, wreckId: 8, parentKind: 'structure', seed: 91, killX: 1, killY: 2, structure: { k: 'capital' } }, 0, 8, []);
+    const child = view({ ...base, wreckId: 9, parentKind: 'structure', seed: 92, killX: 0, killY: 1, parentWreck: 8, parentPiece: 1 }, 8, 8, [{ pieceIndex: 1, killX: 0, killY: 1 }]);
+    const rec = collectLineage(8, deps([child, root], [{ wreckId: 9, index: 0, x: 5, y: 6, angle: 1, vx: 0, integrity: 3 }]));
+    expect(rec!.nodes[0]!.desc.structure).toEqual({ k: 'capital' });
+    expect(rec!.nodes[1]!.desc.structure).toBeUndefined();
+    const raw = roundTrip(rec) as { nodes: Array<{ desc: Record<string, unknown> }> };
+    expect(parseLineageRecord(raw)).toEqual(rec);
+    // A structure ref only on the root, with its parentKind, never with a rock.
+    const withDesc = (i: number, d: Record<string, unknown>) => ({ ...raw, nodes: raw.nodes.map((n, j) => (j === i ? { ...n, desc: { ...n.desc, ...d } } : n)) });
+    expect(parseLineageRecord(withDesc(1, { structure: { k: 'capital' } }))).toBeNull();
+    expect(parseLineageRecord(withDesc(0, { parentKind: 'asteroid' }))).toBeNull();
+    expect(parseLineageRecord(withDesc(0, { rock: { id: 'rock-1', shape: 1, r: 9 } }))).toBeNull();
+    expect(parseLineageRecord(withDesc(0, { structure: { k: 'nope' } }))).toBeNull();
+  });
+
   it('puts every parent before its children', () => {
     const rec = collectLineage(40, shipLineage())!;
     expect(rec.nodes[0]!.parent).toBe(-1);

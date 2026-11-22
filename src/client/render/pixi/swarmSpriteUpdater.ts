@@ -65,6 +65,7 @@ import {
   interpolateSwarmPose,
 } from '../../net/swarmInterpolation';
 import { resolveEntityDisplayPose } from '../../net/swarmDisplayPose';
+import { wreckSourceKindOf } from '../../net/wreckRootSource';
 import { mainThreadNowMs } from '../mainThreadNow.js';
 import { WreckPieceSprite, coolWreckInfo, wreckPieceSpeckColor } from './wreckArt.js';
 import { buildRockPieceArt, classicRockTint, isRockWreck } from './rockPieceArt.js';
@@ -214,10 +215,12 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     // piece once it is ready. Under a livery the owner is the descriptor's
     // (the live hull's livery), so the capital's bake is the one it wore.
     const wreckDesc = entry.kind === 4 ? wreckDescs!.get(entry.wreckId!)! : undefined;
-    const wreckRock = isRockWreck(wreckDesc); // rock cut: no ship kind (its wire shipKind byte is junk), no ship art
-    const wreckParent = wreckDesc !== undefined ? (wreckRock ? wreckDesc.parentKind : entry.shipKind ?? wreckDesc.parentKind) : '';
-    const wreckArtHandle = wreckDesc !== undefined && ctx.art.art && !wreckRock
-      ? wreckArtHandleFor(ctx.art, spriteKey, wreckParent, wreckDesc.owner ?? entry.faction, wreckDeadArtFor(wreckParent))
+    // By its SOURCE: a rock's or a structure's wreck has no ship kind (its wire shipKind byte is junk) and no ship art.
+    const wreckShip = wreckDesc !== undefined && wreckSourceKindOf(wreckDesc.parentKind) === 'ship';
+    const wreckRock = isRockWreck(wreckDesc);
+    const wreckParent = wreckDesc !== undefined ? (wreckShip ? entry.shipKind ?? wreckDesc.parentKind : wreckDesc.parentKind) : '';
+    const wreckArtHandle = wreckShip && ctx.art.art
+      ? wreckArtHandleFor(ctx.art, spriteKey, wreckParent, wreckDesc!.owner ?? entry.faction, wreckDeadArtFor(wreckParent))
       : null;
     // A rock's piece draws the uncut rock's surface (the field rock shader,
     // in the root rock's rest frame); built once, no bake to wait for.
@@ -312,7 +315,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         if (wreckRock && pieceRock === undefined) continue; // rock piece without its rock: not drawn
         sprite = new WreckPieceSprite(
           g, wreckParent, shipArt, info, index, pieceRock !== undefined ? buildRockPieceArt(g, pieceRock, ctx.fieldRocks ?? null) : null,
-          shipArt !== null ? wreckPieceSpeckColor(wreckParent, wreckArtHandle!.job) : null,
+          shipArt !== null ? wreckPieceSpeckColor(wreckParent, wreckArtHandle!.job) : null, wreckShip ? null : ctx.wrecks!.sourceOf(entry.wreckId!) ?? null,
         );
       } else {
         // An awake cut-field rock keeps its cut shape and rock surface; a

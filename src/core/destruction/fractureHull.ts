@@ -43,7 +43,7 @@ import {
   FAN_MIN_WIDTH_BEAMS, FAN_MAX_ASPECT, allChunky, hullBeam, isChunky, keelAxis, minSideFrac, projectRing, ringCentroid,
 } from './fractureMeasure.js';
 import {
-  SPLINTER_MAX, SPLINTER_MIN_WIDTH_BEAMS, crackLine, crackLines, cutSplinters, damageResponse, extraCrack, primaryCut,
+  SPLINTER_MAX, SPLINTER_MIN_WIDTH_BEAMS, crackLine, crackLines, cutSplinters, damageResponse, extraCrack, primaryCut, radialCracks,
   type LocalLine,
 } from './fractureCracks.js';
 import {
@@ -138,6 +138,9 @@ const TIP_SECTION_SPAN = 0.2;
  *  at least this share of the hull, else the line moves toward the centroid
  *  by these fractions of the way (0 = through the kill point). */
 const SOUND_MIN_SHARE = 0.15;
+/** Radial cracks (structures): the least wedge, as a share of an even
+ *  split (hull area / target pieces). */
+const RADIAL_MIN_SHARE = 0.25;
 const SOUND_SHIFTS: readonly number[] = [0, 0.25, 0.5, 0.75, 1];
 
 /** v9: a slice that would leave a piece under the profile minimum slides
@@ -231,6 +234,13 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
     fan: input.fanCracks === false ? [] : drawn.fan,
     far: input.farCrack === false ? [] : drawn.far,
   };
+  // Radial (structures): wedges from the kill point replace the zone cracks;
+  // the primary stands only as a kill cut.
+  const radial = input.radialCracks === true && !plan.snap && primary !== null;
+  if (radial) cracks.zone = radialCracks(hull, input.seed >>> 0, kill, plan.targetPieces - (cutKind !== null ? 2 : 1));
+  // No radial wedge under a quarter of an even share: the loop below drops
+  // the outermost line until none is left (a hit near a corner).
+  const radialMin = radial ? (RADIAL_MIN_SHARE * hullArea) / plan.targetPieces : 0;
   // v10: a capital cut kill splinters off the cut instead: as many cracks as
   // the un-cut layout drew (the violence table's count), branching off the
   // cut line, none parallel to it (film review 2026-11-15).
@@ -245,7 +255,7 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
   // cuts, the zone cracks (one by one) and the primary line, until the cap
   // holds.
   let useCuts = cuts.length > 0;
-  let usePrimary = primary !== null;
+  let usePrimary = primary !== null && !(radial && cutKind === null);
   let useFar = cracks.far.length > 0;
   let nZone = cracks.zone.length;
   let nFan = cracks.fan.length;
@@ -266,6 +276,7 @@ export function fractureHull(input: FractureInput): FracturePiece[] {
       (quantised.length <= cap || cutStands)
       && (!chunkyOnly || onlyPrimary || allChunky(quantised, beam, chunkyWidth))
       && (burnShare === 0 || onlyPrimary || allAtLeast(quantised, burnMin))
+      && (radialMin === 0 || nZone === 0 || allAtLeast(quantised, radialMin))
     ) {
       const jagged = jagCutEdges(
         weldTJunctions(quantised), input.seed >>> 0, scale, jagDepth, jagRoughness, splinterKill ? JAG_ROUGHNESS : undefined,
