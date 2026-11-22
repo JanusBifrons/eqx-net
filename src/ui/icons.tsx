@@ -55,6 +55,10 @@ export const EQX_ICON_NAMES = [
   'orders',
   'route',
   'power',
+  // Selection identity (what the left strip names)
+  'ship',
+  'pod',
+  'rock',
 ] as const;
 
 export type EqxIconName = (typeof EQX_ICON_NAMES)[number];
@@ -232,4 +236,15 @@ export const EQX_ICONS = {
       <path d="M12 3v7M12 14v7M3 12h7M14 12h7" />
     </>
   ),
+  // new: one dart (a single hull; `fleet` is a group of them)
+  ship: <path d="M12 3l7 17-7-4-7 4z" />,
+  // new: small crate with a strap (a cargo pod; `hold` is the ship's hold)
+  pod: (
+    <>
+      <rect x="5" y="7" width="14" height="11" rx="2" />
+      <path d="M5 11h14M10 7v4M14 7v4" />
+    </>
+  ),
+  // new: lumpy rock
+  rock: <path d="M7 5l6-2 6 4 2 7-4 6-8 1-5-5 1-7z" />,
 } as const satisfies Record<EqxIconName, ReactElement>;

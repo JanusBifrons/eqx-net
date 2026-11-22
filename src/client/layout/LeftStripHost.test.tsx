@@ -108,6 +108,14 @@ describe('stripIdentity', () => {
   it('maps the selection to icon, count and panel', () => {
     expect(stripIdentity({ ids: [], focusId: null, focusKind: null })).toBeNull();
     expect(stripIdentity({ ids: ['a'], focusId: 'a', focusKind: 'ship' })).toMatchObject({ icon: 'fleet', count: 1, panel: 'fleet' });
-    expect(stripIdentity({ ids: [], focusId: 'd', focusKind: 'drone' })).toMatchObject({ icon: 'target', count: 1, panel: 'details' });
+    expect(stripIdentity({ ids: [], focusId: 'd', focusKind: 'drone' })).toMatchObject({ icon: 'ship', count: 1, panel: 'details' });
+  });
+
+  it('never names the selection with an icon a strip button uses (one icon, one meaning)', () => {
+    // Target, Cargo/Open pod, Pilot, Stop, cog, close: the buttons a strip can carry.
+    const actions = new Set(['target', 'hold', 'pilot', 'stop', 'cog', 'close']);
+    for (const kind of ['ship', 'lingering', 'drone', 'structure', 'asteroid', 'pod'] as const) {
+      expect(actions.has(stripIdentity({ ids: [], focusId: 'x', focusKind: kind })!.icon)).toBe(false);
+    }
   });
 });

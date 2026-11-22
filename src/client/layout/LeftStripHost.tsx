@@ -32,12 +32,12 @@ import { useSelectionStripItems } from './selectionStripItems';
 import { useLeftStripFit } from './leftStripFit';
 
 const FOCUS_LOOK: Readonly<Record<SelectionFocusKind, { icon: EqxIconName; tooltip: string }>> = {
-  ship: { icon: 'fleet', tooltip: 'Ship' },
-  lingering: { icon: 'fleet', tooltip: 'Parked hull' },
-  drone: { icon: 'target', tooltip: 'Drone' },
+  ship: { icon: 'ship', tooltip: 'Ship' },
+  lingering: { icon: 'ship', tooltip: 'Parked hull' },
+  drone: { icon: 'ship', tooltip: 'Drone' },
   structure: { icon: 'build', tooltip: 'Structure' },
-  asteroid: { icon: 'hold', tooltip: 'Asteroid' },
-  pod: { icon: 'hold', tooltip: 'Cargo pod' },
+  asteroid: { icon: 'rock', tooltip: 'Asteroid' },
+  pod: { icon: 'pod', tooltip: 'Cargo pod' },
 };
 
 export interface StripIdentity {
