@@ -7,7 +7,7 @@ import { mergeConfig } from 'vite';
  * netgate impact. Vite-based to match the app toolchain.
  */
 const config: StorybookConfig = {
-  stories: ['../src/client/**/*.stories.@(ts|tsx)'],
+  stories: ['../src/client/**/*.stories.@(ts|tsx)', '../src/ui/**/*.stories.@(ts|tsx)'],
   addons: ['@storybook/addon-essentials'],
   framework: { name: '@storybook/react-vite', options: {} },
   core: { disableTelemetry: true },
