@@ -98,44 +98,43 @@ test('a rail tap switches the sidebar to that category', async ({ browser }) => 
   }
 });
 
-test('Confirm keeps placing with the sidebar folded to the strip; Cancel brings it back on the same category', async ({ browser }) => {
-  // The Confirm banner is the TOUCH placement flow (desktop places on click),
-  // so this test joins as a touch device.
+test('Place keeps placing with the left-strip placing tools; ✕ brings the sidebar back on the same category', async ({ browser }) => {
+  // Joins as a touch device (the two-step tap → Place flow).
   const { ctx, page } = await joinClient(browser, true);
   try {
     await openBuildSidebar(page);
     await page.locator('[data-testid="build-cat-economy"]').click();
 
-    // Picking a kind raises the ghost and folds the sidebar to the placing
-    // strip (the picked kind, a ✕), so it never covers the ghost.
+    // Picking a kind raises the ghost, closes the sidebar and shows the left
+    // strip's placing tools (the building, ✓, rotate, mirror, ✕) (U3-7).
     await page.locator('[data-testid="build-solar"] button').click();
-    await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
-    await expect(page.locator('[data-testid="placement-banner"]')).toHaveAttribute('data-kind', 'solar');
+    await expect(page.locator('[data-testid="placement-kind"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="placement-kind"]')).toHaveAttribute('data-state', 'solar');
     await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
-    await expect(page.locator('[data-testid="build-strip"]')).toHaveAttribute('data-kind', 'solar');
 
-    // The portrait expands the full sidebar with placement live; its ✕ folds back.
-    await page.locator('[data-testid="build-strip-portrait"] button').click();
+    // The building icon reopens the full sidebar (the strip hides) with
+    // placement live; its ✕ folds back to the strip.
+    await page.locator('[data-testid="placement-kind"]').click();
     await expect(page.locator('[data-testid="build-rail"]')).toBeVisible();
-    await expect(page.locator('[data-testid="placement-banner"]')).toHaveAttribute('data-kind', 'solar');
+    await expect(page.locator('[data-testid="left-strip"]')).toHaveAttribute('data-open', 'false');
+    await expect(page.locator('[data-testid="placement-kind"]')).toHaveAttribute('data-state', 'solar');
     await page.locator('[data-testid="build-sidebar-close"]').click();
     await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
-    await expect(page.locator('[data-testid="build-strip"]')).toBeVisible();
+    await expect(page.locator('[data-testid="left-strip"]')).toHaveAttribute('data-open', 'true');
+    await expect(page.locator('[data-testid="placement-kind"]')).toBeVisible();
 
     // THE LOCK (M3): Confirm keeps you placing the same building; the
-    // sidebar stays folded to the strip.
+    // sidebar stays closed, the placing tools stay.
     await page.locator('[data-testid="placement-confirm"]').click();
-    await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible();
-    await expect(page.locator('[data-testid="placement-banner"]')).toHaveAttribute('data-kind', 'solar');
+    await expect(page.locator('[data-testid="placement-kind"]')).toBeVisible();
+    await expect(page.locator('[data-testid="placement-kind"]')).toHaveAttribute('data-state', 'solar');
     await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
-    await expect(page.locator('[data-testid="build-strip"]')).toHaveAttribute('data-kind', 'solar');
 
     // Cancel ends it: the sidebar is back on Economy, the next pick one tap.
-    await page.locator('[data-testid="build-strip-cancel"]').click();
-    await expect(page.locator('[data-testid="placement-banner"]')).toBeHidden();
+    await page.locator('[data-testid="placement-cancel"]').click();
+    await expect(page.locator('[data-testid="placement-kind"]')).toBeHidden();
     await expect(page.locator('[data-testid="build-kinds"]')).toHaveAttribute('data-category', 'economy', { timeout: 5_000 });
     await expect(page.locator('[data-testid="build-solar"]')).toBeVisible();
-    await expect(page.locator('[data-testid="build-strip"]')).toHaveCount(0);
   } finally {
     await ctx.close();
   }
@@ -148,9 +147,9 @@ test('a Capital places once: Confirm ends placement and brings the sidebar back'
     await openBuildSidebar(page);
     await page.locator('[data-testid="build-cat-core"]').click();
     await page.locator('[data-testid="build-capital"] button').click();
-    await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="placement-kind"]')).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('[data-testid="build-capital"]')).toBeHidden();
-    await expect(page.locator('[data-testid="build-strip"]')).toHaveAttribute('data-kind', 'capital');
+    await expect(page.locator('[data-testid="placement-kind"]')).toHaveAttribute('data-state', 'capital');
 
     await page.locator('[data-testid="placement-confirm"]').click();
     await page.waitForFunction((b) => {
@@ -158,9 +157,8 @@ test('a Capital places once: Confirm ends placement and brings the sidebar back'
       return parseInt(t.replace(/\D/g, '') || '0', 10) > b;
     }, before, { timeout: 8_000 });
 
-    await expect(page.locator('[data-testid="placement-banner"]')).toBeHidden();
+    await expect(page.locator('[data-testid="placement-kind"]')).toBeHidden();
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
-    await expect(page.locator('[data-testid="build-strip"]')).toHaveCount(0);
   } finally {
     await ctx.close();
   }

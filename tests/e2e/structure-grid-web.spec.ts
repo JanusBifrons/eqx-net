@@ -19,8 +19,8 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function joinClient(browser: Browser): Promise<{ ctx: Awaited<ReturnType<Browser['newContext']>>; page: Page }> {
-  // The Confirm/Cancel banner is the TOUCH placement flow (desktop places on
-  // click since P3.6, d239bbf8), so these tests join as a touch device.
+  // These tests join as a touch device (the two-step tap → Place flow); the
+  // left strip's placing tools show on desktop too (U3-7).
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
   const page = await ctx.newPage();
   await page.goto(`${BASE_URL}?room=test-sector-fast&shipKind=scout`);
@@ -51,7 +51,7 @@ test('Build ▸ Capital places a structure', async ({ browser }) => {
     await page.locator('[data-testid="right-rail-build"]').click(); // no auto-open: the rail's Build item opens the panel
     await page.locator('[data-testid="build-cat-core"]').click();
     await page.locator('[data-testid="build-capital"] button').click();
-    await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="placement-kind"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="placement-confirm"]').click();
 
     // The placed Capital appears as a kind-2 swarm entity within a snapshot.
