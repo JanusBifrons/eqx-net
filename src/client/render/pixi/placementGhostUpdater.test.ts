@@ -77,6 +77,20 @@ describe('placement ghost: red or green by the server rule', () => {
     expect(ctx.placementGhost!.alpha).toBeLessThan(0.6);
     expect(ctx.placementGhost!.line.visible).toBe(false);
   });
+  it('right after Place the held ghost on its own new structure is dim, not red, and keeps the pointer', () => {
+    const { ctx, feedback, mirror } = harness([], [['connector', 0, 0]]);
+    const m = mirror(0, 0);
+    m.pendingPlacementPreview!.held = true;
+    updatePlacementGhost(m, ctx);
+    expect(feedback.placementPreviewRejection).toBeNull();
+    expect(ctx.placementGhost!.tint).toBe(GHOST_CLEAR_COLOR);
+    expect(ctx.placementGhost!.alpha).toBeLessThan(0.6);
+    expect(ctx.input._placementActive).toBe(true); // still the live ghost
+    // Moved off the spot (held cleared): the real verdict is back.
+    m.pendingPlacementPreview!.held = false;
+    updatePlacementGhost(m, ctx);
+    expect(feedback.placementPreviewRejection).toBe('overlap-structure');
+  });
 });
 
 describe('placement ghost: the bright hologram', () => {

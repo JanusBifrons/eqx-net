@@ -56,7 +56,7 @@ export function handlePlacementKey(key: string): boolean {
 }
 const DEG = Math.PI / 180;
 import { getGameClient } from '../net/clientSingleton.js';
-import { placementChosen } from './placementChosen.js';
+import { placementChosen, setPlacementHeld } from './placementChosen.js';
 import { logEvent } from '../debug/ClientLogger.js';
 
 /** Gap (world units) between the ship's leading edge and the new structure's
@@ -98,6 +98,10 @@ export interface PlacementPreview {
    *  AFTER Confirm (playtest 2026-06-10 Issue 7), not the live positioning
    *  ghost. The renderer dims it and stops capturing pointers for it. */
   pending?: boolean;
+  /** Live ghost only: true while it still sits on the placement just sent
+   *  (`isHeldOnSent`). Drawn dim with no verdict; never sets `pending`, so
+   *  pointer capture stays on. */
+  held?: boolean;
 }
 
 /**
@@ -176,6 +180,8 @@ export function resolvePlacementPreviewStatus(
   currentStructureCount: number,
   allStructuresRenderable: boolean,
   out: PlacementPreview,
+  chosenX: number | null = null,
+  chosenY: number | null = null,
 ): PlacementPreviewStatus {
   if (placementKind && localShip) {
     const pos = computePlacementPose(localShip, placementKind);
@@ -185,6 +191,7 @@ export function resolvePlacementPreviewStatus(
     out.angle = placementRotationDeg * DEG;
     out.mirror = placementMirror;
     out.pending = false;
+    out.held = isHeldOnSent(placementKind, pending, chosenX, chosenY);
     return 'active';
   }
   if (pending) {
@@ -197,9 +204,29 @@ export function resolvePlacementPreviewStatus(
     out.angle = (pending.rot ?? 0) * DEG;
     out.mirror = pending.mirror === true;
     out.pending = true;
+    out.held = false;
     return 'pending';
   }
   return 'none';
+}
+
+/**
+ * True when the live ghost still sits on the placement just sent: same chosen
+ * point (exact: both come from the same renderer feedback value), kind,
+ * rotation and mirror. Placing keeps going after Place, so without this the
+ * next ghost reads red "too close" on its own new structure. Any pointer move,
+ * rotate, mirror or kind change frees it. The ahead-of-ship fallback has no
+ * chosen point, so it is never held.
+ */
+export function isHeldOnSent(
+  kind: StructureKindId,
+  sent: PendingPlacement | null,
+  chosenX: number | null,
+  chosenY: number | null,
+): boolean {
+  return sent !== null && chosenX !== null && chosenY !== null
+    && sent.kind === kind && sent.x === chosenX && sent.y === chosenY
+    && (sent.rot ?? 0) === placementRotationDeg && (sent.mirror === true) === placementMirror;
 }
 
 /**
@@ -266,6 +293,12 @@ export function placeStructureAt(kindId: StructureKindId, x: number, y: number):
  * refuse it (#15). Returns whether a placement was sent.
  */
 export function commitChosenPlacement(kindId: StructureKindId): boolean {
+  if (placementChosen.held) {
+    // The ghost still sits on the placement just sent: a second Place there
+    // would only be refused (the desktop click re-sets the same point).
+    logEvent('structure_place_blocked', { kind: kindId, reason: 'held' });
+    return false;
+  }
   if (placementChosen.rejection !== null) {
     logEvent('structure_place_blocked', { kind: kindId, reason: placementChosen.rejection });
     return false;
@@ -280,5 +313,10 @@ export function commitChosenPlacement(kindId: StructureKindId): boolean {
     y: cy,
     stuck: placementChosen.stuck,
   });
-  return hasChosen ? placeStructureAt(kindId, cx, cy) : placeStructureAhead(kindId);
+  if (!hasChosen) return placeStructureAhead(kindId);
+  const sentOk = placeStructureAt(kindId, cx, cy);
+  // Hold at once (the mirror pass confirms it next frame) so a second click in
+  // the same frame cannot re-send.
+  if (sentOk) setPlacementHeld(true);
+  return sentOk;
 }

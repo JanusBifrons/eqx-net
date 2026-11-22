@@ -241,7 +241,7 @@ export interface RenderMirror {
    * `kind` is a StructureKindId; `x`/`y` are GAME-space (Y-up); `angle` rad.
    * Structured-cloneable (plain object) so it crosses the worker boundary.
    */
-  pendingPlacementPreview?: { kind: string; x: number; y: number; angle: number; mirror?: boolean; pending?: boolean } | null;
+  pendingPlacementPreview?: { kind: string; x: number; y: number; angle: number; mirror?: boolean; pending?: boolean; held?: boolean } | null;
   /**
    * Helm move marker (owner 2026-11-12): the local pilot's active helm course
    * point, GAME-space, while they fly a capital under a helm order (never for
