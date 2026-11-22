@@ -106,7 +106,7 @@ const wreckBodyParamsCache = new Map<string, WreckBodyParams>();
  *  at spawn, never allocates after the first call), or of a rock's piece
  *  (its source: by its radius, computed per call at spawn). */
 export function wreckBodyParams(source: ShipKindId | WreckSource): WreckBodyParams {
-  if (typeof source !== 'string') return bodyParamsOf(source.profile, source.radius);
+  if (typeof source !== 'string') return bodyParamsOf(source.profile, source.radius * source.partScale);
   const kindId = source;
   let p = wreckBodyParamsCache.get(kindId);
   if (p === undefined) {
@@ -117,6 +117,8 @@ export function wreckBodyParams(source: ShipKindId | WreckSource): WreckBodyPara
   return p;
 }
 
+/** `radius`: the settle speed's radius (× the source's `partScale`, so a
+ *  structure that parts like a ship of its size settles at the same share). */
 function bodyParamsOf(prof: WreckSource['profile'], radius: number): WreckBodyParams {
   return {
     collisionGroups: prof.piecesCollide ? WRECK_COLLISION_GROUPS : SUBCAP_WRECK_COLLISION_GROUPS,

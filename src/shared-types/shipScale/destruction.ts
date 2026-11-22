@@ -541,8 +541,8 @@ const ROCK: DestructionProfile = {
  *  and fan cracks of a long hull left it in 2), in fixed-count mode (no
  *  damage inputs, like a rock), capped by area (`pieceSide` 30: a 64 u
  *  connector 2 pieces, a 120-160 u turret or pylon 4-5, anything from
- *  ~180 u up 6). Its pieces part, drift and settle like a sub-cap ship
- *  wreck's (its parting numbers per radius, each wedge at a sub-cap half's
+ *  ~180 u up 6). Its pieces part, drift and settle like a ship wreck OF
+ *  ITS SIZE (`structurePartScale`; each wedge at a sub-cap half's
  *  speed: `separateFromKill`; lock: server/rooms/structureWreckDrift.test.ts)
  *  and collide with each other; shots never shove them (knock 0). A piece
  *  wears and re-splits like a sub-capital's: halves into two, a quarter or

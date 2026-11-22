@@ -1,18 +1,23 @@
 /**
  * Structure break-up: a destroyed structure's pieces part and drift like a
- * ship wreck's (owner on the in-game stills: the pieces stopped dead ~1 s
- * after the death; "pieces act EXACTLY like ship wrecks"). Driven through
- * THE death path (`CapitalWreckSubsystem.onDeath`) with plain mocks: the
- * spawn velocities a structure's pieces get, against a sub-capital ship's of
- * similar size (robot-nexus, the biggest sub-cap: radius 110, ~30,600 u²),
- * in radii of the whole thing (the parting rules are per radius). Both
- * breaks: a clean snap in two and a shatter into wedges.
+ * SHIP WRECK OF ITS SIZE (owner: "pieces act EXACTLY like ship wrecks, break
+ * scaled by size"). Driven through THE death path
+ * (`CapitalWreckSubsystem.onDeath`, plus `tick()` for a capital's held kick)
+ * with plain mocks, for every breaking structure kind and every wrecking
+ * ship kind, the same killing blow by share of the hull at the same
+ * relative point. Speeds are ABSOLUTE (u/s): a radius-330 structure parted
+ * per radius like a sub-cap (~950 u/s), rammed its neighbours for 700-1,400
+ * damage and chain-killed the base, where a capital ship parts at ~3-9 u/s.
+ * A structure's reference is the ships of its size: between the two ships
+ * whose radii bracket it, log-log (no ship is 110-1220 u). Both breaks: a
+ * clean snap in two and a shatter into wedges.
  */
 import { describe, expect, it } from 'vitest';
 import { CapitalWreckSubsystem, type WreckPieceSpawn } from './CapitalWreckSubsystem.js';
 import { asWreckSource, structureBreaks, structureWreckSource, type WreckSource } from '../../core/destruction/wreckSource.js';
 import { STRUCTURE_KINDS_LIST } from '../../shared-types/structureKinds.js';
-import type { ShipKindId } from '../../shared-types/shipKinds.js';
+import { SHIP_KINDS_LIST, type ShipKindId } from '../../shared-types/shipKinds.js';
+import { shipTuning } from '../../shared-types/shipScale/tuning.js';
 import { fracturePlan } from '../../core/destruction/fractureHull.js';
 import { DESTRUCTION_PROFILES } from '../../shared-types/shipScale/destruction.js';
 
@@ -26,72 +31,119 @@ function seedWhere(snap: boolean): number {
   }
 }
 
-function deathOf(source: ShipKindId | WreckSource, seed: number | null = null): { spawned: WreckPieceSpawn[]; radius: number } {
+interface Death { spawned: WreckPieceSpawn[]; speed: number[]; radius: number }
+
+/** A death through the real path; each piece's speed (u/s) once it has
+ *  parted (a capital's held kick included). */
+function deathOf(source: ShipKindId | WreckSource, seed: number | null = null): Death {
   const spawned: WreckPieceSpawn[] = [];
+  const kick = new Map<string, [number, number]>();
+  let now = 1000;
   const sys = new CapitalWreckSubsystem({
-    serverTick: () => 1000,
+    serverTick: () => now,
     wreckKindOf: () => source,
     positionOf: () => null,
     spawnPiece: (s) => { spawned.push(s); return true; },
     removePiece: () => {},
     isLive: () => true,
     pieceAngle: () => 0,
-    kickPiece: () => {},
+    kickPiece: (id, dvx, dvy) => { kick.set(id, [dvx, dvy]); },
     impulsePiece: () => {},
     pieceCentreInto: () => false,
   });
   sys.forcedSeed = seed;
   const src = asWreckSource(source);
-  // The same killing blow, by share of the hull, at the same relative point.
   sys.noteHit('t', 'attacker', 0.2 * src.maxHull, 0.4 * src.radius, 0.1 * src.radius, -1, 0);
   sys.onDeath('t', source, { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 }, src.maxHull);
-  return { spawned, radius: src.radius };
+  now += 600;
+  sys.tick();
+  const speed = spawned.map((p) => {
+    const k = kick.get(p.id) ?? [0, 0];
+    return Math.hypot(p.vx + k[0], p.vy + k[1]);
+  });
+  return { spawned, speed, radius: src.radius };
 }
 
-/** Each piece's spawn speed in radii of the whole thing per second. */
-function speeds(d: { spawned: WreckPieceSpawn[]; radius: number }): number[] {
-  return d.spawned.map((p) => Math.hypot(p.vx, p.vy) / d.radius).sort((a, b) => a - b);
+const median = (xs: readonly number[]): number => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
+
+/** Distance (u) a piece at `v` covers in 2 s after parting (exponential damping). */
+const in2s = (v: number, damping: number): number => (v / damping) * (1 - Math.exp(-2 * damping));
+
+/** Median piece speed and 2 s distance of a death. */
+function partingOf(d: Death): { v: number; d2: number } {
+  const v = median(d.speed);
+  return { v, d2: in2s(v, d.spawned[0]!.linearDamping) };
 }
 
 /** How long (s) a piece coasts before it drops under its settle speed and
- *  sleeps (exponential damping; collisions aside). */
-function coastSeconds(d: { spawned: WreckPieceSpawn[] }): number[] {
-  return d.spawned.map((p) => {
-    const v = Math.hypot(p.vx, p.vy);
+ *  sleeps (exponential damping; collisions aside), in radii-free terms. */
+function coastSeconds(d: Death): number[] {
+  return d.spawned.map((p, i) => {
+    const v = d.speed[i]!;
     const settle = p.settleSpeed ?? 0;
     return settle > 0 && v > settle ? Math.log(v / settle) / p.linearDamping : 0;
   }).sort((a, b) => a - b);
 }
 
-const median = (xs: number[]): number => xs[Math.floor(xs.length / 2)]!;
+// Every wrecking ship kind, by radius (kinds of one radius: their median).
+const shipRef = new Map<number, { v: number[]; d2: number[] }>();
+for (const k of SHIP_KINDS_LIST) {
+  if (shipTuning(k).destruction === 'none') continue;
+  const p = partingOf(deathOf(k.id as ShipKindId, 7));
+  const row = shipRef.get(k.radius) ?? { v: [], d2: [] };
+  row.v.push(p.v);
+  row.d2.push(p.d2);
+  shipRef.set(k.radius, row);
+}
+const shipRadii = [...shipRef.keys()].sort((a, b) => a - b);
 
-describe('structure wreck pieces part like a ship wreck', () => {
-  const ship = deathOf('robot-nexus');
-  const shipMedian = median(speeds(ship));
-  const shipCoast = median(coastSeconds(ship));
+/** The ships of radius `r`: log-log between the two bracketing radii. */
+function shipsOfSize(r: number): { v: number; d2: number; near: string } {
+  const lo = [...shipRadii].reverse().find((x) => x <= r) ?? shipRadii[0]!;
+  const hi = shipRadii.find((x) => x >= r) ?? shipRadii[shipRadii.length - 1]!;
+  const a = shipRef.get(lo)!;
+  const b = shipRef.get(hi)!;
+  const t = hi === lo ? 0 : Math.log(r / lo) / Math.log(hi / lo);
+  const lerp = (x: number, y: number): number => Math.exp(Math.log(x) + t * (Math.log(y) - Math.log(x)));
+  return { v: lerp(median(a.v), median(b.v)), d2: lerp(median(a.d2), median(b.d2)), near: `ships r=${lo}..${hi}` };
+}
 
-  it('the reference ship wreck parts (sanity)', () => {
-    expect(ship.spawned.length).toBeGreaterThanOrEqual(2);
-    expect(shipMedian).toBeGreaterThan(1);
-    expect(shipCoast).toBeGreaterThan(3);
+describe('structure wreck pieces part like a ship wreck of their size', () => {
+  const nexus = deathOf('robot-nexus');
+  const nexusCoast = median(coastSeconds(nexus));
+
+  it('the reference ships part (sanity): sub-caps fast, capitals slow', () => {
+    expect(shipRadii.length).toBeGreaterThan(4);
+    expect(median(nexus.speed)).toBeGreaterThan(100);
+    expect(shipsOfSize(1220).v).toBeLessThan(10);
+    expect(nexusCoast).toBeGreaterThan(3);
   });
 
   const breaks = [['shatter', seedWhere(false)], ['snap', seedWhere(true)]] as const;
   for (const kind of STRUCTURE_KINDS_LIST) {
     if (!structureBreaks(kind.id, true)) continue;
-    for (const [mode, seed] of breaks) it(`${kind.id} (${mode}): pieces part as fast (per radius) and coast as long as a ship's`, () => {
+    for (const [mode, seed] of breaks) it(`${kind.id} (${mode}): pieces part as fast (u/s) and as far in 2 s as ships of its size, and coast as long`, () => {
       const d = deathOf(structureWreckSource({ k: kind.id }), seed);
       expect(d.spawned.length).toBeGreaterThanOrEqual(2);
       if (mode === 'snap') expect(d.spawned.length).toBe(2);
-      const s = speeds(d);
-      // Every piece moves off, and the wreck parts like the ship's (per radius).
-      expect(s[0]!).toBeGreaterThan(0.25 * shipMedian);
-      expect(median(s)).toBeGreaterThan(0.5 * shipMedian);
-      expect(median(s)).toBeLessThan(2 * shipMedian);
-      // ...and drifts for seconds, not ~1 s.
+      const ref = shipsOfSize(d.radius);
+      const p = partingOf(d);
+      const ctx = `${kind.id} r=${d.radius.toFixed(0)} v=${p.v.toFixed(1)} d2=${p.d2.toFixed(1)} vs ${ref.near} v=${ref.v.toFixed(1)} d2=${ref.d2.toFixed(1)}`;
+      // Every piece moves off, and the wreck parts like ships of its size.
+      // A snap is two halves, like a ship's: 0.5-1.5×. A shatter's wedges
+      // are lighter (1/6 of the hull), and a kick is an impulse against the
+      // piece's mass, so they run up to ~1.7× a ship half's: 0.5-1.75×.
+      const hi = mode === 'snap' ? 1.5 : 1.75;
+      expect(Math.min(...d.speed), ctx).toBeGreaterThan(0.25 * ref.v);
+      expect(p.v / ref.v, ctx).toBeGreaterThan(0.5);
+      expect(p.v / ref.v, ctx).toBeLessThan(hi);
+      expect(p.d2 / ref.d2, ctx).toBeGreaterThan(0.5);
+      expect(p.d2 / ref.d2, ctx).toBeLessThan(hi);
+      // ...and drifts for seconds before it settles, not ~1 s (its settle
+      // speed scales with its parting speed).
       const coast = median(coastSeconds(d));
-      expect(coast).toBeGreaterThan(0.75 * shipCoast);
-      expect(coast).toBeLessThan(1.5 * shipCoast);
+      expect(coast, ctx).toBeGreaterThan(0.75 * nexusCoast);
+      expect(coast, ctx).toBeLessThan(1.5 * nexusCoast);
     });
   }
 });
