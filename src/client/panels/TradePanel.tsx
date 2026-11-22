@@ -1,14 +1,14 @@
 /**
  * The Trade right panel (UI language plan A4, job U2-6a): a drill-down. The top
  * page shows your credits, standing and the base you trade from, then one
- * `EqxListRow` per section (Offers, Deals, History, Gift, Blueprints); a row
+ * `EqxListRow` per section (Offers, Deals, History, Blueprints); a row
  * opens that section's page and the header gets ← back.
  *
  * The page shown is the store's `drawerTab` (the page inside the open panel):
  * `trade` = the top list, `trade-<section>` = a sub-page; `DRAWER_TAB_PANEL`
  * maps all of them to the `trade` panel, so a rail tap keeps the page you left.
- * Data comes from `useTradeData` (polls only while this panel is open). Gift
- * and Blueprints keep their old bodies for now (U2-6b moves them in here).
+ * Data comes from `useTradeData` (polls only while this panel is open).
+ * Blueprints keeps its old body for now (U2-6b moves it in here).
  */
 import { useCallback } from 'react';
 import { EQX_PANEL_SIZE, EqxListRow, EqxPanel, EqxSection } from '../../ui/index.js';
@@ -18,19 +18,17 @@ import {
   type TradeData,
 } from '../layout/Drawer/tabs/TradeTab';
 import { BlueprintMarketSection } from '../layout/Drawer/tabs/BlueprintMarketSection';
-import { TradeGiftPage } from './TradeGiftPage';
 
 /** The top list's page id (`drawerTab`). */
 export const TRADE_TOP = 'trade';
 
-type TradeSection = 'offers' | 'deals' | 'history' | 'gift' | 'blueprints';
+type TradeSection = 'offers' | 'deals' | 'history' | 'blueprints';
 
 /** The sections, in order: label and the `drawerTab` page id. */
 export const TRADE_SECTIONS: readonly { id: TradeSection; label: string }[] = [
   { id: 'offers', label: 'Offers' },
   { id: 'deals', label: 'Deals' },
   { id: 'history', label: 'History' },
-  { id: 'gift', label: 'Gift' },
   { id: 'blueprints', label: 'Blueprints' },
 ];
 
@@ -51,7 +49,6 @@ function SectionPage({ id, data, shown }: { id: TradeSection; data: TradeData; s
     case 'offers': return <TradeOffersPage offers={data.offers} baseId={data.baseId} />;
     case 'deals': return <TradeDealsPage view={data.view} />;
     case 'history': return <TradeHistoryPage view={data.view} shown={shown} />;
-    case 'gift': return <TradeGiftPage baseId={data.baseId} />;
     case 'blueprints': return <BlueprintMarketSection baseId={data.baseId} />;
   }
 }

@@ -19,7 +19,6 @@ import { ClientEntityLeafBase } from '../ClientEntityLeafBase.js';
 import type { ClientSpawnCtx, ClientSyncCtx } from '../IClientEntityLeaf.js';
 import { wreckBodyParams } from '@core/destruction/wreckPieces';
 import { getShipKind } from '@shared-types/shipKinds';
-import { rockWreckSource } from '@core/destruction/wreckSource';
 
 export class WreckClientLeaf extends ClientEntityLeafBase {
   constructor() {
@@ -35,11 +34,12 @@ export class WreckClientLeaf extends ClientEntityLeafBase {
     // The parent kind's profile picks the groups and damping, the same
     // `wreckBodyParams` the server body uses (#15): a sub-capital's pieces
     // don't collide with each other and settle faster.
-    // A rock's piece (rock cut) takes its rock's numbers, as the server does
-    // (a field rock's from the room's field layout: `g` non-null means the
-    // store had the field to rebuild it).
-    const rock = e.wreckId !== undefined ? ctx.wrecks?.rockOf?.(e.wreckId) : undefined;
-    const body = wreckBodyParams(rock !== undefined ? rockWreckSource(rock, ctx.wrecks?.field) : getShipKind(e.shipKind ?? null).id);
+    // The piece takes its SOURCE's numbers (`sourceOf`: a ship kind, a
+    // rock's, a structure's), as the server does (a field rock's from the
+    // room's field layout: `g` non-null means the store had the field to
+    // rebuild it). No source seam: a ship's, by the wire's parent kind.
+    const src = e.wreckId !== undefined ? ctx.wrecks?.sourceOf?.(e.wreckId) : undefined;
+    const body = wreckBodyParams(src ?? getShipKind(e.shipKind ?? null).id);
     ctx.predWorld.spawnObstacle(ctx.key, e.x, e.y, g.radius, g.mass, undefined, body.linearDamping, body.collisionGroups, g.colliderParts);
     ctx.predWorld.setAngularDamping(ctx.key, body.angularDamping);
     // The same settle-to-sleep rule as the server body (#15).

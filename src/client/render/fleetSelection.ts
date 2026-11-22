@@ -125,11 +125,13 @@ export function boxSelectOwn(
   return expandToSquads(hits, ships, localPlayerId, squadOf) as string[];
 }
 
-/** The nearest own ship under a tap (radius + TAP_SLOP), or null. */
+/** The nearest own ship under a tap (radius + slop), or null. A finger passes
+ *  `fingerSlopWorld` (pickEntity.ts) so its reach stays screen-sized. */
 export function pickOwnShipAt(
   x: number, y: number,
   ships: Iterable<FleetShip>,
   localPlayerId: string | null,
+  slop: number = TAP_SLOP,
 ): string | null {
   if (localPlayerId === null) return null;
   let best: string | null = null;
@@ -139,7 +141,7 @@ export function pickOwnShipAt(
     const dx = s.x - x;
     const dy = s.y - y;
     const d = dx * dx + dy * dy;
-    const reach = s.radius + TAP_SLOP;
+    const reach = s.radius + slop;
     if (d <= reach * reach && d < bestSq) {
       bestSq = d;
       best = s.id;
@@ -173,11 +175,19 @@ export function applySelection(
 /**
  * THE selection's focus rule (RTS Part A: one selection concept). The focus
  * (the entity whose details panel shows) survives a change of the selected
- * ships only when no ships are selected (then it may be anything you tapped)
- * or it is one of them. False ⇒ the focus clears.
+ * ships when no ships are selected (then it may be anything you tapped), when
+ * it is one of them, or when it is NOT mine (an enemy or neutral you focused
+ * with ships selected: the left strip shows it, the ships stay). Another of my
+ * own ships or structures (`focusIsMine`, see {@link isMine}) does not.
+ * False ⇒ the focus clears.
  */
-export function focusSurvives(ships: ReadonlySet<string>, focusId: string | null): boolean {
-  return focusId !== null && (ships.size === 0 || ships.has(focusId));
+export function focusSurvives(ships: ReadonlySet<string>, focusId: string | null, focusIsMine = false): boolean {
+  return focusId !== null && (ships.size === 0 || ships.has(focusId) || !focusIsMine);
+}
+
+/** Whether pick id `id` is mine: one of my ships or my structures. */
+export function isMine(id: string, mirror: RenderMirror): boolean {
+  return isOwnShipPresent(id, mirror) || isOwnStructure(id, mirror);
 }
 
 /** True when both sets hold the same ids. */
@@ -193,4 +203,13 @@ export function isOwnShipPresent(id: string, mirror: RenderMirror): boolean {
   // Else one of my PARKED hulls (pre-S3 behaviour: never another active ship).
   const s = mirror.ships.get(id);
   return s !== undefined && isParkedHull(mirror, id, s) && isOwnedByMe(mirror, id, s);
+}
+
+/** Whether pick id `id` (`swarm-<entityId>`) is a structure I own: its grid
+ *  row (`mirror.structures`, room state) names me as owner. Alliances have no
+ *  client carrier yet (the server's `relationOf` refuses allied targets). */
+export function isOwnStructure(id: string, mirror: RenderMirror): boolean {
+  const local = mirror.localPlayerId;
+  if (local === null || !id.startsWith('swarm-')) return false;
+  return mirror.structures?.get(Number(id.slice(6)))?.owner === local;
 }

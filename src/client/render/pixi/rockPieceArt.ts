@@ -21,7 +21,8 @@
 import { Container, Graphics } from 'pixi.js';
 import { EDGE_HULL } from '../../../core/destruction/fractureHull.js';
 import type { WreckPieceGeometry } from '../../../core/destruction/wreckPieceFrame.js';
-import { WRECK_ROCK_PARENT_KIND, type WreckDescriptor, type WreckRockRef } from '../../../shared-types/messages/wreckDescriptor.js';
+import type { WreckDescriptor, WreckRockRef } from '../../../shared-types/messages/wreckDescriptor.js';
+import { wreckSourceKindOf } from '../../net/wreckRootSource.js';
 import type { CutFieldLayer } from '../field/CutFieldLayer.js';
 import { rockPieceMeshData } from '../field/placedRockMesh.js';
 import { ASTEROID_COLOR, ASTEROID_OUTLINE } from './spriteBuilders.js';
@@ -101,5 +102,5 @@ export function buildRockPieceArt(
 /** Is this wreck a rock's (rock cut)? Its parent kind is not a ship kind:
  *  never look up ship art or a ship kind for it. */
 export function isRockWreck(desc: Pick<WreckDescriptor, 'parentKind'> | undefined): boolean {
-  return desc !== undefined && desc.parentKind === WRECK_ROCK_PARENT_KIND;
+  return desc !== undefined && wreckSourceKindOf(desc.parentKind) === 'rock';
 }

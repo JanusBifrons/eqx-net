@@ -116,7 +116,7 @@ export const FEATURE_TRIGGERS = [
   },
   {
     area: 'off-screen radar',
-    paths: ['src/client/render/halo/', 'src/client/render/HaloRadar'],
+    paths: ['src/client/render/halo/', 'src/client/render/HaloRadar', 'src/client/layout/radarInsets'],
     specs: ['radar-sandbox', 'ring-indicator-dead-zone', 'ring-indicator-mobile-scaling'],
   },
   {

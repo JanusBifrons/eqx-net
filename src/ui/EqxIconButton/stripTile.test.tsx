@@ -28,7 +28,9 @@ describe('EqxIconButton variant="strip" (mock .ib)', () => {
     expect(cs.borderRadius).toBe(`${HUD.strip.tileRadius}px`);
     expect(cs.backgroundColor).toBe(computed('backgroundColor', HUD.strip.cell));
     expect(cs.borderTopColor).toBe(computed('borderColor', HUD.strip.edge));
-    expect(cs.color).toBe(computed('color', HUD.color.ink));
+    // Contrast: the strip's own brighter ink and heavier line, not the panel ink.
+    expect(cs.color).toBe(computed('color', HUD.strip.ink));
+    expect(getComputedStyle(screen.getByTestId('t').querySelector('svg')!).strokeWidth).toBe(String(HUD.strip.iconStroke));
   });
 
   it('primary = ok: filled green, dark icon', () => {
@@ -56,6 +58,19 @@ describe('EqxIconButton variant="strip" (mock .ib)', () => {
     expect(getComputedStyle(el()).color).toBe(computed('color', HUD.color.danger));
     rerender(<EqxIconButton variant="strip" status="calm" active icon={<CheckIcon />} tooltip="Order" data-testid="t" />);
     expect(getComputedStyle(el()).borderTopColor).toBe(computed('borderColor', HUD.color.auto));
+    expect(getComputedStyle(el()).boxShadow).toContain('1px');
+  });
+
+  it('accent: the icon in the action world colour, edge tinted; active adds a solid edge + ring', () => {
+    const { rerender } = render(
+      <EqxIconButton variant="strip" accent="#7dff9a" icon={<CheckIcon />} tooltip="Move" data-testid="t" />,
+    );
+    const el = () => screen.getByTestId('t');
+    expect(el().dataset['accent']).toBe('#7dff9a');
+    expect(getComputedStyle(el()).color).toBe(computed('color', '#7dff9a'));
+    expect(getComputedStyle(el()).borderTopColor).toBe(computed('borderColor', '#7dff9a99'));
+    rerender(<EqxIconButton variant="strip" accent="#7dff9a" active icon={<CheckIcon />} tooltip="Move" data-testid="t" />);
+    expect(getComputedStyle(el()).borderTopColor).toBe(computed('borderColor', '#7dff9a'));
     expect(getComputedStyle(el()).boxShadow).toContain('1px');
   });
 

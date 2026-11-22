@@ -113,8 +113,9 @@ export interface CapitalWreckDeps {
   /** The ship kind of a damage target (drone id, playerId or lingering
    *  shipInstanceId) when its death leaves wreck pieces in this room (a
    *  capital with `capitalWrecks`; a polygon sub-capital with `subcapWrecks`),
+   *  or any other wreck source (`WreckSource`) that breaks the same way,
    *  else null. */
-  wreckKindOf: (targetId: string) => ShipKindId | null;
+  wreckKindOf: (targetId: string) => ShipKindId | WreckSource | null;
   /** Who owned a dying hull (the descriptor's `owner`: the livery its
    *  pieces wear on the client): a player hull's playerId (active or
    *  parked), an NPC patrol's faction, else undefined (the kind's

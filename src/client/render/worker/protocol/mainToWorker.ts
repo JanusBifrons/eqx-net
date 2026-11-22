@@ -4,7 +4,7 @@
  * no class instances). Locked by `protocol.test.ts`.
  */
 
-import type { FleetOverlayModel, FleetPickKindWire, RenderMirror, SwarmRenderState } from '@core/contracts/IRenderer';
+import type { FleetOverlayModel, FleetPickKindWire, FocusEntityKind, RenderMirror, SwarmRenderState } from '@core/contracts/IRenderer';
 import type { EffectQuality } from '@core/contracts/IEffects';
 import type { CameraCue } from '@core/contracts/cameraScript';
 import type { SerialisedPointerEvent, SerialisedWheelEvent } from './serialisedEvents.js';
@@ -228,13 +228,6 @@ export interface SetSpectatorMsg {
   active: boolean;
 }
 
-/** RTS slice 12 — the fleet strip's touch tap-order mode. See
- *  `IRenderer.setFleetOrderMode`. Posted on change only. */
-export interface SetFleetOrderModeMsg {
-  type: 'SET_FLEET_ORDER_MODE';
-  mode: 'move' | 'attack';
-}
-
 /** RTS slice 15a — own ships' squads + orders for selection expansion and
  *  order lines. See `IRenderer.setFleetOverlayModel`. Posted when the main
  *  thread's fleet status version moves. */
@@ -306,6 +299,21 @@ export interface GlideCameraMsg {
 export interface SelectFleetShipsMsg {
   type: 'SELECT_FLEET_SHIPS';
   ids: string[];
+}
+
+/** Tap rule T2: the strip Lock / T key. Drives `PixiRenderer.attackFocus`. */
+export interface AttackFocusMsg {
+  type: 'ATTACK_FOCUS';
+}
+
+/**
+ * Focus (select) one entity, as a map tap on it does — the Contacts panel's
+ * row tap. Drives `PixiRenderer.focusEntity`. Id + kind in the pick form.
+ */
+export interface FocusEntityMsg {
+  type: 'FOCUS_ENTITY';
+  id: string;
+  kind: FocusEntityKind;
 }
 
 /**
@@ -443,7 +451,6 @@ export type MainToWorkerMsg =
   | SetCameraCenterMsg
   | SetLoadCurtainMsg
   | SetSpectatorMsg
-  | SetFleetOrderModeMsg
   | SetFleetOverlayModelMsg
   | SetFleetPickMsg
   | CommitFleetPickMsg
@@ -453,6 +460,8 @@ export type MainToWorkerMsg =
   | SetHudOverlaysMsg
   | GlideCameraMsg
   | SelectFleetShipsMsg
+  | FocusEntityMsg
+  | AttackFocusMsg
   | SetCameraScriptMsg
   | PanCameraMsg
   | SetDiagMarkersMsg

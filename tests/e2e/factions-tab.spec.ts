@@ -31,12 +31,12 @@ test('Factions tab lists standings and saves the player’s policy', async ({ pa
   await expect(page.getByTestId('faction-row').filter({ hasText: 'Traders' })).toBeVisible();
 
   // Set "turrets fire below −25"; the server stores it and the next fetch shows it.
-  await page.getByTestId('faction-policy-hostile-button').click();
+  await page.getByTestId('faction-policy-hostile').getByRole('combobox').click();
   await page.getByRole('option', { name: '-25' }).click();
   await expect.poll(async () => page.evaluate(async () => {
     const id = localStorage.getItem('eqxAccountPlayerId') ?? localStorage.getItem('eqxPlayerId') ?? '';
     const r = await fetch(`/trade/factions?playerId=${encodeURIComponent(id)}`);
     return ((await r.json()) as { policy: { hostileBelow: number | null } }).policy.hostileBelow;
   }), { timeout: 10_000 }).toBe(-25);
-  await expect(page.getByTestId('faction-policy-hostile')).toHaveValue('-25');
+  await expect(page.getByTestId('faction-policy-hostile').locator('input')).toHaveValue('-25');
 });

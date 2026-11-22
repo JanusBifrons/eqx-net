@@ -22,17 +22,17 @@
  *
  * Read a ship's profile through `shipTuning(kind).destruction` (#18) or
  * `destructionProfile({ type: 'ship', kindId })` (`destructionProfile.ts`).
- * The entity form leaves room for structures (owner 2026-11-13: "This
- * includes structures as well in the future"); they map to `none` until that
- * work picks a profile per structure kind.
+ *  - `structure`: every structure kind but the gates (owner: "every
+ *    structure breaks", connectors included; `structureBreaks`). Static
+ *    things: fixed-count pieces capped by area, a gentle part, no knock.
  *
  * Kept free of the ship catalogue (the catalogue imports `tuning.ts`, which
  * imports this file).
  */
 import type { ShipKind } from '../shipKinds/types.js';
 
-export type DestructionProfileId = 'capital' | 'subcap' | 'none' | 'rock';
-export const DESTRUCTION_PROFILE_IDS: readonly DestructionProfileId[] = ['capital', 'subcap', 'none', 'rock'];
+export type DestructionProfileId = 'capital' | 'subcap' | 'none' | 'rock' | 'structure';
+export const DESTRUCTION_PROFILE_IDS: readonly DestructionProfileId[] = ['capital', 'subcap', 'none', 'rock', 'structure'];
 
 /** The options `fractureHull` takes from a profile (same field names as its
  *  `FractureInput`; an absent field means the fracture default). */
@@ -56,6 +56,10 @@ export interface DestructionFractureOptions {
   /** Rocks: a cut moves like the sound crack (the laser sweeps across a
    *  long piece), no burned strip. */
   readonly sweepCuts?: boolean;
+  /** Radial cracks from the kill point (the fracture's `radialCracks`): a
+   *  squarish static thing (a structure) shatters into wedges instead of
+   *  the keel-wise zone cracks a long hull takes. */
+  readonly radialCracks?: boolean;
   /** Chance of the one extra crack at violence 0 with `chunkyPieces`. */
   readonly extraChunkChance?: number;
   /** Jag of the cut edges (default depth 4, roughness 0.22). */
@@ -65,6 +69,18 @@ export interface DestructionFractureOptions {
    *  is vaporised (fracture v11). Absent: the fracture's 5 % channel sliver
    *  erase only. capital-destruction.md "Kill cuts", "Burn-away". */
   readonly cutBurnMinShare?: number;
+  /** Set: the cap also scales with the source's world area, one piece per
+   *  `pieceSide`² of it (`fractureCapFor`), never above `maxPieces`, at
+   *  least 1. Absent: `maxPieces` as it is (every ship and rock). */
+  readonly pieceSide?: number;
+}
+
+/** A source's piece cap: `maxPieces`, or with `pieceSide` round(√area ÷
+ *  pieceSide) clamped to 1..`maxPieces` (a connector breaks in 2, a turret
+ *  in 5, a base Capital in 6). `Math.sqrt` only: both sides agree. */
+export function fractureCapFor(opts: DestructionFractureOptions, area: number): number {
+  if (opts.pieceSide === undefined) return opts.maxPieces;
+  return Math.max(1, Math.min(opts.maxPieces, Math.round(Math.sqrt(Math.max(0, area)) / opts.pieceSide)));
 }
 
 /** How a wreck piece breaks again (salvage stream; capital-destruction.md
@@ -512,12 +528,53 @@ const ROCK: DestructionProfile = {
   fx: { ...NONE.fx, glowStyle: 'simple', glowSeconds: 1, cutGlowStyle: 'full' },
 };
 
+/** A destroyed structure (structure break-up; capital-destruction.md
+ *  "Structures"). Never a ship's profile: a structure's wreck source
+ *  (`structureWreckSource`) names it. It shatters from the kill point in
+ *  wedges (`radialCracks`: a structure is squarish, so the keel-wise zone
+ *  and fan cracks of a long hull left it in 2), in fixed-count mode (no
+ *  damage inputs, like a rock), capped by area (`pieceSide` 30: a 64 u
+ *  connector 2 pieces, a 120-160 u turret or pylon 4-5, anything from
+ *  ~180 u up 6). A structure stands still, so its pieces part gently like a
+ *  rock's, collide with each other and settle; shots never shove them
+ *  (knock 0). A piece wears and re-splits like a sub-capital's: halves into
+ *  two, a quarter or less becomes salvage. */
+const STRUCTURE_FRACTURE: DestructionFractureOptions = {
+  maxPieces: 6, snapChance: 0.2, fanCracks: false, farCrack: false, chunkyPieces: false,
+  jag: { depth: 2, roughness: 0.12 }, pieceSide: 30, radialCracks: true,
+};
+const STRUCTURE: DestructionProfile = {
+  id: 'structure',
+  fracture: STRUCTURE_FRACTURE,
+  resplit: SUBCAP.resplit,
+  holdMs: 0,
+  pushScale: 2,
+  separateScale: 20,
+  crackScale: 0,
+  spinScale: 0.3,
+  cutPartSpeed: 0,
+  dampingScale: 10,
+  knockScale: 0,
+  knockMaxScale: 0,
+  knockWakeScale: 0,
+  settlePerRadius: 0.125,
+  settleSpin: 0.3,
+  piecesCollide: true,
+  fx: { ...NONE.fx, glowStyle: 'simple', glowSeconds: 1, cutGlowStyle: 'full' },
+};
+
 export const DESTRUCTION_PROFILES: Readonly<Record<DestructionProfileId, DestructionProfile>> = {
   capital: CAPITAL,
   subcap: SUBCAP,
   none: NONE,
   rock: ROCK,
+  structure: STRUCTURE,
 };
+
+/** Structure kinds that leave no wreck pieces: the gates (their colliders are
+ *  split posts, `gateColliderPolygons`; locked equal to core `isGateKind`
+ *  by `structureWreckSource.test.ts`). */
+export const NO_WRECK_STRUCTURE_KINDS: ReadonlySet<string> = new Set(['shield_gate', 'shield_airlock']);
 
 /** The cargo pod leaves its glowing scrap, not wreck pieces. */
 const NO_WRECK_SHIP_KINDS: ReadonlySet<string> = new Set(['cargo-pod']);

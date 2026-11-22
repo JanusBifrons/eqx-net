@@ -8,7 +8,7 @@
  *            10/30/60 min, number of visits, price band)
  *   Deals    your deals (state, next visit, cancel)
  *   History  what happened, newest first
- *   Gift / Blueprints  panels/TradeGiftPage.tsx, BlueprintMarketSection.tsx
+ *   Blueprints  BlueprintMarketSection.tsx
  *
  * Truth = `GET /trade/economy` + `/trade/offers` (#16), polled by `useTradeData`
  * only while the Trade panel is on screen (drawer-perf rule) and refetched at

@@ -2,7 +2,8 @@ import { describe, it, expect } from 'vitest';
 import { canFinishFleetPick, fleetPickHint, modeNeedsPick } from './fleetPickView.js';
 
 describe('fleetPickView (slice 14b)', () => {
-  it('only patrol / escort / retreat need a map pick', () => {
+  it('only move / patrol / escort / retreat need a map pick', () => {
+    expect(modeNeedsPick('move')).toBe(true);
     expect(modeNeedsPick('patrol')).toBe(true);
     expect(modeNeedsPick('escort')).toBe(true);
     expect(modeNeedsPick('retreat')).toBe(true);
@@ -15,6 +16,7 @@ describe('fleetPickView (slice 14b)', () => {
     expect(canFinishFleetPick({ kind: 'patrol', points: 1 })).toBe(false);
     expect(canFinishFleetPick({ kind: 'patrol', points: 2 })).toBe(true);
     expect(canFinishFleetPick({ kind: 'escort', points: 5 })).toBe(false);
+    expect(canFinishFleetPick({ kind: 'move', points: 5 })).toBe(false);
   });
 
   it('hints are plain and follow the pointer kind', () => {
@@ -23,5 +25,7 @@ describe('fleetPickView (slice 14b)', () => {
     expect(fleetPickHint('patrol', 16, false)).toMatch(/most points \(16\)/);
     expect(fleetPickHint('escort', 0, true)).toBe('Tap one of your other ships to escort');
     expect(fleetPickHint('retreat', 0, false)).toBe('Click where to retreat to');
+    expect(fleetPickHint('move', 0, true)).toBe('Tap where to move');
+    expect(fleetPickHint('move', 0, false)).toBe('Click where to move');
   });
 });
