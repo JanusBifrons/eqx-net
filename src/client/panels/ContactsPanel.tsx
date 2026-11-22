@@ -86,15 +86,16 @@ const REACH_STYLE: CSSProperties = { marginRight: 3 };
  *  words; Name takes the rest. */
 const COL_W = { type: 34, faction: 48, dist: 50 } as const;
 
-/** The kind icon: the shared visual-language shape, no count. */
-function KindIcon({ kind }: { kind: EntityKind }): JSX.Element {
+/** The kind icon: the shared visual-language shape, no count, tinted by the
+ *  row's stance (neutral reads the normal ink, never the far-icon amber). */
+function KindIcon({ kind, color }: { kind: EntityKind; color: string }): JSX.Element {
   const v = ENTITY_VISUALS[kind];
   const pts = entityBadgePolygon(v.shape, 4.5);
   let points = '';
   for (let i = 0; i < pts.length; i += 2) points += `${pts[i]},${pts[i + 1]} `;
   return (
     <svg width={10} height={10} viewBox="-5 -5 10 10" style={ICON_STYLE} aria-hidden>
-      <polygon points={points.trim()} fill={v.cssColor} />
+      <polygon points={points.trim()} fill={color} />
     </svg>
   );
 }
@@ -274,7 +275,7 @@ function contactColumns(activeIdx: number): EqxTableColumn<ContactRow>[] {
 function NameCell({ r }: { r: ContactRow }): JSX.Element {
   return (
     <span style={NAME_STYLE}>
-      <KindIcon kind={r.icon} />
+      <KindIcon kind={r.icon} color={STANCE_COLOUR[r.stance]} />
       <span style={NAME_TEXT_STYLE}>{r.name}</span>
     </span>
   );

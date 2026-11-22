@@ -140,6 +140,12 @@ const FOOT_SX = {
   justifyContent: 'space-between',
   gap: `${T.pageGap}px`,
   pt: `${T.rowPadY}px`,
+  pb: `${T.rowPadY}px`,
+  // Pinned to the bottom of the scrolling panel body so the pager is always
+  // in reach (a phone's 8 rows push it below the fold otherwise).
+  position: 'sticky',
+  bottom: 0,
+  bgcolor: HUD.color.sidePanelBg,
   fontFamily: HUD.font.num,
   fontSize: T.smallFont,
   color: HUD.color.inkDim,
