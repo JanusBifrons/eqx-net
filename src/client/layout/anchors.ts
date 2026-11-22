@@ -215,13 +215,13 @@ export const ANCHOR_STYLES: Record<AnchorName, CSSProperties> = {
     pointerEvents: 'none',
   },
   // Left strip (plan B2): left edge, centred at 57% of the height (the approved
-  // EqxLayout composition, mock .lbar): clear of the top-left HUD and of the
-  // Fly contacts tab (left edge, top 30%).
+  // EqxLayout composition, mock .lbar), clear of the Fly contacts tab (left
+  // edge, top 30%). A tall strip never rises over the top-left HUD: its top is
+  // at least 8px under it (vars measured by layout/leftStripFit.ts).
   'left-strip': {
     position: 'fixed',
-    top: '57%',
+    top: 'max(calc(var(--hud-tl-bottom, 0px) + 8px), calc(57% - var(--left-strip-h, 0px) / 2))',
     left: SAFE_LEFT,
-    transform: 'translateY(-50%)',
     zIndex: Z.railStrip,
     display: 'flex',
     flexDirection: 'column',

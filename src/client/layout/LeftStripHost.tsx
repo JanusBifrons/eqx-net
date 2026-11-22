@@ -3,7 +3,7 @@
  *
  * - Draws the active strip in `<Slot anchor="left-strip">`. For now that is the
  *   selection strip: identity (icon + count); for own ships in Command the fleet
- *   section (Order / Stance / Speed fly-outs and Stop, `fleetStripItems.tsx`);
+ *   section (Order and Stance fly-outs and Stop, `fleetStripItems.tsx`);
  *   the selection's quick actions (Target, cargo / pod, Pilot,
  *   `selectionStripItems.tsx`); then ⚙ and ✕. Doing-mode strips come with U3-7.
  * - The identity ring is the focused thing's hull (the `hullColor` thresholds),
@@ -29,6 +29,7 @@ import { useSelectionPanelData, type PanelData } from '../components/selectionPa
 import { Slot } from './Slot';
 import { useFleetStripItems } from './fleetStripItems';
 import { useSelectionStripItems } from './selectionStripItems';
+import { useLeftStripFit } from './leftStripFit';
 
 const FOCUS_LOOK: Readonly<Record<SelectionFocusKind, { icon: EqxIconName; tooltip: string }>> = {
   ship: { icon: 'fleet', tooltip: 'Ship' },
@@ -75,6 +76,7 @@ export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
   const data = useSelectionPanelData();
   const { items: quickItems, loot } = useSelectionStripItems(data);
   const id = stripIdentity(selection);
+  useLeftStripFit(shown && id !== null);
   if (!shown || id === null) return null;
   const panel = id.panel;
   // A single focus names itself ("Fighter", the building's name); a ship group keeps its count.
