@@ -13,6 +13,10 @@ raw `@mui/*` and `@emotion/*` imports live only inside `src/ui/`.
 | `EqxIconButton` | The one icon button (rail, left strip, fly-outs). One fixed box (`HUD.size.iconButton`), icon centred, no label | `icon`, **required** `tooltip` (also the aria-label), `tone`, `active`, `badge`, `holdMs`, `disabled`, `onClick`, `data-testid` |
 | `EqxTooltip` | Tooltip: hover on desktop, press-and-hold on touch | `title`, `holdMs` |
 | `EqxSwitch` | On / off | `checked`, `onChange(checked)`, `label` (also the accessible name), `disabled`, `data-testid` |
+| `EqxDropdown` | Pick from a list; `searchable` = type to filter (MUI Autocomplete), plain = MUI Select | `options` (`id`, `label`), `value` (id or null; ids array if `multiple`), `onChange`, `label` (also the accessible name), `searchable`, `multiple`, `placeholder`, `disabled`, `data-testid` |
+| `EqxTextField` | Text input | `label` (also the accessible name), `value`, `onChange(text)`, `error` (message; sets the error state), `placeholder`, `disabled`, `data-testid` |
+| `EqxSlider` | Range | `min`, `max`, `step` (default 1), `marks` (`true` or `{ value, label? }[]`), `value`, `onChange(number)`, `label` (aria-label), `disabled`, `data-testid` |
+| `EqxSegmented` | Pick one of 2-4 views or values (throws in dev outside 2-4); `onChange` once per pick | `options` (`id` + `label`, or `id` + `icon` + `tooltip`), `value`, `onChange(id)`, `label` (group name), `disabled`, `data-testid` |
 
 ## Extend, never hand-roll
 

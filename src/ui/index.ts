@@ -8,3 +8,13 @@ export { EqxButton, TONE_COLOR, type EqxButtonProps, type EqxButtonSize, type Eq
 export { EqxIconButton, type EqxIconButtonProps } from './EqxIconButton/EqxIconButton.js';
 export { EqxTooltip, type EqxTooltipProps } from './EqxTooltip/EqxTooltip.js';
 export { EqxSwitch, type EqxSwitchProps } from './EqxSwitch/EqxSwitch.js';
+export {
+  EqxDropdown,
+  type EqxDropdownProps,
+  type EqxDropdownOption,
+  type EqxDropdownSingleProps,
+  type EqxDropdownMultipleProps,
+} from './EqxDropdown/EqxDropdown.js';
+export { EqxTextField, type EqxTextFieldProps } from './EqxTextField/EqxTextField.js';
+export { EqxSlider, type EqxSliderProps, type EqxSliderMark } from './EqxSlider/EqxSlider.js';
+export { EqxSegmented, type EqxSegmentedProps, type EqxSegmentedOption } from './EqxSegmented/EqxSegmented.js';
