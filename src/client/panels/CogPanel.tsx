@@ -4,7 +4,7 @@
  * 'cog'`). It merges the old drawer's Settings page with the desktop
  * SettingsModal's controls: return to menu, graphics, Screen (Full screen,
  * Install), notifications (PushNotificationToggle), then two drill-down rows:
- * Profile (unchanged ProfileTab until U2-8b) and Developer (the old Debug page:
+ * Profile (CogProfilePage: name, avatar, account, Log out) and Developer (the old Debug page:
  * the debug overlay / server log / server ghost switches, ConnectionDiagnostics,
  * DevOverlay, LogPanel and the diagnostic capture).
  *
@@ -15,6 +15,9 @@
  * in `net/ColyseusClient.ts` keys on `rightPanel === 'cog' && drawerTab ===
  * 'debug'`. A drill-down page has ← back to the main page.
  *
+ * Mounted once by PhaseRouter in every phase shell (the desktop header's cog
+ * and avatar open it on the map too, U2-8b), not by RightPanelHost.
+ *
  * Like every EqxPanel this is a persistent Drawer (children stay mounted while
  * closed); only the current page is rendered, so the Developer page's
  * subscribers do not exist on the main page at all.
@@ -23,7 +26,7 @@ import { useCallback, useMemo, type CSSProperties } from 'react';
 import { EQX_PANEL_SIZE, EqxListRow, EqxPanel, EqxSection } from '../../ui/index.js';
 import { useUIStore } from '../state/store';
 import { SettingsTab } from '../layout/Drawer/tabs/SettingsTab';
-import { ProfileTab } from '../layout/Drawer/tabs/ProfileTab';
+import { CogProfilePage } from './CogProfilePage';
 import { DebugTab } from '../layout/Drawer/tabs/DebugTab';
 import { CogScreenSection, COG_SECTION_STYLE } from './cogRows';
 
@@ -67,7 +70,7 @@ export function CogPanel(): JSX.Element {
   const back = useCallback(() => setDrawerTab('settings'), [setDrawerTab]);
   // Memoised so a page keeps its identity across renders (no remount).
   const body = useMemo(() => {
-    if (page === 'profile') return <ProfileTab />;
+    if (page === 'profile') return <CogProfilePage />;
     if (page === 'debug') return <DebugTab />;
     return <MainPage open={setDrawerTab} />;
   }, [page, setDrawerTab]);

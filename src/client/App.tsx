@@ -542,7 +542,7 @@ function GameSurface({
     setGameClient(gameClient);
     // RTS fleet panel: plug the panel's command seam into the network senders.
     installFleetCommandSenders();
-    // Expose for the dev-only diagnostic capture (SettingsModal "Capture" button
+    // Expose for the dev-only diagnostic capture (cog Developer page "Capture" button
     // reads `__eqxClient.stats`). DEV-only assignment guarded by Vite's tree-shaking.
     if (import.meta.env.DEV) {
       (window as unknown as { __eqxClient?: ColyseusGameClient }).__eqxClient = gameClient;
@@ -1034,10 +1034,6 @@ export function App(): JSX.Element {
    *  on every legacy sector-click so the override only applies for the
    *  roster-card flow. */
   const [joinOptionsOverride, setJoinOptionsOverride] = useState<Record<string, unknown> | undefined>(initialJoinOpts);
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const openSettings = useCallback(() => { const s = useUIStore.getState(); if (s.phase === 'game') s.setDrawerTab('settings'); else setSettingsOpen(true); }, []);
-  const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
   // Apply autoJoin once on mount — overrides the store's default 'galaxy-map'.
   // Subsequent phase changes are user-driven (drawer buttons, login flow).
@@ -1122,11 +1118,6 @@ export function App(): JSX.Element {
         <RotatePhoneOverlay />
         <PhaseRouter
           phase={phase}
-          profileOpen={profileOpen}
-          setProfileOpen={setProfileOpen}
-          settingsOpen={settingsOpen}
-          openSettings={openSettings}
-          closeSettings={closeSettings}
           setPhase={setPhase}
           gameSurface={
             <GameSurface
