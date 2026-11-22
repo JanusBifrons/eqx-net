@@ -29,6 +29,25 @@ diag/captures/<ts>-<id>/
 
 Empty siblings are not written, so the directory tells you at a glance which signal categories actually fired.
 
+## perf_summary display-delay fields
+
+Every phone-lane `perf_summary` line (frame-time fields: [phone-link](../ops/phone-link.md#play-evidence-read-this-after-a-play-test)) also records the drone / missile display-delay machinery ([drone-snapshot-interpolation](drone-snapshot-interpolation.md)), so a capture measures it on the device instead of a simulation re-deriving it. Delays are wall ms, rounded to 0.1; counts are events in this 10 s window (a counter reset by a sector change counts from zero). Built by `src/client/debug/perf/laneDelayWindow.ts` from the getters in `swarmInterpolation.ts` and `MissileMirror.ts`; lane builds only, the per-frame cost is four scalar updates.
+
+| Field | Meaning |
+|---|---|
+| `droneDelayMs` | Drone display delay at the window edge: the slewed, possibly held value reads use. |
+| `droneDelayMinMs` / `droneDelayMeanMs` / `droneDelayMaxMs` | Lowest / mean / highest drone delay over the window's processed frames (null: no frames). |
+| `droneDelayTargetMs` | Where the delay slews toward: the adaptive target, floor/ceiling clamped. |
+| `droneSteadyDelayMs` | The delay before the stall hold (the slew alone; shells read it). |
+| `droneHoldFrames` | Frames a binary-stream stall held the drone read point. |
+| `droneResyncs` | Drone re-syncs: a hold that would pass `MAX_TOTAL_DISPLAY_DELAY_MS`. |
+| `droneGlideLimits` | Drone reads capped at the glide limit (per drone per frame). |
+| `droneOldEndClamps` | Drone reads clamped to the pose ring's oldest sample (history already overwritten). |
+| `swarmPackets` | Binary swarm packets stamped (`swarmArrivalStampMs` calls). |
+| `missileDelayMs` | Missile (JSON stream) display delay at the window edge; null before the drone timeline seeds. |
+| `missileHoldFrames` | Frames a JSON-stream stall held the missile read point. |
+| `missileResyncs` | Missile stream re-syncs. |
+
 ## Where to look first
 
 `summary.json` is small (typically 2–5 KB) and contains everything you need to choose a sibling:

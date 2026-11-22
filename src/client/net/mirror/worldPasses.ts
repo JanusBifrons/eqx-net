@@ -1,12 +1,16 @@
-import { useUIStore } from '../../state/store.js';
+import { selectControlMode, useUIStore } from '../../state/store.js';
 import { resolvePlacementPreviewStatus } from '../../structures/structurePlacementClient.js';
-import { interpolateSwarmPose, DISPLAY_DELAY_MS as SHELL_DISPLAY_DELAY_MS } from '../swarmInterpolation.js';
+import {
+  interpolateSwarmPose, setSwarmDisplayDelayMode, stepSwarmDisplayDelay, getSwarmSteadyDisplayDelayMs,
+} from '../swarmInterpolation.js';
+import { shellDisplayDelayGameMs } from '../shellDisplayDelay.js';
 import { isRemoteMovingSwarmKind } from '../snapshotRemoteSync.js';
 import { slewDisplayMountAngles } from '../displayMountAngles.js';
 import { getShipKind } from '@shared-types/shipKinds';
 import { stepRemoteShipOffset } from '../remoteLerpOffsets.js';
 import { liveBeamVisible, LIVE_BEAM_PERSIST_MS } from '../../combat/LocalBeam.js';
 import { updateRemoteBeamDists } from '../../combat/remoteBeamRay.js';
+import { stepMissileDisplayDelay } from '../../combat/MissileMirror.js';
 import type { MirrorPassCtx } from './mirrorPassCtx.js';
 
 /** One server tick in ms (shells as events: the display-tick estimate). */
@@ -105,8 +109,19 @@ export function updateSwarmMirror(ctx: MirrorPassCtx): void {
   // Asteroids (kind=0) + structures (kind=2) keep their predWorld pose from
   // the binary packet (set in `syncSwarmIntoPredWorld`) and the renderer
   // interpolates them off the same poseRing — nothing to do for them here.
+  //
+  // The display delay glides toward its target once per frame (S3-2) before
+  // any read, on this frame's WALL ms (the delay is wall ms). Given the read
+  // clock it also holds the read point through a whole-stream stall (S4-5).
+  // Off the controls (Command, Build, spectate) the delay may grow to cover
+  // recent link outages; flying keeps the pilot target (S5-9).
+  const nowMs = ctx.clock.now();
+  setSwarmDisplayDelayMode(selectControlMode(useUIStore.getState()) === 'fly' ? 'pilot' : 'offPilot');
+  stepSwarmDisplayDelay(ctx.lastFrameMs, nowMs);
+  // Missiles run the same slew + hold on their own stream (S5-4, S5-5); the
+  // renderer may be a worker, so the result rides the mirror.
+  stepMissileDisplayDelay(ctx.mirror, ctx.lastFrameMs, nowMs);
   if (ctx.predWorld && ctx.mirror.swarm) {
-    const nowMs = ctx.clock.now();
     for (const entry of ctx.mirror.swarm.values()) {
       if (!isRemoteMovingSwarmKind(entry.kind)) continue;
       interpolateSwarmPose(entry, nowMs, ctx.swarmInterpScratch);
@@ -172,13 +187,14 @@ export function updateProjectilesMirror(ctx: MirrorPassCtx, frameNowMs: number |
   if (ctx.mirror.projectiles) {
     ctx.ghostManager.update(ctx.gameFrameMs(), ctx.mirror.projectiles);
     // Shells as events (slice 2b): draw salvo shells at the display tick
-    // (server tick estimate minus the remote-entity display delay), and
+    // (server tick estimate minus the drone delay BEFORE the stall hold,
+    // S5-6a: closed-form shells never need the hold), and
     // burst them when the display reaches their hit. At the FRAME's own
     // time (RAF stamp), not `gameClock.now()` (shellFrameTime.test.ts).
     if (ctx.shellEvents) {
       const displayTick = ctx.clockAnchorServerTick
         + (ctx.gameClock.at(frameNowMs ?? ctx.clock.now()) - ctx.clockAnchorPerfNow) / SHELL_TICK_MS
-        - SHELL_DISPLAY_DELAY_MS / SHELL_TICK_MS;
+        - shellDisplayDelayGameMs(getSwarmSteadyDisplayDelayMs(), ctx.gameClock.scale) / SHELL_TICK_MS;
       ctx.placeShells(displayTick);
     }
 

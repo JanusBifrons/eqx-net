@@ -2,9 +2,9 @@
  * Render-mirror post delta (2026-11-13): the swarm map crosses to the
  * renderer worker as a CHANGE SET, not a full structured clone.
  *
- * Before, every MIRROR_UPDATE cloned every swarm entry with its 10-slot pose
+ * Before, every MIRROR_UPDATE cloned every swarm entry with its POSE_RING_DEPTH-slot pose
  * ring, so a field of ~1,000 resting wreck pieces cost the main thread a clone
- * of ~1,000 objects + 10,000 ring slots per frame, for pieces that had not
+ * of ~1,000 objects + ~1,000 × POSE_RING_DEPTH ring slots per frame, for pieces that had not
  * moved (~10 % of the main thread at ~480 pieces; capital-destruction.md
  * "Client cost per wreck piece"). Now the worker keeps its own copy
  * (`SwarmMirrorReplica`) and each post carries only:
@@ -197,9 +197,14 @@ export class SwarmDeltaEncoder {
     const prevHead = s.vals['ringHead'] as number;
     const prevTick = s.vals['lastUpdateTick'] as number;
     let nSlots = 0;
-    if (e.ringHead !== prevHead || e.lastUpdateTick !== prevTick) {
+    if (e.ringHead !== prevHead) {
       nSlots = (e.ringHead - prevHead + depth) % depth;
-      if (nSlots === 0) nSlots = depth;
+    } else if (e.lastUpdateTick !== prevTick) {
+      // Same head, newer tick: the ring wrapped (send it all) when its newest
+      // slot is newer than the last send; else the decoder skipped the ring
+      // write (S5-9 off-pilot thinning) and only the scalars changed.
+      const newest = ring[(e.ringHead + depth - 1) % depth]!;
+      nSlots = !newest.empty && (newest.serverTick === e.lastUpdateTick || newest.serverTick > prevTick) ? depth : 0;
     }
     const b = this.ensure(off + POSE_HEADER + nSlots * POSE_SLOT_STRIDE);
     let o = off;

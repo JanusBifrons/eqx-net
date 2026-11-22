@@ -17,7 +17,7 @@
  * homing curve between snapshots and snapped on each arrival — the
  * "missiles lag, like they only update 20 Hz" report. We now buffer recent
  * authoritative poses in a per-missile ring and INTERPOLATE between the two
- * that bracket `now − MISSILE_DISPLAY_DELAY_MS`, exactly like drones
+ * that bracket `now − display delay` (the shared drone delay, S5-4), exactly like drones
  * (`swarmInterpolation.ts`). The visible motion is a continuous lerp of
  * buffered truth, immune to wire-arrival jitter ≤ the display delay. Past
  * the newest sample (arrivals stalled) we dead-reckon forward, capped, then
@@ -34,18 +34,131 @@ import {
 import type { SnapshotMessage } from '../../shared-types/messages/snapshotMessages.js';
 // Shared teleport bound (one definition for every client interpolator).
 import { isImplausibleJump } from '../net/plausibleSpeed.js';
+// Read-only tick → stamp conversion on the drone display timeline (S5-2).
+import {
+  ADAPTIVE_DELAY_CEILING_MS,
+  MAX_TOTAL_DISPLAY_DELAY_MS,
+  getSwarmDisplayDelayMs,
+  getSwarmDisplayDelayTargetMs,
+  getSwarmDisplaySpeed,
+  getSwarmHoldMaxWallMs,
+  getSwarmRingMinSpacingMs,
+  getSwarmStreamNewestStampMs,
+  isSwarmDelayCatchingUp,
+  isSwarmDelayOffPilotActive,
+  swarmTickToStampMs,
+} from '../net/swarmInterpolation.js';
+// The display-delay slew + stall hold, shared with drones (S5-5, D10 = A).
+import {
+  createDisplayDelayHoldState,
+  holdDisplayDelay,
+  resetDisplayDelayHold,
+  slewDisplayDelay,
+} from '../net/displayDelayHold.js';
 
 /**
- * Display-delay lag in milliseconds. The renderer reads missile poses
- * `MISSILE_DISPLAY_DELAY_MS` behind the latest arrival so it interpolates
- * between two arrived snapshots rather than extrapolating past the latest.
- * 100 ms = 2× the 50 ms (20 Hz) snapshot cadence — covers jitter without
- * making missiles feel sluggish (the drone display-delay floor value).
+ * FALLBACK display delay (GAME ms; wall = 100 / time scale), used only before
+ * the drone tick clock seeds (no drone packet yet). Once it seeds, missiles
+ * read at their own stream's delay (`mirror.swarmDisplayDelayMs`, S5-4/S5-5),
+ * which heads for the drone delay's target so a missile and the drone it
+ * chases are drawn at the same lateness.
+ * 100 ms = 2× the 50 ms (20 Hz) snapshot cadence (the drone delay floor).
  */
 export const MISSILE_DISPLAY_DELAY_MS = 100;
 
+// Missile stream hold (netcode gap smoothing S5-5, owner decision D10 = A).
+// Missiles ride the JSON snapshot stream and drones the binary stream; the two
+// can stall separately. So the missile stream has its OWN display-delay record
+// run through the SAME slew + hold as drones (`displayDelayHold.ts`): its
+// target is the drone delay's target (equal lateness on a healthy link), but
+// it holds on the JSON stream's newest stamp. A JSON-only stall parks the
+// missile read point at "newest + extrapolation cap" and missiles resume from
+// there (no snap); a swarm-only stall holds drones while missiles play on.
+// Main-thread state: the renderer may run in a worker, so the value rides the
+// mirror. Scalars only.
+const _missileHold = createDisplayDelayHoldState(MISSILE_DISPLAY_DELAY_MS);
+/** False until the first step with a drone timeline; the record then starts
+ *  AT the drone delay. Re-seeded on a speed change (the drone delay is
+ *  re-clamped at once then). */
+let _missileHoldSeeded = false;
+let _missileHoldSpeed = 1;
+/** Newest server tick seen on the JSON snapshot stream and its stamp (wall
+ *  ms, drone tick timeline; arrival time before that clock seeds). */
+let _missileStreamNewestTick = -1;
+let _missileStreamNewestStampMs = Number.NaN;
+
+/** Note one JSON snapshot of `tick` stamped `stampMs` (newer tick wins). */
+function noteMissileStreamStamp(tick: number, stampMs: number): void {
+  if (tick <= _missileStreamNewestTick) return;
+  _missileStreamNewestTick = tick;
+  _missileStreamNewestStampMs = stampMs;
+}
+
 /**
- * Maximum dead-reckoning window past the newest ring sample before freezing.
+ * Step the missile stream's display delay one frame and publish it on the
+ * mirror (netcode gap smoothing S5-4, S5-5). Call once per frame right after
+ * `stepSwarmDisplayDelay`, with the same frame dt and read clock, before the
+ * renderer resolves missiles. WALL ms (floor and ceiling already ÷ speed).
+ * NaN until the first tick-stamped drone packet after a reset (no drone
+ * timeline yet), which makes `resolveMissileDisplayPose` fall back to
+ * `MISSILE_DISPLAY_DELAY_MS`.
+ */
+export function stepMissileDisplayDelay(mirror: RenderMirror, frameDtMs: number, nowMs: number): void {
+  if (Number.isNaN(getSwarmStreamNewestStampMs())) {
+    _missileHoldSeeded = false;
+    mirror.swarmDisplayDelayMs = Number.NaN;
+    return;
+  }
+  const speed = getSwarmDisplaySpeed();
+  _missileHold.targetMs = getSwarmDisplayDelayTargetMs();
+  if (!_missileHoldSeeded || speed !== _missileHoldSpeed) {
+    _missileHold.delayMs = getSwarmDisplayDelayMs();
+    _missileHoldSeeded = true;
+    _missileHoldSpeed = speed;
+  } else {
+    // The drone record's mode (S5-9): its catch-up slew and hold maximum.
+    slewDisplayDelay(_missileHold, frameDtMs, speed, isSwarmDelayCatchingUp());
+  }
+  holdDisplayDelay(
+    _missileHold, nowMs, _missileStreamNewestStampMs, MISSILE_EXTRAPOLATION_CAP_MS / speed, speed, getSwarmHoldMaxWallMs(),
+  );
+  mirror.swarmDisplayDelayMs = _missileHold.delayMs;
+}
+
+/** Forget the missile stream's delay, newest stamp and counters (sector
+ *  change: `resetPredictionState`; tests). */
+export function resetMissileDisplayDelay(): void {
+  resetDisplayDelayHold(_missileHold, MISSILE_DISPLAY_DELAY_MS);
+  _missileHold.holdFrameCount = 0;
+  _missileHold.resyncCount = 0;
+  _missileHoldSeeded = false;
+  _missileHoldSpeed = 1;
+  _missileStreamNewestTick = -1;
+  _missileStreamNewestStampMs = Number.NaN;
+}
+
+/** Frames on which a JSON stream stall held the missile read point. */
+export function getMissileHoldFrameCount(): number { return _missileHold.holdFrameCount; }
+/** Missile stream re-syncs (a hold past MAX_TOTAL_DISPLAY_DELAY_MS). */
+export function getMissileResyncCount(): number { return _missileHold.resyncCount; }
+
+/** The delay (wall ms) missiles read at this frame: the published missile
+ *  stream delay, or the fixed fallback ÷ speed while it is NaN / absent. */
+function missileDisplayDelayWallMs(mirror: RenderMirror, speed: number): number {
+  const shared = mirror.swarmDisplayDelayMs;
+  if (shared !== undefined && shared > 0 && Number.isFinite(shared)) return shared;
+  return MISSILE_DISPLAY_DELAY_MS / speed;
+}
+
+/** The mirror's game speed (1 when absent or invalid). */
+function mirrorSpeed(mirror: RenderMirror): number {
+  const s = mirror.timeScale;
+  return s !== undefined && s > 0 && Number.isFinite(s) ? s : 1;
+}
+
+/**
+ * Maximum dead-reckoning window past the newest ring sample before freezing,
+ * in GAME ms (wall = 250 / time scale, like the drone glide limit).
  * When the next snapshot is late (WiFi jitter, AOI roll) the renderer
  * extrapolates the missile forward with the newest sample's velocity so the
  * sprite keeps moving smoothly. Capped so a missile that left the AOI doesn't
@@ -67,6 +180,25 @@ export const MISSILE_EXTRAPOLATION_CAP_MS = 250;
  *  dead-reckoning caps, so a frozen phase cannot exist. The event stays as the
  *  same-frame fast path for the explosion VFX. */
 const MISSILE_ABSENT_DESPAWN_MS = 250;
+
+/** The absent-from-slice despawn window (wall ms) this frame. Off pilot
+ *  (S5-9) the read point sits up to seconds back, so a missile that left the
+ *  slice is kept for the delay past the pilot ceiling as well: it flies its
+ *  last buffered poses out instead of vanishing mid-flight. Pilot: 250. */
+function missileAbsentDespawnMs(): number {
+  if (!isSwarmDelayOffPilotActive()) return MISSILE_ABSENT_DESPAWN_MS;
+  const extraMs = _missileHold.delayMs - ADAPTIVE_DELAY_CEILING_MS / getSwarmDisplaySpeed();
+  return MISSILE_ABSENT_DESPAWN_MS + Math.max(0, extraMs);
+}
+
+/** True when a pose stamped `stampMs` should skip the ring (S5-9 off-pilot
+ *  thinning): the newest slot is under `spacingMs` older. 0 = never skip. */
+function isRingWriteThinned(m: MissileRenderState, stampMs: number, spacingMs: number): boolean {
+  if (!(spacingMs > 0)) return false;
+  const newest = m.poseRing[(m.ringHead + MISSILE_POSE_RING_DEPTH - 1) % MISSILE_POSE_RING_DEPTH]!;
+  const sinceMs = stampMs - newest.arrivalMs;
+  return !newest.empty && sinceMs >= 0 && sinceMs < spacingMs;
+}
 
 /** Allocate a fresh, empty pose ring for a newly-sighted missile. */
 function newRing(): PoseRingEntry[] {
@@ -104,12 +236,23 @@ export function applyMissileSnapshot(
   if (!mirror.missiles) mirror.missiles = new Map();
   const map = mirror.missiles;
 
+  // Playback stamp (S5-2): every missile in the slice is a pose at
+  // `serverTick`, placed on the drone tick timeline so a backlog drained in
+  // one frame keeps its server spacing. Before that clock is seeded (no
+  // drone packet yet) the sample keeps its arrival stamp. Any snapshot, with
+  // missiles or not, shows the JSON stream is alive (the S5-5 hold).
+  const tickStampMs = swarmTickToStampMs(serverTick, nowMs);
+  const stampMs = Number.isNaN(tickStampMs) ? nowMs : tickStampMs;
+  noteMissileStreamStamp(serverTick, stampMs);
+
   if (slice && slice.length > 0) {
+    const spacingMs = getSwarmRingMinSpacingMs(MISSILE_POSE_RING_DEPTH);
     for (const entry of slice) {
       // Signed angular velocity (WS-C #5) — back-fills to 0 for pre-WS-C
       // servers (linear path, byte-identical to before).
       const angvel = entry.angvel ?? 0;
       const existing = map.get(entry.id);
+      const stampWentBack = existing !== undefined && !Number.isNaN(tickStampMs) && isStampBehindRing(existing, stampMs, serverTick);
       if (existing) {
         existing.x = entry.x;
         existing.y = entry.y;
@@ -119,7 +262,10 @@ export function applyMissileSnapshot(
         existing.lifePct = entry.lifePct;
         existing.lastUpdateTick = serverTick;
         existing.latestArrivalMs = nowMs;
-        writeRing(existing, entry.x, entry.y, entry.vx, entry.vy, entry.angle, angvel, nowMs, serverTick);
+        if (stampWentBack || !isRingWriteThinned(existing, stampMs, spacingMs)) {
+          writeRing(existing, entry.x, entry.y, entry.vx, entry.vy, entry.angle, angvel, stampMs, serverTick);
+        }
+        if (stampWentBack) restampRing(existing, nowMs);
       } else {
         const fresh: MissileRenderState = {
           id: entry.id,
@@ -134,7 +280,7 @@ export function applyMissileSnapshot(
           weaponId: entry.weaponId,
           lifePct: entry.lifePct,
         };
-        writeRing(fresh, entry.x, entry.y, entry.vx, entry.vy, entry.angle, angvel, nowMs, serverTick);
+        writeRing(fresh, entry.x, entry.y, entry.vx, entry.vy, entry.angle, angvel, stampMs, serverTick);
         map.set(entry.id, fresh);
       }
     }
@@ -143,10 +289,32 @@ export function applyMissileSnapshot(
   // Slice-driven despawn (campaign 5.1c): a missile the slice stopped
   // carrying — detonated with its event AOI-filtered away, or out of the
   // recipient's view — is reaped within the extrapolation cap.
+  const despawnMs = missileAbsentDespawnMs();
   for (const [id, m] of map) {
-    if (nowMs - m.latestArrivalMs > MISSILE_ABSENT_DESPAWN_MS) {
+    if (nowMs - m.latestArrivalMs > despawnMs) {
       map.delete(id);
     }
+  }
+}
+
+/** True when a NEWER tick would be stamped at or before a sample already in
+ *  the ring: the basis moved (arrival stamps → tick stamps once the drone
+ *  clock seeds, or a tick-clock re-seed), so ring order would run backwards. */
+function isStampBehindRing(m: MissileRenderState, stampMs: number, serverTick: number): boolean {
+  for (let i = 0; i < MISSILE_POSE_RING_DEPTH; i++) {
+    const e = m.poseRing[i]!;
+    if (!e.empty && e.serverTick < serverTick && e.arrivalMs >= stampMs) return true;
+  }
+  return false;
+}
+
+/** Re-stamp every ring sample from its own tick on the current tick clock, so
+ *  the whole ring shares one basis (in place, zero alloc). Only called after a
+ *  tick stamp was taken, so the clock is seeded and no stamp is NaN. */
+function restampRing(m: MissileRenderState, nowMs: number): void {
+  for (let i = 0; i < MISSILE_POSE_RING_DEPTH; i++) {
+    const e = m.poseRing[i]!;
+    if (!e.empty) e.arrivalMs = swarmTickToStampMs(e.serverTick, nowMs);
   }
 }
 
@@ -213,7 +381,7 @@ function curveDeadReckon(
 
 /**
  * Resolve a missile's display pose at `nowMs` by interpolating buffered
- * authoritative poses at `nowMs − MISSILE_DISPLAY_DELAY_MS`. Returns null when
+ * authoritative poses at `nowMs − display delay` (the shared drone delay, S5-4). Returns null when
  * the missile doesn't exist (caller skips drawing).
  */
 export function resolveMissileDisplayPose(
@@ -243,9 +411,14 @@ export function resolveMissileDisplayPose(
     return { x: m.x, y: m.y, angle: m.angle, lifePct: m.lifePct };
   }
 
-  // Game time scale: the delay is GAME ms (the ring depth is sized in
-  // snapshots, which arrive 1/speed as far apart in wall time).
-  const delayMs = MISSILE_DISPLAY_DELAY_MS / (mirror.timeScale ?? 1);
+  // The missile stream delay (S5-4, S5-5), already WALL ms; before the drone
+  // clock seeds, the fixed GAME-ms fallback ÷ speed (snapshots arrive 1/speed
+  // as far apart in wall time). Ring stamps are wall ms and velocities per
+  // GAME second, so every dead-reckon dt is wall ms × speed, and the cap
+  // (game ms) is ÷ speed in wall ms (as drones, S4-1b).
+  const speed = mirrorSpeed(mirror);
+  const capWallMs = MISSILE_EXTRAPOLATION_CAP_MS / speed;
+  const delayMs = missileDisplayDelayWallMs(mirror, speed);
   const targetMs = nowMs - delayMs;
   const newest = _populated[count - 1]!;
   const oldest = _populated[0]!;
@@ -261,8 +434,12 @@ export function resolveMissileDisplayPose(
   // sample still resolves to the sample point — the legacy behaviour).
   if (count === 1 || targetMs <= oldest.arrivalMs) {
     const rawDtMs = targetMs - oldest.arrivalMs;
-    const dtMs = Math.max(-delayMs, Math.min(MISSILE_EXTRAPOLATION_CAP_MS, rawDtMs));
-    const c = curveDeadReckon(oldest.x, oldest.y, oldest.vx, oldest.vy, oldest.angle, oldest.angvel, dtMs / 1000);
+    // Off pilot (S5-9) the read point can sit seconds before a new missile's
+    // first sample: it has not launched yet on screen. Never in pilot (the
+    // delay is at most MAX_TOTAL_DISPLAY_DELAY_MS / speed there).
+    if (rawDtMs < -MAX_TOTAL_DISPLAY_DELAY_MS / speed) return null;
+    const dtMs = Math.max(-delayMs, Math.min(capWallMs, rawDtMs));
+    const c = curveDeadReckon(oldest.x, oldest.y, oldest.vx, oldest.vy, oldest.angle, oldest.angvel, dtMs * speed / 1000);
     return { x: c.x, y: c.y, angle: c.angle, lifePct: m.lifePct };
   }
 
@@ -271,8 +448,8 @@ export function resolveMissileDisplayPose(
   // freeze. Pre-WS-C this held `angle` and coasted straight — which flew off the
   // server's turning path and snapped on the next arrival.
   if (targetMs >= newest.arrivalMs) {
-    const overshootMs = Math.min(MISSILE_EXTRAPOLATION_CAP_MS, targetMs - newest.arrivalMs);
-    const dt = overshootMs / 1000;
+    const overshootMs = Math.min(capWallMs, targetMs - newest.arrivalMs);
+    const dt = overshootMs * speed / 1000;
     const c = curveDeadReckon(newest.x, newest.y, newest.vx, newest.vy, newest.angle, newest.angvel, dt);
     return { x: c.x, y: c.y, angle: c.angle, lifePct: m.lifePct };
   }
@@ -291,8 +468,10 @@ export function resolveMissileDisplayPose(
   // missile could plausibly travel in the span, that's a server discontinuity
   // (despawn+id-reuse, lock re-acquire SET) — snap to the newer pose, never
   // animate across the gap.
+  // The bound is a game-time speed: the span between stamps is WALL ms, so
+  // scale it to game ms (at 2× a wall ms carries two game ms of travel).
   const gap = Math.hypot(b.x - a.x, b.y - a.y);
-  if (isImplausibleJump(gap, span)) {
+  if (isImplausibleJump(gap, span * speed)) {
     return { x: b.x, y: b.y, angle: b.angle, lifePct: m.lifePct };
   }
 
@@ -305,7 +484,7 @@ export function resolveMissileDisplayPose(
   // (back-compat with pre-WS-C servers / dumb-flying missiles). The angle is
   // taken from the arc integration, which lands at ~`b.angle` by `span`
   // (continuity into the next bracket).
-  const dt = span > 0 ? Math.max(0, targetMs - a.arrivalMs) / 1000 : 0;
+  const dt = span > 0 ? Math.max(0, targetMs - a.arrivalMs) * speed / 1000 : 0;
   if (Math.abs(a.angvel) < ANGVEL_EPS) {
     // Linear fast path — straight lerp between the two buffered samples (the
     // original behaviour; keeps the smooth two-sample blend for non-steering

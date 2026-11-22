@@ -19,6 +19,15 @@
 import { describe, expect, it } from 'vitest';
 import { applySnapshotPerfStats } from '../../src/client/net/snapshotPerfStats.js';
 import { createDropDetector } from '../../src/client/net/snapshotDropDetector.js';
+import {
+  getSwarmDisplayDelayTargetMs,
+  getSwarmStreamNewestStampMs,
+  resetSwarmTickClock,
+  swarmArrivalStampMs,
+  swarmTickToStampMs,
+  ADAPTIVE_DELAY_CEILING_MS,
+  ADAPTIVE_DELAY_FACTOR,
+} from '../../src/client/net/swarmInterpolation.js';
 import type { SnapshotMessage } from '../../src/shared-types/messages.js';
 
 function makeSnap(serverTick: number): SnapshotMessage {
@@ -81,5 +90,91 @@ describe('applySnapshotPerfStats — intervalMs from wire-arrival time', () => {
     // Snap B: wire=150, RAF=180 (30 ms delay — RAF jittered later).
     const i = applySnapshotPerfStats(makeSnap(2), 180, 100, 150, ctx);
     expect(i, 'wire gap is the source of truth despite RAF jitter').toBe(50);
+  });
+});
+
+/** JSON snapshots go out every 3 server ticks. */
+const JSON_EVERY_TICKS = 3;
+/** Snapshots skipped in the drop test (one 12-tick hole = 3 drops). */
+const SKIPPED_SNAPSHOTS = 3;
+const WIRE_STEP_MS = 50;
+/** A binary EWMA inside the delay window: x 1.5 = 120 ms. */
+const MID_SWARM_EWMA_MS = 80;
+/** A binary EWMA (x 1.5 = 90 ms) that sits under the floor until the drop bias lifts it. */
+const FAST_SWARM_EWMA_MS = 60;
+/** A binary EWMA the feed (x 1.5 = 225 ms) clamps to the ceiling. */
+const SLOW_SWARM_EWMA_MS = 150;
+/** One JSON-snapshot drop adds one frame of bias (snapshotDropDetector). */
+const DROP_BIAS_PER_DROP_MS = 1000 / 60;
+
+describe('applySnapshotPerfStats — drop detector and display-delay feed (S5-7)', () => {
+  it('still counts dropped JSON snapshots (droppedSnapshotsRecent source)', () => {
+    const ctx = makeCtx();
+    let wire = WIRE_STEP_MS;
+    let tick = JSON_EVERY_TICKS;
+    applySnapshotPerfStats(makeSnap(tick), wire, 0, wire, ctx);
+    for (let i = 0; i < 2; i++) {
+      tick += JSON_EVERY_TICKS;
+      applySnapshotPerfStats(makeSnap(tick), wire + WIRE_STEP_MS, wire, wire + WIRE_STEP_MS, ctx);
+      wire += WIRE_STEP_MS;
+    }
+    expect(ctx.dropDetector.dropCount).toBe(0);
+    tick += JSON_EVERY_TICKS * (SKIPPED_SNAPSHOTS + 1);
+    applySnapshotPerfStats(makeSnap(tick), wire + WIRE_STEP_MS, wire, wire + WIRE_STEP_MS, ctx);
+    expect(ctx.dropDetector.dropCount).toBe(SKIPPED_SNAPSHOTS);
+  });
+
+  it('drives the drone delay target from the swarm EWMA x 1.5', () => {
+    resetSwarmTickClock();
+    const ctx = { ...makeCtx(), swarmBinaryEwma: MID_SWARM_EWMA_MS };
+    applySnapshotPerfStats(makeSnap(3), WIRE_STEP_MS, 0, WIRE_STEP_MS, ctx);
+    applySnapshotPerfStats(makeSnap(6), 2 * WIRE_STEP_MS, WIRE_STEP_MS, 2 * WIRE_STEP_MS, ctx);
+    expect(getSwarmDisplayDelayTargetMs()).toBeCloseTo(MID_SWARM_EWMA_MS * ADAPTIVE_DELAY_FACTOR, 9);
+    resetSwarmTickClock();
+  });
+
+  it('adds the drop bias to the target', () => {
+    resetSwarmTickClock();
+    const ctx = { ...makeCtx(), swarmBinaryEwma: FAST_SWARM_EWMA_MS };
+    let wire = WIRE_STEP_MS;
+    let tick = JSON_EVERY_TICKS;
+    applySnapshotPerfStats(makeSnap(tick), wire, 0, wire, ctx);
+    for (let i = 0; i < 2; i++) {
+      tick += JSON_EVERY_TICKS;
+      applySnapshotPerfStats(makeSnap(tick), wire + WIRE_STEP_MS, wire, wire + WIRE_STEP_MS, ctx);
+      wire += WIRE_STEP_MS;
+    }
+    // One 12-tick hole: 3 snapshots dropped.
+    tick += JSON_EVERY_TICKS * (SKIPPED_SNAPSHOTS + 1);
+    applySnapshotPerfStats(makeSnap(tick), wire + WIRE_STEP_MS, wire, wire + WIRE_STEP_MS, ctx);
+    expect(ctx.dropDetector.dropCount).toBe(SKIPPED_SNAPSHOTS);
+    expect(getSwarmDisplayDelayTargetMs()).toBeCloseTo(
+      FAST_SWARM_EWMA_MS * ADAPTIVE_DELAY_FACTOR + SKIPPED_SNAPSHOTS * DROP_BIAS_PER_DROP_MS, 9);
+    resetSwarmTickClock();
+  });
+
+  it('clamps a slow stream to the ceiling', () => {
+    resetSwarmTickClock();
+    const ctx = { ...makeCtx(), swarmBinaryEwma: SLOW_SWARM_EWMA_MS };
+    applySnapshotPerfStats(makeSnap(3), WIRE_STEP_MS, 0, WIRE_STEP_MS, ctx);
+    applySnapshotPerfStats(makeSnap(6), 2 * WIRE_STEP_MS, WIRE_STEP_MS, 2 * WIRE_STEP_MS, ctx);
+    expect(SLOW_SWARM_EWMA_MS * ADAPTIVE_DELAY_FACTOR).toBeGreaterThan(ADAPTIVE_DELAY_CEILING_MS);
+    expect(getSwarmDisplayDelayTargetMs()).toBe(ADAPTIVE_DELAY_CEILING_MS);
+    resetSwarmTickClock();
+  });
+
+  it('each JSON snapshot tick keeps the drone stream newest stamp fresh', () => {
+    resetSwarmTickClock();
+    const ctx = makeCtx();
+    // Before the tick clock is seeded the snapshot cannot be placed.
+    applySnapshotPerfStats(makeSnap(3), WIRE_STEP_MS, 0, WIRE_STEP_MS, ctx);
+    expect(Number.isNaN(getSwarmStreamNewestStampMs())).toBe(true);
+    // Seed the clock with one swarm packet, then a later JSON snapshot moves
+    // the stream newest to its own tick's stamp.
+    swarmArrivalStampMs(3, WIRE_STEP_MS);
+    const wire = 2 * WIRE_STEP_MS;
+    applySnapshotPerfStats(makeSnap(6), wire, WIRE_STEP_MS, wire, ctx);
+    expect(getSwarmStreamNewestStampMs()).toBe(swarmTickToStampMs(6, wire));
+    resetSwarmTickClock();
   });
 });

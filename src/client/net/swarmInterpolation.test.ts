@@ -69,13 +69,13 @@ describe('drone snapshot-interpolation constants (Step 4, 2026-05-18 pivot)', ()
     expect(DISPLAY_DELAY_MS).toBe(100);
   });
 
-  it('ADAPTIVE_DELAY_CEILING_MS = 280 ms (covers decimated out-of-interest drones)', () => {
-    // Raised 200 → 280: an out-of-interest decimated drone arrives every
-    // ~100–170 ms; the adaptive feed sizes the buffer at
-    // binaryInterArrivalEwma × 1.5, so a 170 ms cadence wants ~255 ms to
-    // still bracket two samples. 280 leaves headroom; the in-interest
-    // combat pack sits at the 100 ms floor, nowhere near this.
-    expect(ADAPTIVE_DELAY_CEILING_MS).toBe(280);
+  it('ADAPTIVE_DELAY_CEILING_MS = 150 ms (caps the 4G display delay)', () => {
+    // Lowered 280 → 150 (netcode gap smoothing S5-7, owner decision "cap
+    // delay + fix hold"): the adaptive feed sizes the buffer at
+    // binaryInterArrivalEwma × 1.5 + drop bias; a jittery or decimated
+    // stream stops here and the 250 ms glide plus the stall hold cover the
+    // rest, instead of drawing every drone ~300 ms late on 4G.
+    expect(ADAPTIVE_DELAY_CEILING_MS).toBe(150);
   });
 });
 
@@ -144,7 +144,7 @@ describe('interpolateSwarmPose (display-delay buffer)', () => {
       { x: 0,   arrivalMs: 1000 },
       { x: 100, vx: 200, arrivalMs: 1100 },
     ]);
-    // targetMs = 1600, 500 ms past newest. Capped to 100 ms → +20u → 120.
+    // targetMs = 1600, 500 ms past newest. Capped to 250 ms → +50u → 150.
     interpolateSwarmPose(e, 1600 + DISPLAY_DELAY_MS, out);
     expect(out.x).toBeCloseTo(100 + 200 * (EXTRAPOLATION_LIMIT_MS / 1000), 4);
   });

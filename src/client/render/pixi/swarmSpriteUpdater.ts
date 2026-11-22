@@ -65,6 +65,7 @@ import {
   interpolateSwarmPose,
 } from '../../net/swarmInterpolation';
 import { resolveEntityDisplayPose } from '../../net/swarmDisplayPose';
+import { mainThreadNowMs } from '../mainThreadNow.js';
 import { WreckPieceSprite, coolWreckInfo, wreckPieceSpeckColor } from './wreckArt.js';
 import { buildRockPieceArt, classicRockTint, isRockWreck } from './rockPieceArt.js';
 import { isFieldRockMesh } from '../field/CutFieldLayer.js';
@@ -133,6 +134,8 @@ export function scrapHeatTint(ageMs: number): number | undefined {
 export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): void {
   if (!mirror.swarm) return;
   const now = performance.now();
+  // Pose-ring arrivals are main-thread stamps: interpolate on that clock.
+  const poseNow = mainThreadNowMs(mirror, now);
   const fxNow = ctx.fxNowMs ?? now; // game-speed presentation clock (wreck glow / death clock)
   const slewDtSec = ctx.slewDtSec; // P3.8 — structure-mount slew rate input
   const wreckDescs = mirror.wrecks;
@@ -344,7 +347,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     let structCluster: Container | null = null;
     const lerped = entry.kind === 1 || entry.kind === 3 || entry.kind === 4
       ? resolveEntityDisplayPose(entry, ctx.swarmPoseScratch)
-      : interpolateSwarmPose(entry, now, ctx.swarmPoseScratch);
+      : interpolateSwarmPose(entry, poseNow, ctx.swarmPoseScratch);
     sprite.x = lerped.x;
     sprite.y = -lerped.y;
     // A3 — don't draw structures that are off screen (static, so the bounding

@@ -3,6 +3,7 @@ import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind } from '@shared-types/shipKinds';
 import { getStructureKind, isStructureKindId } from '../../shared-types/structureKinds.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
+import { mainThreadNowMs } from './mainThreadNow.js';
 
 /**
  * THE selection marker (structures follow-up Item B4; RTS Part A: one
@@ -75,7 +76,7 @@ export function resolveSelectable(mirror: RenderMirror, id: string, out: Selecta
     out.x = sw.x;
     out.y = sw.y;
   } else {
-    const lerped = interpolateSwarmPose(sw, performance.now(), _poseScratch);
+    const lerped = interpolateSwarmPose(sw, mainThreadNowMs(mirror, performance.now()), _poseScratch);
     out.x = lerped.x;
     out.y = lerped.y;
   }

@@ -77,6 +77,8 @@ Every lane play session leaves numbers on disk with no extra step:
     on the client, `rttMs`/`rttMeanMs`/`jitterMs`, `corrections` (own-ship
     corrections in the window), `corrRate`, `maxDrift`. Numbers only: no ids,
     names or positions (`src/client/debug/perf/laneFrameSummary.ts`).
+    Each line also carries the display-delay machinery (wall ms; field list
+    in [diagnostic-captures](../architecture/diagnostic-captures.md#perf_summary-display-delay-fields)).
     Since the netcode gap-smoothing telemetry (S0) it also carries the
     netcode gap counters (`dcLastArrivalMs`, `dcReplacedTotal`,
     `swarmLateMaxMs`, `anchorHardSnaps`, ...): how late snapshots arrived and

@@ -33,7 +33,9 @@ import {
 import { shipKindFromIndex } from '../../shared-types/shipKinds.js';
 import { structureKindFromIndex } from '../../shared-types/structureKinds.js';
 import { asteroidResourceFromIndex } from '../../shared-types/asteroidResources.js';
-import { swarmArrivalStampMs, noteSwarmSlotOverwrite } from './swarmInterpolation.js';
+import {
+  getSwarmRingMinSpacingMs, swarmArrivalStampMs, noteSwarmSlotOverwrite, noteSwarmStreamStamp,
+} from './swarmInterpolation.js';
 
 interface MutableMirror {
   swarm?: Map<number, SwarmRenderState>;
@@ -95,10 +97,18 @@ export function decodeSwarmPacket(
   const tick = view.getUint32(4, true);
   // The live client stamps ring poses on the server-tick clock, not the raw
   // drain time (`swarmArrivalStampMs`: per-RAF draining bunched the stamps).
-  if (stampByTick) nowMs = swarmArrivalStampMs(tick, nowMs);
+  if (stampByTick) {
+    nowMs = swarmArrivalStampMs(tick, nowMs);
+    // Newest stamp for the stream as a whole (S4-2); the S4-5 stall hold
+    // reads it (JSON snapshots feed it too, S5-7).
+    noteSwarmStreamStamp(tick, nowMs);
+  }
 
   const expectedBytes = SWARM_HEADER_BYTES + count * SWARM_RECORD_BYTES;
   if (byteLength < expectedBytes) return;
+  // Off-pilot ring thinning (S5-9): 0 in pilot; off pilot, the least stamp
+  // spacing for POSE_RING_DEPTH slots to cover the (up to 4 s) delay.
+  const ringSpacingMs = getSwarmRingMinSpacingMs(POSE_RING_DEPTH);
 
   // Lazily initialise the swarm map on the mirror.
   const m = mirror as RenderMirror & MutableMirror;
@@ -221,14 +231,20 @@ export function decodeSwarmPacket(
       entry.lastUpdateTick = tick;
 
       // Push the new pose into the ring at ringHead, then advance. This is
-      // what `interpolateSwarmPose` reads on the hot path.
-      const slot = entry.poseRing[entry.ringHead]!;
-      if (!slot.empty) noteSwarmSlotOverwrite(slot.arrivalMs);
-      slot.x = x; slot.y = y; slot.angle = angle;
-      slot.vx = vx; slot.vy = vy; slot.angvel = angvel;
-      slot.arrivalMs = nowMs; slot.serverTick = tick;
-      slot.sleeping = sleeping; slot.empty = false;
-      entry.ringHead = (entry.ringHead + 1) % POSE_RING_DEPTH;
+      // what `interpolateSwarmPose` reads on the hot path. Off pilot (S5-9) a
+      // pose stamped under `ringSpacingMs` after the newest slot is skipped,
+      // so the ring spans the long delay (the scalars above still update).
+      const newestSlot = entry.poseRing[(entry.ringHead + POSE_RING_DEPTH - 1) % POSE_RING_DEPTH]!;
+      const sinceNewestMs = nowMs - newestSlot.arrivalMs;
+      if (!(ringSpacingMs > 0 && !newestSlot.empty && sinceNewestMs >= 0 && sinceNewestMs < ringSpacingMs)) {
+        const slot = entry.poseRing[entry.ringHead]!;
+        if (!slot.empty) noteSwarmSlotOverwrite(slot.arrivalMs);
+        slot.x = x; slot.y = y; slot.angle = angle;
+        slot.vx = vx; slot.vy = vy; slot.angvel = angvel;
+        slot.arrivalMs = nowMs; slot.serverTick = tick;
+        slot.sleeping = sleeping; slot.empty = false;
+        entry.ringHead = (entry.ringHead + 1) % POSE_RING_DEPTH;
+      }
     }
 
     if (seen) seen.add(entityId);

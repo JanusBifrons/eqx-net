@@ -22,11 +22,12 @@ import { liveBeamLook, liveBeamLine, remoteBeamStyleForMount, remoteBeamLine, re
 import type { FxBeams } from '../art/fx/FxWeapons.js';
 import type { FxFences, FxShields, ShieldPoseFn } from '../art/fx/FxShields.js';
 import { applyMountOffset } from './spriteBuilders.js';
+import { mainThreadNowMs } from '../mainThreadNow.js';
 
 /** Tractor beams (salvage PR 11b, `tractorBeams.ts`): fill the pooled views
  *  and hand them to the tractor pool. Returns how many views are live. */
 export function updateTractorBeams(mirror: RenderMirror, pool: BeamSpritePool | null, views: BeamView[], disabled: boolean, fxNow: () => number, cameraScale: number): number {
-  const count = disabled || !pool ? 0 : fillTractorBeams(mirror, fxNow(), cameraScale, views);
+  const count = disabled || !pool ? 0 : fillTractorBeams(mirror, mainThreadNowMs(mirror, fxNow()), cameraScale, views);
   pool?.setBeams(views, count, cameraScale);
   return count;
 }
@@ -151,7 +152,8 @@ export function updateBeams(mirror: RenderMirror, ctx: BeamCtx): void {
     // transform writes (no Graphics triangulation), so always-calling
     // for a handful of beams is free and adds no allocation (invariant
     // #14 — reuses the pooled slot array + pooled sprites).
-    const now = ctx.fxNow();
+    // Pose-ring arrivals and `expiresAt` are main-thread stamps.
+    const now = mainThreadNowMs(mirror, ctx.fxNow());
     let slotIdx = 0;
     // WS-4 Phase 4 — drill beams route to the dedicated mining pool instead.
     let miningIdx = 0;
