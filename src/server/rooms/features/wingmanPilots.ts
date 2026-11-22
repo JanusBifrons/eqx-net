@@ -27,12 +27,8 @@ import type { LockSubsystem } from '../LockSubsystem.js';
 import type { WeaponMountTicker } from '../WeaponMountTicker.js';
 import type { PlayerFireResolver } from '../PlayerFireResolver.js';
 import type { WorkerCmd } from '../PhysicsWorkerProxy.js';
-<<<<<<< HEAD
-import { WingmanKeptLocks } from './wingmanKeptLocks.js';
-=======
 import { wireSwarmEntityId } from './fleetMessages.js';
-import { holdsLiveLock, WingmanKeptLocks } from './wingmanKeptLocks.js';
->>>>>>> origin/main
+import { WingmanKeptLocks } from './wingmanKeptLocks.js';
 
 /** RTS slice 4b — `fleet.detach` options when the owner takes a member's helm. */
 const KEEP_SQUAD = Object.freeze({ keepSquad: true });
