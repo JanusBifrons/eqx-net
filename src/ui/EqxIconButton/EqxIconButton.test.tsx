@@ -114,6 +114,13 @@ describe('EqxIconButton', () => {
     expect(cs().boxShadow).toContain('inset');
   });
 
+  it('data-state passes through to the button (tests read a lock stage)', () => {
+    render(<EqxIconButton icon={<PublicIcon />} tooltip="g" variant="strip" data-state="cancel" data-testid="ib" />);
+    expect(screen.getByTestId('ib').getAttribute('data-state')).toBe('cancel');
+    render(<EqxIconButton icon={<PublicIcon />} tooltip="h" data-testid="ib2" />);
+    expect(screen.getByTestId('ib2').hasAttribute('data-state')).toBe(false);
+  });
+
   it('variant round (default) keeps the outlined circle', () => {
     render(<EqxIconButton icon={<PublicIcon />} tooltip="g" data-testid="ib" />);
     expect(getComputedStyle(screen.getByTestId('ib')).borderRadius).toBe('50%');

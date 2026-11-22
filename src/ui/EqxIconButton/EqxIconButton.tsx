@@ -43,6 +43,8 @@ export interface EqxIconButtonProps {
   /** Strip variant only: a status tile (current order / stance). */
   status?: EqxStripStatus;
   'data-testid'?: string;
+  /** Round / strip only: a machine-readable state for tests (`data-state`), e.g. a lock's stage. Never shown. */
+  'data-state'?: string;
 }
 
 export function EqxIconButton({
@@ -57,6 +59,7 @@ export function EqxIconButton({
   variant = 'round',
   status,
   'data-testid': testId,
+  'data-state': dataState,
 }: EqxIconButtonProps) {
   if (variant === 'rail' || variant === 'railTool') {
     return (
@@ -89,6 +92,7 @@ export function EqxIconButton({
           data-tone={tone}
           data-active={active ? 'true' : 'false'}
           data-variant={variant}
+          {...(dataState !== undefined ? { 'data-state': dataState } : {})}
           {...(strip && status !== undefined ? { 'data-status': status } : {})}
           disableRipple={strip}
           sx={

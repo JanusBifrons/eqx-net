@@ -190,6 +190,23 @@ export const HUD = {
     flyInPx: 9,
     flyInMs: 220,
   },
+  /** EqxBar: a readout bar in a panel (mock .lrow + .bar). Px and colours. */
+  bar: {
+    /** Track height (.5cqw) and the empty track (mock .bar). */
+    height: 5,
+    track: '#1b2338',
+    /** Battery charge fill. */
+    charge: '#cc8844',
+    /** The label column and its font (mock .lrow 1.15cqw). */
+    labelW: 52,
+    labelSize: 11,
+    /** Gap between label and track (.8cqw). */
+    gap: 7,
+    /** A short bar beside other content (a building card row). */
+    shortW: 36,
+    /** Fill width ease, ms (the stats arrive at ~5 Hz). */
+    fillMs: 1000,
+  },
 } as const;
 
 export function hullColor(pct: number): string {

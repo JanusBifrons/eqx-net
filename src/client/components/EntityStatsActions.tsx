@@ -1,34 +1,30 @@
 import { Box, IconButton, Tooltip } from '@mui/material';
-import FlightTakeoffIcon from '@mui/icons-material/FlightTakeoff';
 import RecyclingIcon from '@mui/icons-material/Recycling';
 import BuildIcon from '@mui/icons-material/Build';
 import { useUIStore } from '../state/store';
 import { sendRefineSalvage, sendRepairShip } from '../structures/structureActionsClient';
-import { sendPilotShip } from '../ships/shipActionsClient';
 import { canManageBuildings } from '../structures/buildingManagement';
 import { BountyAction } from './BountyAction';
 import { BlueprintInstall } from './BlueprintInstall';
 import { ResearchLabPanel } from './ResearchLabPanel';
-import { CargoAction, PodOpen } from './LootWindow';
 import { ForeignTeleporterPanel, TeleporterPanel } from './TeleporterPanel';
 import { HullUnpack } from './HullUnpack';
-import { TargetAction } from './TargetAction';
 import { ACTION_BTN_SX, ICON_SX } from './StructureManageActions';
 import { StructureSettingsOpen } from './StructureSettingsModal';
 import type { PanelData } from './EntityStatsPanel';
 
 /**
- * Inspector sections and action buttons of the click-to-inspect panel
- * (`EntityStatsPanel`): owner actions, bounty, blueprints, unpack, lab,
- * teleporters, cargo, pod, target and pilot.
+ * Inspector sections and owner actions of the Details panel body
+ * (`EntityStatsPanel`): the building's settings (Build mode), repair, refine,
+ * bounty, blueprints, unpack, lab and teleporters. The one-tap actions (Target,
+ * cargo, pod, Pilot) are on the left strip (`layout/selectionStripItems.tsx`).
  */
 export function EntityStatsActions({ data }: { data: PanelData }): JSX.Element {
   const manage = useUIStore(canManageBuildings);
   return (
     <>
       {data.isOwn && data.entityId !== undefined && (manage || data.holdLine !== undefined || data.canRefine === true) && (
-        // Phase-1 issue 6 — owner-only action buttons. The panel root is
-        // pointerEvents:none (passive readout), so this row re-enables pointers.
+        // Phase-1 issue 6 — owner-only action buttons.
         // Open (the settings side panel, where building management lives) is
         // Build mode only (`canManageBuildings`); repair and refine are pilot
         // services and show in every mode.
@@ -71,34 +67,11 @@ export function EntityStatsActions({ data }: { data: PanelData }): JSX.Element {
       {data.isLab === true && data.entityId !== undefined && <ResearchLabPanel entityId={data.entityId} />}
       {data.isTeleporter === true && data.entityId !== undefined && <TeleporterPanel key={data.entityId} entityId={data.entityId} />}
       {data.isForeignTeleporter === true && data.entityId !== undefined && <ForeignTeleporterPanel key={data.entityId} entityId={data.entityId} />}
-      {data.hasCargo === true && data.entityId !== undefined && <CargoAction key={data.entityId} entityId={data.entityId} title={data.name} />}
-      {data.cargoShip !== undefined && <CargoAction key={data.cargoShip} ship={data.cargoShip} title={data.name} />}
-      {data.podOpen !== undefined && data.entityId !== undefined && <PodOpen key={data.entityId} entityId={data.entityId} inReach={data.podOpen} {...(data.infoLine !== undefined ? { subtitle: data.infoLine } : {})} />}
-      <TargetAction isOwn={data.isOwn === true || data.pilotShipId !== undefined} />
-      {data.pilotShipId !== undefined && (
-        // Phase 4 WS-A2 — in-world Pilot action on the local player's OWN
-        // lingering hull. Same-sector instant swap (no spool/curtain); the camera
-        // smooth-lerps to the new ship. The panel root is pointerEvents:none, so
-        // this row re-enables pointers.
-        <Box sx={ACTIONS_SX} data-testid="entity-stats-actions">
-          <Tooltip title="Pilot this ship (instant in-sector swap)">
-            <IconButton
-              data-testid="ship-action-pilot"
-              size="small"
-              sx={ACTION_BTN_SX}
-              onClick={() => sendPilotShip(data.pilotShipId!)}
-            >
-              <FlightTakeoffIcon sx={ICON_SX} />
-            </IconButton>
-          </Tooltip>
-        </Box>
-      )}
     </>
   );
 }
 
-// Phase-1 issue 6 — owner-only action-button row. Re-enables pointers (the
-// panel root is pointerEvents:none) and keeps the buttons tiny ("start tiny").
+// Phase-1 issue 6 — owner-only action-button row.
 const ACTIONS_SX = {
   gridColumn: '1 / -1',
   display: 'flex',

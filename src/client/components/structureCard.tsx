@@ -15,10 +15,10 @@
 import { Box, CircularProgress, Tooltip } from '@mui/material';
 import BoltIcon from '@mui/icons-material/Bolt';
 import { EntityBadge } from './EntityBadge';
-import { Bar } from './inspectorBar';
+import { EqxBar } from '../../ui/index.js';
 import { phoneTiny } from './inspectorSizes';
 import { inspectorPowerLine } from './structureSettingsPower';
-import { HUD, hullColor } from '../hud/tokens';
+import { HUD } from '../hud/tokens';
 import { useHudSize } from '../hud/useHudScale';
 import { BUILD_AWAITING_CLEAR_LINE } from '../structures/buildAwaitingClear';
 import { PROD_STATE } from '@shared-types/production';
@@ -108,7 +108,7 @@ export function StructureCardRows({ d }: { d: StructureCardData }): JSX.Element 
           {d.pending ? (
             <Box data-testid="entity-stats-spinner" sx={SPIN_BOX_SX}><CircularProgress size={10} thickness={6} sx={SPINNER_SX} /></Box>
           ) : (
-            <Bar pct={d.hpPct} color={hullColor(d.hpPct)} short />
+            <EqxBar pct={d.hpPct} short />
           )}
           {power !== null && (
             // Desktop hover only (touch never opens it). The icon ignores the
