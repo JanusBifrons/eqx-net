@@ -115,6 +115,38 @@ describe('structure wreck pieces carry the turret\'s gun(s)', () => {
     expect(pv.children.some((c) => c instanceof Sprite && c.texture === gunTex)).toBe(true);
     expect(pv.children.some((c) => c instanceof Graphics)).toBe(false);
   });
+
+  // Round-2 stills: the gun on a wreck piece was a STUB. The barrel reaches
+  // the muzzle (1.6 × the turret radius), well past the hull, as the live
+  // turret draws it; the piece mask (its outline) cut it at the hull edge,
+  // leaving the stretch between the housing and the hull side.
+  it('the barrel past the hull stays whole on the piece that holds the mount; no other piece draws it', () => {
+    const gunTex = new Texture({ source: new TextureSource({ width: 8, height: 16 }) });
+    const gunArt = { frames: [gunTex, gunTex], w: 8, h: 16, tiles: 1, tileH: 16, density: 2, nozzles: [], navLights: [] };
+    for (const seed of [3, 17, 31]) {
+      const ds = { ...d, seed, killX: 30, killY: 20 };
+      const ps = rebuildWreckPieces(ds)!;
+      const inf = new WreckArtState().infoFor(ds, ps, 0, { x: 0, y: 0, angle: 0 }, 0, 1000);
+      let owners = 0;
+      for (const p of ps) {
+        const sp = new WreckPieceSprite(p, WRECK_STRUCTURE_PARENT_KIND, art, inf, p.index, null, null, structureWreckSource({ k }), places.map(() => gunArt));
+        const rig = sp.getChildByLabel('wreck-rig')!;
+        const mask = rig.mask as Graphics;
+        places.forEach((pl, i) => {
+          const pv = rig.getChildByLabel('wreck-gun', true)!.parent!.children.filter((c) => c.label === 'wreck-gun')[i]!;
+          const at = (t: number): { x: number; y: number } => rig.toLocal({ x: 0, y: -t }, pv);
+          const owner = mask.containsPoint(at(0));
+          // Just short of the muzzle: outside the hull (the turret's half side is 70).
+          const tip = at(pl.muzzle * 0.95);
+          expect(Math.hypot(tip.x + p.cx, tip.y - p.cy), 'tip is past the hull').toBeGreaterThan(75);
+          expect(mask.containsPoint(tip), `s${seed} piece ${p.index}: tip ${owner ? 'kept' : 'not drawn'}`).toBe(owner);
+          if (owner) owners++;
+        });
+        sp.destroy({ children: true });
+      }
+      expect(owners, `s${seed}: one owner per gun`).toBe(places.length);
+    }
+  });
 });
 
 describe('structureWreckGunArts: the live gun\'s own bake', () => {
