@@ -184,7 +184,7 @@ test('a rail tap switches the sidebar to that category', async ({ browser }) => 
   }
 });
 
-test('Confirm keeps placing with the sidebar hidden; Cancel brings it back on the same category', async ({ browser }) => {
+test('Confirm keeps placing with the sidebar folded to the strip; Cancel brings it back on the same category', async ({ browser }) => {
   // The Confirm banner is the TOUCH placement flow (desktop places on click),
   // so this test joins as a touch device.
   const { ctx, page } = await joinClient(browser, true);
@@ -192,25 +192,36 @@ test('Confirm keeps placing with the sidebar hidden; Cancel brings it back on th
     await openBuildSidebar(page);
     await page.locator('[data-testid="build-cat-economy"]').click();
 
-    // Picking a kind raises the ghost and hides the sidebar, so it never
-    // covers the ghost.
+    // Picking a kind raises the ghost and folds the sidebar to the placing
+    // strip (the picked kind, a ✕), so it never covers the ghost.
     await page.locator('[data-testid="build-solar"] button').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('[data-testid="placement-banner"]')).toContainText('Solar');
     await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
+    await expect(page.locator('[data-testid="build-strip"]')).toHaveAttribute('data-kind', 'solar');
+
+    // The portrait expands the full sidebar with placement live; its ✕ folds back.
+    await page.locator('[data-testid="build-strip-portrait"] button').click();
+    await expect(page.locator('[data-testid="build-rail"]')).toBeVisible();
+    await expect(page.locator('[data-testid="placement-banner"]')).toContainText('Solar');
+    await page.locator('[data-testid="build-sidebar-close"]').click();
+    await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
+    await expect(page.locator('[data-testid="build-strip"]')).toBeVisible();
 
     // THE LOCK (M3): Confirm keeps you placing the same building; the
-    // sidebar stays hidden.
+    // sidebar stays folded to the strip.
     await page.locator('[data-testid="placement-confirm"]').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible();
     await expect(page.locator('[data-testid="placement-banner"]')).toContainText('Solar');
     await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
+    await expect(page.locator('[data-testid="build-strip"]')).toHaveAttribute('data-kind', 'solar');
 
     // Cancel ends it: the sidebar is back on Economy, the next pick one tap.
     await page.locator('[data-testid="placement-cancel"]').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeHidden();
     await expect(page.locator('[data-testid="build-kinds"]')).toHaveAttribute('data-category', 'economy', { timeout: 5_000 });
     await expect(page.locator('[data-testid="build-solar"]')).toBeVisible();
+    await expect(page.locator('[data-testid="build-strip"]')).toHaveCount(0);
   } finally {
     await ctx.close();
   }
@@ -225,6 +236,7 @@ test('a Capital places once: Confirm ends placement and brings the sidebar back'
     await page.locator('[data-testid="build-capital"] button').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('[data-testid="build-capital"]')).toBeHidden();
+    await expect(page.locator('[data-testid="build-strip"]')).toHaveAttribute('data-kind', 'capital');
 
     await page.locator('[data-testid="placement-confirm"]').click();
     await page.waitForFunction((b) => {
@@ -234,6 +246,7 @@ test('a Capital places once: Confirm ends placement and brings the sidebar back'
 
     await expect(page.locator('[data-testid="placement-banner"]')).toBeHidden();
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="build-strip"]')).toHaveCount(0);
   } finally {
     await ctx.close();
   }
