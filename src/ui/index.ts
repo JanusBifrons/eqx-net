@@ -31,3 +31,5 @@ export { EqxSection, type EqxSectionProps } from './EqxSection/EqxSection.js';
 export { EqxListRow, type EqxListRowProps } from './EqxListRow/EqxListRow.js';
 export { EqxTable, tableGridTemplate, type EqxTableProps, type EqxTableColumn, type EqxTableSort, type EqxSortDir } from './EqxTable/EqxTable.js';
 export { TABLE_PAGER_SLOTS, tablePageList, tablePageWindow, type EqxTablePageSlot, type EqxTablePageWindow } from './EqxTable/tablePaging.js';
+export { EqxWindow, type EqxWindowProps } from './EqxWindow/EqxWindow.js';
+export { onGameWindowOpen, notifyGameWindowOpen, isAnyWindowOpen, useAnyWindowOpen } from './EqxWindow/windowOpen.js';

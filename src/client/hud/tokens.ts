@@ -301,6 +301,31 @@ export const HUD = {
     pageGap: 3,
     pageBtn: 22,
   },
+  /** EqxWindow: the one Window (the loot window's frame). Px; paper = `color.paper`. */
+  window: {
+    /** Gap to the screen edge (each side), and the desktop width cap (two cargo grids). */
+    margin: 12,
+    maxW: 880,
+    radius: 10,
+    shadow: '0 10px 40px rgba(0,0,0,0.65)',
+    /** Header / footer min height and padding; title size. */
+    headMinH: 52,
+    footMinH: 58,
+    padX: 12,
+    padY: 8,
+    gap: 10,
+    titleSize: 15,
+    /** Body text and the footer's small text. */
+    font: 12,
+    smallFont: 11,
+    /** The header ✕ square and the footer buttons. */
+    xBtn: 32,
+    xFont: 16,
+    btnH: 38,
+    btnPadX: 16,
+    btnFont: 13,
+    btnRadius: 6,
+  },
 } as const;
 
 export function hullColor(pct: number): string {

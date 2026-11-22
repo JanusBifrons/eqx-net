@@ -22,7 +22,6 @@
   "src/client/components/FleetStrip.tsx",
   "src/client/components/GalaxyPickerChrome.tsx",
   "src/client/components/GalaxySectorTooltip.tsx",
-  "src/client/components/GameWindow.tsx",
   "src/client/components/HelmPanel.tsx",
   "src/client/components/Hud.tsx",
   "src/client/components/HullTile.tsx",
