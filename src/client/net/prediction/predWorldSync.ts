@@ -16,7 +16,7 @@ import { logEvent } from '../../debug/ClientLogger';
 import { authoritativeSwarmStateAt, isRemoteMovingSwarmKind } from '../snapshotRemoteSync.js';
 import type { ShipPhysicsState } from '@core/physics/World';
 import { forgetRemote } from '../remotePredictionGuard';
-import { isOwnedByMe, isParkedHull } from '../../render/shipOwnership.js';
+import { isOwnedByMe, isParkedHull, streamCentreShip } from '../../render/shipOwnership.js';
 import { moveKey, moveSetKey } from '../../render/shipRekey.js';
 import type { PredictionStepCtx } from './predictionStepCtx.js';
 
@@ -96,9 +96,10 @@ export function syncSwarmIntoPredWorld(c: PredictionStepCtx): void {
   ctx.predWorld = c.predWorld;
   ctx.structures = c.mirror.structures; // hologram pass-through (structure leaf)
   // A3 — structures stream in by distance from the local ship (every
-  // correction replays the whole prediction world). No local ship ⇒ keep all.
-  const localId = c.mirror.localPlayerId;
-  const me = localId ? c.mirror.ships.get(localId) : undefined;
+  // correction replays the whole prediction world). No local ship (Command
+  // view, spectate) ⇒ around my parked hull, the cut field's centre
+  // (`streamCentreShip`); only with neither ⇒ keep all.
+  const me = streamCentreShip(c.mirror);
   // Wreck pieces stream by the GAP between hulls: the local hull's radius
   // (213 u for a 2× crossguard) is not part of the PREDWORLD_WRECK_RADIUS
   // travel budget.

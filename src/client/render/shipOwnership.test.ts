@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import type { RenderMirror, ShipRenderState } from '@core/contracts/IRenderer';
-import { isOwnedByMe, isParkedHull, isShipIAmFlying, shipOwner } from './shipOwnership.js';
+import { isOwnedByMe, isParkedHull, isShipIAmFlying, shipOwner, streamCentreShip } from './shipOwnership.js';
 
 const pose = (o: Partial<ShipRenderState> = {}): ShipRenderState => ({ x: 0, y: 0, vx: 0, vy: 0, angle: 0, ...o });
 
@@ -19,6 +19,16 @@ function mirror(localPlayerId: string | null): RenderMirror {
 }
 
 describe('shipOwnership', () => {
+  it('stream centre: the ship I fly, else my parked hull (Command view), else none', () => {
+    const m = mirror('P');
+    expect(streamCentreShip(m)).toBe(m.ships.get('P'));
+    m.ships.delete('P');
+    expect(streamCentreShip(m), 'no own ship ⇒ my parked hull').toBe(m.ships.get('S-mine'));
+    m.ships.delete('S-mine');
+    expect(streamCentreShip(m), 'a hull I do not own is never the centre').toBeNull();
+    expect(streamCentreShip(mirror(null))).toBeNull();
+  });
+
   it('shipOwner: ownerPlayerId, else the key (active ships are keyed by pilot)', () => {
     expect(shipOwner('P', pose())).toBe('P');
     expect(shipOwner('S-1', pose({ ownerPlayerId: 'Q' }))).toBe('Q');

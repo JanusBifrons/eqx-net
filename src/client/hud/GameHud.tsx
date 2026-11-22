@@ -29,7 +29,6 @@ import { HUD } from './tokens';
 import { hudScale, useHudSize, useIsLandscape } from './useHudScale';
 import { WeaponStrip } from './WeaponStrip';
 import { LockStatusBand } from './LockStatusBand';
-import { ContactsOverview } from '../components/ContactsOverview';
 import { stickToWorldBearing } from '@core/combat/manualAim';
 import { HoldButton, SectorChip, useEnergyFill, useFakeCredits } from './widgets';
 import { BuildStatusBody, WalletRow } from './BuildStatus';
@@ -78,8 +77,6 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
       </Slot>
       {/* A right-side panel (building settings, or any rail panel) docks over the right edge: no strip under it. */}
       {flying && !settingsOpen && rightPanel === null && <FcStripDock scale={scale} />}
-      {/* Contacts overview (lock list): left edge, the strip's mirror. */}
-      {flying && <ContactsOverview />}
       {/* The Build sidebar portals to <body> (EqxPanel): no Slot. */}
       <BuildSidebarHost />
 
