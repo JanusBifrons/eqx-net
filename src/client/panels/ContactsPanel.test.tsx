@@ -6,7 +6,7 @@
  * locking or has locked cancels.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 
 const PLAYER_ID = '0a1b2c3d-4e5f-4000-8000-000000000001';
 const requestLock = vi.fn();
@@ -84,34 +84,123 @@ describe('ContactsPanel: opening and closing', () => {
   });
 });
 
-describe('ContactsPanel: the list', () => {
-  it('lists contacts by name (no ids), hostiles first, with km and reach', () => {
+const rowKeys = (): string[] => [...screen.getByTestId('contacts-panel').querySelectorAll('[data-testid^="contact-row-"]')]
+  .map((r) => r.getAttribute('data-key')!);
+
+describe('ContactsPanel: the table', () => {
+  it('lists contacts by name (no ids), nearest first, with type, faction, stance, km and reach', () => {
     render(<ContactsPanel />);
     const panel = screen.getByTestId('contacts-panel');
     expect(panel.textContent).toContain('Fighter');
     expect(panel.textContent).toContain('Heavy');
-    expect(panel.textContent).toContain('Ripley');
+    expect(panel.textContent).toContain('Ripley'); // the pilot, in the Faction column
     expect(panel.textContent).not.toContain(PLAYER_ID);
     expect(panel.textContent).not.toMatch(/s:\d|p:/);
     expect(panel.getAttribute('data-count')).toBe('3');
-    const rows = panel.querySelectorAll('[data-testid^="contact-row-"]');
-    expect(rows[0]!.getAttribute('data-key')).toBe('s:7'); // the hostile
-    expect(rows[0]!.textContent).toContain('400 m');
-    expect(rows[0]!.getAttribute('data-in-reach')).toBe('active');
+    expect(rowKeys()).toEqual(['s:7', 's:8', `p:${PLAYER_ID}`]);
+    const hostile = screen.getByTestId('contact-row-s:7');
+    expect(hostile.textContent).toContain('400 m');
+    expect(hostile.textContent).toContain('Hostile');
+    expect(hostile.textContent).toContain('Drones');
+    expect(hostile.getAttribute('data-in-reach')).toBe('active');
+    expect(hostile.getAttribute('data-stance')).toBe('hostile');
     expect(screen.getByTestId('contact-row-s:8').getAttribute('data-in-reach')).toBe('none');
-    expect(screen.getByTestId(`contact-row-p:${PLAYER_ID}`).textContent).toContain('3.0 km');
+    const pilot = screen.getByTestId(`contact-row-p:${PLAYER_ID}`);
+    expect(pilot.textContent).toContain('3.0 km');
+    expect(pilot.getAttribute('data-faction')).toBe('Ripley');
+    expect(pilot.getAttribute('data-type')).toBe('ship');
   });
 
-  it('the sort switch puts the nearest first', () => {
-    fakeMirror.swarm.set(7, { kind: 1, shipKind: 'fighter', x: 0, y: 2000, isHostileToLocal: true });
+  it('row text is the stance colour', () => {
+    render(<ContactsPanel />);
+    expect(getComputedStyle(screen.getByTestId('contact-row-s:7')).color).toBe('rgb(255, 107, 107)');
+    expect(getComputedStyle(screen.getByTestId('contact-row-s:8')).color).toBe('rgb(255, 212, 121)');
+    expect(getComputedStyle(screen.getByTestId(`contact-row-p:${PLAYER_ID}`)).color).toBe('rgb(107, 255, 155)');
+  });
+
+  it('a header tap sorts by it; a second tap reverses; the previous column breaks ties', () => {
+    render(<ContactsPanel />);
+    expect(screen.getByTestId('contacts-list-sort-dist').getAttribute('data-sorted')).toBe('asc');
+    fireEvent.click(screen.getByTestId('contacts-list-sort-dist'));
+    expect(rowKeys()).toEqual([`p:${PLAYER_ID}`, 's:8', 's:7']);
+    fireEvent.click(screen.getByTestId('contacts-list-sort-stance'));
+    // Hostile, neutral, friendly (each stance ordered by the old primary).
+    expect(rowKeys()).toEqual(['s:7', 's:8', `p:${PLAYER_ID}`]);
+    expect(screen.getByTestId('contacts-list-sort-stance').getAttribute('data-sorted')).toBe('asc');
+    fireEvent.click(screen.getByTestId('contacts-list-sort-stance'));
+    expect(rowKeys()).toEqual([`p:${PLAYER_ID}`, 's:8', 's:7']);
+  });
+
+  it('the sort survives the 4 Hz refresh', () => {
+    vi.useFakeTimers();
     try {
       render(<ContactsPanel />);
-      const first = () => screen.getByTestId('contacts-panel').querySelector('[data-testid^="contact-row-"]')!.getAttribute('data-key');
-      expect(first()).toBe('s:7');
-      fireEvent.click(screen.getByTestId('contacts-sort-nearest'));
-      expect(first()).toBe('s:8');
+      fireEvent.click(screen.getByTestId('contacts-list-sort-dist'));
+      fakeMirror.localGroups[0]!.l = [{ t: 's:8', s: 1, p: 50 }];
+      act(() => { vi.advanceTimersByTime(300); });
+      expect(screen.getByTestId('contact-row-s:8').getAttribute('data-lock')).toBe('acquiring');
+      expect(rowKeys()).toEqual([`p:${PLAYER_ID}`, 's:8', 's:7']);
     } finally {
-      fakeMirror.swarm.set(7, { kind: 1, shipKind: 'fighter', x: 0, y: 400, isHostileToLocal: true });
+      vi.useRealTimers();
+    }
+  });
+
+  it('filters hide behind the toggle; type and stance filters narrow the table', () => {
+    render(<ContactsPanel />);
+    expect(screen.queryByTestId('contacts-filters')).toBeNull();
+    fireEvent.click(screen.getByTestId('contacts-filters-toggle'));
+    expect(screen.getByTestId('contacts-filters')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('contacts-filter-stance-friendly'));
+    expect(rowKeys()).toEqual([`p:${PLAYER_ID}`]);
+    expect(screen.getByTestId('contacts-panel').getAttribute('data-count')).toBe('1');
+    fireEvent.click(screen.getByTestId('contacts-filter-stance-all'));
+    fireEvent.click(screen.getByTestId('contacts-filter-type-structure'));
+    expect(rowKeys()).toEqual([]);
+    expect(screen.getByTestId('contacts-empty')).toHaveTextContent('No contacts match the filters');
+    // Hiding the filters keeps them applied (the toggle stays lit).
+    fireEvent.click(screen.getByTestId('contacts-filters-toggle'));
+    expect(screen.queryByTestId('contacts-filters')).toBeNull();
+    expect(rowKeys()).toEqual([]);
+  });
+
+  it('the faction filter lists the factions present', () => {
+    render(<ContactsPanel />);
+    fireEvent.click(screen.getByTestId('contacts-filters-toggle'));
+    fireEvent.mouseDown(within(screen.getByTestId('contacts-filter-faction')).getByRole('combobox'));
+    expect(screen.getAllByRole('option').map((o) => o.textContent)).toEqual(['All factions', 'Drones', 'Ripley']);
+    fireEvent.click(screen.getByRole('option', { name: 'Ripley' }));
+    expect(rowKeys()).toEqual([`p:${PLAYER_ID}`]);
+  });
+
+  it('pages: 8 rows a page, prev / next, page X of Y', () => {
+    for (let i = 0; i < 10; i++) fakeMirror.swarm.set(100 + i, { kind: 1, shipKind: 'fighter', x: 5000 + i * 10, y: 0 });
+    try {
+      render(<ContactsPanel />);
+      expect(screen.getByTestId('contacts-panel').getAttribute('data-count')).toBe('13');
+      expect(rowKeys()).toHaveLength(8);
+      expect(screen.getByTestId('contacts-list-page')).toHaveTextContent('Page 1 of 2');
+      fireEvent.click(screen.getByTestId('contacts-list-next'));
+      expect(rowKeys()).toHaveLength(5);
+      expect(screen.getByTestId('contacts-list-page')).toHaveTextContent('Page 2 of 2');
+      // A sort change goes back to page 1.
+      fireEvent.click(screen.getByTestId('contacts-list-sort-name'));
+      expect(screen.getByTestId('contacts-list-page')).toHaveTextContent('Page 1 of 2');
+    } finally {
+      for (let i = 0; i < 10; i++) fakeMirror.swarm.delete(100 + i);
+    }
+  });
+
+  it('no contacts: an empty line', () => {
+    const saved = new Map(fakeMirror.swarm);
+    const savedPilot = fakeMirror.ships.get(PLAYER_ID);
+    fakeMirror.swarm.clear();
+    fakeMirror.ships.delete(PLAYER_ID);
+    try {
+      render(<ContactsPanel />);
+      expect(screen.getByTestId('contacts-empty')).toHaveTextContent('Nothing to lock nearby');
+    } finally {
+      saved.forEach((v, k) => fakeMirror.swarm.set(k, v));
+      fakeMirror.ships.set(PLAYER_ID, savedPilot);
     }
   });
 
@@ -122,12 +211,12 @@ describe('ContactsPanel: the list', () => {
     expect(cancelLock).not.toHaveBeenCalled();
   });
 
-  it('a tap on a locked (or acquiring) row cancels that lock; it reads LOCKED', () => {
+  it('a tap on a locked (or acquiring) row cancels that lock; it reads LOCK', () => {
     fakeMirror.localGroups[0]!.l = [{ t: 's:7', s: 2, p: 100 }];
     render(<ContactsPanel />);
     const row = screen.getByTestId('contact-row-s:7');
     expect(row.getAttribute('data-lock')).toBe('locked');
-    expect(row.textContent).toContain('LOCKED');
+    expect(row.textContent).toContain('LOCK');
     fireEvent.click(row);
     expect(cancelLock).toHaveBeenCalledWith('guns', 's:7');
     expect(requestLock).not.toHaveBeenCalled();

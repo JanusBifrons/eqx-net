@@ -8,23 +8,38 @@ like you use when you warp to". The contacts overview is that list.
 
 ## What it shows
 
-A compact panel, one row per thing you can lock (the same set the lock line
+A compact table, one row per thing you can lock (the same set the lock line
 considers): NPC ships and capitals, other pilots' ships, and structures that
 aren't yours. Asteroids, scrap, your own structures and NPCs mid warp run are
-left out. Each row:
+left out. Columns (owner, 2026-11-22: a table with filters, sortable, paged,
+nearest first, type, faction and stance columns, rows coloured by stance):
 
-| Part | Meaning |
+| Column | Meaning |
 |---|---|
-| Icon | The shared visual language (`render/entityVisuals.ts`): red star hostile NPC, amber diamond neutral NPC, green triangle pilot, blue hexagon structure |
-| Name | Kind name, elite name, pilot display name, or "Turret · Owner" for a structure. Never an id |
-| ⚠ / ◎ (red) | It has you locked / is locking you (`localLockedBy`) |
-| ● / ○ / · | In FIRE reach of the active group (group colour) / of another group only / of none: the group's weapon reach, not a lock limit (locks reach the ship's longest gun, `shipLockRange`) |
-| Distance | `450 m`, `3.2 km`, `39 km` (1 km = 1,000 u) |
-| Lock | `LOCK` or the acquiring percent (capped at 99 until the lock completes, like the lock band) in the colour of the group holding it; yellow while a failsafe runs |
+| Name | Kind icon (the shared visual language, `render/entityVisuals.ts`: red star hostile NPC, amber diamond neutral NPC, green triangle pilot, blue hexagon structure), then the kind or elite name (a pilot's ship by its hull, a structure by its kind). Then ⚠ / ◎ in red when it has you locked / is locking you (`localLockedBy`), and `LOCK` or the acquiring percent (capped at 99, like the lock band) in the colour of the group holding the lock, yellow while a failsafe runs. Never an id |
+| Type | Ship or Structure |
+| Faction | Whose it is: an NPC patrol's faction, else its kind's allegiance (Drones, Robots, Traders, ...); a pilot's name for a pilot's ship; a structure's owner (NPC faction, player name, or "Unknown"). Never an id |
+| Stance | Hostile / Neutral / Friendly, from the same rule as the radar and far-zoom icons (`farIconRelation`, `render/relationToLocal.ts`): anything aggro on you, aiming at you or locking you is Hostile first; other pilots and their structures are Friendly; the rest (trade haulers too) Neutral |
+| Dist | ● / ○ / · (in FIRE reach of the active group in group colour / of another group only / of none: the weapon reach, not a lock limit, locks reach the ship's longest gun, `shipLockRange`), then `450 m`, `3.2 km`, `39 km` (1 km = 1,000 u) |
 
-Rows out of every group's fire reach are dimmed (still lockable). The list sorts hostiles first, then
-by distance; the switch under the header picks nearest first. It shows at most 40
-rows.
+- **Row colour** is the stance colour (hostile red, neutral amber, friendly
+  green: the radar's relationship colours, `ENTITY_VISUALS`). Rows out of
+  every group's fire reach are dimmed (still lockable); the active group's
+  own lock tints the row.
+- **Sorting:** tap any header to sort by it (▲ ascending, ▼ descending; a
+  second tap flips). The tapped column becomes the primary key and the one
+  before it the tie-break, so Dist then Stance lists hostiles, then neutrals,
+  then friendlies, each nearest first. Stance ascending is hostile first.
+  Default: distance ascending. Remaining ties fall back to distance, then the
+  lock key, so rows never swap between refreshes.
+- **Pages:** 8 rows a page; ‹ Prev / Next › and "Page X of Y" show when there
+  is more than one page. A sort or filter change goes back to page 1.
+- **Filters:** the funnel button next to the group line shows or hides them
+  (it stays lit while any filter is on): Type (All / Ship / Structure),
+  Stance (All / Hostile / Neutral / Friendly) and Faction (the factions in
+  the list). Hidden filters stay applied.
+- Sort, filters and page are the panel's own state: they survive the 4 Hz
+  refresh, and reset when the game reloads.
 
 ## Locking from it
 
@@ -60,11 +75,15 @@ panel and keeps the left side for the selection strip.
 ## How it works
 
 - Pure row building in `src/client/components/contactRows.ts`
-  (`buildContactRows`, `sortContacts`, `formatContactKm`, `contactTapAction`).
+  (`buildContactRows`, `contactStance`, `sortContacts` + `tapContactSort`,
+  `filterContacts` + `contactFactions`, `formatContactKm`, `contactTapAction`).
 - `src/client/panels/ContactsPanel.tsx` polls the render mirror at 4 Hz while
   open and re-renders only when what's shown changes. Closed, it polls nothing.
-  Rows are catalogue `EqxListRow` action rows (`onTap`, `dim`, `selected`,
-  `dataAttrs`); the sort is an `EqxSegmented`.
+  The table is the catalogue `EqxTable` (sortable headers, `onRowTap`,
+  `rowColor`, `rowDim`, `rowSelected`, `rowDataAttrs`, paging); filters are
+  `EqxSegmented` / `EqxDropdown` behind an `EqxIconButton`. Rows carry
+  `data-key`, `data-kind`, `data-type`, `data-faction`, `data-stance`,
+  `data-lock`, `data-lock-group`, `data-in-reach`, `data-locking-you`.
 - Group reach comes from `ColyseusClient.fcGroupReach(groupId)`: the same
   per-slot `weaponAutoFireRange` max as the server's `groupGeometry`.
 - The only store field is the one right-panel flag, `rightPanel === 'contacts'`
@@ -73,10 +92,13 @@ panel and keeps the left side for the selection strip.
 ## Tests
 
 - Unit: `contactRows.test.ts` (lockable set, names not ids, reach with the
-  slack, lock and locking-you state, sort, km format, tap action),
+  slack, lock and locking-you state, type / faction / stance, the multi-key
+  sort and header taps, filters, km format, tap action),
   `MouseLock.test.ts` (O).
 - Component: `panels/ContactsPanel.test.tsx` (rail pick and O open it, ✕ and
-  Esc close it, names not ids, sort switch, a tap sends `lock_request` for the
+  Esc close it, names not ids, stance colours, header sort and tie-break,
+  sort kept across the refresh, filters hide and narrow, faction options,
+  paging, a tap sends `lock_request` for the
   active group, a tap on a locked row cancels, 4 Hz refresh);
   `layout/RightPanelHost.test.tsx` (Contacts on the rail in every mode).
 - E2E: `tests/e2e/contacts-overview.spec.ts` (`fc-duel`, `instantLock`): desktop
@@ -85,7 +107,7 @@ panel and keeps the left side for the selection strip.
 
 ## Next
 
-- Filters (hostiles only, ships only) and a column for the lock time estimate.
+- A column for the lock time estimate.
 - A shot in the showcase reel alongside the real-scale ranges shot.
 
 ## Client rules in detail
