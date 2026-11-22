@@ -11,8 +11,9 @@
 import { describe, expect, it } from 'vitest';
 import { LineOfFireGate, type LineOfFireBody } from './LineOfFireGate.js';
 import { rayHitsSphere } from '../../core/combat/Weapons.js';
-import { SAB_TOTAL_BYTES, SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, slotBase } from '../../shared-types/sabLayout.js';
+import { SAB_TOTAL_BYTES, SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import { LINE_OF_FIRE_BUDGET } from '../../shared-types/perf/perfBudgets.js';
+import { getWeapon } from '../../core/combat/WeaponCatalogue.js';
 
 interface Body extends LineOfFireBody { side: number }
 
@@ -48,8 +49,8 @@ function scene(seed: number) {
   return { sab, recs, r };
 }
 
-const hit = (rec: Body, fx: number, fy: number, dx: number, dy: number, max: number, cx: number, cy: number) =>
-  rayHitsSphere(fx, fy, dx, dy, max, cx, cy, rec.radius);
+const hit = (rec: Body, fx: number, fy: number, dx: number, dy: number, max: number, cx: number, cy: number, _ca = 0, hw = 0) =>
+  rayHitsSphere(fx, fy, dx, dy, max, cx, cy, rec.radius + hw);
 
 describe('LineOfFireGate', () => {
   it('agrees with a full scan on every shot of the fleet fight', () => {
@@ -138,6 +139,43 @@ describe('LineOfFireGate', () => {
     expect(gate.blocked(0, 0, 0, 1, 800, 's', 't', side0, 800, -400, 0)).toBe(false);
     // A beam (no speed) is the static check.
     expect(gate.blocked(0, 0, 0, 1, 800, 's', 't', side0, 0)).toBe(false);
+  });
+
+  it('a squadmate sliding onto the lead line AHEAD of a bolt holds it; one sliding away does not', () => {
+    // Wingmen in a chase fly the shot's way: the bolt meets a friend ahead of
+    // it later than along / speed. Friend 94 u right of the line, 500 u out,
+    // flying with the shot at 800 u/s and drifting 150 u/s toward the line.
+    // The bolt (1600 u/s) closes at 800 u/s: it reaches the friend after
+    // 0.625 s, when the friend has drifted 94 u, onto the line.
+    const sab = new Float32Array(new ArrayBuffer(SAB_TOTAL_BYTES));
+    const b = slotBase(0);
+    sab[b + SLOT_X_OFF] = 94; sab[b + SLOT_Y_OFF] = 500;
+    sab[b + SLOT_VX_OFF] = -150; sab[b + SLOT_VY_OFF] = 800;
+    let tick = 0;
+    const recs: Body[] = [{ id: 'wingman', slot: 0, side: 0, radius: 20 }];
+    const gate = new LineOfFireGate<Body>({ registry: { all: () => recs, version: 1 }, sabF32: sab, tick: () => tick, rayHit: hit });
+    expect(gate.blocked(0, 0, 0, 1, 1200, 's', 't', side0), 'clear right now').toBe(false);
+    expect(gate.blocked(0, 0, 0, 1, 1200, 's', 't', side0, 1600), 'crossing the lead line in flight: hold').toBe(true);
+    // The same squadmate drifting AWAY from the line: a clear line, fire.
+    sab[b + SLOT_VX_OFF] = 150; tick++;
+    expect(gate.blocked(0, 0, 0, 1, 1200, 's', 't', side0, 1600), 'clear line: fire').toBe(false);
+    // Out of the bolt's reach when it would cross: fire (0.3 s flight).
+    sab[b + SLOT_VX_OFF] = -150; tick++;
+    expect(gate.blocked(0, 0, 0, 1, 480, 's', 't', side0, 1600), 'crosses after the bolt is spent').toBe(false);
+  });
+
+  it('the line is as wide as the bolt: a squadmate whose edge is 2 u off it holds fire', () => {
+    const sab = new Float32Array(new ArrayBuffer(SAB_TOTAL_BYTES));
+    const b = slotBase(0);
+    // Hull radius 20, centre 22 u right of the line: its edge is 2 u off.
+    sab[b + SLOT_X_OFF] = 22; sab[b + SLOT_Y_OFF] = 400;
+    const recs: Body[] = [{ id: 'wingman', slot: 0, side: 0, radius: 20 }];
+    const gate = new LineOfFireGate<Body>({ registry: { all: () => recs, version: 1 }, sabF32: sab, tick: () => 0, rayHit: hit });
+    const bolt = getWeapon('laser');
+    if (bolt.mode !== 'projectile') throw new Error('laser is a bolt');
+    expect(bolt.radius, 'the bolt is wider than the 2 u gap').toBeGreaterThan(2);
+    expect(gate.blocked(0, 0, 0, 1, 800, 's', 't', side0, bolt.speed), 'a thin ray slips past').toBe(false);
+    expect(gate.blocked(0, 0, 0, 1, 800, 's', 't', side0, bolt.speed, 0, 0, bolt.radius), 'the bolt grazes it: hold').toBe(true);
   });
 
   it(`fleet fight: work per tick stays within budget (${JSON.stringify(LINE_OF_FIRE_BUDGET)})`, () => {

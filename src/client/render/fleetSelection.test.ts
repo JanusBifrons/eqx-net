@@ -108,9 +108,14 @@ describe('focusSurvives (RTS Part A: one selection)', () => {
   it('no ships selected: any focus stays (inspecting a drone, a structure)', () => {
     expect(focusSurvives(new Set(), 'swarm-7')).toBe(true);
   });
-  it('ships selected: the focus stays only if it is one of them', () => {
+  it('ships selected: a focus that is one of them stays', () => {
     expect(focusSurvives(new Set(['a', 'b']), 'a')).toBe(true);
-    expect(focusSurvives(new Set(['a', 'b']), 'swarm-7')).toBe(false);
+  });
+  it('ships selected: a focus that is NOT mine stays (the ships stay too)', () => {
+    expect(focusSurvives(new Set(['a', 'b']), 'swarm-7')).toBe(true);
+  });
+  it('ships selected: another of MY ships (or structures) as focus clears', () => {
+    expect(focusSurvives(new Set(['a', 'b']), 'c', true)).toBe(false);
   });
   it('a null focus never survives', () => {
     expect(focusSurvives(new Set(['a']), null)).toBe(false);

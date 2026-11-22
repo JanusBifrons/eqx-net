@@ -14,6 +14,9 @@ import type { Client } from 'colyseus';
 import type { FleetCommandSubsystem, FleetModeData } from '../../fleet/FleetCommandSubsystem.js';
 import type { FleetStatusSoon } from '../../fleet/FleetStatusSoon.js';
 import type { TransitOrchestrator } from '../../transit/TransitOrchestrator.js';
+import type { StructureRegistry } from '../../structures/StructureRegistry.js';
+import type { SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
+import { relationOf, type RelationContext } from '../../../shared-types/relations.js';
 import type { ParsedMessageHost, RoomFeature } from './parsedMessage.js';
 import {
   DisbandSquadSchema,
@@ -31,11 +34,51 @@ export interface FleetMessageHost extends ParsedMessageHost {
   sessionToPlayer(): ReadonlyMap<string, string>;
   /** Count one fleet command for `sessionId`; false = over this tick's cap (drop it). */
   fleetMsgAllowed(sessionId: string): boolean;
-  fleet: Pick<FleetCommandSubsystem, 'applyOrder' | 'setMoveSpeed' | 'setMode' | 'setStance' | 'formSquad' | 'disbandSquad'>;
+  fleet: Pick<FleetCommandSubsystem, 'applyOrder' | 'ownerOfAttached' | 'setMoveSpeed' | 'setMode' | 'setStance' | 'formSquad' | 'disbandSquad'>;
   fleetTransit(): Pick<TransitOrchestrator, 'fleetCommandIssued'> | null;
   fleetStatusSoon: Pick<FleetStatusSoon, 'request'>;
   serverTick(): number;
   playerToActiveShipInstance: ReadonlyMap<string, string>;
+  swarmRegistry: Pick<SwarmEntityRegistry, 'getByEntityId'>;
+  structureRegistry: Pick<StructureRegistry, 'get'>;
+  relationCtx: RelationContext;
+}
+
+/** The entityId in a wire swarm id (`swarm-<entityId>`, what the client's
+ *  attack order names), or -1. Alloc-free digit parse. */
+export function wireSwarmEntityId(id: string): number {
+  if (!id.startsWith('swarm-') || id.length <= 6) return -1;
+  let n = 0;
+  for (let i = 6; i < id.length; i++) {
+    const c = id.charCodeAt(i) - 48;
+    if (c < 0 || c > 9) return -1;
+    n = n * 10 + c;
+  }
+  return n;
+}
+
+/**
+ * Is `targetId` something `pid`'s fleet must not be ordered to attack: its
+ * own (or a friendly / allied owner's) structure or ship? Owner by
+ * `relationOf` (the one hostility answer, #15): a structure's registry owner;
+ * an attached hull's fleet owner; else the id itself (a pilot's active ship is
+ * named by playerId). An unknown structure (no owner) is not refused here.
+ */
+export function isFriendlyFleetTarget(
+  pid: string, targetId: string,
+  h: Pick<FleetMessageHost, 'swarmRegistry' | 'structureRegistry' | 'relationCtx' | 'fleet'>,
+): boolean {
+  let owner: string | undefined;
+  const eid = wireSwarmEntityId(targetId);
+  if (eid >= 0) {
+    const rec = h.swarmRegistry.getByEntityId(eid);
+    owner = rec !== null ? h.structureRegistry.get(rec.id)?.owner : undefined;
+  } else {
+    owner = h.structureRegistry.get(targetId)?.owner ?? h.fleet.ownerOfAttached(targetId) ?? targetId;
+  }
+  if (owner === undefined) return false;
+  const rel = relationOf(pid, owner, h.relationCtx);
+  return rel === 'self' || rel === 'friendly' || rel === 'allied';
 }
 
 export function registerFleetMessages(h: FleetMessageHost): RoomFeature {
@@ -53,7 +96,12 @@ export function registerFleetMessages(h: FleetMessageHost): RoomFeature {
     if (d.kind === 'move') accepted = h.fleet.applyOrder(pid, d.shipIds, d.speed === undefined ? { kind: 'move', x: d.x!, y: d.y! } : { kind: 'move', x: d.x!, y: d.y!, speed: d.speed });
     // Command speed: re-pace the running Moves (0 = halt in place, keep the point).
     else if (d.kind === 'speed') accepted = h.fleet.setMoveSpeed(pid, d.shipIds, d.speed!);
-    else if (d.kind === 'attack') accepted = h.fleet.applyOrder(pid, d.shipIds, { kind: 'attack', targetId: d.targetId! });
+    // Never an attack on your own (or a friendly / allied) structure or ship:
+    // dropped, the ships keep their orders.
+    else if (d.kind === 'attack') {
+      if (isFriendlyFleetTarget(pid, d.targetId!, h)) return;
+      accepted = h.fleet.applyOrder(pid, d.shipIds, { kind: 'attack', targetId: d.targetId! });
+    }
     else accepted = h.fleet.applyOrder(pid, d.shipIds, FLEET_STOP_ORDER);
     // RTS fleet warp: a new order to a spooling ship takes it out of the warp.
     h.fleetTransit()?.fleetCommandIssued(pid, accepted, false);

@@ -25,6 +25,7 @@ import type { PickedEntityKind } from '../render/pickEntity';
 import { droneName, parkedHullLabels, parseEntityId, structureName, structureSliceFor, structureSubtype } from './entityStatsLookups';
 import { buildStalledLine, isBuildAwaitingClear } from '../structures/buildAwaitingClear';
 import { structureOwnerLabel } from './structureSettingsStatus';
+import { focusStance, type ContactStance } from './contactRows';
 
 /**
  * Number source by kind:
@@ -141,6 +142,8 @@ export interface PanelData {
   /** Cargo pods 16 — a selected pod: is my ship within the open reach?
    *  (the same `withinLootOpenReach` the server gates on). */
   podOpen?: boolean;
+  /** Its stance to you (`focusStance`, the contacts table's rule); absent for a rock / pod. */
+  stance?: ContactStance;
 }
 
 // Every PanelData field is a primitive, so a keyed shallow compare is an exact
@@ -152,7 +155,7 @@ const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'entityId', 'isOwn', 'isStructure', 'level', 'pilotShipId',
   'holdLine', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
   'recipe', 'prodState', 'prodStatus', 'makes', 'prodPct', 'gunLine', 'noAmmo', 'noFuel', 'breach',
-  'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter', 'isForeignTeleporter', 'alienGateLine', 'podOpen',
+  'isLab', 'hasCargo', 'cargoShip', 'packed', 'isTeleporter', 'isForeignTeleporter', 'alienGateLine', 'podOpen', 'stance',
 ];
 
 /** True when two polled PanelData reads carry identical values (Wave-3 3.3 —
@@ -354,6 +357,9 @@ export function useSelectionPanelData(): PanelData | null {
     const tick = (): void =>
       setData((prev) => {
         const next = readData(selectedId, selectedKind);
+        const mirror = getGameClient()?.mirror;
+        const stance = next !== null && mirror !== undefined && selectedKind !== null ? focusStance(mirror, selectedId, selectedKind) : null;
+        if (next !== null && stance !== null) next.stance = stance;
         return prev !== null && next !== null && panelDataEqual(prev, next) ? prev : next;
       });
     tick();
