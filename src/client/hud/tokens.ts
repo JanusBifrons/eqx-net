@@ -55,11 +55,11 @@ export const HUD = {
     /** Game dialog body text. */
     dialogInk: '#ccc',
     /** Side panel paper (right dock / bottom sheet). */
-    sidePanelBg: 'rgba(8,12,24,0.98)',
-    /** Side panel text. */
-    sidePanelInk: '#dffff0',
+    sidePanelBg: 'rgba(8,12,24,0.97)',
     /** Side panel edge. */
     sidePanelEdge: '#2a3550',
+    /** Dark text on a filled cyan / amber button (mock .btn.pri). */
+    onAccent: '#021018',
   },
   /** Minimum invisible touch target (Apple HIG / Material: 44–48 px). */
   touchMin: 44,
@@ -71,6 +71,29 @@ export const HUD = {
     railDesktop: 56,
     /** The one icon-button size for the rail and the left strip (>= touchMin). */
     iconButton: 44,
+  },
+  /** EqxPanel layout (mock .ph/.pb/.pf, 1cqw = 9.15 px on a 915 px phone), px. */
+  panel: {
+    /** Header min height (4.6cqw). */
+    headMinH: 42,
+    /** Header / body / footer padding: 1cqw x 1.3cqw. */
+    padY: 9,
+    padX: 12,
+    /** Body gap between rows (.9cqw). */
+    bodyGap: 8,
+    /** Header and footer gap (.8cqw). */
+    rowGap: 7,
+    /** Title size (1.5cqw). */
+    titleSize: 14,
+    /** The header ✕ / ← square (3cqw). */
+    headBtn: 27,
+    /** Control corner radius (.5cqw), also EqxButton. */
+    radius: 5,
+    /** Small button text (1.2cqw) and padding (.7cqw). */
+    btnFont: 11,
+    btnPad: 6,
+    /** Disabled control opacity (mock .btn.off). */
+    offOpacity: 0.35,
   },
   /** Motion (UI language plan B3). Honour prefers-reduced-motion at the call site. */
   motion: {

@@ -50,12 +50,15 @@ describe('the other two palettes read tokens and keep today\'s colours', () => {
     expect(d.GAME_DIALOG_CONTENT_SX.color).toBe('#ccc');
   });
 
+  // The mock `.panel` look (FIDELITY.md): ink text, one edge2 line on the left, flush.
   it('side panel paper', async () => {
     const s = await import('../client/components/SidePanel.js');
     const sx = s.rightPaperSx(s.SECTOR_PANEL_SIZE, false);
-    expect(sx['bgcolor']).toBe('rgba(8,12,24,0.98)');
-    expect(sx['color']).toBe('#dffff0');
-    expect(sx['border']).toBe('1px solid #2a3550');
+    expect(sx['bgcolor']).toBe('rgba(8,12,24,0.97)');
+    expect(sx['color']).toBe(HUD.color.ink);
+    expect(sx['border']).toBe('none');
+    expect(sx['borderLeft']).toBe(`1px solid ${HUD.color.edge2}`);
+    expect(sx['borderRadius']).toBe(0);
     expect(sx['bgcolor']).toBe(HUD.color.sidePanelBg);
   });
 });

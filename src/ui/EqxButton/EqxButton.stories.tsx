@@ -16,7 +16,7 @@ const meta: Meta<typeof EqxButton> = {
   ],
   args: { children: 'Launch', tone: 'secondary', size: 'small', disabled: false },
   argTypes: {
-    tone: { control: 'inline-radio', options: ['primary', 'secondary', 'danger'] },
+    tone: { control: 'inline-radio', options: ['primary', 'secondary', 'danger', 'manual'] },
     size: { control: 'inline-radio', options: ['small', 'medium', 'large'] },
   },
 };
@@ -25,6 +25,9 @@ type Story = StoryObj<typeof EqxButton>;
 
 export const Secondary: Story = {};
 export const Primary: Story = { args: { tone: 'primary', children: 'Apply' } };
+/** Amber fill: a changed, unapplied value (the panel's dirty Apply). */
+export const Manual: Story = { args: { tone: 'manual', children: 'Apply' } };
+export const PrimaryDisabled: Story = { args: { tone: 'primary', children: 'Apply', disabled: true } };
 export const Danger: Story = { args: { tone: 'danger', children: 'Scrap' } };
 export const Large: Story = { args: { size: 'large' } };
 export const Disabled: Story = { args: { disabled: true } };

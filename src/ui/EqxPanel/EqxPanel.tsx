@@ -54,7 +54,16 @@ export interface SidePanelSize {
    *  orientation), no notch, no header, no grab handle; `width` on desktop,
    *  `touchMinW` on touch. */
   centred?: boolean;
+  /** The mock's dock: the right edge, top 0 to bottom 0, on any screen (touch
+   *  and desktop); `touchTop` and `touchToolbarRow` are ignored. */
+  fullHeight?: boolean;
 }
+
+/** The catalogue panel (mock `.panel`): full height on the right edge, ~36% of
+ *  a sideways phone (915 px: ~330 px), 380 px on desktop. */
+export const EQX_PANEL_SIZE: SidePanelSize = {
+  width: 380, touchFrac: 0.36, touchMinW: 300, touchTop: null, fullHeight: true,
+};
 
 /** The see-through notch left for the top-right toolbar (TopRightToolbar.tsx:
  *  two 26 px chips 4 px apart, 16 px in from the right edge and 16 px down)
@@ -96,7 +105,7 @@ export function escapeClosesPanel(e: KeyboardEvent): boolean {
 
 const PAPER_COMMON = {
   bgcolor: HUD.color.sidePanelBg,
-  color: HUD.color.sidePanelInk,
+  color: HUD.color.ink,
   border: `1px solid ${HUD.color.sidePanelEdge}`,
   display: 'flex',
   flexDirection: 'column',
@@ -124,8 +133,17 @@ export function rightPaperSx(size: SidePanelSize, touch: boolean): Record<string
     // never overflows past the fold; `100%` resolves to the LARGE layout viewport
     // and clipped on a non-fullscreen mobile browser.
     height: 'calc(100dvh - var(--app-bar-h, 48px))',
-    borderRadius: '8px 0 0 8px',
+    // Mock `.panel`: flush to the edge, one edge2 line on the left, no card corners.
+    border: 'none',
+    borderLeft: `1px solid ${HUD.color.edge2}`,
+    borderRadius: 0,
   };
+  if (size.fullHeight === true) {
+    // Desktop: the same share of the width, capped at `width` (a 915 px window matches the phone).
+    const frac = `${size.touchFrac * 100}vw`;
+    const w = touch ? `clamp(${size.touchMinW}px, ${frac}, ${size.width}px)` : `min(${size.width}px, ${frac})`;
+    return { ...right, width: w, top: 0, bottom: 0, height: '100dvh' };
+  }
   if (!touch) return right;
   // Phone held sideways: a narrower panel; the sector panel starts below the
   // top-right toolbar (full-screen chip), so the hex keeps the height.
@@ -167,7 +185,10 @@ const PAPER_BOTTOM = {
   // when NOT in fullscreen; the body scrolls on overflow.
   height: `min(${SHEET_FRAC_PORTRAIT * 100}dvh, ${SHEET_MAX_H}px)`,
   maxHeight: 'calc(100dvh - 8px)',
-  borderRadius: '10px 10px 0 0',
+  // Flat like the right dock: one edge2 line on top, no card corners.
+  border: 'none',
+  borderTop: `1px solid ${HUD.color.edge2}`,
+  borderRadius: 0,
 } as const;
 
 const HANDLE_WRAP_SX = {
@@ -184,17 +205,42 @@ const HANDLE_WRAP_SX = {
 
 const PANEL_BG = PAPER_COMMON.bgcolor;
 const PANEL_EDGE = PAPER_COMMON.border;
-const HEAD_SX = { ...WINDOW_HEAD_SX, flexWrap: 'nowrap' } as const;
+const P = HUD.panel;
+/** Mock `.ph`: title row with a bottom edge; ← and ✕ are small outlined squares. */
+const HEAD_SX = {
+  flex: 'none', display: 'flex', alignItems: 'center', flexWrap: 'nowrap', gap: `${P.rowGap}px`,
+  px: `${P.padX}px`, py: `${P.padY}px`, minHeight: P.headMinH, boxSizing: 'border-box',
+  borderBottom: `1px solid ${HUD.color.panelEdge}`,
+} as const;
 const GRAB_TITLE_SX = {
-  ...WINDOW_TITLE_SX, flex: '1 1 auto', minWidth: 0, alignSelf: 'stretch', display: 'flex', alignItems: 'center',
+  fontFamily: HUD.font.label, fontWeight: 700, fontSize: P.titleSize, color: HUD.color.ink,
+  flex: '1 1 auto', minWidth: 0, alignSelf: 'stretch', display: 'flex', alignItems: 'center',
   touchAction: 'none', '@media (pointer: coarse)': { cursor: 'grab' },
 } as const;
-const GRAB_TITLE_NOTCH_SX = { ...GRAB_TITLE_SX, fontSize: 13 } as const;
+const HEAD_BTN_SX = {
+  flex: 'none', width: P.headBtn, height: P.headBtn, p: 0, display: 'grid', placeItems: 'center',
+  border: `1px solid ${HUD.color.edge2}`, borderRadius: `${P.radius}px`, background: 'transparent',
+  color: HUD.color.inkDim, fontFamily: HUD.font.label, fontSize: P.titleSize - 1, cursor: 'pointer',
+} as const;
+/** Mock `.pb`: the body takes the spare height and scrolls; rows keep their size. */
+const BODY_PADDED_SX = {
+  flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain',
+  display: 'flex', flexDirection: 'column', gap: `${P.bodyGap}px`, px: `${P.padX}px`, py: `${P.padY}px`,
+  '& > *': { flex: 'none' },
+} as const;
+/** `body="bare"`: the content lays out its own padding and scroll. */
+const BODY_BARE_SX = { flex: '1 1 auto', minHeight: 0, display: 'flex', flexDirection: 'column' } as const;
+/** The notch header keeps the window look until the notch goes (plan U5-3). */
+const NOTCH_HEAD_BASE_SX = { ...WINDOW_HEAD_SX, flexWrap: 'nowrap' } as const;
+const GRAB_TITLE_NOTCH_SX = {
+  ...WINDOW_TITLE_SX, flex: '1 1 auto', minWidth: 0, alignSelf: 'stretch', display: 'flex', alignItems: 'center',
+  touchAction: 'none', '@media (pointer: coarse)': { cursor: 'grab' }, fontSize: 13,
+} as const;
 const X_NOTCH_SX = { ...WINDOW_X_SX, width: 28, height: 28, fontSize: 14 } as const;
 const TOP_ROW_SX = { flex: 'none', display: 'flex', height: TOOLBAR_ROW_H } as const;
 /** The compact header beside the notch; the body's top edge draws the line under it. */
 const HEAD_NOTCH_SX = {
-  ...HEAD_SX, flex: '1 1 auto', minWidth: 0, minHeight: 0, height: TOOLBAR_ROW_H, py: 0, px: 1, gap: 1,
+  ...NOTCH_HEAD_BASE_SX, flex: '1 1 auto', minWidth: 0, minHeight: 0, height: TOOLBAR_ROW_H, py: 0, px: 1, gap: 1,
   bgcolor: PANEL_BG, border: PANEL_EDGE, borderBottom: 'none', borderRight: 'none', borderTopLeftRadius: '8px',
 } as const;
 /** See-through: the toolbar paints, and is tapped, through it. */
@@ -232,6 +278,9 @@ export interface SidePanelProps {
   onBack?: () => void;
   /** The footer: an Apply button, amber while `dirty` (changed, not applied). No footer without it. */
   apply?: EqxPanelApply;
+  /** With `title`: 'padded' (default) is the mock body (padding, row gap, scrolls);
+   *  'bare' when the content lays out its own (the Build sidebar). */
+  body?: 'padded' | 'bare';
   children: ReactNode;
 }
 
@@ -241,32 +290,38 @@ export interface EqxPanelApply {
   dirty: boolean;
   /** Default "Apply". */
   label?: string;
+  /** An outlined action left of Apply (the mock fleet panel's Stop). */
+  secondary?: { label: string; onClick: () => void; testId?: string };
 }
 
 /** The old name for the same props. */
 export type EqxPanelProps = SidePanelProps;
 
-const BACK_SX = { ...WINDOW_X_SX, mr: 1 } as const;
+/** Mock `.pf`: buttons share the row; a top edge. */
 const FOOTER_SX = {
-  flex: '0 0 auto', display: 'flex', justifyContent: 'flex-end', p: 1,
-  borderTop: `1px solid ${HUD.color.sidePanelEdge}`, bgcolor: HUD.color.sidePanelBg,
-} as const;
-const FOOTER_DIRTY_SX = {
-  ...FOOTER_SX, borderTop: `1px solid ${HUD.color.manual}`, boxShadow: `inset 0 1px 6px ${HUD.color.manualGlow}`,
-  color: HUD.color.manual,
+  flex: 'none', display: 'flex', gap: `${P.rowGap}px`, px: `${P.padX}px`, py: `${P.padY}px`,
+  borderTop: `1px solid ${HUD.color.panelEdge}`, bgcolor: HUD.color.sidePanelBg,
 } as const;
 
+/** Apply is the primary: cyan, dimmed and off until something changed; amber
+ *  fill while `dirty` so an unapplied change stands out. */
 function ApplyFooter({ apply }: { apply: EqxPanelApply }): JSX.Element {
   return (
-    <Box sx={apply.dirty ? FOOTER_DIRTY_SX : FOOTER_SX} data-testid="eqx-panel-footer" data-dirty={apply.dirty ? '1' : '0'}>
-      <EqxButton onClick={apply.onApply} tone={apply.dirty ? 'manual' : 'secondary'} data-testid="eqx-panel-apply">{apply.label ?? 'Apply'}</EqxButton>
+    <Box sx={FOOTER_SX} data-testid="eqx-panel-footer" data-dirty={apply.dirty ? '1' : '0'}>
+      {apply.secondary !== undefined && (
+        <EqxButton fullWidth onClick={apply.secondary.onClick} data-testid={apply.secondary.testId}>
+          {apply.secondary.label}
+        </EqxButton>
+      )}
+      <EqxButton fullWidth onClick={apply.onApply} tone={apply.dirty ? 'manual' : 'primary'} disabled={!apply.dirty}
+        data-testid="eqx-panel-apply">{apply.label ?? 'Apply'}</EqxButton>
     </Box>
   );
 }
 
 export function EqxPanel({
   open, onClose, testId, handleTestId, size = SECTOR_PANEL_SIZE, closeOnEscape = false, paperAttrs, children,
-  title, headerTestId, closeTestId, onBack, apply,
+  title, headerTestId, closeTestId, onBack, apply, body = 'padded',
 }: SidePanelProps): JSX.Element {
   const dock = useSidePanelDock();
   const centred = size.centred === true;
@@ -330,18 +385,19 @@ export function EqxPanel({
   // the ✕ sits outside it so the handle's pointer capture never takes its click.
   const header = (compact: boolean): JSX.Element => (
     <Box sx={compact ? HEAD_NOTCH_SX : HEAD_SX} data-testid={headerTestId} data-compact={compact ? '1' : '0'}>
-      {onBack !== undefined && <Box component="button" type="button" sx={compact ? X_NOTCH_SX : BACK_SX}
+      {onBack !== undefined && <Box component="button" type="button" sx={compact ? X_NOTCH_SX : HEAD_BTN_SX}
         onClick={onBack} aria-label="Back" data-testid="eqx-panel-back">←</Box>}
       <Box sx={compact ? GRAB_TITLE_NOTCH_SX : GRAB_TITLE_SX} onPointerDown={onHandleDown} onPointerMove={onHandleMove}
         onPointerUp={onHandleUp} onPointerCancel={onHandleCancel} data-testid={handleTestId} aria-label="Drag to close">
         {title}
       </Box>
-      <Box component="button" type="button" sx={compact ? X_NOTCH_SX : WINDOW_X_SX} onClick={onClose}
+      <Box component="button" type="button" sx={compact ? X_NOTCH_SX : HEAD_BTN_SX} onClick={onClose}
         aria-label="Close" data-testid={closeTestId}>✕</Box>
     </Box>
   );
 
   const footer = apply !== undefined ? <ApplyFooter apply={apply} /> : null;
+  const bodyBox = <Box sx={body === 'bare' ? BODY_BARE_SX : BODY_PADDED_SX} data-testid="eqx-panel-body">{children}</Box>;
 
   return (
     // Portal to <body> so the panel escapes the host chrome / GameSurface
@@ -368,12 +424,12 @@ export function EqxPanel({
             {header(true)}
             <Box sx={NOTCH_SX} aria-hidden data-testid="side-panel-notch" />
           </Box>
-          <Box sx={NOTCH_BODY_SX}>{children}{footer}</Box>
+          <Box sx={NOTCH_BODY_SX}>{bodyBox}{footer}</Box>
         </>
       ) : (
         <>
           {header(false)}
-          {children}
+          {bodyBox}
           {footer}
         </>
       ))}

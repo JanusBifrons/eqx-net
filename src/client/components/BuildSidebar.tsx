@@ -122,7 +122,7 @@ export function BuildSidebar({ open, onClose, onPick, strip = false, onExpand, o
   return (
     <SidePanel open={open} onClose={onClose} testId="build-sidebar" size={BUILD_PANEL_SIZE} closeOnEscape
       paperAttrs={{ 'data-open': open ? '1' : '0', 'data-mode': 'full' }} title="Build" headerTestId="build-sidebar-head"
-      closeTestId="build-sidebar-close">
+      closeTestId="build-sidebar-close" body="bare">
       {open && (
         <Box sx={WINDOW_ROOT_SX}>
           <Box sx={BODY_SX}>

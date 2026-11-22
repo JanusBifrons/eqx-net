@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
-import { EqxPanel } from './EqxPanel.js';
+import { EQX_PANEL_SIZE, EqxPanel, rightPaperSx } from './EqxPanel.js';
 import { SidePanel } from '../../client/components/SidePanel.js';
 import { HUD } from '../../client/hud/tokens.js';
 
@@ -57,27 +57,51 @@ describe('EqxPanel', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
-  it('the Apply footer appears only with apply', () => {
+  it('the Apply footer appears only with apply; Apply is off until something changed', () => {
     const { rerender } = render(<EqxPanel {...base} onClose={() => {}}>body</EqxPanel>);
     expect(screen.queryByTestId('eqx-panel-footer')).toBeNull();
     const onApply = vi.fn();
     rerender(<EqxPanel {...base} onClose={() => {}} apply={{ onApply, dirty: false }}>body</EqxPanel>);
+    const apply = screen.getByRole('button', { name: 'Apply' });
+    expect(apply).toHaveProperty('disabled', true);
+    expect(apply.dataset['tone']).toBe('primary');
+    rerender(<EqxPanel {...base} onClose={() => {}} apply={{ onApply, dirty: true }}>body</EqxPanel>);
     fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
     expect(onApply).toHaveBeenCalledTimes(1);
   });
 
-  it('dirty turns the footer amber (the manual token)', () => {
-    const { rerender } = render(
-      <EqxPanel {...base} onClose={() => {}} apply={{ onApply: () => {}, dirty: false }}>body</EqxPanel>);
-    const clean = screen.getByTestId('eqx-panel-footer');
-    expect(clean.getAttribute('data-dirty')).toBe('0');
-    expect(getComputedStyle(clean).borderTopColor).not.toBe(getComputedStyle(document.body).color);
-    rerender(<EqxPanel {...base} onClose={() => {}} apply={{ onApply: () => {}, dirty: true }}>body</EqxPanel>);
-    const dirty = screen.getByTestId('eqx-panel-footer');
-    expect(dirty.getAttribute('data-dirty')).toBe('1');
-    expect(screen.getByTestId('eqx-panel-apply').dataset['tone']).toBe('manual');
-    expect(getComputedStyle(dirty).color).toBe('rgb(255, 176, 46)');
+  it('dirty fills Apply amber (the manual token)', () => {
+    render(<EqxPanel {...base} onClose={() => {}} apply={{ onApply: () => {}, dirty: true }}>body</EqxPanel>);
+    expect(screen.getByTestId('eqx-panel-footer').getAttribute('data-dirty')).toBe('1');
+    const apply = screen.getByTestId('eqx-panel-apply');
+    expect(apply.dataset['tone']).toBe('manual');
+    expect(getComputedStyle(apply).backgroundColor).toBe('rgb(255, 176, 46)');
     expect(HUD.color.manual).toBe('#ffb02e');
+  });
+
+  it('a secondary footer action sits beside Apply', () => {
+    const onStop = vi.fn();
+    render(<EqxPanel {...base} onClose={() => {}}
+      apply={{ onApply: () => {}, dirty: false, secondary: { label: 'Stop', onClick: onStop } }}>body</EqxPanel>);
+    fireEvent.click(screen.getByRole('button', { name: 'Stop' }));
+    expect(onStop).toHaveBeenCalledTimes(1);
+  });
+
+  it('the body sits between header and footer and takes the spare height', () => {
+    render(<EqxPanel {...base} onClose={() => {}} apply={{ onApply: () => {}, dirty: false }}>body</EqxPanel>);
+    const bodyEl = screen.getByTestId('eqx-panel-body');
+    expect(bodyEl.previousElementSibling).toBe(screen.getByTestId('p-head'));
+    expect(bodyEl.nextElementSibling).toBe(screen.getByTestId('eqx-panel-footer'));
+    expect(getComputedStyle(bodyEl).flexGrow).toBe('1');
+    expect(getComputedStyle(bodyEl).overflowY).toBe('auto');
+  });
+
+  it('EQX_PANEL_SIZE docks flush, full height, on the right edge', () => {
+    for (const touch of [false, true]) {
+      expect(rightPaperSx(EQX_PANEL_SIZE, touch)).toMatchObject({ top: 0, bottom: 0, height: '100dvh', borderRadius: 0 });
+    }
+    expect(rightPaperSx(EQX_PANEL_SIZE, true)['width']).toBe('clamp(300px, 36vw, 380px)');
+    expect(rightPaperSx(EQX_PANEL_SIZE, false)['width']).toBe('min(380px, 36vw)');
   });
 
   it('docks right on landscape and as a bottom sheet on a portrait phone', () => {
