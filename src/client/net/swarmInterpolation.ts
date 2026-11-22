@@ -20,7 +20,7 @@ import { isImplausibleJump } from './plausibleSpeed.js';
 import { wrapAngle } from '../../core/ai/virtualPilot.js';
 import {
   ADAPTIVE_DELAY_CEILING_MS, DISPLAY_DELAY_MS, EXTRAPOLATION_LIMIT_MS, OFF_PILOT_MAX_TOTAL_DISPLAY_DELAY_MS, SERVER_TICK_MS,
-  nextSwarmInterArrivalEwmaMs, ringThinningSpacingMs, swarmDelayTargetWallMs, type SwarmDelayMode,
+  nextSwarmInterArrivalEwmaMs, ringThinningSpacingMs, swarmDelayTargetWallMs, swarmRingCoverMs, type SwarmDelayMode,
 } from './swarmDelaySizing.js';
 import { createDisplayDelayHoldState, holdDisplayDelay, resetDisplayDelayHold, slewDisplayDelay } from './displayDelayHold.js';
 import {
@@ -33,7 +33,7 @@ export {
   DISPLAY_DELAY_MS, EXTRAPOLATION_LIMIT_MS, ADAPTIVE_DELAY_CEILING_MS, MAX_TOTAL_DISPLAY_DELAY_MS,
   DISPLAY_DELAY_SLEW_TAU_MS, DISPLAY_DELAY_SLEW_MAX_RATE, DISPLAY_DELAY_SLEW_SNAP_MS,
   ADAPTIVE_DELAY_FACTOR, SWARM_INTER_ARRIVAL_SAMPLE_CAP_MS, SWARM_INTER_ARRIVAL_KEEP, nextSwarmInterArrivalEwmaMs,
-  isSwarmHoldDelayOverMax, boundSwarmHoldDelayMs, OFF_PILOT_DELAY_CEILING_MS, type SwarmDelayMode,
+  isSwarmHoldDelayOverMax, boundSwarmHoldDelayMs, swarmHoldBoundWallMs, OFF_PILOT_DELAY_CEILING_MS, type SwarmDelayMode,
 } from './swarmDelaySizing.js';
 
 /** Teleport guard (drone snapshot-interpolation pivot, 2026-05-18): routing
@@ -132,7 +132,7 @@ export function stepSwarmDisplayDelay(frameDtMs: number, nowMs: number = Number.
   slewDisplayDelay(_drone, frameDtMs, _displaySpeed, _mode.catchUp);
   settleCatchUp(_mode, _drone);
   holdDisplayDelay(_drone, nowMs, _streamNewestStampMs, glideLimitWallMs(), _displaySpeed, swarmHoldMaxWallMs(_mode, _displaySpeed));
-  _ringCoverMs = isOffPilotBoundsActive(_mode) ? Math.max(_drone.delayMs, _drone.targetMs) : 0;
+  _ringCoverMs = swarmRingCoverMs(isOffPilotBoundsActive(_mode), _drone.delayMs, _drone.targetMs, _displaySpeed);
   if (Number.isFinite(nowMs)) _lastFrameStepMs = nowMs;
   _tickClockDriftedThisFrame = false;
 }
@@ -200,7 +200,7 @@ export function nextSwarmBinaryEwmaMs(prevEwmaMs: number, dtMs: number, nowMs: n
 // glide limit" (the same frozen pose), and playback resumes from that held
 // point; the slew then brings the delay back to its target, playing at most
 // DISPLAY_DELAY_SLEW_MAX_RATE fast (no second catch-up mechanism). Bound:
-// MAX_TOTAL_DISPLAY_DELAY_MS / speed (S4-4); a stall that would pass it
+// `swarmHoldBoundWallMs(speed)` (S4-4); a stall that would pass it
 // re-syncs the delay to its target in one step, counted once per stall. The
 // slew and hold are `displayDelayHold.ts` over `_drone` (missiles run the same
 // functions over their own record, S5-5). A drone missing from recent packets

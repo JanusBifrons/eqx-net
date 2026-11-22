@@ -13,6 +13,8 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import {
   MAX_TOTAL_DISPLAY_DELAY_MS,
   ADAPTIVE_DELAY_CEILING_MS,
+  EXTRAPOLATION_LIMIT_MS,
+  swarmHoldBoundWallMs,
   boundSwarmHoldDelayMs,
   isSwarmHoldDelayOverMax,
   noteSwarmResync,
@@ -81,15 +83,26 @@ describe('boundSwarmHoldDelayMs + counted re-sync', () => {
     expect(getSwarmResyncCount()).toBe(1);
   });
 
-  it('scales with speed at 2x: the bound is 400 / 2 = 200 wall ms', () => {
-    const boundWall = MAX_TOTAL_DISPLAY_DELAY_MS / FAST_SPEED;
+  // Above 1x a network stall (wall time) of the 1x length must still hold:
+  // bound + glide stays 650 wall ms, so the bound is (400 + 250) − 250 / speed.
+  it('above 1x keeps the 1x stall length: at 2x the bound is (400 + 250) − 250 / 2 = 525 wall ms', () => {
+    const boundWall = swarmHoldBoundWallMs(FAST_SPEED);
+    expect(boundWall).toBe(MAX_TOTAL_DISPLAY_DELAY_MS + EXTRAPOLATION_LIMIT_MS - EXTRAPOLATION_LIMIT_MS / FAST_SPEED);
+    expect(boundWall + EXTRAPOLATION_LIMIT_MS / FAST_SPEED).toBe(MAX_TOTAL_DISPLAY_DELAY_MS + EXTRAPOLATION_LIMIT_MS);
     const target = TARGET_WALL_MS / FAST_SPEED;
+    // 300 wall ms: over the old 400 / 2 bound, under this one.
+    expect(holdDelay(300, target, FAST_SPEED)).toBe(300);
     expect(holdDelay(boundWall - EDGE_MS, target, FAST_SPEED)).toBe(boundWall - EDGE_MS);
     expect(holdDelay(boundWall, target, FAST_SPEED)).toBe(boundWall);
     expect(getSwarmResyncCount()).toBe(0);
-    // 300 wall ms is under the 1x bound but over the 2x one.
-    expect(holdDelay(300, target, FAST_SPEED)).toBe(target);
+    expect(holdDelay(boundWall + EDGE_MS, target, FAST_SPEED)).toBe(target);
     expect(getSwarmResyncCount()).toBe(1);
+  });
+
+  it('at or below 1x the bound is exactly 400 / speed', () => {
+    for (const speed of [0.5, SLOW_SPEED, 1]) expect(swarmHoldBoundWallMs(speed)).toBe(MAX_TOTAL_DISPLAY_DELAY_MS / speed);
+    // A garbage speed counts as 1.
+    expect(swarmHoldBoundWallMs(Number.NaN)).toBe(MAX_TOTAL_DISPLAY_DELAY_MS);
   });
 
   it('the re-sync counter resets with the other drone stream counters', () => {

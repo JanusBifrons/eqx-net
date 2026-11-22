@@ -11,7 +11,7 @@
  * (bounded rate), then `holdDisplayDelay` parks the read point (now − delay)
  * at "stream newest + glide limit" while the stream is stalled, so playback
  * resumes from the held place and the slew plays the catch-up. A stall that
- * would push the delay past MAX_TOTAL_DISPLAY_DELAY_MS / speed re-syncs to
+ * would push the delay past the hold bound (`swarmHoldBoundWallMs`) re-syncs to
  * the target in one step, counted once per stall.
  *
  * Pure functions over the record: no module state, no allocation.
@@ -91,7 +91,7 @@ export function slewDisplayDelay(s: DisplayDelayHoldState, frameDtMs: number, sp
 /** The stall hold for the frame read at `nowMs`: when the read point would
  *  pass `newestStampMs + glideLimitWallMs` (the stream's newest stamp plus
  *  the glide limit, all wall ms), grow the delay so it stays there; past
- *  MAX_TOTAL_DISPLAY_DELAY_MS / `speed`, re-sync to the target (counted once
+ *  the hold bound (`swarmHoldBoundWallMs`), re-sync to the target (counted once
  *  per stall). `maxWallMs` (S5-9, off pilot) replaces that maximum with a
  *  wall-ms bound; undefined keeps the S5-5 maximum exactly. A non-finite
  *  `nowMs` or `newestStampMs` (no stream yet) does nothing but clear

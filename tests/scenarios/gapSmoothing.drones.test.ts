@@ -549,8 +549,12 @@ const IDLE_RESUME_RECORDED: DroneFixtureResult = {
  *  131.55 u); 2x gap-600 still 2 snaps (largest 162.47 -> 250.35 u, total
  *  253.44 -> 252.95); 2x jitter-4g 3 snaps (26.83 u) -> 8 (18.2 u) with 9
  *  freezes and 1 re-sync, as the clock no longer drifts late and the 2x
- *  hold limit (200 wall ms) now binds. A change to any is a behaviour
- *  change. */
+ *  hold limit (200 wall ms) now binds. The hold bound above 1x
+ *  (`swarmHoldBoundWallMs`, 2x: 525 wall ms) and the ring thinning past the
+ *  ceiling: 2x gap-400 / gap-600 / burst 1-2 snaps + 1 re-sync -> 0 + 0 (max
+ *  delay 191.67 -> 275 / 475); 2x jitter-4g 8 snaps + 1 re-sync -> 0 + 0,
+ *  lateness 291.18 -> 311.22; 2x gap-swarm-only still 1 snap (nothing holds
+ *  while JSON flows). A change to any is a behaviour change. */
 const RECORDED_0_7X: Record<GapProfileName, DroneFixtureResult> = {
   'lan-clean': {
     straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 145.48, maxLatenessMs: 145.72 },
@@ -633,25 +637,25 @@ const RECORDED_2X: Record<GapProfileName, DroneFixtureResult> = {
     delayStepsOverBound: 0, resyncs: 0, holdFrames: 2,
   },
   'gap-400': {
-    straight: { snaps: 1, largestSnapU: 131.55, totalSnapU: 131.55, freezeFrames: 13, backwardSteps: 0, meanLatenessMs: 102.73, maxLatenessMs: 316.67 },
-    turning: { snaps: 1, largestSnapU: 132.53, totalSnapU: 132.53, freezeFrames: 13, backwardSteps: 0, meanLatenessMs: 102.8, maxLatenessMs: 317.51 },
-    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 10,
-    stampLatenessMeanMs: 24.7, stampLatenessMaxMs: 404.25, maxDelayMs: 191.67, minDelayMs: 50,
-    delayStepsOverBound: 0, resyncs: 1, holdFrames: 9,
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 13, backwardSteps: 0, meanLatenessMs: 176.43, maxLatenessMs: 316.67 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 13, backwardSteps: 0, meanLatenessMs: 176.6, maxLatenessMs: 317.51 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 25.12, stampLatenessMaxMs: 408.33, maxDelayMs: 275, minDelayMs: 50,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 14,
   },
   'gap-600': {
-    straight: { snaps: 2, largestSnapU: 250.35, totalSnapU: 252.95, freezeFrames: 25, backwardSteps: 0, meanLatenessMs: 124.87, maxLatenessMs: 516.67 },
-    turning: { snaps: 2, largestSnapU: 249.45, totalSnapU: 252.05, freezeFrames: 25, backwardSteps: 0, meanLatenessMs: 125, maxLatenessMs: 517.51 },
-    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 34,
-    stampLatenessMeanMs: 49.82, stampLatenessMaxMs: 602.25, maxDelayMs: 191.67, minDelayMs: 50,
-    delayStepsOverBound: 0, resyncs: 1, holdFrames: 9,
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 25, backwardSteps: 0, meanLatenessMs: 284.01, maxLatenessMs: 516.67 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 25, backwardSteps: 0, meanLatenessMs: 284.23, maxLatenessMs: 517.51 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 50.75, stampLatenessMaxMs: 608.33, maxDelayMs: 475, minDelayMs: 50,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 26,
   },
   'burst-600-both-streams': {
-    straight: { snaps: 2, largestSnapU: 250.35, totalSnapU: 252.95, freezeFrames: 25, backwardSteps: 0, meanLatenessMs: 124.87, maxLatenessMs: 516.67 },
-    turning: { snaps: 2, largestSnapU: 249.45, totalSnapU: 252.05, freezeFrames: 25, backwardSteps: 0, meanLatenessMs: 125, maxLatenessMs: 517.51 },
-    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 34,
-    stampLatenessMeanMs: 49.82, stampLatenessMaxMs: 602.25, maxDelayMs: 191.67, minDelayMs: 50,
-    delayStepsOverBound: 0, resyncs: 1, holdFrames: 9,
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 25, backwardSteps: 0, meanLatenessMs: 284.01, maxLatenessMs: 516.67 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 25, backwardSteps: 0, meanLatenessMs: 284.23, maxLatenessMs: 517.51 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 0,
+    stampLatenessMeanMs: 50.75, stampLatenessMaxMs: 608.33, maxDelayMs: 475, minDelayMs: 50,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 26,
   },
   'gap-json-only': {
     straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 93.61, maxLatenessMs: 111.18 },
@@ -675,11 +679,11 @@ const RECORDED_2X: Record<GapProfileName, DroneFixtureResult> = {
     delayStepsOverBound: 0, resyncs: 0, holdFrames: 0,
   },
   'jitter-4g': {
-    straight: { snaps: 8, largestSnapU: 18.2, totalSnapU: 108.2, freezeFrames: 9, backwardSteps: 0, meanLatenessMs: 291.18, maxLatenessMs: 373.2 },
-    turning: { snaps: 9, largestSnapU: 19.02, totalSnapU: 113.04, freezeFrames: 9, backwardSteps: 0, meanLatenessMs: 291.71, maxLatenessMs: 373.2 },
-    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 106,
-    stampLatenessMeanMs: 171.77, stampLatenessMaxMs: 337.57, maxDelayMs: 199.31, minDelayMs: 50,
-    delayStepsOverBound: 0, resyncs: 1, holdFrames: 26,
+    straight: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 311.22, maxLatenessMs: 384.86 },
+    turning: { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 311.47, maxLatenessMs: 384.86 },
+    overwriteUnread: 0, oldEndClamps: 0, glideLimitHolds: 26,
+    stampLatenessMeanMs: 160.29, stampLatenessMaxMs: 340.98, maxDelayMs: 207.65, minDelayMs: 50,
+    delayStepsOverBound: 0, resyncs: 0, holdFrames: 11,
   },
 };
 
@@ -857,7 +861,7 @@ describe('drone gap-smoothing targets at 0.7x and 2x game speed', () => {
   // runs short of a longer hold. Target: hold through, no re-sync, no snap,
   // no read pinned to the oldest pose.
   for (const name of ['gap-400', 'gap-600', 'burst-600-both-streams'] as const) {
-    it.fails(`2x ${name}: zero snaps, no re-sync, no pin-to-oldest`, () => {
+    it(`2x ${name}: zero snaps, no re-sync, no pin-to-oldest`, () => {
       const result = runDroneFixture(GAP_PROFILES[name], { timeScale: 2 });
       expect(result.straight.snaps + result.turning.snaps).toBe(0);
       expect(result.resyncs).toBe(0);
@@ -876,7 +880,7 @@ describe('drone gap-smoothing targets at 0.7x and 2x game speed', () => {
 
   // At 2x 4G jitter a late-drifted tick clock reset on an early packet (a
   // 40 ms jump): a 26.8 u snap.
-  it.fails('2x jitter-4g: zero snaps', () => {
+  it('2x jitter-4g: zero snaps', () => {
     const result = runDroneFixture(GAP_PROFILES['jitter-4g'], { timeScale: 2 });
     expect(result.straight.snaps + result.turning.snaps).toBe(0);
   });

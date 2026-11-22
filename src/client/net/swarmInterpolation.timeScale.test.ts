@@ -12,7 +12,7 @@ import {
   setSwarmDisplayDelayMs, setSwarmDisplaySpeed, getSwarmDisplayDelayMs, getSwarmDisplayDelayTargetMs,
   stepSwarmDisplayDelay, resetSwarmTickClock, interpolateSwarmPose, getSwarmGlideLimitCount,
   DISPLAY_DELAY_MS, ADAPTIVE_DELAY_CEILING_MS, DISPLAY_DELAY_SLEW_MAX_RATE, EXTRAPOLATION_LIMIT_MS,
-  MAX_TOTAL_DISPLAY_DELAY_MS, swarmArrivalStampMs, noteSwarmStreamStamp, getSwarmResyncCount, getSwarmHoldFrameCount,
+  swarmHoldBoundWallMs, swarmArrivalStampMs, noteSwarmStreamStamp, getSwarmResyncCount, getSwarmHoldFrameCount,
 } from './swarmInterpolation.js';
 import { POSE_RING_DEPTH } from '../../core/contracts/IRenderer.js';
 import { resolveMissileDisplayPose } from '../combat/MissileMirror.js';
@@ -200,10 +200,12 @@ describe('swarm glide travels in game time (S4-1b)', () => {
   });
 });
 
-// S4-5: the stream-stall hold is bounded in GAME ms like the floor, ceiling and
-// glide limit. At speed s the delay may grow to MAX_TOTAL_DISPLAY_DELAY_MS / s
-// wall ms; a stall ends in a re-sync only when holding would pass that, i.e.
-// when the stall outlasts (glide limit + bound) / s wall ms.
+// S4-5: the stream-stall hold bound. At or below 1x it is GAME ms like the
+// floor, ceiling and glide limit: the delay may grow to 400 / s wall ms, and a
+// stall re-syncs once it outlasts (glide limit + bound) / s = 650 / s wall ms.
+// Above 1x a network stall is still wall time, so the bound
+// (`swarmHoldBoundWallMs`, 650 − 250 / s) keeps that stall at 650 wall ms:
+// in general a stall re-syncs past 650 / min(s, 1) wall ms.
 describe('stream-stall hold bound follows the sector speed (S4-5)', () => {
   afterEach(() => { setSwarmDisplaySpeed(1); resetSwarmTickClock(); });
 
@@ -213,7 +215,7 @@ describe('stream-stall hold bound follows the sector speed (S4-5)', () => {
   const startMs = 10_000;
   const stallAtMs = 2000;
   const runMs = 5000;
-  /** Stall lengths (game ms) either side of glide limit + bound = 650. */
+  /** Stall lengths (1x ms; wall = this / min(speed, 1)) either side of glide limit + bound = 650. */
   const shortStallGameMs = 600;
   const longStallGameMs = 750;
 
@@ -241,15 +243,16 @@ describe('stream-stall hold bound follows the sector speed (S4-5)', () => {
   }
 
   for (const speed of [0.7, 2]) {
-    it(`at ${speed}×: holds up to ${MAX_TOTAL_DISPLAY_DELAY_MS} / ${speed} wall ms, re-syncs once past it`, () => {
-      const bound = MAX_TOTAL_DISPLAY_DELAY_MS / speed;
-      const shortMax = stallRun(speed, shortStallGameMs / speed);
+    it(`at ${speed}×: holds up to the hold bound (${swarmHoldBoundWallMs(speed).toFixed(1)} wall ms), re-syncs once past it`, () => {
+      const bound = swarmHoldBoundWallMs(speed);
+      const wallPerMs = 1 / Math.min(speed, 1);
+      const shortMax = stallRun(speed, shortStallGameMs * wallPerMs);
       expect(getSwarmResyncCount()).toBe(0);
       expect(getSwarmHoldFrameCount()).toBeGreaterThan(0);
       expect(shortMax).toBeLessThanOrEqual(bound);
       // It really held: the delay grew past the steady ceiling (280 / speed).
       expect(shortMax).toBeGreaterThan(ADAPTIVE_DELAY_CEILING_MS / speed);
-      const longMax = stallRun(speed, longStallGameMs / speed);
+      const longMax = stallRun(speed, longStallGameMs * wallPerMs);
       expect(getSwarmResyncCount()).toBe(1);
       expect(longMax).toBeLessThanOrEqual(bound);
     });

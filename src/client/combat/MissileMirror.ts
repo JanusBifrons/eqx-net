@@ -37,7 +37,6 @@ import { isImplausibleJump } from '../net/plausibleSpeed.js';
 // Read-only tick → stamp conversion on the drone display timeline (S5-2).
 import {
   ADAPTIVE_DELAY_CEILING_MS,
-  MAX_TOTAL_DISPLAY_DELAY_MS,
   getSwarmDisplayDelayMs,
   getSwarmDisplayDelayTargetMs,
   getSwarmDisplaySpeed,
@@ -46,6 +45,7 @@ import {
   getSwarmStreamNewestStampMs,
   isSwarmDelayCatchingUp,
   isSwarmDelayOffPilotActive,
+  swarmHoldBoundWallMs,
   swarmTickToStampMs,
 } from '../net/swarmInterpolation.js';
 // The display-delay slew + stall hold, shared with drones (S5-5, D10 = A).
@@ -139,7 +139,7 @@ export function resetMissileDisplayDelay(): void {
 
 /** Frames on which a JSON stream stall held the missile read point. */
 export function getMissileHoldFrameCount(): number { return _missileHold.holdFrameCount; }
-/** Missile stream re-syncs (a hold past MAX_TOTAL_DISPLAY_DELAY_MS). */
+/** Missile stream re-syncs (a hold past the hold bound, `swarmHoldBoundWallMs`). */
 export function getMissileResyncCount(): number { return _missileHold.resyncCount; }
 
 /** The delay (wall ms) missiles read at this frame: the published missile
@@ -436,8 +436,8 @@ export function resolveMissileDisplayPose(
     const rawDtMs = targetMs - oldest.arrivalMs;
     // Off pilot (S5-9) the read point can sit seconds before a new missile's
     // first sample: it has not launched yet on screen. Never in pilot (the
-    // delay is at most MAX_TOTAL_DISPLAY_DELAY_MS / speed there).
-    if (rawDtMs < -MAX_TOTAL_DISPLAY_DELAY_MS / speed) return null;
+    // delay is at most the hold bound, `swarmHoldBoundWallMs`, there).
+    if (rawDtMs < -swarmHoldBoundWallMs(speed)) return null;
     const dtMs = Math.max(-delayMs, Math.min(capWallMs, rawDtMs));
     const c = curveDeadReckon(oldest.x, oldest.y, oldest.vx, oldest.vy, oldest.angle, oldest.angvel, dtMs * speed / 1000);
     return { x: c.x, y: c.y, angle: c.angle, lifePct: m.lifePct };
