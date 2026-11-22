@@ -1,7 +1,7 @@
 import { Application, Container, RenderLayer } from 'pixi.js';
 import { Camera } from './worker/Camera';
 import { DEFAULT_GRAPHICS_QUALITY, renderResolution, type GraphicsQuality } from './graphicsQuality';
-import type { FleetOverlayModel, FleetPickKindWire, IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
+import type { FleetOverlayModel, FleetPickKindWire, FocusEntityKind, IRenderer, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import { GameClock } from '@core/clock/GameClock';
 import { GalaxyMapLayer } from './galaxy/GalaxyMapLayer';
 import { type FrameMarkers } from './worker/protocol';
@@ -456,8 +456,6 @@ export class PixiRenderer implements IRenderer {
   /** DEV/E2E: what the backdrop is showing. */
   backdropStats(): BackdropStats { return backdropStats(this._probes); }
 
-  /** See `IRenderer.setFleetOrderMode`. */
-  setFleetOrderMode(mode: 'move' | 'attack'): void { this._input.setFleetOrderMode(mode); }
   /** See `IRenderer.setFleetPick`. */
   setFleetPick(kind: FleetPickKindWire | null): void { this._input.setFleetPick(kind); }
   /** See `IRenderer.commitFleetPick`. */
@@ -520,6 +518,10 @@ export class PixiRenderer implements IRenderer {
 
   /** RTS fleet warp (S8) — see `RendererInputController.selectFleetShips`. */
   selectFleetShips(ids: readonly string[]): void { this._input.selectFleetShips(ids); }
+  /** Contacts row tap — see `RendererInputController.focusEntity`. */
+  focusEntity(id: string, kind: FocusEntityKind): void { this._input.focusEntity(id, kind); }
+  /** Tap rule T2 — see `RendererCommandRouting.attackFocus`. */
+  attackFocus(): void { this._input.attackFocus(); }
 
   /** Cinematic camera — see `RendererCameraDirector.setCameraScript`. */
   setCameraScript(cues: readonly CameraCue[] | null): void { this._cameraDirector.setCameraScript(cues); }

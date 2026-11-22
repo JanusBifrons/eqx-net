@@ -36,6 +36,9 @@ export function syncProjectiles(
   mirror: RenderMirror,
   projectiles: SnapshotMessage['projectiles'],
   seenScratch: Set<string>,
+  /** Bolts this client already ended on a drawn hull (`advanceBoltsToHulls`,
+   *  `GhostManager.stoppedBolts`): never drawn again; forgotten once gone. */
+  stopped?: Set<string>,
 ): void {
   if (!mirror.projectiles) return;
   const seen = seenScratch;
@@ -43,6 +46,7 @@ export function syncProjectiles(
   if (projectiles) {
     for (const p of projectiles) {
       seen.add(p.id);
+      if (stopped?.has(p.id) === true) continue;
       const prev = mirror.projectiles.get(p.id);
       // Shells as events: a shell drawn from its salvo keeps the closed-form
       // pose on the display clock; the per-tick copy would yank it forward.
@@ -71,4 +75,5 @@ export function syncProjectiles(
     if (entry.isGhost || entry.event === true) continue; // event shells: ShellSalvoStore.place owns them
     if (!seen.has(id)) mirror.projectiles.delete(id);
   }
+  if (stopped) for (const id of stopped) if (!seen.has(id)) stopped.delete(id);
 }

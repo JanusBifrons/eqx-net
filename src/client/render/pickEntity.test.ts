@@ -18,7 +18,8 @@ import type {
   ShipRenderState,
   SwarmRenderState,
 } from '@core/contracts/IRenderer';
-import { pickEntityAt } from './pickEntity.js';
+import { FINGER_SLOP_PX, fingerSlopWorld, pickEntityAt, TAP_SLOP } from './pickEntity.js';
+import { getStructureKind } from '@shared-types/structureKinds';
 
 function ship(x: number, y: number, kind = 'fighter'): ShipRenderState {
   return { x, y, angle: 0, vx: 0, vy: 0, kind };
@@ -140,5 +141,25 @@ describe('pickEntityAt', () => {
     });
     const hit = pickEntityAt(0, 0, m);
     expect(hit).toEqual({ id: 'swarm-2', kind: 'structure' });
+  });
+});
+
+describe('pickEntityAt — touch slop (fingerSlopWorld)', () => {
+  it('converts the finger slop to world units at the zoom, never below TAP_SLOP', () => {
+    expect(fingerSlopWorld(0.1)).toBeCloseTo(FINGER_SLOP_PX / 0.1);
+    expect(fingerSlopWorld(1)).toBe(TAP_SLOP);
+    expect(fingerSlopWorld(4)).toBe(TAP_SLOP);
+    expect(fingerSlopWorld(0)).toBe(TAP_SLOP);
+  });
+
+  it('zoomed out, a structure 100 units off is missed with TAP_SLOP and hit with the finger slop', () => {
+    const fp = getStructureKind('turret').footprint;
+    const mirror = {
+      localPlayerId: 'me', ships: new Map(),
+      swarm: new Map([[5, { kind: 2, shipKind: 'turret', radius: 20, x: 0, y: 0, angle: 0 }]]),
+    } as unknown as RenderMirror;
+    const x = fp.w / 2 + 100;
+    expect(pickEntityAt(x, 0, mirror)).toBeNull();
+    expect(pickEntityAt(x, 0, mirror, fingerSlopWorld(0.1))).toEqual({ id: 'swarm-5', kind: 'structure' });
   });
 });

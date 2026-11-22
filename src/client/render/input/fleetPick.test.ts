@@ -69,6 +69,11 @@ describe('decidePickTap', () => {
     expect(decidePickTap('escort', null, false, 0), 'empty space does nothing').toBe('ignore');
   });
 
+  it('move (tap rule T3) takes the tap point, whatever is under it', () => {
+    expect(decidePickTap('move', null, false, 0)).toBe('moveHere');
+    expect(decidePickTap('move', 'own', true, 0)).toBe('moveHere');
+  });
+
   it('nothing happens when no pick is on', () => {
     expect(decidePickTap(null, 'own', false, 0)).toBe('ignore');
   });

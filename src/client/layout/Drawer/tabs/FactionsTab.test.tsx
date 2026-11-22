@@ -45,14 +45,26 @@ describe('FactionsTab (v4 F3)', () => {
   it('changing the turret rule sends the player’s policy', async () => {
     render(<FactionsTab />);
     await waitFor(() => expect(screen.getAllByTestId('faction-row')).toHaveLength(3));
-    const select = screen.getByTestId('faction-policy-hostile');
-    fireEvent.change(select, { target: { value: '-25' } });
-    // MUI Select renders a hidden native input; drive it through the button.
-    if (sent.length === 0) {
-      fireEvent.mouseDown(within(select.parentElement!).getByRole('combobox'));
-      fireEvent.click(await screen.findByRole('option', { name: '-25' }));
-    }
+    // The policy is a catalogue EqxDropdown named by its sentence; pick through its button.
+    const field = screen.getByTestId('faction-policy-hostile');
+    const box = within(field).getByRole('combobox', { name: 'Your turrets fire on anyone you rate below' });
+    expect(box.textContent).toBe('Off');
+    fireEvent.mouseDown(box);
+    fireEvent.click(await screen.findByRole('option', { name: '-25' }));
     expect(sent).toEqual([{ hostileBelow: -25, alliedAbove: null }]);
+  });
+
+  it('the ally rule offers Off and the positive steps; Off sends null', async () => {
+    useUIStore.getState().setRightPanel('faction');
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ ...VIEW, policy: { hostileBelow: null, alliedAbove: 50 } }) })));
+    render(<FactionsTab />);
+    await waitFor(() => expect(screen.getAllByTestId('faction-row')).toHaveLength(3));
+    const box = within(screen.getByTestId('faction-policy-allied')).getByRole('combobox');
+    expect(box.textContent).toBe('+50');
+    fireEvent.mouseDown(box);
+    expect((await screen.findAllByRole('option')).map((o) => o.textContent)).toEqual(['Off', '+25', '+50', '+75']);
+    fireEvent.click(screen.getByRole('option', { name: 'Off' }));
+    expect(sent).toEqual([{ hostileBelow: null, alliedAbove: null }]);
   });
 
   it('does not poll while hidden', () => {
