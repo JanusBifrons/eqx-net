@@ -59,7 +59,7 @@ test('placing a turret near a shield wall warns that the wall will stop its fire
     await page.locator('[data-testid="speed-dial-fab"]').click();
     await page.locator('[data-testid="speed-dial-build"]').click();
     await page.locator('[data-testid="build-cat-defence"]').click();
-    await page.locator('[data-testid="build-turret"]').click();
+    await page.locator('[data-testid="build-turret"] button').click();
 
     const hint = page.locator('[data-testid="placement-fence-hint"]');
     await expect(hint).toHaveCount(1);

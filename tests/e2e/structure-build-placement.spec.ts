@@ -5,8 +5,8 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
 /**
  * Structures plan, Phase 2 — Build → place flow (CLIENT half) regression lock.
  *
- * The speed-dial "Build ▸" sub-menu lets the player pick a structure kind,
- * which raises the placement confirm banner; confirming sends `place_structure`
+ * The speed-dial "Build ▸" action opens the Build sidebar, where a kind tile
+ * raises the placement confirm banner; confirming sends `place_structure`
  * (a drop a fixed clearance ahead of the ship — the Phase 2 fallback coordinate
  * model). The new structure then rides the existing kind=2 swarm path and shows
  * up in the client's swarm mirror (`data-swarm-count`).
@@ -51,12 +51,12 @@ test('Build ▸ Capital → confirm places a structure that appears in the swarm
   try {
     const before = await swarmCount(page);
 
-    // Open the dial → enter the Build sub-menu → pick Capital.
+    // Open the dial → Build ▸ opens the sidebar → Core on its rail → the Capital tile.
     await page.locator('[data-testid="speed-dial-fab"]').click();
     await page.locator('[data-testid="speed-dial-build"]').click();
     await page.locator('[data-testid="build-cat-core"]').click();
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
-    await page.locator('[data-testid="build-capital"]').click();
+    await page.locator('[data-testid="build-capital"] button').click();
 
     // The placement confirm banner appears; confirm sends place_structure.
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
@@ -113,7 +113,7 @@ test('no ghost↔structure gap after Confirm — the blueprint never vanishes (p
     await page.locator('[data-testid="speed-dial-fab"]').click();
     await page.locator('[data-testid="speed-dial-build"]').click();
     await page.locator('[data-testid="build-cat-core"]').click();
-    await page.locator('[data-testid="build-capital"]').click();
+    await page.locator('[data-testid="build-capital"] button').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
 
     // The live positioning ghost is on the dataset before the sampler starts.
@@ -179,7 +179,7 @@ test('placement Cancel exits placement mode without placing', async ({ browser }
     await page.locator('[data-testid="speed-dial-fab"]').click();
     await page.locator('[data-testid="speed-dial-build"]').click();
     await page.locator('[data-testid="build-cat-economy"]').click();
-    await page.locator('[data-testid="build-solar"]').click();
+    await page.locator('[data-testid="build-solar"] button').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
 
     await page.locator('[data-testid="placement-cancel"]').click();

@@ -33,6 +33,7 @@
  */
 
 import { serverLogEvent } from '../debug/ServerEventLog.js';
+import type { TickHealthWindow } from './TickHealthWindow.js';
 
 export const TICK_HITCH_THRESHOLD_MS = 12;
 export const TICK_HITCH_MIN_INTERVAL_MS = 250;
@@ -72,6 +73,10 @@ export interface SimLateness {
 }
 
 export class TickBudgetTelemetry {
+  /** `health`: the degraded-rate pino summary (`TickHealthWindow`), fed
+   *  from `endTick`. Null in unit callers that only want the event buffer. */
+  constructor(private readonly health: TickHealthWindow | null = null) {}
+
   private readonly tickBudgetSums: Record<string, number> = {
     sabRead: 0,
     projectiles: 0,
@@ -146,6 +151,7 @@ export class TickBudgetTelemetry {
     this.tickBudgetSampleCount++;
     if (totalMs > this.tickBudgetMaxTotalMs) this.tickBudgetMaxTotalMs = totalMs;
     if (totalMs > 16.67) this.tickBudgetOverBudgetCount++;
+    this.health?.record(this.tickStart, totalMs, ctx.timeScale ?? 1);
 
     // Hot-capture single-tick hitches. Rate-limited so a sustained
     // pathology doesn't flood the server-event buffer.

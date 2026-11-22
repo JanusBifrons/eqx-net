@@ -48,9 +48,9 @@ describe('SpeedDialMenu open list fits the screen', () => {
 });
 
 /**
- * Command view: the open list never covers the bottom-centre stack (desktop
- * build palette, fleet panel / strip, status capsule). Desktop 1280×800: the
- * palette's right end sat under the open build list's lower entries.
+ * Command view: the open list never covers the bottom-centre stack (fleet
+ * panel / strip, status capsule). Desktop 1280×800: a wide stack's right end
+ * sat under the open list's lower entries.
  */
 describe('SpeedDialMenu open list stops above the bottom-centre panels', () => {
   const DESK_H = 800;
@@ -83,7 +83,7 @@ describe('SpeedDialMenu open list stops above the bottom-centre panels', () => {
     return screen.getByTestId('speed-dial').querySelector<HTMLElement>('.MuiSpeedDial-actions')!;
   }
 
-  it('a build palette reaching under the list caps the list above the palette', () => {
+  it('a bottom stack reaching under the list caps the list above the stack', () => {
     stackRect = { top: 680, bottom: 784, left: 40, right: 1240 };
     expect(openList().style.maxHeight).toBe(`${680 - DESK_LIST.top - FIT_EDGE_MARGIN_PX}px`);
   });

@@ -200,9 +200,9 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 
 ### Build menus show packed stock (economy v2)
 
-- Non-starter structures are placed from a PACKED item. Both build surfaces (the `SpeedDialMenu` kind drill and the desktop `BottomControlPanel`) label each kind via the pure `buildEntry(kindId, counts)` (`shared-types/packedStock.ts`): "Smelter ×2", or LOCKED ("Smelter · buy packed", dimmed, no-op on click/hotkey). Starter kinds are never locked; before the first reply (`counts === null`) nothing is.
+- Non-starter structures are placed from a PACKED item. The build surface (the Build sidebar, `BuildSidebar.tsx`; the desktop bottom hotbar was folded into it) labels each kind via the pure `buildEntry(kindId, counts)` (`shared-types/packedStock.ts`): "Smelter ×2", or LOCKED ("Smelter · buy packed", dimmed, no-op on click/hotkey). Starter kinds are never locked; before the first reply (`counts === null`) nothing is.
 - The counts come ONLY from `packed_stock` replies (#16) via `usePackedStock(active)`, asked while a build menu is open. The Zustand `packedStock` field is a discrete map, written only on a reply.
-- Locks: `packedStock.test.ts`, `BottomControlPanel.test.tsx`, `packedBuy.test.ts` (server counts).
+- Locks: `packedStock.test.ts`, `BuildSidebar.test.tsx`, `packedBuy.test.ts` (server counts).
 ## Server implementation notes
 
 > Moved from `src/server/CLAUDE.md`. The short rules stay there; this is the detail.

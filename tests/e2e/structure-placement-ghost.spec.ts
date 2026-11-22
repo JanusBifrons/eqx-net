@@ -94,7 +94,7 @@ test('(A) picking a kind draws + projects the world ghost (data-placement-screen
   const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false });
   try {
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
-    await page.locator('[data-testid="build-capital"]').click();
+    await page.locator('[data-testid="build-capital"] button').click();
 
     // The ghost is drawn in the world and its pose projected to screen — the
     // REAL artifact (read what's drawn/projected, not a recompute).
@@ -124,7 +124,7 @@ test('(B) TOUCH: tap-to-position parks the ghost, then confirm is clickable at a
     const before = await swarmCount(page);
 
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
-    await page.locator('[data-testid="build-capital"]').click();
+    await page.locator('[data-testid="build-capital"] button').click();
 
     // Tap-to-position (touch keeps the two-step flow): a touch tap on the world
     // canvas positions + PARKS the blueprint (it does NOT one-click place — only
@@ -161,7 +161,7 @@ test('(C) DESKTOP: the blueprint ghost FOLLOWS the pointer on hover (no button)'
   const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false });
   try {
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
-    await page.locator('[data-testid="build-capital"]').click();
+    await page.locator('[data-testid="build-capital"] button').click();
 
     const screenXAfterHoverAt = async (x: number): Promise<number> => {
       await page.mouse.move(x, 400);
@@ -198,7 +198,7 @@ async function clickPlaceAssertAtClick(browser: Browser, useWorker: boolean): Pr
   const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false, worker: useWorker });
   try {
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 6_000 });
-    await page.locator('[data-testid="build-capital"]').click();
+    await page.locator('[data-testid="build-capital"] button').click();
 
     // Hover well off-centre so the chosen point is clearly NOT the ahead-of-ship
     // default, then read the renderer's chosen world point BEFORE the click
@@ -284,7 +284,7 @@ test('(F) PRODUCTION channel: one-click place uses the chosen point with the E2E
   const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false, worker: false, extraQuery: '&noE2EDataset=1' });
   try {
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 6_000 });
-    await page.locator('[data-testid="build-capital"]').click();
+    await page.locator('[data-testid="build-capital"] button').click();
 
     // Hover off-centre (NOT the ahead-of-ship default) so placementChosen holds
     // a real pointer point, then one-click to place.
@@ -321,7 +321,7 @@ async function dragLeavesCanvasTracksGhost(browser: Browser, useWorker: boolean)
   const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false, worker: useWorker });
   try {
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 6_000 });
-    await page.locator('[data-testid="build-capital"]').click();
+    await page.locator('[data-testid="build-capital"] button').click();
 
     const worldX = async (): Promise<number> =>
       parseFloat((await surfaceAttr(page, 'data-placement-world-x')) ?? 'NaN');
@@ -378,7 +378,7 @@ async function cancelExitsPlacement(browser: Browser, how: 'right-click' | 'esca
   try {
     const before = await swarmCount(page);
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 6_000 });
-    await page.locator('[data-testid="build-capital"]').click();
+    await page.locator('[data-testid="build-capital"] button').click();
     // Placement active (desktop has NO banner — P3.6); read the signal instead.
     await waitPlacementActive(page);
 
@@ -423,7 +423,7 @@ test('(K) DESKTOP: placement shows NO mobile Confirm/Cancel banner (P3.6)', asyn
   const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false });
   try {
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 6_000 });
-    await page.locator('[data-testid="build-capital"]').click();
+    await page.locator('[data-testid="build-capital"] button').click();
 
     // Placement is active (the ghost is drawn + projected) ...
     await waitPlacementActive(page);
@@ -456,7 +456,7 @@ test('(L) TOUCH: picking a kind centres the ghost on select, ready to confirm (P
   const { ctx, page } = await joinAndOpenBuild(browser, { mobile: true });
   try {
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
-    await page.locator('[data-testid="build-capital"]').click();
+    await page.locator('[data-testid="build-capital"] button').click();
 
     // Parked at centre on select — NO tap. (Pre-fix: stuck stays '0' until a tap.)
     await page.waitForFunction(
@@ -494,7 +494,7 @@ test('(M) TOUCH: a long-press contextmenu does NOT cancel placement (P6.2)', asy
   const { ctx, page } = await joinAndOpenBuild(browser, { mobile: true });
   try {
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
-    await page.locator('[data-testid="build-capital"]').click();
+    await page.locator('[data-testid="build-capital"] button').click();
     await waitPlacementActive(page);
 
     // Simulate the Android long-press: a touch pointerdown (sets the handler's
