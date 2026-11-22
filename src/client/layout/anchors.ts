@@ -110,10 +110,12 @@ export const ANCHOR_STYLES: Record<AnchorName, CSSProperties> = {
     gap: STACK_GAP,
     pointerEvents: 'none',
   },
+  // Beside the left strip while it shows (`--left-strip-w`, layout/leftStripFit.ts),
+  // so the warp spool bar's Abort is never under the strip's ✕.
   'middle-left': {
     position: 'fixed',
     top: '50%',
-    left: SAFE_LEFT,
+    left: 'calc(env(safe-area-inset-left, 0px) + 16px + var(--left-strip-w, 0px))',
     transform: 'translateY(-50%)',
     zIndex: Z.hud,
     display: 'flex',
