@@ -86,6 +86,5 @@
   "src/client/layout/RotatePhoneOverlay.tsx",
   "src/client/layout/TopRightToolbar.tsx",
   "src/client/layout/useIsCompact.ts",
-  "src/client/main.tsx",
   "src/client/panels/BuildPanel.tsx"
 ]

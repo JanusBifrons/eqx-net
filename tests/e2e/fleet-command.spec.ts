@@ -103,7 +103,7 @@ test.describe('RTS fleet command loop @feature', () => {
     await waitForInPlay(page);
     await waitCommandView(page);
     await waitOwnHullCount(page, 2);
-    await expect(page.locator('[data-testid="pilot-spectator-toggle"]')).toHaveAttribute('data-control-mode', 'command');
+    await expect(page.locator('[data-testid="pilot-spectator-toggle"]')).toHaveAttribute('data-value', 'command');
 
     // ── Box-select both (left-drag around them). ──────────────────────────
     const hulls = await ownHulls(page);
@@ -206,7 +206,7 @@ test.describe('RTS fleet command loop @feature', () => {
       () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'pilot', undefined,
       { timeout: 10_000 },
     );
-    await expect(page.locator('[data-testid="pilot-spectator-toggle"]')).toHaveAttribute('data-control-mode', 'fly');
+    await expect(page.locator('[data-testid="pilot-spectator-toggle"]')).toHaveAttribute('data-value', 'fly');
     await a.ctx.close();
   });
 });
