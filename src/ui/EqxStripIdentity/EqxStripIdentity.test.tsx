@@ -68,6 +68,14 @@ describe('EqxStripIdentity', () => {
     expect(el().dataset['state']).toBe('hostile');
   });
 
+  it('ringColor overrides the health ring (a hostile focus rings in its stance colour)', () => {
+    render(<EqxStripIdentity icon={<EqxIcon name="ship" />} tooltip="f" health="ok" ringColor="#ff6b6b" data-testid="id" />);
+    const el = screen.getByTestId('id');
+    expect(getComputedStyle(el).borderTopColor).toBe(computedColor('#ff6b6b'));
+    expect(getComputedStyle(el).boxShadow).toContain('inset');
+    expect(el.dataset['health']).toBe('ok');
+  });
+
   it('count > 1 shows a badge; 1 or none shows none', () => {
     const { rerender, container } = render(<EqxStripIdentity icon={<EqxIcon name="fleet" />} tooltip="f" health="ok" />);
     const badge = () => container.querySelector('.MuiBadge-badge');
