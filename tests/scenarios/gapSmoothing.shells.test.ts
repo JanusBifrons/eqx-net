@@ -83,10 +83,14 @@ const SHELL_FLIGHT_TICKS = Math.ceil(RUN_MS / TICK_MS) + 60;
  *  37.56 -> 38.71 while both are drawn far sooner (drone mean lateness
  *  294.08 -> 155.44, shell ~332 -> 194.15; the fixed delay now gives 32.75):
  *  the gap is mostly the clock anchor's lag on the jittered JSON stream, and
- *  the shell delay now moves with a target that changes every snapshot. */
+ *  the shell delay now moves with a target that changes every snapshot.
+ *  One tick-clock drift per frame: jitter-4g 38.71 -> 40.27 with the shell
+ *  unchanged (194.15): the drone clock no longer drifts late on bursts, so
+ *  the drone is drawn 1.56 ms sooner (155.44 -> 153.88). A clock-basis
+ *  shift on the drone side, not a shell regression. */
 const RECORDED_SHELL_DRONE_GAP_MS: Partial<Record<GapProfileName, number>> = {
   'lan-clean': 14.67,
-  'jitter-4g': 38.71,
+  'jitter-4g': 40.27,
 };
 /** Rounding slack on the recorded gaps (ms). */
 const GAP_TOLERANCE_MS = 0.01;

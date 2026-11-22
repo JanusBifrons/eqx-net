@@ -118,16 +118,29 @@ export const SERVER_TICK_MS = 1000 / 60;
 // The S4-5 hold lets the delay grow during a stream stall (read point held at
 // the stream newest stamp + glide cap) and bounds it here.
 
-/** True when a requested hold delay (wall ms) passes
- *  MAX_TOTAL_DISPLAY_DELAY_MS / speed. A non-finite request counts as over
- *  (re-sync rather than read at a garbage delay). Pure. */
-export function isSwarmHoldDelayOverMax(requestedDelayWallMs: number, speed: number): boolean {
+/** The hold bound (wall ms) at game speed `speed`: MAX_TOTAL_DISPLAY_DELAY_MS
+ *  / speed at or below 1x. A network stall is wall time, and the longest one
+ *  a hold rides out is the bound plus the glide (EXTRAPOLATION_LIMIT_MS /
+ *  speed): 650 wall ms at 1x. Above 1x a plain 400 / speed bound shrank that
+ *  (2x: 200 + 125 = 325 ms, so a 400 ms stall re-synced and snapped), so
+ *  there the bound is (400 + 250) − 250 / speed and the stall a hold rides
+ *  out stays 650 wall ms (2x: 525 + 125). In general (400 + 250) / min(speed,
+ *  1) − 250 / speed. A non-positive or non-finite speed counts as 1. Pure. */
+export function swarmHoldBoundWallMs(speed: number): number {
   const s = Number.isFinite(speed) && speed > 0 ? speed : 1;
-  return !(requestedDelayWallMs <= MAX_TOTAL_DISPLAY_DELAY_MS / s);
+  // Written per branch so the bound at or below 1x is exactly 400 / speed (no rounding drift).
+  return s <= 1 ? MAX_TOTAL_DISPLAY_DELAY_MS / s : MAX_TOTAL_DISPLAY_DELAY_MS + EXTRAPOLATION_LIMIT_MS - EXTRAPOLATION_LIMIT_MS / s;
+}
+
+/** True when a requested hold delay (wall ms) passes the hold bound
+ *  (`swarmHoldBoundWallMs`). A non-finite request counts as over (re-sync
+ *  rather than read at a garbage delay). Pure. */
+export function isSwarmHoldDelayOverMax(requestedDelayWallMs: number, speed: number): boolean {
+  return !(requestedDelayWallMs <= swarmHoldBoundWallMs(speed));
 }
 
 /** The delay (wall ms) a hold may use: the request while it is at or under
- *  MAX_TOTAL_DISPLAY_DELAY_MS / speed, otherwise `targetWallMs` (the
+ *  the hold bound (`swarmHoldBoundWallMs`), otherwise `targetWallMs` (the
  *  re-sync: the delay resets to its target in one step). Pure; the caller
  *  checks `isSwarmHoldDelayOverMax` with the same inputs and calls
  *  `noteSwarmResync()` once for a re-sync. */
@@ -236,4 +249,15 @@ export function ringThinningSpacingMs(delayMs: number, depth: number): number {
   const slots = depth - RING_THINNING_HEADROOM_SLOTS;
   if (!(delayMs > 0) || slots <= 0) return 0;
   return (delayMs * RING_THINNING_COVER_FACTOR) / slots;
+}
+
+/** The delay (wall ms) the pose ring's writes are thinned to cover
+ *  (`ringThinningSpacingMs`): the larger of the delay and its target off
+ *  pilot (S5-9), and in pilot while a stall hold has grown the delay past the
+ *  adaptive ceiling (ADAPTIVE_DELAY_CEILING_MS / speed). The unthinned
+ *  ring covers the hold bound at or below 1x, but at 2x its 28 ticks span
+ *  only 233 wall ms against a 525 ms bound (`swarmHoldBoundWallMs`), so a
+ *  long hold read before its oldest pose. Otherwise 0 (no thinning). Pure. */
+export function swarmRingCoverMs(offPilot: boolean, delayWallMs: number, targetWallMs: number, speed: number): number {
+  return offPilot || delayWallMs > ADAPTIVE_DELAY_CEILING_MS / speed ? Math.max(delayWallMs, targetWallMs) : 0;
 }
