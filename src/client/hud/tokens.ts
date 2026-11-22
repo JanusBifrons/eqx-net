@@ -207,6 +207,23 @@ export const HUD = {
     /** Fill width ease, ms (the stats arrive at ~5 Hz). */
     fillMs: 1000,
   },
+  /** EqxSection heading (mock .sec) and EqxListRow (mock .lrow). Px and colours. */
+  list: {
+    /** Section heading font (1cqw), letter spacing (.12em) and top margin (.3cqw). */
+    secFont: 9,
+    secTracking: '0.12em',
+    secTop: 3,
+    /** Row padding (.55cqw x .7cqw), gap between parts (.8cqw), corner radius (.5cqw). */
+    rowPadY: 5,
+    rowPadX: 6,
+    rowGap: 7,
+    rowRadius: 5,
+    /** Row text (1.15cqw); the second line and the right-hand value (1cqw). */
+    rowFont: 11,
+    rowSmallFont: 9,
+    /** Hover / pressed wash on a row that opens a page (mock .lrow.on). */
+    rowHoverBg: 'rgba(52,216,255,0.1)',
+  },
 } as const;
 
 export function hullColor(pct: number): string {
