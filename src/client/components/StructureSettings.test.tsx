@@ -55,10 +55,10 @@ describe('StructureSettings (Details panel)', () => {
     expect(power).toHaveAttribute('data-load', 'full');
     expect(screen.getByTestId('settings-power-grid')).toHaveTextContent('+35');
     expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR -15');
-    // The status block above the pages: what left the card.
-    expect(screen.getByTestId('settings-status-owner')).toHaveTextContent('you');
-    expect(screen.getByTestId('settings-status-level')).toHaveTextContent('1');
-    expect(screen.queryByTestId('settings-status-conn')).toBeNull(); // not a connector
+    // The status block never repeats the card header's owner and level, and a
+    // turret (no connections, no hold) has no status block at all.
+    expect(screen.getByTestId('entity-stats-level')).toHaveTextContent('Lv 1');
+    expect(screen.queryByTestId('settings-status')).toBeNull();
   });
 
   it('lives in the Details panel: ⚙ opens it, its ✕ closes it, the HUD sees one right panel', () => {
