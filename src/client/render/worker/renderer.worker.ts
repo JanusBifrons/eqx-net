@@ -256,6 +256,12 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
+      case 'UNDO_FLEET_PICK_POINT': {
+        if (!renderer) return;
+        renderer.undoFleetPickPoint();
+        break;
+      }
+
       case 'SET_RADAR_PREFS': {
         if (!renderer) return;
         renderer.setRadarPrefs(msg.prefs);

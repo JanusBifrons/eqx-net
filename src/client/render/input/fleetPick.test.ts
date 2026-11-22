@@ -10,6 +10,7 @@ import {
   pickCanFinish,
   pickFinishPatrol,
   pickStart,
+  pickUndoPoint,
 } from './fleetPick.js';
 
 describe('fleetPick state', () => {
@@ -48,6 +49,21 @@ describe('fleetPick state', () => {
     expect(pickCanFinish(s)).toBe(false);
     pickStart(s, null);
     expect(s.kind).toBeNull();
+  });
+
+  it('undo drops the last patrol point only (UI plan U3-3)', () => {
+    const s = createFleetPickState();
+    pickStart(s, 'patrol');
+    expect(pickUndoPoint(s), 'nothing to drop').toBe(false);
+    pickAddPoint(s, 1, 2);
+    pickAddPoint(s, 3, 4);
+    pickAddPoint(s, 5, 6);
+    expect(pickUndoPoint(s)).toBe(true);
+    expect(s.count).toBe(2);
+    pickAddPoint(s, 7, 8);
+    expect(pickFinishPatrol(s)).toEqual({ kind: 'patrol', route: [[1, 2], [3, 4], [7, 8]] });
+    pickStart(s, 'retreat');
+    expect(pickUndoPoint(s), 'not a patrol').toBe(false);
   });
 });
 

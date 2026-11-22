@@ -460,6 +460,8 @@ export class PixiRenderer implements IRenderer {
   setFleetPick(kind: FleetPickKindWire | null): void { this._input.setFleetPick(kind); }
   /** See `IRenderer.commitFleetPick`. */
   commitFleetPick(): void { this._input.commitFleetPick(); }
+  /** See `IRenderer.undoFleetPickPoint`. */
+  undoFleetPickPoint(): void { this._input.undoFleetPickPoint(); }
   /** See `IRenderer.setFleetOverlayModel`. */
   setFleetOverlayModel(model: FleetOverlayModel): void { this._input.setFleetOverlayModel(model); }
 

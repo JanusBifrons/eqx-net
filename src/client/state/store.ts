@@ -298,12 +298,17 @@ export const useUIStore = create<UIStore>((set, get) => ({
       : { ids: ids.length === 0 ? EMPTY_IDS : [...ids], focusId, focusKind: focusId === null ? null : focusKind };
     set(ids.length === 0 ? { selection, fleetPick: null } : { selection });
   },
-  setFleetPick: (kind) => set({ fleetPick: kind === null ? null : { kind, points: 0, doneSeq: 0 } }),
+  setFleetPick: (kind) => set(kind === null
+    ? { fleetPick: null }
+    : { fleetPick: { kind, points: 0, doneSeq: 0, undoSeq: 0 }, rightPanel: null }),
   setFleetPickPoints: (points) => set((s) => (
     s.fleetPick === null || s.fleetPick.points === points ? {} : { fleetPick: { ...s.fleetPick, points } }
   )),
   requestFleetPickDone: () => set((s) => (
     s.fleetPick === null ? {} : { fleetPick: { ...s.fleetPick, doneSeq: s.fleetPick.doneSeq + 1 } }
+  )),
+  requestFleetPickUndo: () => set((s) => (
+    s.fleetPick === null ? {} : { fleetPick: { ...s.fleetPick, undoSeq: s.fleetPick.undoSeq + 1 } }
   )),
   setEnergyMax: (max) => set({ energyMax: max }),
   setHelmState: (available, active, speed) => set({ helmAvailable: available, helmActive: active, helmSpeed: speed }),

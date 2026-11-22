@@ -21,6 +21,9 @@ export interface IFleetView {
   /** RTS slice 14b: Done for a patrol pick (worker `COMMIT_FLEET_PICK`).
    *  Publishes the route via feedback when it has enough points. */
   commitFleetPick(): void;
+  /** UI plan U3-3: the left strip's undo for a patrol pick, drops the last
+   *  route point (worker `UNDO_FLEET_PICK_POINT`). A no-op with no points. */
+  undoFleetPickPoint(): void;
   /**
    * RTS fleet warp (S8) — make these own ships THE selection (the one the
    * renderer owns; the focus is cleared). Ids not present as own ships in the
