@@ -17,7 +17,6 @@ export const DRAWER_TAB_PANEL: Readonly<Record<string, RailId>> = {
   'trade-offers': 'trade',
   'trade-deals': 'trade',
   'trade-history': 'trade',
-  'trade-gift': 'trade',
   'trade-blueprints': 'trade',
   contracts: 'jobs',
   bounties: 'jobs',
@@ -63,6 +62,12 @@ type PanelState = Pick<RightPanelUi, 'rightPanel' | 'drawerTab'>;
 
 /** True while the (old) advanced drawer shows: a drawer group's panel is open. */
 export const selectDrawerOpen = (s: Pick<RightPanelUi, 'rightPanel'>): boolean => DRAWER_PANELS.has(s.rightPanel);
+
+/** True while any panel docks over the right edge: a rail panel (`rightPanel`)
+ *  or the building-settings panel. The HUD hides what sits under that glass
+ *  (weapon strip, right-thumb lock stick and BOOST). */
+export const selectRightPanelOpen = (s: Pick<RightPanelUi, 'rightPanel'> & { structureSettingsOpen: boolean }): boolean =>
+  s.rightPanel !== null || s.structureSettingsOpen;
 
 /** True while drawer tab `tab` is on screen (the snapshot-rate gate). */
 export const selectDrawerTabShown = (tab: string) => (s: PanelState): boolean =>

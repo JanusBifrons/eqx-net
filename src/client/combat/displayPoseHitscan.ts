@@ -133,20 +133,82 @@ export class DisplayPoseHitscan implements PredHitscanWorld {
     const swarm = this.swarm;
     if (swarm !== undefined) {
       for (const [entityId, e] of swarm) {
-        if (e.kind !== SWARM_KIND_DRONE && e.kind !== SWARM_KIND_SCRAP && e.kind !== SWARM_KIND_WRECK) continue;
         if (passWreck && e.kind === SWARM_KIND_WRECK) continue;
-        const key = this.keyCache.get(entityId);
-        if (key === undefined || key === excludeId) continue;
-        // Drones and scrap count when they have a collision body (as before).
-        // A wreck piece always does: pieces stream into the predWorld only
-        // near the local ship, but a far one still stops the server's shots
-        // ("wrecks block shots"), so the drawn beam ends on it too.
-        if (e.kind !== SWARM_KIND_WRECK && !this.movingKeys.has(key)) continue;
+        const key = this.drawnKey(entityId, e);
+        if (key === null || key === excludeId) continue;
         const d = rayHitsDrawnSwarmEntity(e, fromX, fromY, dirX, dirY, bestDist, this.wrecks, halfWidth);
         if (d !== null && (bestId === null || d < bestDist)) {
           bestDist = d;
           bestId = key;
         }
+      }
+    }
+    if (bestId === null) return null;
+    this.result.hitId = bestId;
+    this.result.dist = bestDist;
+    return this.result;
+  }
+
+  /** The body key of a swarm entity the ray tests at its DRAWN pose, or null.
+   *  Drones and scrap count when they have a collision body (as before). A
+   *  wreck piece always does: pieces stream into the predWorld only near the
+   *  local ship, but a far one still stops the server's shots ("wrecks block
+   *  shots"), so the drawn beam ends on it too. */
+  private drawnKey(entityId: number, e: SwarmRenderState): string | null {
+    if (e.kind !== SWARM_KIND_DRONE && e.kind !== SWARM_KIND_SCRAP && e.kind !== SWARM_KIND_WRECK) return null;
+    const key = this.keyCache.get(entityId);
+    if (key === undefined) return null;
+    if (e.kind !== SWARM_KIND_WRECK && !this.movingKeys.has(key)) return null;
+    return key;
+  }
+
+  // ── Bolts (capital fixes S14) ────────────────────────────────────────────
+  // Many bolts per frame each cast a short step, so the drawn swarm entities
+  // are gathered ONCE per frame (`beginBoltFrame`) and each `boltHit` tests
+  // only that short list (the predWorld ray has Rapier's own broadphase).
+  private readonly boltEntities: SwarmRenderState[] = [];
+  private readonly boltKeys: string[] = [];
+  private boltCount = 0;
+
+  /** Gather this frame's drawn drones / scrap / wreck pieces for `boltHit`. */
+  beginBoltFrame(): void {
+    let n = 0;
+    const swarm = this.swarm;
+    if (swarm !== undefined) {
+      for (const [entityId, e] of swarm) {
+        const key = this.drawnKey(entityId, e);
+        if (key === null) continue;
+        this.boltEntities[n] = e;
+        this.boltKeys[n] = key;
+        n++;
+      }
+    }
+    this.boltCount = n;
+  }
+
+  /** First thing a bolt's frame step (unit dir, `maxDist` long) meets, as
+   *  `hitscan` sees it (predWorld bodies + drawn swarm poses), against the
+   *  list `beginBoltFrame` gathered. Null: nothing, or no predWorld yet. */
+  boltHit(
+    fromX: number, fromY: number, dirX: number, dirY: number,
+    maxDist: number, excludeId: string,
+  ): { hitId: string; dist: number } | null {
+    const world = this.world;
+    if (world === null) return null;
+    const h = world.hitscan(fromX, fromY, dirX, dirY, maxDist, excludeId, this.skip);
+    let bestId: string | null = null;
+    let bestDist = maxDist;
+    if (h !== null) {
+      bestId = h.hitId;
+      bestDist = h.dist;
+    }
+    for (let i = 0; i < this.boltCount; i++) {
+      const key = this.boltKeys[i]!;
+      if (key === excludeId) continue;
+      const d = rayHitsDrawnSwarmEntity(this.boltEntities[i]!, fromX, fromY, dirX, dirY, bestDist, this.wrecks);
+      if (d !== null && (bestId === null || d < bestDist)) {
+        bestDist = d;
+        bestId = key;
       }
     }
     if (bestId === null) return null;

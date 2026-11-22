@@ -140,6 +140,32 @@ describe('tickWingmanTargets keeps held locks (capital S2)', () => {
     expect(t.keys()[0]).toEqual(['p:tB']);
   });
 
+  // wingmanFightsRobots 2026-11-22: pinning the AI pilot's OWN locks bypassed
+  // the pick's spread-targets claims; the squadron piled onto one cube from
+  // every side and shot across each other. Only the pilot's locks are kept.
+  it("the AI pilot's own lock follows its pick and is never fed back as a kept lock", () => {
+    const t = setup();
+    t.brain.target = 'tB';
+    t.pilots.tickWingmanTargets();
+    expect(t.keys()).toEqual([['p:tB'], ['p:tB']]);
+    t.pilots.tickWingmanTargets();
+    expect(t.brain.kept, 'its own lock does not pin the pick').toBeNull();
+    t.brain.target = 'tC';
+    t.pilots.tickWingmanTargets();
+    expect(t.keys()).toEqual([['p:tC'], ['p:tC']]);
+  });
+
+  it("a handed-over lock stays kept beside a group the AI pilot retargets", () => {
+    const t = setup();
+    t.handOver('p:tA', null);
+    t.brain.target = 'tB';
+    t.pilots.tickWingmanTargets();
+    t.brain.target = 'tC';
+    t.pilots.tickWingmanTargets();
+    expect(t.keys()).toEqual([['p:tA'], ['p:tC']]);
+    expect(t.brain.kept).toBe('tA');
+  });
+
   it('hold fire with no order still drops every lock', () => {
     const t = setup();
     t.handOver('p:tA', 'p:tB');

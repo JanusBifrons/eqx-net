@@ -8,6 +8,8 @@
  *    commanded picks the ship to escort; a tap anywhere else does nothing.
  *  - retreat: the next tap is the retreat point. The panel's "Back to post"
  *    sends retreat with no point (the server then retreats to the post).
+ *  - move (tap rule T3, the left strip's Move): the next tap is a move order
+ *    to that point, through the right-click order path (not a pick result).
  *
  * The points are spatial, so they live here in the renderer (worker-safe,
  * pure, no Pixi); only the kind and the point COUNT reach Zustand. The state
@@ -15,7 +17,7 @@
  */
 import { FLEET_ROUTE_MAX, FLEET_ROUTE_MIN } from '@shared-types/messages/fleetStatusMessages';
 
-export type FleetPickKind = 'patrol' | 'escort' | 'retreat';
+export type FleetPickKind = 'move' | 'patrol' | 'escort' | 'retreat';
 
 export const FLEET_PICK_ROUTE_MIN = FLEET_ROUTE_MIN;
 export const FLEET_PICK_ROUTE_MAX = FLEET_ROUTE_MAX;
@@ -69,7 +71,7 @@ export function pickFinishPatrol(s: FleetPickState): FleetPickResult | null {
 }
 
 /** What a map tap means while picking. */
-export type PickTapAction = 'addPoint' | 'retreatHere' | 'escortShip' | 'ignore';
+export type PickTapAction = 'addPoint' | 'retreatHere' | 'moveHere' | 'escortShip' | 'ignore';
 
 /**
  * Decide a tap while picking. `hitOwnId` is the own ship under the tap (or
@@ -86,6 +88,8 @@ export function decidePickTap(
       return count < FLEET_PICK_ROUTE_MAX ? 'addPoint' : 'ignore';
     case 'retreat':
       return 'retreatHere';
+    case 'move':
+      return 'moveHere';
     case 'escort':
       // A ship cannot escort itself: only an own ship outside the selection.
       return hitOwnId !== null && !hitSelected ? 'escortShip' : 'ignore';

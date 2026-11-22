@@ -238,12 +238,6 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
-      case 'SET_FLEET_ORDER_MODE': {
-        if (!renderer) return;
-        renderer.setFleetOrderMode(msg.mode);
-        break;
-      }
-
       case 'SET_FLEET_OVERLAY_MODEL': {
         if (!renderer) return;
         renderer.setFleetOverlayModel(msg.model);
@@ -292,9 +286,20 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
+      case 'ATTACK_FOCUS': {
+        renderer?.attackFocus();
+        break;
+      }
+
       case 'SELECT_FLEET_SHIPS': {
         if (!renderer) return;
         renderer.selectFleetShips(msg.ids);
+        break;
+      }
+
+      case 'FOCUS_ENTITY': {
+        if (!renderer) return;
+        renderer.focusEntity(msg.id, msg.kind);
         break;
       }
 

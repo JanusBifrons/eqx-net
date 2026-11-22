@@ -181,7 +181,7 @@ describe('renderer-worker protocol', () => {
       { name: 'SET_EFFECT_PARAMS shield', msg: { type: 'SET_EFFECT_PARAMS', effect: 'shield', params: { baseAlpha: 0.18, breatheAmplitude: 0.08 } } },
       { name: 'RESET_EFFECTS_HANDOFF', msg: { type: 'RESET_EFFECTS_HANDOFF' } },
       { name: 'SET_SPECTATOR on', msg: { type: 'SET_SPECTATOR', active: true } },
-      { name: 'SET_FLEET_ORDER_MODE attack', msg: { type: 'SET_FLEET_ORDER_MODE', mode: 'attack' } },
+      { name: 'SET_FLEET_PICK move', msg: { type: 'SET_FLEET_PICK', kind: 'move' } },
       { name: 'SET_FLEET_PICK patrol', msg: { type: 'SET_FLEET_PICK', kind: 'patrol' } },
       { name: 'SET_FLEET_PICK cancel', msg: { type: 'SET_FLEET_PICK', kind: null } },
       { name: 'COMMIT_FLEET_PICK', msg: { type: 'COMMIT_FLEET_PICK' } },
