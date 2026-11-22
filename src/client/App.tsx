@@ -84,7 +84,7 @@ import { LayoutProvider } from './layout/LayoutProvider';
 import { Slot } from './layout/Slot';
 import { RightPanelHost } from './layout/RightPanelHost';
 import { LeftStripHost } from './layout/LeftStripHost';
-import { handleStripEscape } from './input/railKeys';
+import { handleRailKeys } from './input/railKeys';
 import { TopRightToolbar } from './layout/TopRightToolbar';
 import { applyHudMode, applyHudOverlays, hudModeFromSearch, isHudMode } from './cinematic/hudMode';
 import type { CameraCue } from '@core/contracts/cameraScript';
@@ -681,7 +681,7 @@ function GameSurface({
         if (e.key === 'Escape') { useUIStore.getState().setFleetPick(null); e.preventDefault(); }
         else if (e.key === 'Enter' && canFinishFleetPick(pick)) useUIStore.getState().requestFleetPickDone();
       }
-      handleStripEscape(e, useUIStore.getState(), () => rendererRef.current?.selectFleetShips([])); // Esc order (railKeys.ts)
+      handleRailKeys(e, useUIStore.getState(), () => rendererRef.current?.selectFleetShips([])); // rail keys + Esc order (railKeys.ts)
       // Phase V — R rotates the placement ghost a quarter turn (structures are
       // rectangles; storage runs in rows); F mirrors it (base loop 4D).
       // Main-thread, both render paths.

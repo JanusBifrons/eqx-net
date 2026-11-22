@@ -1,6 +1,10 @@
 /**
  * Desktop keys for the right rail and the left strip (UI language plan A5, U1-9).
  *
+ * Alt + 1–8 open the rail items in order, top to bottom (owner 2026-11-22: Shift +
+ * number stays the weapon group auto/manual switch, MouseLock.ts). The same pick
+ * as tapping the item (`pickRailItem`).
+ *
  * Esc order: close the fly-out, then the panel, then clear the strip; one press
  * does one thing.
  *   - A status fly-out (EqxStatusFlyout) stops Esc itself at the window capture
@@ -13,8 +17,11 @@ import { selectControlMode } from '../state/store';
 import type { UIStore } from '../state/storeTypes';
 import { stripIdentity } from '../layout/LeftStripHost';
 import { buildMenuKeysOpen } from './buildMenuKeys';
+import { pickRailItem } from '../layout/RightPanelHost';
+import { railItemsFor } from '../layout/railItems';
 
-type EscState = Pick<UIStore, 'placementKind' | 'fleetPick' | 'rightPanel' | 'contactsOpen' | 'selection'>
+type EscState = Pick<UIStore, 'placementKind' | 'fleetPick' | 'rightPanel' | 'contactsOpen' | 'selection'
+  | 'drawerTab' | 'setRightPanel' | 'setDrawerTab' | 'setContactsOpen'>
   & Parameters<typeof selectControlMode>[0];
 
 /** Pure: does this Esc press clear the strip (deselect)? `buildOpen` is the
@@ -28,7 +35,24 @@ export function escClearsStrip(e: Pick<KeyboardEvent, 'key' | 'defaultPrevented'
   return stripIdentity(s.selection) !== null;
 }
 
-/** App.tsx keydown: Esc clears the strip through the renderer, which owns the selection. */
-export function handleStripEscape(e: KeyboardEvent, s: EscState, clear: () => void): void {
+/** Pure: the rail slot (0-based) an Alt + 1–8 press picks, else null. Uses the
+ *  key's `code` (Alt changes `key` on some layouts). */
+export function railKeyIndex(e: Pick<KeyboardEvent, 'code' | 'altKey' | 'shiftKey' | 'ctrlKey' | 'metaKey' | 'repeat' | 'target'>): number | null {
+  if (!e.altKey || e.shiftKey || e.ctrlKey || e.metaKey || e.repeat) return null;
+  const t = e.target as HTMLElement | null;
+  if (t !== null && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return null;
+  const m = /^Digit([1-8])$/.exec(e.code);
+  return m ? Number(m[1]) - 1 : null;
+}
+
+/** App.tsx keydown: Alt + 1–8 pick a rail item; Esc clears the strip through
+ *  the renderer, which owns the selection. */
+export function handleRailKeys(e: KeyboardEvent, s: EscState, clear: () => void): void {
+  const i = railKeyIndex(e);
+  if (i !== null) {
+    const item = railItemsFor(selectControlMode(s))[i];
+    if (item !== undefined) { pickRailItem(item.id, s); e.preventDefault(); }
+    return;
+  }
   if (escClearsStrip(e, s, buildMenuKeysOpen())) { clear(); e.preventDefault(); }
 }
