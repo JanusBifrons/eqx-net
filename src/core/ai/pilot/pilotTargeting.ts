@@ -52,7 +52,9 @@ export class PilotTargeting {
   /** A kept lock (`setKeptLockTarget`): the hull's live weapon lock its pilot
    *  or AI pilot already holds. While it is a hostile candidate and no attack
    *  order stands it wins the pick, so the ship fights what it is locked on
-   *  until that dies or leaves range. Null = none. Server-only. */
+   *  until that dies or the lock drops (lock range, not on-sight range: the
+   *  pick sees it at any distance and on every stance but Hold fire). Null =
+   *  none. Server-only. */
   keptLockId: string | null = null;
   /** The ledger tick the order wrote for its target (-1 = none): lifting the
    *  order forgets the mark unless the target hit this ship since. */

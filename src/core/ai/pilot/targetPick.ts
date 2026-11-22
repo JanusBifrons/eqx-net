@@ -133,9 +133,11 @@ export class TargetPick {
   /**
    * Build the merged candidate buffer in place (players, hostile structures,
    * hostile other-allegiance swarm ships); returns its length and sets
-   * `anyHostile`.
+   * `anyHostile`. The `kept` lock's target (capital S2b) is judged hostile
+   * free of the on-sight range and the stance (Defensive): the live lock is
+   * the order, so lock range decides its reach, not `engageR2`.
    */
-  build(self: AiEntity, view: AiWorldView, engageR2: number, onSight: boolean, ordered: string | null): number {
+  build(self: AiEntity, view: AiWorldView, engageR2: number, onSight: boolean, ordered: string | null, kept: string | null = null): number {
     const cand = this.cand;
     const ownerId = this.ownerId;
     const ownerFoe = view.hostileToPlayer;
@@ -163,10 +165,11 @@ export class TargetPick {
       let h = this.hostileTo.has(p.id) || (p.ownerId !== undefined && this.hostileTo.has(p.ownerId));
       if (h && this.ownerId !== null && (p.id === this.ownerId || p.ownerId === this.ownerId)) h = false;
       c.ledger = h;
-      if (!h && onSight && this.onSightPlayers && p.truce !== true) {
+      const k = p.id === kept;
+      if (!h && (onSight || k) && this.onSightPlayers && p.truce !== true) {
         const dx = p.x - self.x;
         const dy = p.y - self.y;
-        h = dx * dx + dy * dy <= engageR2;
+        h = k || dx * dx + dy * dy <= engageR2;
       }
       c.hostile = h;
       if (h) anyHostile = true;
@@ -185,7 +188,7 @@ export class TargetPick {
         if (!h && ownerId !== null && ownerFoe !== undefined) {
           const dx = s.x - self.x;
           const dy = s.y - self.y;
-          h = dx * dx + dy * dy <= engageR2 && ownerFoe(s.id, ownerId);
+          h = (s.id === kept || dx * dx + dy * dy <= engageR2) && ownerFoe(s.id, ownerId);
         }
         if (!h && s.ownerFoeOnly === true) continue;
         let c = cand[n];
@@ -223,13 +226,14 @@ export class TargetPick {
         const ledger = h;
         // On sight: the stance table, a players-side ship's foes of players,
         // and (owned ships) anything hostile to the OWNER (slice 6).
-        if (!h && onSight && isNpcAllegianceId(s.allegiance)
+        const k = s.id === kept;
+        if (!h && (onSight || k) && isNpcAllegianceId(s.allegiance)
           && (isOnSightHostile(this.allegiance, s.allegiance)
             || (this.foesOfPlayers && isOnSightHostile(s.allegiance, PLAYERS_SIDE))
             || (ownerId !== null && ownerFoe !== undefined && ownerFoe(s.id, ownerId)))) {
           const dx = s.x - self.x;
           const dy = s.y - self.y;
-          h = dx * dx + dy * dy <= engageR2;
+          h = k || dx * dx + dy * dy <= engageR2;
         }
         if (!h) continue;
         let c = cand[n];
