@@ -77,7 +77,6 @@ test.describe('galaxy-map overlay (Map B)', () => {
     // on something whose ancestor is still mid-mount silently no-ops.
     await page.locator('[data-testid="right-rail-galaxy"]').click();
     await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible({ timeout: 5_000 });
-    await page.locator('[data-testid="drawer-tab-galaxy"]').click();
     await expect(page.locator('[data-testid="drawer-panel-galaxy"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="galaxy-tab-show-map"]').click();
 

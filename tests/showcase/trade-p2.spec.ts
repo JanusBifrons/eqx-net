@@ -67,7 +67,6 @@ test('Living World P2: a trade deal, a raid, an escort', async ({ page }, testIn
 
   // 1) The Trade tab: standing with each side + the offers board.
   await page.getByTestId('right-rail-trade').click();
-  await page.getByTestId('drawer-tab-trade').click();
   await expect(page.getByTestId('trade-base-picker')).toBeVisible({ timeout: 15_000 });
   const offer = page.locator('[data-testid="trade-offer"][data-offer-kind="sell"][data-offer-good="salvage"]');
   await expect(offer).toBeVisible({ timeout: 10_000 });
@@ -108,7 +107,6 @@ test('Living World P2: a trade deal, a raid, an escort', async ({ page }, testIn
 
   // 6) History.
   await page.getByTestId('right-rail-trade').click();
-  await page.getByTestId('drawer-tab-trade').click();
   await page.getByTestId('trade-section-history').click();
   await expect(page.getByTestId('trade-history-row').first()).toBeVisible({ timeout: 10_000 });
   await page.waitForTimeout(2_000);

@@ -64,6 +64,14 @@ describe('RightPanelHost', () => {
     expect(document.documentElement.style.getPropertyValue('--rail-w')).toBe('0px');
   });
 
+  it('the Trade item carries the unread-offers badge (moved off the old drawer column)', () => {
+    useUIStore.setState({ tradeUnread: 3 });
+    mount();
+    expect(screen.getByTestId('right-rail-trade').parentElement?.querySelector('.MuiBadge-badge')?.textContent).toBe('3');
+    act(() => { useUIStore.setState({ tradeUnread: 0 }); });
+    expect(screen.getByTestId('right-rail-trade').parentElement?.querySelector('.MuiBadge-badge')?.className).toContain('MuiBadge-invisible');
+  });
+
   it('rail icon -> flag set -> the host shows that panel; ✕ clears it', () => {
     mount();
     fireEvent.click(screen.getByTestId('right-rail-fleet'));

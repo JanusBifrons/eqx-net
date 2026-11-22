@@ -11,7 +11,7 @@
  *   including today's advanced drawer (moved here from App.tsx) and the
  *   selection's Details panel (opened from the left strip's ⚙, not a rail item).
  */
-import { useEffect } from 'react';
+import { useEffect, useMemo } from 'react';
 import { EqxIcon, EqxRail, railWidthFor, useRailCompact, type EqxRailItem } from '../../ui/index.js';
 import { selectControlMode, useShouldRenderHud, useUIStore } from '../state/store';
 import { panelForDrawerTab } from '../state/rightPanel';
@@ -57,6 +57,9 @@ export function RightPanelHost(): JSX.Element {
   const mode = useUIStore(selectControlMode);
   const rightPanel = useUIStore((s) => s.rightPanel);
   const contactsOpen = useUIStore((s) => s.contactsOpen);
+  // The Trade item carries the unread-offers badge (it moved off the old drawer column).
+  const tradeUnread = useUIStore((s) => s.tradeUnread);
+  const items = useMemo(() => COMMON.map((it) => (it.id === 'trade' ? { ...it, badge: tradeUnread } : it)), [tradeUnread]);
   const compact = useRailCompact();
   useRailWidthVar(shown ? railWidthFor(compact) : 0);
   const tools = railTools(mode).map(toRail);
@@ -65,7 +68,7 @@ export function RightPanelHost(): JSX.Element {
     <>
       {shown && (
         <Slot anchor="right-rail">
-          <EqxRail tools={tools} items={COMMON} cog={COG} activeId={activeId} compact={compact}
+          <EqxRail tools={tools} items={items} cog={COG} activeId={activeId} compact={compact}
             onPick={(id) => pickRailItem(id, useUIStore.getState())} data-testid="right-rail" />
         </Slot>
       )}

@@ -58,7 +58,6 @@ test('Trade tab: post a deal and a trade hauler arrives', async ({ page }) => {
 
   // Open the drawer on the Trade tab.
   await page.getByTestId('right-rail-trade').click();
-  await page.getByTestId('drawer-tab-trade').click();
   await expect(page.getByTestId('trade-tab')).toBeVisible();
   await expect(page.getByTestId('trade-rep-traders')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByTestId('trade-base-picker')).toBeVisible({ timeout: 10_000 });
