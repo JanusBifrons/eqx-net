@@ -13,6 +13,7 @@ raw `@mui/*` and `@emotion/*` imports live only inside `src/ui/`.
 | `EqxIconButton` | The one icon button (rail, left strip, fly-outs). One fixed box (`HUD.size.iconButton`), icon centred, no label | `icon`, **required** `tooltip` (also the aria-label), `tone`, `active`, `badge`, `holdMs`, `disabled`, `onClick`, `data-testid` |
 | `EqxTooltip` | Tooltip: hover on desktop, press-and-hold on touch | `title`, `holdMs` |
 | `EqxSwitch` | On / off | `checked`, `onChange(checked)`, `label` (also the accessible name), `disabled`, `data-testid` |
+| `EqxStrip`, `EqxStripIdentity` | The left strip: one icon column, NO text except count badges; `EqxStrip.Separator` is a thin rule. Width = one button + theme gap; `open` slides it fully off to the left (HUD.motion, reduced-motion = instant); never positions itself. Identity = small ROUND icon, ring colour = health | Strip: `children` (icon buttons / identity / Separator only, else dev warning), `open`, `aria-label`, `data-testid`. Identity: `icon`, **required** `tooltip`, `health` (ok / warn / crit), `count` (badge when > 1), `onClick`, `holdMs`, `data-testid` |
 
 ## Extend, never hand-roll
 
