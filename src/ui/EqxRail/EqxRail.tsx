@@ -82,12 +82,23 @@ function capItems(
 
 const NO_TOOLS: readonly EqxRailItem[] = [];
 
+/** The rail width (CSS px) for a compact (phone) or desktop rail. */
+export function railWidthFor(compact: boolean): number {
+  return compact ? HUD.size.railPhone : HUD.size.railDesktop;
+}
+
+/** True when the rail is compact by default (a touch screen, `RAIL_COMPACT_QUERY`).
+ *  The host reads it to size `--rail-w` the same as the rail it draws. */
+export function useRailCompact(): boolean {
+  return useMediaQuery(RAIL_COMPACT_QUERY);
+}
+
 export function EqxRail({ items, tools = NO_TOOLS, activeId, onPick, cog, compact, 'data-testid': testId }: EqxRailProps) {
-  const coarse = useMediaQuery(RAIL_COMPACT_QUERY);
+  const coarse = useRailCompact();
   const isCompact = compact ?? coarse;
   const shown = capItems(tools, items);
   const pinned = resolveCog(cog);
-  const width = isCompact ? HUD.size.railPhone : HUD.size.railDesktop;
+  const width = railWidthFor(isCompact);
   const child = (id: string) => (testId ? `${testId}-${id}` : undefined);
   const tile = (it: EqxRailItem, tool: boolean) => (
     <EqxIconButton

@@ -44,7 +44,7 @@ describe('z tiers (plan B2)', () => {
   it('full order, lowest to highest', () => {
     const order = (Object.keys(Z) as (keyof typeof Z)[]).sort((a, b) => Z[a] - Z[b]);
     expect(order).toEqual([
-      'canvas', 'hud', 'mobileControls', 'hudOverSticks', 'railStrip', 'drawer', 'appBar',
+      'canvas', 'hud', 'mobileControls', 'hudOverSticks', 'panel', 'railStrip', 'drawer', 'appBar',
       'overlay', 'modal', 'prompt', 'transit', 'rotatePrompt',
     ]);
     expect(new Set(Object.values(Z)).size).toBe(Object.keys(Z).length);

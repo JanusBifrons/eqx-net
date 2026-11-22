@@ -83,7 +83,7 @@ import { PilotSpectatorToggle } from './components/PilotSpectatorToggle';
 import { GalaxyPickerChrome, type GalaxyPickerApi } from './components/GalaxyPickerChrome';
 import { LayoutProvider } from './layout/LayoutProvider';
 import { Slot } from './layout/Slot';
-import { AdvancedDrawer } from './layout/Drawer/AdvancedDrawer';
+import { RightPanelHost } from './layout/RightPanelHost';
 import { TopRightToolbar } from './layout/TopRightToolbar';
 import { applyHudMode, applyHudOverlays, hudModeFromSearch, isHudMode } from './cinematic/hudMode';
 import type { CameraCue } from '@core/contracts/cameraScript';
@@ -958,7 +958,7 @@ function GameSurface({
       {/* The top-centre column carries status + lock warnings, so on a wide screen the
           toggle sits under the sector chip instead of over the ship. */}
       <PilotToggleSlot />
-      <AdvancedDrawer />
+      <RightPanelHost />
       {/* Phase 4 WS-A1 (D3) — the blocking DeathOverlay "You Died/Respawn" modal
        *  is removed. Death transitions INSTANTLY into spectator (free-roam
        *  construction camera); re-entry is via the galaxy map or (WS-A2) an

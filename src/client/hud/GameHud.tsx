@@ -51,6 +51,7 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
   // Build mode hides the flight controls: the ghost and the build list own the screen.
   const building = useUIStore((s) => s.buildMode);
   const settingsOpen = useUIStore((s) => s.structureSettingsOpen);
+  const rightPanel = useUIStore((s) => s.rightPanel);
   const size = useHudSize();
   const scale = hudScale(size);
   const landscape = useIsLandscape();
@@ -75,8 +76,8 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
           <NetHealthCluster size={Math.round(9 * scale)} />
         </div>
       </Slot>
-      {/* The building settings side panel docks over the right edge: no strip under it. */}
-      {flying && !settingsOpen && <FcStripDock scale={scale} />}
+      {/* A right-side panel (building settings, or any rail panel) docks over the right edge: no strip under it. */}
+      {flying && !settingsOpen && rightPanel === null && <FcStripDock scale={scale} />}
       {/* Contacts overview (lock list): left edge, the strip's mirror. */}
       {flying && <ContactsOverview />}
       {/* pointer-events none: the open list's column lets taps through to the base
@@ -98,8 +99,8 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
           spectating, so the bottom edge is free). Always mounted: the death flip must
           not mount UI. */}
       <Slot anchor="bottom-center" order={2}>
-        <FleetPanel />
-        <FleetStrip />
+        {/* The rail's Fleet panel shows these while open (panels/FleetPanel.tsx). */}
+        {rightPanel !== 'fleet' && <><FleetPanel /><FleetStrip /></>}
       </Slot>
       {!touch && flying && (
         <Slot anchor="bottom-right" order={1}><DesktopFcHint scale={scale} /></Slot>

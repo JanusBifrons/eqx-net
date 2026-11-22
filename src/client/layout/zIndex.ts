@@ -6,7 +6,7 @@
  * z-index from this table once; widgets do not set their own.
  *
  * Tier ordering (lowest → highest):
- *   canvas  < hud < mobileControls < hudOverSticks < railStrip < drawer < appBar < overlay
+ *   canvas  < hud < mobileControls < hudOverSticks < panel < railStrip < drawer < appBar < overlay
  *   < modal < prompt < transit
  *   < rotatePrompt (above the galaxy map chrome at 2000, below the
  *   lost-connection and error overlays at 9999)
@@ -16,8 +16,13 @@
  * landscape (where the capsule overlaps the move-stick zone). Its hosts and
  * widgets are `pointerEvents: 'none'` except the controls that take input.
  *
+ * `panel`: the docked right panel (EqxPanel, plan A4), over the HUD and
+ * thumb-stick zones, UNDER the rail (mock: .panel z 4, .rail z 5), so its
+ * open and close slide passes beneath the rail.
+ *
  * `railStrip`: the right rail and the left strip (UI language plan B2), over
- * the HUD and thumb-stick zones, under the panel (`drawer`) they open.
+ * the HUD, the thumb-stick zones and the panel they open; under the old
+ * modal drawer (`drawer`).
  *
  * `prompt`: the top-centre answer-me prompt (plan B2), above Windows
  * (`modal`) so it is never hidden, below the drag ghost (`transit`).
@@ -30,6 +35,7 @@ export const Z = {
   hud: 10,
   mobileControls: 15,
   hudOverSticks: 16,
+  panel: 1050,
   railStrip: 1100,
   drawer: 1200,
   appBar: 1300,

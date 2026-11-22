@@ -11,6 +11,7 @@ import PaletteOutlinedIcon from '@mui/icons-material/PaletteOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import { useUIStore } from '../../state/store';
 import { selectDrawerOpen } from '../../state/rightPanel';
+import { RAIL_W_CSS } from '../railWidth';
 import { useFreshPressSurface } from '../../components/touchClickActivate';
 import { ProfileTab } from './tabs/ProfileTab';
 import { SettingsTab } from './tabs/SettingsTab';
@@ -82,6 +83,8 @@ const RAIL_WIDTH = 56;
 // --------------------------------------------------------------------------
 const DRAWER_SX = {
   '& .MuiDrawer-paper': {
+    // Docked left of the right rail (UI plan U1-5), which stays in view beside it.
+    right: RAIL_W_CSS,
     width: 'min(360px, 90vw)',
     bgcolor: '#0d1117',
     borderLeft: '1px solid rgba(0, 255, 136, 0.18)',

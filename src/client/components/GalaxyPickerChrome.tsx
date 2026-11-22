@@ -315,12 +315,11 @@ export function GalaxyPickerChrome({
         pointerEvents: 'none',
         // Equinox Phase 9 (item 2) — in the in-game WARP map the gameplay HUD
         // (bottom-right AUTO/FIRE/BOOST) is a body-level z=Z.mobileControls(15)
-        // host, so the SectorInfoDrawer's z (1200) is trapped inside this
-        // z-auto chrome root and can't beat it. Lift the whole (still
-        // pointer-none) chrome above the HUD here so the docked drawer's action
-        // bar is clickable; below the app bar + modals. Landing has no HUD, so
-        // no lift is needed there.
-        ...(isWarp ? { zIndex: Z.drawer } : {}),
+        // host. Lift the whole (still pointer-none) chrome above the HUD here so
+        // the docked sector panel's action bar is clickable; the panel tier
+        // (Z.panel, the same as EqxPanel's Paper, which paints later in the DOM)
+        // keeps it under the right rail. Landing has no HUD, so no lift there.
+        ...(isWarp ? { zIndex: Z.panel } : {}),
         display: 'flex',
         flexDirection: 'column',
       }}

@@ -26,6 +26,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { Box, Drawer, Portal, useMediaQuery } from '@mui/material';
 import { Z } from '../../client/layout/zIndex.js';
+import { RAIL_W_CSS } from '../../client/layout/railWidth.js';
 import { HUD } from '../../client/hud/tokens.js';
 import { WINDOW_HEAD_SX, WINDOW_TITLE_SX, WINDOW_X_SX } from '../../client/components/GameWindow.js';
 import { isTouchDevice } from '../../client/input/TouchInput.js';
@@ -116,9 +117,10 @@ const PAPER_COMMON = {
   // MUI's persistent (docked) Drawer sets NO z-index on its Paper, so the
   // bottom-right chrome buttons (landing: single-player/engineering z3-4; in-game:
   // the AUTO/FIRE/BOOST HUD at Z.mobileControls) would render OVER the panel's
-  // action bar and intercept clicks. Pin it to the drawer tier (above both, below
-  // the app bar — the panel already starts under the app bar).
-  zIndex: Z.drawer,
+  // action bar and intercept clicks. Pin it to the panel tier: above both, and
+  // UNDER the right rail (Z.railStrip), so its open / close slide passes beneath
+  // the rail (mock: .panel z 4, .rail z 5).
+  zIndex: Z.panel,
 } as const;
 
 /** The right dock's Paper sx (exported for the size locks). */
@@ -126,6 +128,8 @@ export function rightPaperSx(size: SidePanelSize, touch: boolean): Record<string
   if (size.centred === true) return centredPaperSx(size, touch);
   const right = {
     ...PAPER_COMMON,
+    // Docked LEFT of the right rail (`--rail-w`, 0px until the rail mounts).
+    right: RAIL_W_CSS,
     width: size.width,
     maxWidth: '92vw',
     top: 'var(--app-bar-h, 48px)',
@@ -165,6 +169,7 @@ export function rightPaperSx(size: SidePanelSize, touch: boolean): Record<string
 function centredPaperSx(size: SidePanelSize, touch: boolean): Record<string, unknown> {
   return {
     ...PAPER_COMMON,
+    right: RAIL_W_CSS,
     width: touch ? size.touchMinW : size.width,
     top: 0,
     bottom: 0,
@@ -402,7 +407,7 @@ export function EqxPanel({
 
   return (
     // Portal to <body> so the panel escapes the host chrome / GameSurface
-    // stacking traps: its Paper z (Z.drawer) then lives at the body level, ABOVE
+    // stacking traps: its Paper z (Z.panel) then lives at the body level, ABOVE
     // the gameplay HUD slot hosts (Z.mobileControls) whose action bar it overlaps
     // when docked. Without this, a z=1200 Paper nested in a z-auto chrome can't
     // beat a body-level z=15 sibling (CSS stacking-context isolation).

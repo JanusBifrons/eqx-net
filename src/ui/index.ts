@@ -24,4 +24,4 @@ export { EqxTextField, type EqxTextFieldProps } from './EqxTextField/EqxTextFiel
 export { EqxSlider, type EqxSliderProps, type EqxSliderMark } from './EqxSlider/EqxSlider.js';
 export { EqxSegmented, type EqxSegmentedProps, type EqxSegmentedOption } from './EqxSegmented/EqxSegmented.js';
 export { EqxPanel, EQX_PANEL_SIZE, type EqxPanelProps, type EqxPanelApply } from './EqxPanel/EqxPanel.js';
-export { EqxRail, RAIL_MAX_ITEMS, RAIL_COG_ID, type EqxRailProps, type EqxRailItem, type EqxRailCog } from './EqxRail/EqxRail.js';
+export { EqxRail, RAIL_MAX_ITEMS, RAIL_COG_ID, railWidthFor, useRailCompact, type EqxRailProps, type EqxRailItem, type EqxRailCog } from './EqxRail/EqxRail.js';

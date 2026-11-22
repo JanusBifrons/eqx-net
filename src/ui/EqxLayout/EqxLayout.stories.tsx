@@ -2,6 +2,7 @@ import type { Meta, StoryObj } from '@storybook/react';
 import { Box, GlobalStyles, ThemeProvider } from '@mui/material';
 import { useState } from 'react';
 import { HUD } from '../../client/hud/tokens.js';
+import { Z } from '../../client/layout/zIndex.js';
 import { eqxTheme } from '../theme.js';
 import { EqxIcon } from '../EqxIcon/EqxIcon.js';
 import { EqxIconButton } from '../EqxIconButton/EqxIconButton.js';
@@ -89,8 +90,8 @@ function Layout({ compact, panelOpen: initialOpen }: LayoutProps): JSX.Element {
   } as EqxPanelProps;
   return (
     <ThemeProvider theme={eqxTheme}>
-      {/* Story-only: dock the panel left of the rail (mock .panel right: 5.25cqw). */}
-      <GlobalStyles styles={{ [`[data-testid="${PANEL_TEST_ID}"] .MuiDrawer-paper`]: { right: railW } }} />
+      {/* As in the game (RightPanelHost): the rail sets --rail-w; EqxPanel docks left of it. */}
+      <GlobalStyles styles={{ ':root': { '--rail-w': `${railW}px` } }} />
       <Box sx={WORLD_SX} data-testid="layout">
         <Box sx={{ position: 'absolute', left: 0, top: '57%', transform: 'translateY(-50%)' }}>
           <EqxStrip aria-label="Selection" open={!panelOpen} data-testid="layout-strip">
@@ -109,10 +110,13 @@ function Layout({ compact, panelOpen: initialOpen }: LayoutProps): JSX.Element {
             <EqxIconButton variant="strip" icon={<EqxIcon name="close" />} tooltip="Deselect" />
           </EqxStrip>
         </Box>
-        <Box sx={{ position: 'absolute', top: 0, right: 0, bottom: 0, display: 'flex' }}>
-          <EqxRail tools={RAIL_TOOLS} items={RAIL_ITEMS} cog onPick={() => {}} compact={compact} data-testid="layout-rail" />
-        </Box>
         <FleetPanel {...panelArgs} />
+      </Box>
+      {/* The rail stacks ABOVE the panel (Z.railStrip over Z.panel, mock .rail z 5 over
+          .panel z 4), so the panel slides in and out beneath it. Outside the world box:
+          a fixed box is its own stacking context and would trap the rail under the panel. */}
+      <Box sx={{ position: 'fixed', top: 0, right: 0, bottom: 0, display: 'flex', zIndex: Z.railStrip }}>
+        <EqxRail tools={RAIL_TOOLS} items={RAIL_ITEMS} cog onPick={() => {}} compact={compact} data-testid="layout-rail" />
       </Box>
     </ThemeProvider>
   );
