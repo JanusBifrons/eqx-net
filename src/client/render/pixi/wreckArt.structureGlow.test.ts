@@ -109,6 +109,26 @@ describe('structure pieces: the cut glow is an edge clipped to the piece', () =>
   }
 });
 
+describe('structure pieces: the simple glow is sized by the structure, as a ship by its own', () => {
+  // A turret (r ~89) or connector (r 32) must get a ship-of-its-size line.
+  // Round-2 stills: a turret's pieces drew the 11 u cap, because the width
+  // was taken from the wreck's piece extent (5 wedges reach ~1.6 × r).
+  for (const k of ['turret', 'connector']) {
+    it(`${k}: each face's band ≤ half the share of its own radius`, () => {
+      for (const seed of [3, 17, 31]) {
+        const { desc, src } = structureDesc(k, seed);
+        const all = spritesOf(desc, src);
+        for (const { s } of all) s.update(1000 + 500, 0);
+        let reach = 0;
+        for (const { p, x, y } of glowVerts(all)) reach = Math.max(reach, outlineDist(p, x, y, true));
+        expect(reach, `${k} s${seed}`).toBeLessThanOrEqual(Math.max(4.5, 0.1 * src.radius) / 2 + 1e-3);
+        expect(reach, `${k} s${seed}: still a visible line`).toBeGreaterThan(1);
+        for (const { s } of all) s.destroy({ children: true });
+      }
+    });
+  }
+});
+
 describe('ship pieces: the simple glow is byte-identical', () => {
   /** Sum of |position| × (index + 1) over every glow vertex: a cheap,
    *  order-sensitive fingerprint of the geometry (recorded before the

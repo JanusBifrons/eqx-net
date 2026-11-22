@@ -1240,8 +1240,11 @@ export class WreckPieceSprite extends Container {
     // The simple glow's band is a share of the hull (a small hull's core
     // alone is a hairline at fleet-fight zoom: round-2 review, "a thin orange
     // line on one edge"); `insideWidth` keeps it inside the piece.
-    // A structure's is capped at the widest ship's (`simpleGlowWidth`).
-    this.simpleW = simpleGlowWidth(info.hullR, wreckSourceKindOf(this.parentKind));
+    // A structure's is capped at the widest ship's (`simpleGlowWidth`), and
+    // sized by its own radius (`shipRadius`: its source's), as a ship kind of
+    // that radius: its wedges' extent (`hullR`, ~1.6 × r) drew a turret the cap.
+    const src = wreckSourceKindOf(this.parentKind);
+    this.simpleW = simpleGlowWidth(src === 'structure' ? this.shipRadius : info.hullR, src);
     const reach = this.simple ? Math.max(this.halfHalo, this.simpleW) : this.halfHalo;
     let k = 0;
     // On the piece AS DRAWN (`wreckGlowStrip`): a capital's outline spans
