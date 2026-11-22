@@ -72,7 +72,6 @@
   "src/client/hud/BuildStatus.tsx",
   "src/client/hud/NetHealthCluster.tsx",
   "src/client/layout/Drawer/AdvancedDrawer.tsx",
-  "src/client/layout/Drawer/tabs/BlueprintMarketSection.tsx",
   "src/client/layout/Drawer/tabs/ContractsTab.tsx",
   "src/client/layout/Drawer/tabs/DebugTab.tsx",
   "src/client/layout/Drawer/tabs/FactionLookPicker.tsx",
