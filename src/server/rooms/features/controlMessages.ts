@@ -6,7 +6,6 @@
  */
 import type { Client } from 'colyseus';
 import type pino from 'pino';
-import { isWarpDropPoint } from '../../../core/galaxy/sectorSites.js';
 import type { ShipState } from '../schema/SectorState.js';
 import { makeInputHandler } from '../InputHandler.js';
 import type { MalformedMessageTracker } from '../MalformedMessageTracker.js';
@@ -29,8 +28,8 @@ export interface ControlMessageHost extends ParsedMessageHost {
   getActiveShip(playerId: string): ShipState | undefined;
   isPilotDisabled(playerId: string): boolean;
   noteWarpRequest(playerId: string, x: number, y: number): void;
-  sectorKey(): string | null;
-  solar(): boolean;
+  /** The warp route check (`WarpRouteCheck.valid`). */
+  validWarpPoint(playerId: string, x: number, y: number): boolean;
   logger: pino.Logger;
   malformed: MalformedMessageTracker;
   handleFire(client: Client, raw: unknown): void;
@@ -52,10 +51,7 @@ export function registerControlMessages(h: ControlMessageHost): RoomFeature {
     shipEnergyOf: (playerId) => h.getActiveShip(playerId)?.energy,
     isDisabled: (playerId) => h.isPilotDisabled(playerId),
     onWarpRequest: (playerId, x, y) => h.noteWarpRequest(playerId, x, y),
-    validWarpPoint: (x, y) => {
-      const sectorKey = h.sectorKey();
-      return sectorKey !== null && isWarpDropPoint(sectorKey, x, y, h.solar());
-    },
+    validWarpPoint: (playerId, x, y) => h.validWarpPoint(playerId, x, y),
     logger: h.logger,
     malformed: h.malformed,
   }));

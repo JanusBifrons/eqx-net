@@ -186,6 +186,12 @@ export function getActiveSnapshotTransport(): DataChannelTransport | null {
   return t !== null && t.phase !== 'closed' ? t : null;
 }
 
+/** True when the latest DataChannel transport fell back to the WebSocket
+ *  (read by the net-health HUD, `hud/NetHealthCluster.tsx`). */
+export function snapshotTransportFellBack(): boolean {
+  return activeSnapshotTransport?.fellBack ?? false;
+}
+
 /** The DataChannel snapshot transport for `room` (started by the welcome handler). */
 export function createSnapshotDataChannel(room: Room, sink: SnapshotSink): DataChannelTransport {
   // Phase 2/4 swift-otter — instantiate the DataChannel transport

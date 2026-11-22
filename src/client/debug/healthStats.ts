@@ -91,7 +91,12 @@ export function recordServerGcPause(durationMs: number, nowMs: number = Date.now
   record(serverGcRing, nowMs, durationMs);
 }
 
+/** Long tasks recorded since load (cumulative; the net-health HUD takes deltas). */
+let longtaskTotal = 0;
+export function getLongtaskTotalCount(): number { return longtaskTotal; }
+
 export function recordLongtask(durationMs: number, nowMs: number = Date.now()): void {
+  longtaskTotal++;
   record(longtaskRing, nowMs, durationMs);
 }
 

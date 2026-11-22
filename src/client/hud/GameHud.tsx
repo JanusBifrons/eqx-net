@@ -32,6 +32,7 @@ import { ContactsOverview } from '../components/ContactsOverview';
 import { stickToWorldBearing } from '@core/combat/manualAim';
 import { HoldButton, SectorChip, useEnergyFill, useFakeCredits } from './widgets';
 import { BuildStatusBody, WalletRow } from './BuildStatus';
+import { NetHealthCluster } from './NetHealthCluster';
 import { ShieldRing } from './ShieldRing';
 
 interface Props {
@@ -66,7 +67,13 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
     <>
       {/* ── Top ─────────────────────────────────────────────────────────── */}
       {flying && <Slot anchor="top-center" order={1}><LockStatusBand scale={scale} /></Slot>}
-      <Slot anchor="top-left" order={1}><SectorChip size={Math.round(9 * scale)} /></Slot>
+      {/* Net health sits beside the sector chip (same row), so its appearing never shifts the column. */}
+      <Slot anchor="top-left" order={1}>
+        <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+          <SectorChip size={Math.round(9 * scale)} />
+          <NetHealthCluster size={Math.round(9 * scale)} />
+        </div>
+      </Slot>
       {/* The building settings side panel docks over the right edge: no strip under it. */}
       {flying && !settingsOpen && <FcStripDock scale={scale} />}
       {/* Contacts overview (lock list): left edge, the strip's mirror. */}

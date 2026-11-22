@@ -106,6 +106,37 @@ Stage 6 (packet-loss resilience) of the network-feel roadmap addresses sustained
 
 Stage 4 added three public-readable fields to `PredictionStats`: `rttMeanMs` (Welford running mean), `rttStdDevMs` (Welford σ), and `droppedSnapshotsRecent` (sliding-window drop count). The next user diagnostic capture surfaces these for inspection alongside the existing RTT/jitter metrics.
 
+## Net-health HUD
+
+A small icon + number cluster beside the sector chip (`hud/NetHealthCluster.tsx`, logic in the pure `hud/netHealth.ts`, rolling window + gates in `hud/netHealthWindow.ts`) tells a player when play is hitching and whose fault it is: the **network**, the **server** or the **device**. It is hidden while everything is healthy.
+
+It reads only counters that already exist, plus scalar counters added to the existing feeds: `ColyseusClient.stats` (`rttMs`, `significantCorrectionCount`, `lastSnapshotRecvAtMs`), `net/snapshotArrivalStats.ts` (fed by the existing per-arrival hook `logSnapshotRecvTelemetry` with the arrival time and the server's `serverSendPerfNow` stamp; reset by the welcome handler), the rAF hitch counters in `net/RafStallDetector.ts` (same `LANE_HITCH_MS` bound as the phone-lane frame summary), the long-task total in `debug/healthStats.ts` (the existing longtask observer feed), `useUIStore.clockRate` (server time dilation), the swarm glide-limit and old-end-clamp counters, `mirror.swarm.size`, `connectionStatus` and the DataChannel `fellBack` flag. A 10 Hz wall-clock timer samples them (never per frame, allocation-free); React re-renders at most every 250 ms and only when a shown, bucketed value changes. It is inactive (reset, hidden) outside a sector room and during a transit.
+
+Each source is judged on its own clock:
+
+- **Network** — the server sent on time but the update arrived late or with a gap. Arrival lateness = one-way delay (recv − send stamp) above its running floor, so clock skew cancels. A network gap = an arrival gap over 200 ms that the server's send-stamp gap does not explain. Ping (RTT) is part of this item.
+- **Server** — the server itself sent late: the gap between consecutive send stamps (server clock, the network cannot move it), or time dilation (`clockRate` < 1).
+- **Device** — the phone's own frames hitched: rAF frame gaps over `LANE_HITCH_MS` (50 ms) and long tasks, per second.
+
+Thresholds follow the owner's network tiers (Good / Playable / Poor): amber = past Good, red = Poor. Each item has two hysteresis gates (amber, red) on normalised scores: an item shows when its metric reaches the threshold and hides only after it stays under 0.8 × the threshold for 2 s. Rates and percentiles use a 1 s window, except gap counts, which use 60 s because the tier is per minute.
+
+| Item | Metric | Amber (past Good) | Red (Poor) | Constants |
+|---|---|---|---|---|
+| Network: ping | RTT p99 (≈ max of the 1 s window) | ≥ 100 ms | ≥ 250 ms | `NET_RTT_WARN_MS`, `NET_RTT_BAD_MS` |
+| Network: late | arrival lateness p95 (1 s, by count: over the bound in more than 5 % of arrivals) | > 30 ms | > 150 ms | `ARRIVAL_LATE_WARN_MS`, `ARRIVAL_LATE_BAD_MS`, `NET_LATE_TAIL_FRACTION` |
+| Network: gaps | network gaps over 200 ms in the last 60 s | ≥ 2 /min | ≥ 10 /min, or any gap over 1 s | `NET_GAP_MS`, `NET_GAPS_WARN_PER_MIN`, `NET_GAPS_BAD_PER_MIN`, `NET_GAP_SEVERE_MS`, `NET_GAP_WINDOW_MS` |
+| Network: wait | ongoing wait since the last snapshot (cause still unknown) | — | ≥ 1 s | `NET_WAIT_BAD_MS` |
+| Server | longest consecutive send-stamp gap (1 s), or `clockRate` | > 150 ms or < 99 % | > 1 s or < 75 % | `SERVER_SEND_GAP_MS`, `SERVER_SEND_GAP_BAD_MS`, `SERVER_CLOCK_RATE_WARN`, `SERVER_CLOCK_RATE_BAD` |
+| Device | rAF hitches (> 50 ms) or long tasks per second (1 s), whichever is higher | ≥ 2 /s | ≥ 5 /s, or any frame over 250 ms | `DEVICE_STALLS_WARN_PER_S`, `DEVICE_STALLS_BAD_PER_S`, `FRAME_SEVERE_HITCH_MS` |
+| Corrections (consequence) | own-ship significant corrections (drift > 0.05 u) per second | 5 /s | — | `OWN_CORRECTIONS_PER_S` |
+| Drone misses (consequence) | drone reads frozen at the glide limit or clamped to the ring's old end, per drone per second | 3 /s | — | `DRONE_MISSES_PER_DRONE_S` |
+| Link | `connectionStatus` not `connected` (red), or the DataChannel fell back to the WebSocket ("WS", amber) | immediately | | |
+
+The network item shows the number for its worst cause (ping, `+Nms` lateness, `N/min` gaps or the wait). The server item shows the send gap, or the clock rate as a percentage while the server is dilated. Each readout sits in a fixed-width, tabular-digit slot (`NET_SLOT_CH` in `hud/netHealthItems.ts`, sized for the longest readout) so the cluster never shifts as a value gains a digit. Tapping the cluster opens details: each visible item's own icon beside a 1–2 sentence plain-English paragraph saying whose fault it is, with its averaged number (`netHealthItems`; the threshold text stays as the desktop `title`).
+
+Known limits: RTT includes server processing, so a long server stall can also raise ping. On the DataChannel, losing two or more consecutive snapshots looks like a server send gap (the WebSocket is reliable, so it cannot). A wait over 1 s shows on the network item before its cause is known. A gap stays counted for its 60 s window. A server without the send stamp gives no lateness or server attribution. There is no counter for remote-ship snaps per second (`remoteCorrSamples` counts snapshots, not snaps), so the HUD has no item for them.
+
+
 ## Client rules in detail
 
 Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.

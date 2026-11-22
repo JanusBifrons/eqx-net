@@ -53,6 +53,13 @@ export const FEATURE_TRIGGERS = [
     specs: ['capital-helm', 'player-capital-galaxy'],
   },
   {
+    // Warp route check: in-sector warps stop at the near side of a field or structure.
+    area: 'warp route check',
+    paths: ['src/client/components/WarpPicker', 'src/client/components/warpDestinations', 'src/client/components/warpRoute',
+      'src/core/galaxy/warpTarget', 'src/core/nav/warpLineStop', 'src/server/rooms/warpRouteCheck'],
+    specs: ['warp-near-side'],
+  },
+  {
     // Autopilot: the helm flies the planner's route round rocks (navigation slices 12-14).
     area: 'autopilot',
     paths: ['src/core/nav/', 'src/server/nav/', 'src/core/helm/', 'src/client/helm/', 'src/shared-types/messages/navMessages'],
