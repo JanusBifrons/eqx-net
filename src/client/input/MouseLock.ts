@@ -10,7 +10,8 @@
  *  - RIGHT button held = boost (context menu suppressed).
  *  - Keys: 1–9 select a weapon group, Shift+1–9 toggle that group AUTO/MAN,
  *    T locks the selected entity with the active group, X drops the active
- *    group's locks.
+ *    group's locks. All of these stand down while the Build sidebar is open
+ *    (its own 1–9 / Q / E keys: input/buildMenuKeys.ts).
  *
  * The ship is the screen centre (the pilot camera follows it with no lag), so
  * the bearing is the cursor's offset from the surface centre (no camera
@@ -20,6 +21,7 @@ import { aimInput } from './AimInput';
 import { stickToWorldBearing } from '@core/combat/manualAim';
 import { getGameClient } from '../net/clientSingleton';
 import { useUIStore } from '../state/store';
+import { buildMenuKeysOpen } from './buildMenuKeys';
 
 /** A press held this long (or dragged past MOUSE_AIM_DRAG_PX) starts the lock line;
  *  a quicker click is left alone so click-to-select keeps working. */
@@ -41,12 +43,15 @@ export function mouseLockTakesPress(placementKind: string | null): boolean {
   return placementKind === null;
 }
 
-/** Pure: key event → fire-control key action (null = not ours). */
+/** Pure: key event → fire-control key action (null = not ours, or the Build
+ *  sidebar is open: its keys own 1–9 then). */
 export function fcKeyAction(
   key: string,
   code: string,
   shift: boolean,
+  buildMenuOpen = false,
 ): { kind: 'select' | 'mode'; index: number } | { kind: 'target' | 'clear' | 'overview' } | null {
+  if (buildMenuOpen) return null;
   const m = /^Digit([1-9])$/.exec(code);
   if (m) return { kind: shift ? 'mode' : 'select', index: Number(m[1]) - 1 };
   const k = key.toLowerCase();
@@ -66,7 +71,7 @@ function isTyping(t: EventTarget | null): boolean {
 export function installFcKeys(): () => void {
   const onKey = (e: KeyboardEvent): void => {
     if (e.repeat || e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target)) return;
-    const a = fcKeyAction(e.key, e.code, e.shiftKey);
+    const a = fcKeyAction(e.key, e.code, e.shiftKey, buildMenuKeysOpen());
     if (!a) return;
     const st = useUIStore.getState();
     const client = getGameClient();

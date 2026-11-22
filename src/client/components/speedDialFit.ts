@@ -8,10 +8,10 @@ import { useLayoutEffect, type RefObject } from 'react';
  * Measured, not a fixed `dvh` sum: the dial sits under the top-right toolbar,
  * whose height varies, so the cap is taken from the list's own on-screen edge.
  *
- * Command view: the bottom-centre stack (desktop build palette, fleet panel /
- * strip, status capsule) can reach under the dial's column (its buttons and
- * their always-on labels). Then a downward list also stops above that stack,
- * so the list and the fleet / build panels never cover each other
+ * Command view: the bottom-centre stack (fleet panel / strip, status capsule)
+ * can reach under the dial's column (its buttons and their always-on labels).
+ * Then a downward list also stops above that stack, so the list and the
+ * fleet panels never cover each other
  * (Pixel 7 landscape and desktop). A stack clear of the column changes nothing.
  */
 
