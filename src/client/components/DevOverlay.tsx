@@ -6,7 +6,7 @@ import { useUIStore } from '../state/store';
  * server-ghost vs predicted positions.
  *
  * Lives inside the AdvancedDrawer's "Dev" tab. The `showDevOverlay` Zustand
- * flag still gates visibility — toggle it from `SettingsModal` (or the
+ * flag still gates visibility — toggle it from the cog's Developer page (or the
  * keybinding) and this card hides without closing the drawer.
  */
 export function DevOverlay(): JSX.Element | null {

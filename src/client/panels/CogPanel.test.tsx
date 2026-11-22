@@ -11,7 +11,7 @@ import { selectDrawerTabShown } from '../state/rightPanel';
 vi.mock('../layout/Drawer/tabs/SettingsTab', () => ({
   SettingsTab: () => <div data-testid="settings-body"><div data-testid="push-row" /></div>,
 }));
-vi.mock('../layout/Drawer/tabs/ProfileTab', () => ({ ProfileTab: () => <div data-testid="profile-body" /> }));
+vi.mock('./CogProfilePage', () => ({ CogProfilePage: () => <div data-testid="profile-body" /> }));
 // The real DebugTab, with its snapshot-rate children stubbed.
 vi.mock('../components/ConnectionDiagnostics', () => ({ ConnectionDiagnostics: () => <div data-testid="conn-diag" /> }));
 vi.mock('../components/DevOverlay', () => ({ DevOverlay: () => <div data-testid="dev-overlay" /> }));

@@ -56,7 +56,7 @@ export const FEATURE_TRIGGERS = [
   {
     // Warp route check: in-sector warps stop at the near side of a field or structure.
     area: 'warp route check',
-    paths: ['src/client/components/WarpPicker', 'src/client/components/warpDestinations', 'src/client/components/warpRoute',
+    paths: ['src/client/components/WarpPicker', 'src/client/panels/GalaxyPanel', 'src/client/components/warpDestinations', 'src/client/components/warpRoute',
       'src/core/galaxy/warpTarget', 'src/core/nav/warpLineStop', 'src/server/rooms/warpRouteCheck'],
     specs: ['warp-near-side'],
   },

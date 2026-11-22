@@ -23,6 +23,8 @@ const LIGHTING_GROUP_SX = { mt: 0.5, '& .MuiToggleButton-root': { fontSize: 11, 
 export function SettingsTab(): JSX.Element {
   const setPhase = useUIStore((s) => s.setPhase);
   const setRightPanel = useUIStore((s) => s.setRightPanel);
+  // The cog opens on the map too (header gear): Return to main menu only in a sector.
+  const inGame = useUIStore((s) => s.phase === 'game');
 
   // Graphics: the Machined look (default) or today's flat look. Per device;
   // read when the game loads, so a change applies on the next load.
@@ -64,7 +66,7 @@ export function SettingsTab(): JSX.Element {
 
   return (
     <Box sx={{ p: 2, display: 'flex', flexDirection: 'column', gap: 2 }}>
-      <Box>
+      {inGame && <><Box>
         <Typography variant="overline" sx={{ color: '#9aa0b4', display: 'block', mb: 1 }}>
           Navigation
         </Typography>
@@ -82,7 +84,7 @@ export function SettingsTab(): JSX.Element {
         </Typography>
       </Box>
 
-      <Divider />
+      <Divider /></>}
 
       <Box>
         <Typography variant="overline" sx={{ color: '#9aa0b4', display: 'block', mb: 1 }}>

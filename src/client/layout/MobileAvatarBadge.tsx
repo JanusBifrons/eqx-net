@@ -1,31 +1,22 @@
 import { useAuthStore } from '../auth/authStore.js';
 import { isTouchDevice } from '../input/TouchInput';
-import { AvatarMenu } from '../components/AvatarMenu.js';
+import { openCogProfile, ProfileAvatar } from '../panels/CogProfilePage.js';
 import { Slot } from './Slot';
-
-interface Props {
-  /** Opens the display-name editor (`ProfileModal`) from the menu's
-   *  "Display name" item. */
-  onProfileClick: () => void;
-}
 
 /**
  * Floating avatar pip for the galaxy map (the homepage) on mobile.
  *
- * Desktop already surfaces auth state via the persistent `AppHeader` /
- * `AvatarMenu`. On touch the AppBar is hidden, so without this badge the
- * player has no at-a-glance signal that they're logged in on the galaxy
- * map. Only mounted on the galaxy-map phase — in game the right-edge
- * drawer's Profile tab already covers this.
+ * Desktop surfaces auth state via the persistent `AppHeader` avatar. On touch
+ * the AppBar is hidden, so without this badge the player has no at-a-glance
+ * signal that they're logged in on the galaxy map. Only mounted on the
+ * galaxy-map phase — in game the rail's cog reaches the same Profile page.
  *
- * The badge now opens the SAME `AvatarMenu` popover (Display name + Logout) as
- * the desktop header — this component only owns the touch gate and the
- * layout `Slot`; the trigger styling + menu behaviour live in `AvatarMenu`'s
- * `mobile` variant.
+ * A tap opens the cog panel's Profile page (`openCogProfile`), the same page
+ * the desktop header avatar opens: name, account and Log out.
  *
  * Renders nothing when not on a touch device or not logged in.
  */
-export function MobileAvatarBadge({ onProfileClick }: Props): JSX.Element | null {
+export function MobileAvatarBadge(): JSX.Element | null {
   const user = useAuthStore((s) => s.user);
 
   if (!user) return null;
@@ -35,7 +26,7 @@ export function MobileAvatarBadge({ onProfileClick }: Props): JSX.Element | null
   // It only renders on the galaxy-map phase.
   return (
     <Slot anchor="top-right" order={1}>
-      <AvatarMenu variant="mobile" onProfileClick={onProfileClick} />
+      <ProfileAvatar name={user.displayName ?? user.email} size={34} onClick={openCogProfile} data-testid="mobile-avatar-badge" />
     </Slot>
   );
 }

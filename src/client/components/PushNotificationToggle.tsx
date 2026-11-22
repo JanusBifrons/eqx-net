@@ -29,8 +29,8 @@ function reasonText(reason: SubscribeReason): string {
 }
 
 /**
- * "Alert me when my base is under attack" — the Web Push opt-in. Shared by the
- * desktop SettingsModal and the mobile drawer Settings tab. On iOS-not-installed
+ * "Alert me when my base is under attack" — the Web Push opt-in. Shown on the
+ * cog panel's Settings page. On iOS-not-installed
  * it shows the Add-to-Home-Screen hint (push only works in an installed PWA);
  * on unsupported browsers it renders nothing.
  */
