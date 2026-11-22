@@ -8,3 +8,4 @@ export { EqxButton, TONE_COLOR, type EqxButtonProps, type EqxButtonSize, type Eq
 export { EqxIconButton, type EqxIconButtonProps } from './EqxIconButton/EqxIconButton.js';
 export { EqxTooltip, type EqxTooltipProps } from './EqxTooltip/EqxTooltip.js';
 export { EqxSwitch, type EqxSwitchProps } from './EqxSwitch/EqxSwitch.js';
+export { EqxThemeProvider, type EqxThemeProviderProps } from './EqxThemeProvider/EqxThemeProvider.js';
