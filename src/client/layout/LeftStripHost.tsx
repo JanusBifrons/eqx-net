@@ -23,6 +23,7 @@ import type { RightPanel } from '../state/rightPanel';
 import type { SelectionFocusKind, UISelection } from '../state/storeTypes';
 import { Slot } from './Slot';
 import { useFleetStripItems } from './fleetStripItems';
+import { useLeftStripFit } from './leftStripFit';
 
 const FOCUS_LOOK: Readonly<Record<SelectionFocusKind, { icon: EqxIconName; tooltip: string }>> = {
   ship: { icon: 'fleet', tooltip: 'Ship' },
@@ -61,6 +62,7 @@ export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
   const setRightPanel = useUIStore((s) => s.setRightPanel);
   const fleetItems = useFleetStripItems();
   const id = stripIdentity(selection);
+  useLeftStripFit(shown && id !== null);
   if (!shown || id === null) return null;
   const panel = id.panel;
   return (

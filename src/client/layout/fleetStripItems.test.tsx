@@ -1,5 +1,5 @@
 /**
- * UI plan U3-4: the left strip's fleet section. Order / Stance / Speed fly-outs
+ * UI plan U3-4: the left strip's fleet section. Order / Stance fly-outs
  * and Stop show only for own ships in Command; one pick sends one order through
  * the fleet command seam (the panel's path); Patrol starts the map pick; a
  * mixed selection shows the neutral icon; Esc closes an open fly-out first.
@@ -9,7 +9,6 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useUIStore } from '../state/store';
 import { applyFleetStatus, resetFleetStatus, type FleetStatusUpdate } from '../fleet/fleetStatus';
 import { resetFleetCommands, setFleetCommands } from '../fleet/fleetCommands';
-import { HELM_SPEED_FRACTION } from '@core/helm/helm';
 import { LayoutProvider } from './LayoutProvider';
 import { LeftStripHost } from './LeftStripHost';
 
@@ -59,10 +58,10 @@ afterEach(() => {
 });
 
 describe('left strip fleet section (U3-4)', () => {
-  it('own ships in Command: Order, Stance, Speed and Stop, each with a tooltip, no text', () => {
+  it('own ships in Command: Order, Stance and Stop, each with a tooltip, no text', () => {
     mount();
     select(['a', 'b']);
-    for (const t of ['order', 'stance', 'speed', 'stop']) {
+    for (const t of ['order', 'stance', 'stop']) {
       const el = screen.getByTestId(`left-strip-${t}`);
       expect(el.getAttribute('aria-label'), t).toBeTruthy();
       expect(el.textContent, t).toBe('');
@@ -92,10 +91,6 @@ describe('left strip fleet section (U3-4)', () => {
     pick('stance', 'holdFire');
     expect(cmd.setStance).toHaveBeenCalledTimes(1);
     expect(cmd.setStance).toHaveBeenCalledWith(['a', 'b'], 'holdFire');
-    pick('speed', '1');
-    expect(cmd.setSpeed).toHaveBeenCalledTimes(1);
-    expect(cmd.setSpeed).toHaveBeenCalledWith(['a', 'b'], HELM_SPEED_FRACTION[1]);
-    expect(useUIStore.getState().commandSpeed).toBe(1);
     fireEvent.click(screen.getByTestId('left-strip-stop'));
     expect(cmd.stop).toHaveBeenCalledTimes(1);
     expect(cmd.stop).toHaveBeenCalledWith(['a', 'b']);
