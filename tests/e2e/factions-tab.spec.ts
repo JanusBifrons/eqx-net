@@ -22,8 +22,9 @@ test('Factions tab lists standings and saves the player’s policy', async ({ pa
     { timeout: 90_000 },
   );
 
+  // The rail's Faction item opens the Faction panel on its main page (U2-7).
   await page.getByTestId('right-rail-faction').click();
-  await page.getByTestId('drawer-tab-factions').click();
+  await expect(page.getByTestId('faction-panel')).toBeVisible();
   await expect(page.getByTestId('factions-tab')).toBeVisible();
   // The fixed factions are always listed, by name.
   await expect(page.getByTestId('faction-row').filter({ hasText: 'Sol Dominion' })).toBeVisible({ timeout: 10_000 });

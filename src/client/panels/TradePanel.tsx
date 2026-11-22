@@ -14,10 +14,11 @@ import { useCallback } from 'react';
 import { EQX_PANEL_SIZE, EqxListRow, EqxPanel, EqxSection } from '../../ui/index.js';
 import { useUIStore } from '../state/store';
 import {
-  activeDealCount, GiftForm, TradeDealsPage, TradeHeader, TradeHistoryPage, TradeOffersPage, TradeSignIn, useTradeData,
+  activeDealCount, TradeDealsPage, TradeHeader, TradeHistoryPage, TradeOffersPage, TradeSignIn, useTradeData,
   type TradeData,
 } from '../layout/Drawer/tabs/TradeTab';
 import { BlueprintMarketSection } from '../layout/Drawer/tabs/BlueprintMarketSection';
+import { TradeGiftPage } from './TradeGiftPage';
 
 /** The top list's page id (`drawerTab`). */
 export const TRADE_TOP = 'trade';
@@ -50,7 +51,7 @@ function SectionPage({ id, data, shown }: { id: TradeSection; data: TradeData; s
     case 'offers': return <TradeOffersPage offers={data.offers} baseId={data.baseId} />;
     case 'deals': return <TradeDealsPage view={data.view} />;
     case 'history': return <TradeHistoryPage view={data.view} shown={shown} />;
-    case 'gift': return <GiftForm baseId={data.baseId} />;
+    case 'gift': return <TradeGiftPage baseId={data.baseId} />;
     case 'blueprints': return <BlueprintMarketSection baseId={data.baseId} />;
   }
 }

@@ -7,7 +7,7 @@ import { useUIStore } from '../state/store';
 import { escClearsStrip, handleRailKeys, railKeyIndex } from './railKeys';
 
 const SHIP = { ...useUIStore.getState().selection, ids: ['s1'] };
-const base = () => ({ ...useUIStore.getState(), selection: SHIP, rightPanel: null, contactsOpen: false, placementKind: null, fleetPick: null });
+const base = () => ({ ...useUIStore.getState(), selection: SHIP, rightPanel: null, placementKind: null, fleetPick: null });
 const esc = (over: Partial<KeyboardEvent> = {}) => ({ key: 'Escape', defaultPrevented: false, target: null, ...over }) as KeyboardEvent;
 
 describe('escClearsStrip', () => {
@@ -51,14 +51,14 @@ describe('Alt + 1–8: the rail in order (Shift + number stays the weapon auto/m
   });
   it('opens the Nth rail item like a tap, and again closes it', () => {
     useUIStore.setState({ rightPanel: null, drawerTab: 'galaxy', selection: { ...SHIP, ids: [] } });
-    // Command mode rail: Fleet, Galaxy, Jobs, Trade, Faction, cog.
+    // Command mode rail: Fleet, Contacts, Galaxy, Jobs, Trade, Faction, cog.
     const mode = { pilotMode: 'spectator' } as never;
     useUIStore.setState(mode);
     const press = (code: string) => { const e = new KeyboardEvent('keydown', { code, altKey: true, cancelable: true }); handleRailKeys(e, useUIStore.getState(), vi.fn()); return e; };
-    const e = press('Digit4');
+    const e = press('Digit5');
     expect(e.defaultPrevented).toBe(true);
     expect(useUIStore.getState().rightPanel).toBe('trade');
-    press('Digit4');
+    press('Digit5');
     expect(useUIStore.getState().rightPanel).toBeNull();
     expect(press('Digit8').defaultPrevented).toBe(false); // no 8th item: the key is left alone
   });

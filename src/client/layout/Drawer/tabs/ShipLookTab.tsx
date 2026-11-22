@@ -1,6 +1,7 @@
 /**
- * Galaxy map 0c — the Ship look drawer tab: pick the colour and sigil every
- * ship you own wears (`FactionLookPicker`).
+ * Galaxy map 0c — the Ship look page (the Faction panel's drill-down,
+ * `panels/FactionPanel.tsx`): pick the colour and sigil every ship you own
+ * wears (`FactionLookPicker`).
  *
  * The players this client knows come from the same `GET /trade/factions`
  * reply the Factions tab reads (their default looks count as taken), polled

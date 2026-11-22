@@ -423,7 +423,7 @@ function GameSurface({
     clientRef.current?.transitInstr.engage({ target: targetSectorKey });
     // Pull the current arrival picker state (mobile-only UI; PC keeps the
     // default `'same'` mode and sends no `arrival`, preserving legacy
-    // behaviour). The xy values were already clamped on blur in GalaxyTab,
+    // behaviour). The xy values were already clamped on blur in the Galaxy panel,
     // and the server clamps again as defense-in-depth.
     const s = useUIStore.getState();
     let arrival: { x: number; y: number } | undefined;
