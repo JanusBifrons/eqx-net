@@ -1,15 +1,14 @@
 /**
  * While the join loading screen (sector briefing) is up, the page chrome
  * that would sit over it stays hidden: the top bar (EQUINOX / settings /
- * LOGIN) and the "Command view" chip. Both gate on the same existing
- * selector the WarpScreen uses (`useShowLoadingScreen`). Sideways phone
- * (915x412): the chip sat over the briefing card's top-right.
+ * LOGIN). It gates on the same selector the WarpScreen uses
+ * (`useShowLoadingScreen`). (The "Command view" chip is gone: the mode
+ * switch shows the mode, owner 2026-11-22.)
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
 import { AppHeader } from './AppHeader.js';
-import { SpectatorIndicator } from './SpectatorIndicator.js';
 
 const LOADING = {
   phase: 'game' as const,
@@ -60,22 +59,9 @@ describe('loading screen hides the page chrome over the briefing', () => {
     expect(screen.getByTestId('app-header')).toBeTruthy();
   });
 
-  it('Command view chip is hidden while the join loading screen shows', () => {
-    useUIStore.setState({ ...LOADING, pilotMode: 'spectator' });
-    render(<SpectatorIndicator />);
-    expect(screen.queryByTestId('spectator-indicator')).toBeNull();
-  });
-
-  it('Command view chip shows once the sector is ready', () => {
-    useUIStore.setState({ pilotMode: 'spectator' });
-    render(<SpectatorIndicator />);
-    expect(screen.getByTestId('spectator-indicator')).toHaveTextContent('Command view');
-  });
-
   it('a sector-to-sector trip keeps the chrome (no loading screen then)', () => {
     useUIStore.setState({ ...LOADING, travelling: true, pilotMode: 'spectator' });
-    render(<>{header()}<SpectatorIndicator /></>);
+    render(header());
     expect(screen.getByTestId('app-header')).toBeTruthy();
-    expect(screen.getByTestId('spectator-indicator')).toBeTruthy();
   });
 });
