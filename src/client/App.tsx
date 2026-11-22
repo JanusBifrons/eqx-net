@@ -84,6 +84,7 @@ import { LayoutProvider } from './layout/LayoutProvider';
 import { Slot } from './layout/Slot';
 import { RightPanelHost } from './layout/RightPanelHost';
 import { LeftStripHost } from './layout/LeftStripHost';
+import { handleStripEscape } from './input/railKeys';
 import { TopRightToolbar } from './layout/TopRightToolbar';
 import { applyHudMode, applyHudOverlays, hudModeFromSearch, isHudMode } from './cinematic/hudMode';
 import type { CameraCue } from '@core/contracts/cameraScript';
@@ -669,13 +670,10 @@ function GameSurface({
       if (!e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'm' || e.key === 'M')) {
         toggleGalaxyMap();
       }
-      // WS-10 (R2.5) — Escape cancels structure placement. Main-thread + window
-      // level so it works on BOTH render paths (the renderer can't touch
-      // Zustand). No-op when not placing. Marked handled so a side panel's Esc
-      // (SidePanel escapeClosesPanel) never also fires on the same press.
+      // WS-10 (R2.5) — Esc cancels placement (window level: both render paths). Marked
+      // handled so a panel's Esc (escapeClosesPanel) never also fires on that press.
       if (e.key === 'Escape' && useUIStore.getState().placementKind) { cancelPlacement(); e.preventDefault(); }
-      // RTS slice 14b — Escape cancels a fleet map pick; Enter is Done for a
-      // patrol route with enough points. Not from a text field.
+      // RTS slice 14b — Esc cancels a fleet map pick; Enter finishes a patrol route.
       const pick = useUIStore.getState().fleetPick;
       const inField = e.target instanceof HTMLElement
         && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable);
@@ -683,6 +681,7 @@ function GameSurface({
         if (e.key === 'Escape') { useUIStore.getState().setFleetPick(null); e.preventDefault(); }
         else if (e.key === 'Enter' && canFinishFleetPick(pick)) useUIStore.getState().requestFleetPickDone();
       }
+      handleStripEscape(e, useUIStore.getState(), () => rendererRef.current?.selectFleetShips([])); // Esc order (railKeys.ts)
       // Phase V — R rotates the placement ghost a quarter turn (structures are
       // rectangles; storage runs in rows); F mirrors it (base loop 4D).
       // Main-thread, both render paths.
