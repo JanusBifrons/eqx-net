@@ -95,7 +95,10 @@ export function EqxStrip({
   const vertical = orientation === 'vertical';
   const look = vertical
     ? {
-        width: STRIP_WIDTH,
+        // The strip sits flush on the left edge; on a phone with a camera band the
+        // background fills the band and the buttons step clear of it.
+        width: `calc(${STRIP_WIDTH}px + env(safe-area-inset-left, 0px))`,
+        paddingLeft: `calc(${S.pad}px + env(safe-area-inset-left, 0px))`,
         flexDirection: 'column' as const,
         gap: `${S.gap}px`,
         border: `1px solid ${S.edge}`,
