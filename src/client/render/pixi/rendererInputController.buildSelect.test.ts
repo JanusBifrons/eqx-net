@@ -71,3 +71,36 @@ describe('RendererInputController: a tap on your building in Build selects it', 
     expect(ctl._focusKind).toBe('structure');
   });
 });
+
+/** Tap rule T4: Build (not placing) follows the same tap rule as Command and
+ *  Fly; while placing, a tap only drives the ghost and never focuses. */
+describe('Build: a tap on something that is not mine (tap rule T4)', () => {
+  const ENEMY = {
+    localPlayerId: 'me-123',
+    ships: new Map(),
+    swarm: new Map([[7, { kind: 2, shipKind: 'turret', radius: 20, x: 100, y: -100 }]]),
+    structures: new Map([[7, { owner: 'enemy-9' }]]),
+  } as unknown as RenderMirror;
+
+  it('not placing: a touch tap focuses the enemy structure (no order)', () => {
+    const { ctl, deps, feedback } = setup();
+    deps.lastMirror = ENEMY;
+    tapBuilding(ctl);
+    expect(ctl._focusId).toBe('swarm-7');
+    expect(ctl._focusKind).toBe('structure');
+    expect(feedback.orderSeq).toBe(0);
+  });
+
+  it('placing: the same tap moves the ghost there and focuses nothing', () => {
+    const { ctl, deps, feedback } = setup();
+    deps.lastMirror = { ...ENEMY, pendingPlacementPreview: { kind: 'solar', x: 600, y: -600, angle: 0 } } as unknown as RenderMirror;
+    ctl._placementActive = true;
+    ctl._placementChosenX = 600;
+    ctl._placementChosenY = -600;
+    tapBuilding(ctl);
+    expect(ctl._focusId).toBeNull();
+    expect(ctl._placementChosenX).toBe(100);
+    expect(ctl._placementChosenY).toBe(-100);
+    expect(feedback.orderSeq).toBe(0);
+  });
+});

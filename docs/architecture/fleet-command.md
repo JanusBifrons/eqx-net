@@ -382,6 +382,21 @@ space deselects, like an RTS (shift keeps the ships). A tap is never a move or
 attack order: orders are the mouse right-click, the strip's Lock (below) and
 the strip's Move.
 
+The three modes share ONE pick (tap rule T4): Command and Build (not placing)
+go through the command router's `tapSelect` → `commandTap` →
+`handleGameplayTap`; Fly goes through the camera's tap (its one tap threshold)
+→ `handleGameplayTap`, on both pointer paths, with the same slop (a finger
+gets `fingerSlopWorld`, a mouse `TAP_SLOP`). On a phone in Fly the two
+FloatingStick zones cover most of the screen: a quick no-drag touch there
+(`isTap`) is handed to the world canvas (`forwardTapToWorld`) and reaches the
+same tap; a drag drives the stick. With no ships selected (Fly), the strip
+shows the focus with the personal Lock (`fc-target`, the active weapon
+group). While a structure is being placed, a tap only moves the ghost and
+never focuses. Locks: `rendererInputController.stickTap.test.tsx`,
+`rendererInputController.tapFocus.test.ts`,
+`rendererInputController.buildSelect.test.ts`, `LeftStripHost.test.tsx`
+("in Fly"), `FloatingStick.test.tsx`.
+
 **Move on the strip** (tap rule T3). With my ships selected in Command, the
 left strip's fleet section has a Move icon (`left-strip-move`, "Move: tap a
 point"). It arms a one-point map pick on the fleet-pick path

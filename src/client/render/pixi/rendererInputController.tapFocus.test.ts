@@ -158,3 +158,19 @@ describe('attackFocus (the strip Lock)', () => {
     expect(feedback.orderSeq).toBe(0);
   });
 });
+
+/**
+ * Tap rule T4: Fly (no Command view) goes through the same pick -> focus. A
+ * finger gets the same fingertip slop there as in Command (worker path).
+ */
+describe('Fly: a touch tap uses the same pick as Command', () => {
+  it('zoomed out, a finger a few pixels off the enemy focuses it; a mouse there does not', () => {
+    for (const [pointerType, want] of [['touch', 'swarm-7'], ['mouse', null]] as const) {
+      const { ctl } = setup(0.1);
+      ctl.setCommandView(false);
+      ctl.selectFleetShips([]);
+      tap(ctl, 22, 10, pointerType);
+      expect(ctl._focusId, pointerType).toBe(want);
+    }
+  });
+});

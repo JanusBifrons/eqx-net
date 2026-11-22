@@ -203,3 +203,23 @@ describe('stripIdentity', () => {
     }
   });
 });
+
+/**
+ * Tap rule T4: the same strip in Fly. A tap focuses a ship or structure that
+ * is not mine; with no ships selected its Lock is the pilot's own (the
+ * personal Target, active weapon group), never the fleet order.
+ */
+describe('LeftStripHost in Fly (T4)', () => {
+  for (const kind of ['structure', 'ship'] as const) {
+    it(`a focused enemy ${kind}: its identity and the personal Lock, which locks with the active group`, () => {
+      useUIStore.setState({ pilotMode: 'pilot' });
+      mount();
+      select([], kind === 'ship' ? 'p2' : 'swarm-7', kind);
+      expect(stripButtons()).toEqual(['left-strip-identity', 'fc-target']);
+      expect(screen.getByTestId('fc-target').getAttribute('data-state')).toBe('lock');
+      fireEvent.click(screen.getByTestId('fc-target'));
+      expect(lockSelected).toHaveBeenCalledOnce();
+      expect(attackFocus).not.toHaveBeenCalled();
+    });
+  }
+});

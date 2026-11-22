@@ -193,7 +193,7 @@ export abstract class RendererCommandRouting {
 
   /** Pick slop for a tap: a mouse keeps the world-unit {@link TAP_SLOP}; a
    *  finger (touch / pen) gets a fingertip's screen reach at this zoom. */
-  private tapSlop(pointerType: string): number {
+  protected tapSlop(pointerType: string): number {
     return pointerType === 'mouse' ? TAP_SLOP : fingerSlopWorld(this.camera.scale.x);
   }
 
