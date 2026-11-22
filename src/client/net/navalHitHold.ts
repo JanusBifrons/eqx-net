@@ -78,6 +78,15 @@ export function matchedHoldMs(offPilot: boolean): number {
  *  headroom `MAX_HOLD_MS` has over the largest pilot delay (1500 − 400). */
 export const STAMPED_HOLD_MARGIN_MS = MAX_HOLD_MS - MAX_TOTAL_DISPLAY_DELAY_MS;
 
+/** A stamped hold's game-ms deadline from game `nowGameMs`: the current
+ *  drone display delay (game ms) + `STAMPED_HOLD_MARGIN_MS`, capped by
+ *  `matchedHoldMs`. Also bounds a swept drone or scrap piece kept drawn
+ *  (`DrawnShellTiming.linger`). */
+export function stampedHoldDeadlineMs(nowGameMs: number, offPilot: boolean): number {
+  const delayGameMs = getSwarmDisplayDelayMs() * getSwarmDisplaySpeed();
+  return nowGameMs + Math.min(delayGameMs + STAMPED_HOLD_MARGIN_MS, matchedHoldMs(offPilot));
+}
+
 /** The drones' read point at wall `nowMs` (`swarmArrivalStampMs` units): the
  *  time every drone read targets (`interpolateSwarmPose`: now − the held
  *  display delay). A stamped hit is drawn once this reaches its stamp.
@@ -188,9 +197,7 @@ export class NavalHitHold {
   ): boolean {
     const stampMs = swarmTickToStampMs(stampTick, nowWallMs);
     if (Number.isNaN(stampMs)) return false;
-    const delayGameMs = getSwarmDisplayDelayMs() * getSwarmDisplaySpeed();
-    const h = this.push(evt, suppressNumber,
-      nowGameMs + Math.min(delayGameMs + STAMPED_HOLD_MARGIN_MS, matchedHoldMs(offPilot)));
+    const h = this.push(evt, suppressNumber, stampedHoldDeadlineMs(nowGameMs, offPilot));
     h.stampTick = stampTick;
     h.stampMs = stampMs;
     return true;

@@ -422,6 +422,26 @@ state patch, ahead of a held blast (keeping it needs `MineSync` to keep a
 row while a blast is held at its point). Locks:
 `impactFxHandlers.mineHold.test.ts`, `combat/missileWallHits.test.ts`.
 
+**Slice 5: swept drones and scrap stay until drawn out.** A drone or scrap
+/ wreck piece that leaves with no destroy (scrap picked up or expired, a
+drone leaving) has no event: the next full binary snapshot omits it, and
+`decodeSwarmPacket`'s sweep deleted it on arrival, a display delay before
+the drawn timeline got there. The sweep now asks its `keep`
+(`SwarmSweepKeep`, the same `DrawnShellTiming` object whose `has` keeps
+held deaths) to `linger` each omitted entity (live client only,
+`stampByTick`): a moving kind (`isRemoteMovingSwarmKind`) whose newest
+sample (`latestArrivalMs`, on the tick-stamp clock) the drones' read point
+has not reached stays in the mirror, recorded in `swarmKills` with
+`sweptTick` = its `lastUpdateTick` (no new queue). The per-frame `place`
+removes it (plain delete, no FX) once `swarmReadPointMs` passes that
+sample, or at `stampedHoldDeadlineMs` (the stamped-hit deadline: delay +
+`STAMPED_HOLD_MARGIN_MS`, capped by `matchedHoldMs`). A newer pose for the
+id (it came back) or a recycled id drops the record and keeps the entity.
+Welcome and sector reset (`onWelcome`, `reset`) delete lingering entries.
+Not guarded while lingering: the entity stays targetable / lockable, and
+its predWorld body stays, for at most the display delay (the same as a held
+death). Lock: `drawnShellTiming.sweep.test.ts`.
+
 ## Client rules in detail
 
 Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.

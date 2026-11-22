@@ -1408,10 +1408,10 @@ export class ColyseusGameClient {
       const decodeStartMs = performance.now();
       if (raw instanceof ArrayBuffer) {
         if (bw) { bw.swarmBytes += raw.byteLength; bw.swarmPackets += 1; }
-        decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._shellTiming.swarmKills);
+        decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._shellTiming);
       } else if (ArrayBuffer.isView(raw)) {
         if (bw) { bw.swarmBytes += raw.byteLength; bw.swarmPackets += 1; }
-        decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._shellTiming.swarmKills);
+        decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._shellTiming);
       }
       this.syncSwarmIntoPredWorld();
       const decodeMs = performance.now() - decodeStartMs;
