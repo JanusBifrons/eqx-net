@@ -42,9 +42,47 @@ export const HUD = {
     /** Capital tier edge (blue) and owned-hull edge (gold). */
     tier1: 'rgba(74,168,255,0.6)',
     tier2: 'rgba(255,200,58,0.7)',
+    /** MUI primary (buttons, focus, game-dialog titles): signal green. */
+    brand: '#00ff88',
+    /** Page background behind everything (MUI background.default). */
+    appBg: '#05070f',
+    /** Default MUI Paper (menus, drawers without their own paper). */
+    appPaper: '#0d1117',
+    /** Game dialog (ShipDetail, Upgrade, loot): opaque navy paper. */
+    dialogBg: '#0c1020',
+    /** Game dialog thin slate edge. */
+    dialogEdge: '#2a2f40',
+    /** Game dialog body text. */
+    dialogInk: '#ccc',
+    /** Side panel paper (right dock / bottom sheet). */
+    sidePanelBg: 'rgba(8,12,24,0.98)',
+    /** Side panel text. */
+    sidePanelInk: '#dffff0',
+    /** Side panel edge. */
+    sidePanelEdge: '#2a3550',
   },
   /** Minimum invisible touch target (Apple HIG / Material: 44–48 px). */
   touchMin: 44,
+  /** Layout sizes (UI language plan B3), px. */
+  size: {
+    /** Right rail width on a phone. */
+    railPhone: 48,
+    /** Right rail width on desktop. */
+    railDesktop: 56,
+    /** The one icon-button size for the rail and the left strip (>= touchMin). */
+    iconButton: 44,
+  },
+  /** Motion (UI language plan B3). Honour prefers-reduced-motion at the call site. */
+  motion: {
+    /** Panel / strip slide in, ms (MUI enteringScreen). */
+    slideInMs: 225,
+    /** Panel / strip slide out, ms (MUI leavingScreen). */
+    slideOutMs: 195,
+    /** Slide easing (MUI easeOut). */
+    slideEasing: 'cubic-bezier(0.0, 0, 0.2, 1)',
+    /** A dragged panel snapping back to docked, ms. */
+    snapBackMs: 160,
+  },
 } as const;
 
 export function hullColor(pct: number): string {

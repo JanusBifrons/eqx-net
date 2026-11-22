@@ -21,6 +21,7 @@
 import { useEffect, useRef, type ReactNode } from 'react';
 import { Box, Drawer, Portal, useMediaQuery } from '@mui/material';
 import { Z } from '../layout/zIndex';
+import { HUD } from '../hud/tokens.js';
 import { WINDOW_HEAD_SX, WINDOW_TITLE_SX, WINDOW_X_SX } from './GameWindow';
 import { isTouchDevice } from '../input/TouchInput';
 import {
@@ -88,9 +89,9 @@ export function escapeClosesPanel(e: KeyboardEvent): boolean {
 }
 
 const PAPER_COMMON = {
-  bgcolor: 'rgba(8,12,24,0.98)',
-  color: '#dffff0',
-  border: '1px solid #2a3550',
+  bgcolor: HUD.color.sidePanelBg,
+  color: HUD.color.sidePanelInk,
+  border: `1px solid ${HUD.color.sidePanelEdge}`,
   display: 'flex',
   flexDirection: 'column',
   boxSizing: 'border-box',
@@ -276,7 +277,7 @@ export function SidePanel({
       onClose();
     } else if (p) {
       // Snap back to docked.
-      p.style.transition = 'transform 160ms ease';
+      p.style.transition = `transform ${HUD.motion.snapBackMs}ms ease`;
       p.style.transform = '';
     }
   };

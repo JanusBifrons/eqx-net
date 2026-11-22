@@ -1,6 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ThemeProvider, createTheme, CssBaseline } from '@mui/material';
+import { ThemeProvider, CssBaseline } from '@mui/material';
 import { registerSW } from 'virtual:pwa-register';
 import { App } from './App';
 import { applyHudMode, hudModeFromSearch } from './cinematic/hudMode';
@@ -12,7 +12,7 @@ import '@fontsource/chakra-petch/500.css';
 import '@fontsource/chakra-petch/700.css';
 import '@fontsource/jetbrains-mono/500.css';
 import '@fontsource/jetbrains-mono/700.css';
-import { HUD } from './hud/tokens';
+import { eqxTheme } from '../ui/theme.js';
 import { apiGetMe, exchangeAuthCode } from './auth/authApi';
 import { lockLandscape } from './layout/useFullscreen';
 import { isStandaloneNow } from './layout/useStandalone';
@@ -65,18 +65,6 @@ if (typeof window !== 'undefined') {
   }
 }
 
-const theme = createTheme({
-  palette: {
-    mode: 'dark',
-    primary: { main: '#00ff88' },
-    background: { default: '#05070f', paper: '#0d1117' },
-  },
-  typography: {
-    // The HUD label font app-wide, so the drawer and dialogs match the HUD.
-    fontFamily: HUD.font.label,
-  },
-});
-
 // Bootstrap: restore session from localStorage or Google OAuth callback URL.
 async function bootstrapAuth(): Promise<void> {
   const { setAuth } = useAuthStore.getState();
@@ -120,7 +108,7 @@ if (!root) throw new Error('No #root element found');
 bootstrapAuth().finally(() => {
   createRoot(root).render(
     <StrictMode>
-      <ThemeProvider theme={theme}>
+      <ThemeProvider theme={eqxTheme}>
         <CssBaseline />
         <App />
       </ThemeProvider>

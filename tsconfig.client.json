@@ -15,6 +15,6 @@
     }
   },
   "references": [{ "path": "./tsconfig.core.json" }],
-  "include": ["src/client/**/*.ts", "src/client/**/*.tsx", "src/core/**/*.ts", "src/shared-types/**/*.ts"],
-  "exclude": ["src/client/**/*.test.ts", "src/client/**/*.test.tsx", "**/__fixtures__/**"]
+  "include": ["src/client/**/*.ts", "src/client/**/*.tsx", "src/core/**/*.ts", "src/shared-types/**/*.ts", "src/ui/**/*.ts", "src/ui/**/*.tsx"],
+  "exclude": ["src/client/**/*.test.ts", "src/client/**/*.test.tsx", "src/ui/**/*.test.ts", "src/ui/**/*.test.tsx", "**/__fixtures__/**"]
 }
