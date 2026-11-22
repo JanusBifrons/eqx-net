@@ -11,7 +11,10 @@
  *     the `rightPanel` flag to the item; AdvancedDrawer shows on that flag).
  *   - `panel`: a `panels/*Panel.tsx` shown while the flag is the item (Build:
  *     panels/BuildPanel.tsx, mounted by GameHud's BuildSidebarHost).
- *   - `contacts`: today's contacts list (`contactsOpen`), until its panel lands.
+ *
+ * Contacts is a common item (every mode: you lock from the list in Fly,
+ * Command and Build alike); it is an ordinary `panel` item that opens
+ * `panels/ContactsPanel.tsx`. The O key toggles the same flag (`input/MouseLock.ts`).
  */
 import type { EqxIconName } from '../../ui/icons.js';
 import type { RailId } from '../state/rightPanel.js';
@@ -19,8 +22,7 @@ import type { ControlMode } from '../state/storeTypes.js';
 
 export type RailOpen =
   | { kind: 'drawer'; page: string }
-  | { kind: 'panel' }
-  | { kind: 'contacts' };
+  | { kind: 'panel' };
 
 export interface RailItemSpec {
   id: RailId;
@@ -30,13 +32,14 @@ export interface RailItemSpec {
   open: RailOpen;
 }
 
-const CONTACTS: RailItemSpec = { id: 'contacts', icon: 'contacts', tooltip: 'Contacts', open: { kind: 'contacts' } };
+const CONTACTS: RailItemSpec = { id: 'contacts', icon: 'contacts', tooltip: 'Contacts', open: { kind: 'panel' } };
 const HOLD: RailItemSpec = { id: 'hold', icon: 'hold', tooltip: 'Hold', open: { kind: 'panel' } };
 const FLEET: RailItemSpec = { id: 'fleet', icon: 'fleet', tooltip: 'Fleet', open: { kind: 'panel' } };
 const BUILD: RailItemSpec = { id: 'build', icon: 'build', tooltip: 'Build', open: { kind: 'panel' } };
 
 /** In every mode, below the mode's tools. */
 export const RAIL_COMMON: readonly RailItemSpec[] = [
+  CONTACTS,
   { id: 'galaxy', icon: 'galaxy', tooltip: 'Galaxy', open: { kind: 'drawer', page: 'galaxy' } },
   { id: 'jobs', icon: 'jobs', tooltip: 'Jobs', open: { kind: 'drawer', page: 'contracts' } },
   { id: 'trade', icon: 'trade', tooltip: 'Trade', open: { kind: 'drawer', page: 'trade' } },
@@ -47,7 +50,7 @@ export const RAIL_COMMON: readonly RailItemSpec[] = [
 export const RAIL_COG: RailItemSpec = { id: 'cog', icon: 'cog', tooltip: 'Settings', open: { kind: 'drawer', page: 'settings' } };
 
 const MODE_TOOLS: Readonly<Record<ControlMode, readonly RailItemSpec[]>> = {
-  fly: [CONTACTS, HOLD],
+  fly: [HOLD],
   command: [FLEET],
   build: [BUILD],
 };
@@ -65,5 +68,5 @@ export function railItemsFor(mode: ControlMode): readonly RailItemSpec[] {
 /** The spec for a rail id (any mode). */
 export function railItemById(id: string): RailItemSpec | undefined {
   if (id === RAIL_COG.id) return RAIL_COG;
-  return [CONTACTS, HOLD, FLEET, BUILD, ...RAIL_COMMON].find((it) => it.id === id);
+  return [HOLD, FLEET, BUILD, ...RAIL_COMMON].find((it) => it.id === id);
 }

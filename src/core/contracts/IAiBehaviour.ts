@@ -60,6 +60,11 @@ export interface AiStructureView {
   /** Class-priority weight (higher = attack first). Fed to
    *  `WeaponMountController.pickTarget` via `priorityBias`. */
   readonly priority: number;
+  /** The structure's owner string (an owned brain never targets its own). */
+  readonly owner?: string;
+  /** Listed only because it is hostile to the OWNER of some AI-flown hull
+   *  (an enemy base), not a drone-raid target: ownerless brains skip it. */
+  readonly ownerFoeOnly?: boolean;
 }
 
 /**
@@ -93,7 +98,8 @@ export interface AiWorldView {
   /** Live, alive players. Empty when none are present. */
   readonly players: ReadonlyArray<AiPlayerView>;
   /**
-   * Hostile structures this drone may target (wave-system Phase 2). Empty/absent
+   * Hostile structures this drone may target (wave-system Phase 2), plus the
+   * structures hostile to an AI-flown hull's owner (`ownerFoeOnly`). Empty/absent
    * for ambient drones and for any sector with no faction "under wave". The
    * server builds this list ONCE per tick (faction-filtered) and reuses it;
    * behaviours read it in their COMBAT branch.
@@ -436,6 +442,9 @@ export interface IAiBehaviour {
    *  the guard leash; null lifts it (the ship goes back to its job). */
   setOrderedTarget?(id: string | null, atTick: number): void;
   getOrderedTarget?(): string | null;
+  /** RTS kept lock (SERVER-ONLY): the target the hull's live weapon lock
+   *  holds; while it is a hostile candidate (and no order) it wins the pick. */
+  setKeptLockTarget?(id: string | null): void;
   /** RTS Hunt (SERVER-ONLY): no guard leash; with nothing to fight the ship
    *  searches the sector, then engages what it finds. A guard post ends it. */
   setHunt?(on: boolean): void;
