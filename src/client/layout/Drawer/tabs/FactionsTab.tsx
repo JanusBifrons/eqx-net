@@ -11,6 +11,7 @@
 import { memo, useCallback, useEffect, useState, type HTMLAttributes } from 'react';
 import { Box, MenuItem, Select, Typography, type SelectChangeEvent } from '@mui/material';
 import { useUIStore } from '../../../state/store';
+import { selectDrawerTabShown } from '../../../state/rightPanel';
 import { loadStoredPlayerId } from '../../../identity/token';
 import { fetchFactions } from '../../../net/tradeApi';
 import { sendSetFactionPolicy } from '../../../net/tradeClient';
@@ -36,7 +37,7 @@ function standingColor(v: number): string {
 }
 
 export const FactionsTab = memo(function FactionsTab(): JSX.Element {
-  const visible = useUIStore((s) => s.drawerTab === 'factions' && s.isDrawerOpen);
+  const visible = useUIStore(selectDrawerTabShown('factions'));
   const [view, setView] = useState<PlayerFactionsView | null>(null);
   const playerId = loadStoredPlayerId();
 

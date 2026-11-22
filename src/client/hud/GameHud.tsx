@@ -18,6 +18,7 @@ import { useCallback, useEffect, useRef } from 'react';
 import { selectControlMode, useShouldRenderHud, useUIStore } from '../state/store';
 import type { TouchInput } from '../input/TouchInput';
 import { Slot } from '../layout/Slot';
+import { RAIL_W_CSS } from '../layout/railWidth';
 import { SpeedDialMenu } from '../components/SpeedDialMenu';
 import { FleetPanel } from '../components/FleetPanel';
 import { FleetStrip } from '../components/FleetStrip';
@@ -237,7 +238,7 @@ function FcStripDock({ scale }: { scale: number }): JSX.Element {
     <div
       style={{
         position: 'fixed',
-        right: 'calc(env(safe-area-inset-right, 0px) + 14px)',
+        right: `calc(env(safe-area-inset-right, 0px) + ${RAIL_W_CSS} + 14px)`,
         top: '50%',
         transform: 'translateY(-62%)',
         zIndex: 18,
@@ -277,7 +278,7 @@ function LockCluster({ touchInput }: { touchInput: TouchInput }): JSX.Element {
     <>
       <FloatingStick
         id="hud-lock"
-        zone={{ right: 0, top: '28%', width: '44%', bottom: 0 }}
+        zone={{ right: RAIL_W_CSS, top: '28%', width: '44%', bottom: 0 }}
         home={{ right: base + 70, bottom: base }}
         radius={46}
         knob={36}
@@ -294,7 +295,7 @@ function LockCluster({ touchInput }: { touchInput: TouchInput }): JSX.Element {
       <div
         style={{
           position: 'fixed',
-          right: `calc(env(safe-area-inset-right, 0px) + ${base}px)`,
+          right: `calc(env(safe-area-inset-right, 0px) + ${RAIL_W_CSS} + ${base}px)`,
           bottom: `calc(env(safe-area-inset-bottom, 0px) + ${base}px)`,
           zIndex: 17,
         }}

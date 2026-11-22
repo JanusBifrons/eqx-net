@@ -49,6 +49,13 @@ describe('panelCameraNudge maths', () => {
     expect(rightPanelWidthPx(SETTINGS_PANEL_SIZE, 1200, true)).toBe(360);
   });
 
+  it('the right rail widens the covered strip; at 0 nothing moves', () => {
+    expect(rightPanelWidthPx(SETTINGS_PANEL_SIZE, 1024, false, 0)).toBe(360);
+    expect(rightPanelWidthPx(SETTINGS_PANEL_SIZE, 1024, false, 56)).toBe(416);
+    expect(rightPanelWidthPx(SETTINGS_PANEL_SIZE, 800, true, 48)).toBe(368);
+    expect(panelNudgeX(100, rightPanelWidthPx(SETTINGS_PANEL_SIZE, 1024, false, 56), 2)).toBe(204);
+  });
+
   it('shifts the camera +X by half the panel, in world units', () => {
     expect(panelNudgeX(100, 360, 2)).toBe(190);
     expect(panelNudgeX(100, 360, 0.5)).toBe(460);

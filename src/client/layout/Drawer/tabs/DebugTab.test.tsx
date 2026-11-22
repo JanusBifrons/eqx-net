@@ -3,7 +3,7 @@
  *
  * With `ModalProps.keepMounted: true` on AdvancedDrawer (2026-05-13,
  * commit `2aa7d4f`), drawer-tab content stays in DOM even when the
- * drawer is closed. DebugTab returns `null` when `isDrawerOpen === false`
+ * drawer is closed. DebugTab returns `null` when the drawer is closed (`rightPanel` null)
  * so the snapshot-rate Zustand subscriptions inside `ConnectionDiagnostics`,
  * `DevOverlay`, and `LogPanel` don't fire when the panel can't be seen.
  *
@@ -20,7 +20,7 @@ import { useUIStore } from '../../../state/store.js';
 beforeEach(() => {
   // Default to closed; each test sets explicitly.
   useUIStore.setState({
-    isDrawerOpen: false,
+    rightPanel: null,
     drawerTab: 'debug',
     showDevOverlay: false,
     showLogPanel: false,
@@ -29,14 +29,14 @@ beforeEach(() => {
 
 describe('DebugTab — snapshot-rate gate', () => {
   it('returns null when the drawer is closed', () => {
-    useUIStore.setState({ isDrawerOpen: false });
+    useUIStore.setState({ rightPanel: null });
     const { container } = render(<DebugTab />);
     expect(container).toBeEmptyDOMElement();
     expect(screen.queryByTestId('diag-capture-button')).not.toBeInTheDocument();
   });
 
   it('renders the capture button when the drawer is open', () => {
-    useUIStore.setState({ isDrawerOpen: true });
+    useUIStore.setState({ rightPanel: 'cog' });
     render(<DebugTab />);
     expect(screen.getByTestId('diag-capture-button')).toBeInTheDocument();
   });

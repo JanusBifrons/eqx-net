@@ -19,7 +19,7 @@ function seedLoggedIn(): void {
     token: 'tok-123',
     user: { id: 'u1', email: 'pilot@eqx.test', displayName: 'Pilot' },
   });
-  useUIStore.setState({ phase: 'game', isDrawerOpen: false });
+  useUIStore.setState({ phase: 'game', rightPanel: null });
 }
 
 describe('AvatarMenu', () => {

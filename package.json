@@ -23,6 +23,8 @@
     "perf:phone": "tsx perf/run-phone.ts",
     "lint": "node scripts/dev/light-lane.mjs --kind lint -- eslint .",
     "audit:god-files": "node scripts/audit-god-files.mjs",
+    "audit:mui": "node scripts/audit-mui.mjs",
+    "ui:countdown": "node scripts/audit-mui.mjs --count",
     "audit:thin-wrappers": "node scripts/audit-thin-wrappers.mjs",
     "audit:query": "node scripts/query-audit.mjs",
     "test": "node scripts/test-unit.mjs",
