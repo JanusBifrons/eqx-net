@@ -8,7 +8,6 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { useUIStore } from '../../state/store';
 
 vi.mock('./tabs/GalaxyTab', () => ({ GalaxyTab: () => <div>galaxy page</div> }));
-vi.mock('./tabs/TradeTab', () => ({ TradeTab: () => <div>trade page</div> }));
 vi.mock('./tabs/ContractsTab', () => ({ ContractsTab: () => <div>jobs page</div> }));
 vi.mock('./tabs/FactionsTab', () => ({ FactionsTab: () => <div>factions page</div> }));
 vi.mock('./tabs/ShipLookTab', () => ({ ShipLookTab: () => <div>look page</div> }));
@@ -24,7 +23,7 @@ afterEach(() => { useUIStore.setState({ rightPanel: null, drawerTab: 'galaxy' })
 describe('AdvancedDrawer: each rail panel shows only its own pages', () => {
   it('maps pages to panels as the plan says', () => {
     expect(pagesOfPanel('galaxy').map((p) => p.id)).toEqual(['galaxy']);
-    expect(pagesOfPanel('trade').map((p) => p.id)).toEqual(['trade']);
+    expect(pagesOfPanel('trade')).toEqual([]); // its own drill-down, panels/TradePanel.tsx
     expect(pagesOfPanel('jobs').map((p) => p.id)).toEqual(['contracts']);
     expect(pagesOfPanel('faction').map((p) => p.id)).toEqual(['factions', 'look']);
     expect(pagesOfPanel('cog').map((p) => p.id)).toEqual(['profile', 'settings', 'debug']);
@@ -34,6 +33,7 @@ describe('AdvancedDrawer: each rail panel shows only its own pages', () => {
     render(<AdvancedDrawer />);
     act(() => { useUIStore.getState().setDrawerTab('galaxy'); });
     expect(screen.getByTestId('drawer-panel-galaxy').textContent).toBe('galaxy page');
+    expect(screen.getByTestId('advanced-drawer')).toBeVisible();
     expect(screen.queryByRole('tablist')).toBeNull();
     expect(screen.queryByTestId('drawer-tab')).toBeNull();
     expect(screen.queryByTestId('drawer-tab-trade')).toBeNull();
@@ -52,8 +52,15 @@ describe('AdvancedDrawer: each rail panel shows only its own pages', () => {
 
   it('✕ closes the panel', () => {
     render(<AdvancedDrawer />);
-    act(() => { useUIStore.getState().setDrawerTab('trade'); });
+    act(() => { useUIStore.getState().setDrawerTab('contracts'); });
     fireEvent.click(screen.getByTestId('drawer-close'));
     expect(useUIStore.getState().rightPanel).toBeNull();
+  });
+
+  it('stays shut while the Trade panel is open (Trade draws its own panel)', () => {
+    render(<AdvancedDrawer />);
+    act(() => { useUIStore.getState().setDrawerTab('trade'); });
+    expect(useUIStore.getState().rightPanel).toBe('trade');
+    expect(screen.getByTestId('advanced-drawer')).not.toBeVisible();
   });
 });
