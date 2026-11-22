@@ -156,7 +156,7 @@ export function TradeTab(): JSX.Element {
         )}
       </Box>
 
-      <Tabs value={section} onChange={(_e, v: Section) => setSection(v)} sx={TABS_SX} variant="fullWidth">
+      <Tabs value={section} onChange={(_e, v: Section) => setSection(v)} sx={TABS_SX} variant="scrollable" scrollButtons={false}>
         <Tab value="offers" label="Offers" data-testid="trade-section-offers" />
         <Tab value="deals" label={`Deals${view ? ` (${view.deals.filter((d) => ['scheduled', 'inbound', 'docked', 'departing'].includes(d.state)).length})` : ''}`} data-testid="trade-section-deals" />
         <Tab value="history" label="History" data-testid="trade-section-history" />
