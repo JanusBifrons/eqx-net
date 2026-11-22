@@ -17,10 +17,10 @@ const px = (v: string | undefined): number => parseFloat(v ?? 'NaN');
 describe('leftStripFitVars', () => {
   it('writes whole px, never negative; a strip that fits is not scaled', () => {
     expect(leftStripFitVars(116.4, 265.6, 900)).toEqual({
-      '--hud-tl-bottom': '116px', '--left-strip-h': '266px', '--left-strip-scale': '1',
+      '--hud-tl-bottom': '116px', '--left-strip-h': '266px', '--left-strip-scale': '1', '--left-strip-w': '0px',
     });
     expect(leftStripFitVars(-3, -1, 900)).toEqual({
-      '--hud-tl-bottom': '0px', '--left-strip-h': '0px', '--left-strip-scale': '1',
+      '--hud-tl-bottom': '0px', '--left-strip-h': '0px', '--left-strip-scale': '1', '--left-strip-w': '0px',
     });
   });
 
@@ -38,6 +38,12 @@ describe('leftStripFitVars', () => {
     expect(scale).toBeGreaterThanOrEqual(MIN_STRIP_SCALE);
     const h = px(v['--left-strip-h']);
     expect(stripTop(412, 116, h) + h).toBeLessThanOrEqual(412 - 8 + 0.5);
+  });
+
+  it('publishes the strip width (scaled, plus the gap) so the spool bar sits beside it', () => {
+    expect(leftStripFitVars(116, 200, 900, 52)['--left-strip-w']).toBe('60px');
+    // Scaled strip: 360 px tall in 280 px of room → 0.778 × 52 ≈ 40, + 8.
+    expect(leftStripFitVars(116, 360, 412, 52)['--left-strip-w']).toBe('48px');
   });
 
   it('never shrinks below the floor', () => {
