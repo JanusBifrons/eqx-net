@@ -170,6 +170,17 @@ export class GhostManager {
     }
   }
 
+  /** Server bolt ids this client already ended on a drawn hull
+   *  (`advanceBoltsToHulls`): `syncProjectiles` never draws them again and
+   *  forgets each once the server stops listing it. */
+  readonly stoppedBolts = new Set<string>();
+
+  /** A ghost bolt met a drawn hull (`advanceBoltsToHulls`, which removes it
+   *  from the mirror too): it is gone, never drawn again. */
+  stop(id: string): void {
+    this.ghosts.delete(id);
+  }
+
   /** Evict all unresolved ghosts for a ship that just died. */
   clearForShip(ownerId: string): void {
     for (const [id, ghost] of this.ghosts) {
@@ -188,5 +199,6 @@ export class GhostManager {
    */
   dispose(): void {
     this.ghosts.clear();
+    this.stoppedBolts.clear();
   }
 }
