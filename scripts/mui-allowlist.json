@@ -44,7 +44,6 @@
   "src/client/components/SectorHistorySparkline.tsx",
   "src/client/components/SectorInfoDrawer.tsx",
   "src/client/components/SettingsModal.tsx",
-  "src/client/components/SidePanel.tsx",
   "src/client/components/SpeedDialMenu.tsx",
   "src/client/components/StructureManageActions.tsx",
   "src/client/components/StructurePlacementBanner.tsx",
