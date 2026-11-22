@@ -47,8 +47,8 @@ export interface NpcLineOfFireHost {
   /** The room state's ships (lingering hulls, owned hulls). */
   ships(): { get(shipInstanceId: string): ShipState | undefined };
   getActiveShip(playerId: string): ShipState | undefined;
-  playerHitscanDist(ship: ShipState, fx: number, fy: number, dx: number, dy: number, maxDist: number, cx: number, cy: number, angle: number): number | null;
-  swarmRayHit(rec: SwarmEntityRecord, fx: number, fy: number, dx: number, dy: number, maxDist: number, cx: number, cy: number, ca: number): number | null;
+  playerHitscanDist(ship: ShipState, fx: number, fy: number, dx: number, dy: number, maxDist: number, cx: number, cy: number, angle: number, halfWidth?: number): number | null;
+  swarmRayHit(rec: SwarmEntityRecord, fx: number, fy: number, dx: number, dy: number, maxDist: number, cx: number, cy: number, ca: number, hw?: number): number | null;
   /** Line-of-fire feedback to the shooter's brain. */
   noteBlocked(entityId: string, tick: number, blockerX: number, blockerY: number): void;
   /** Fire control's blocked-line hold (the mount ticker's, built in onCreate). */
@@ -117,9 +117,9 @@ export class NpcLineOfFire {
         sabF32: h.sabF32(),
         tick: () => h.serverTick(),
         ships: (out) => this.fillLofShips(out),
-        rayHit: (rec, fx, fy, dx, dy, max, cx, cy, ca) => rec instanceof LofShipBody
-          ? h.playerHitscanDist(rec.ship!, fx, fy, dx, dy, max, cx, cy, ca)
-          : h.swarmRayHit(rec, fx, fy, dx, dy, max, cx, cy, ca),
+        rayHit: (rec, fx, fy, dx, dy, max, cx, cy, ca, hw) => rec instanceof LofShipBody
+          ? h.playerHitscanDist(rec.ship!, fx, fy, dx, dy, max, cx, cy, ca, hw)
+          : h.swarmRayHit(rec, fx, fy, dx, dy, max, cx, cy, ca, hw),
       });
     }
     return this.built;
@@ -250,7 +250,9 @@ export class NpcLineOfFire {
     // naval shell's line is checked to its target (as an AI capital's turret).
     const reach = w.mode === 'missile' || NAVAL_SHELL_WEAPON_IDS.has(weaponId) ? 0 : weaponIdReach(weaponId, size);
     const shotSpeed = w.mode === 'hitscan' ? 0 : w.speed;
-    if (!gate.blocked(fx, fy, dx, dy, reach > dist ? reach : dist, sid, targetId, this.lofFriendly, shotSpeed, svx, svy)) return false;
+    // A bolt hits by its catalogue radius (the projectile sweep's): the line is that wide.
+    const shotRadius = w.mode === 'projectile' ? w.radius : 0;
+    if (!gate.blocked(fx, fy, dx, dy, reach > dist ? reach : dist, sid, targetId, this.lofFriendly, shotSpeed, svx, svy, shotRadius)) return false;
     this.host.noteBlocked(sid, this.host.serverTick(), gate.lastBlockerX, gate.lastBlockerY);
     return true;
   }

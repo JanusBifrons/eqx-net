@@ -3,12 +3,15 @@
  * - `searchable` -> MUI `Autocomplete` (type to filter the options by label).
  * - plain        -> MUI `Select`.
  * One component, one prop. `multiple` makes `value` / `onChange` an array of ids.
- * `label` is the visible label and the accessible name. Colours and font from
- * `hud/tokens.ts`; no sx / style / className pass-through (plan C2).
+ * `label` is the visible label and the accessible name. Both draw as the
+ * compact panel field (mock `.field`, `../EqxTextField/fieldSx.ts`) with the
+ * mock option list (kit `.kmenu`); sizes from `HUD.field`; no sx / style /
+ * className pass-through (plan C2).
  */
-import { Autocomplete, FormControl, InputLabel, MenuItem, Select, TextField } from '@mui/material';
+import { Autocomplete, FilledInput, FormControl, InputLabel, MenuItem, Select, TextField } from '@mui/material';
 import { useId } from 'react';
 import { HUD } from '../../client/hud/tokens.js';
+import { FIELD_MENU_ITEM_SX, FIELD_MENU_PAPER_SX, FIELD_SX } from '../EqxTextField/fieldSx.js';
 
 /** One choice: a stable id (what `value` holds) and the text shown. */
 export interface EqxDropdownOption {
@@ -44,11 +47,23 @@ export interface EqxDropdownMultipleProps extends EqxDropdownBase {
 
 export type EqxDropdownProps = EqxDropdownSingleProps | EqxDropdownMultipleProps;
 
-const FIELD_SX = {
-  '& .MuiInputBase-root': { fontFamily: HUD.font.label, color: HUD.color.ink },
-  '& .MuiInputLabel-root': { fontFamily: HUD.font.label, color: HUD.color.inkDim },
-  '& .MuiOutlinedInput-notchedOutline': { borderColor: HUD.color.edge2 },
+const F = HUD.field;
+
+/** Autocomplete pads its own filled root; hand that padding to the shared input rule. */
+const SEARCH_SX = {
+  ...FIELD_SX,
+  '& .MuiAutocomplete-inputRoot.MuiFilledInput-root': { pt: 0, pb: 0, pl: 0 },
+  '& .MuiAutocomplete-inputRoot.MuiFilledInput-root .MuiAutocomplete-input': {
+    pt: `${F.padTop}px`,
+    pb: `${F.padBottom}px`,
+    pl: `${F.padX}px`,
+  },
+  '& .MuiAutocomplete-endAdornment .MuiSvgIcon-root': { color: HUD.color.inkDim },
 } as const;
+
+const SEARCH_PAPER_SX = { ...FIELD_MENU_PAPER_SX, '& .MuiAutocomplete-option': FIELD_MENU_ITEM_SX } as const;
+
+const MENU_PROPS = { slotProps: { paper: { sx: FIELD_MENU_PAPER_SX } } } as const;
 
 export function EqxDropdown(props: EqxDropdownProps) {
   return props.searchable ? <SearchableDropdown {...props} /> : <PlainDropdown {...props} />;
@@ -63,11 +78,18 @@ function SearchableDropdown(props: EqxDropdownProps) {
     size: 'small' as const,
     fullWidth: true,
     'data-testid': testId,
-    sx: FIELD_SX,
+    sx: SEARCH_SX,
+    slotProps: { paper: { sx: SEARCH_PAPER_SX } },
     getOptionLabel: (o: EqxDropdownOption) => o.label,
     isOptionEqualToValue: (a: EqxDropdownOption, b: EqxDropdownOption) => a.id === b.id,
-    renderInput: (params: object) => (
-      <TextField {...params} label={label} {...(placeholder === undefined ? {} : { placeholder })} />
+    renderInput: (params: { InputProps: object }) => (
+      <TextField
+        {...params}
+        variant="filled"
+        InputProps={{ ...params.InputProps, disableUnderline: true }}
+        label={label}
+        {...(placeholder === undefined ? {} : { placeholder })}
+      />
     ),
   };
   if (props.multiple) {
@@ -98,11 +120,12 @@ function PlainDropdown(props: EqxDropdownProps) {
   const labelId = useId();
   const labelOf = (id: string) => options.find((o) => o.id === id)?.label ?? id;
   const items = options.map((o) => (
-    <MenuItem key={o.id} value={o.id} sx={{ fontFamily: HUD.font.label }}>
+    <MenuItem key={o.id} value={o.id} sx={FIELD_MENU_ITEM_SX}>
       {o.label}
     </MenuItem>
   ));
   const shownEmpty = placeholder ?? '';
+  const input = <FilledInput disableUnderline />;
   let control;
   if (props.multiple) {
     const onChange = props.onChange;
@@ -110,6 +133,8 @@ function PlainDropdown(props: EqxDropdownProps) {
       <Select<string[]>
         labelId={labelId}
         label={label}
+        input={input}
+        MenuProps={MENU_PROPS}
         multiple
         displayEmpty={placeholder !== undefined}
         value={[...props.value]}
@@ -128,6 +153,8 @@ function PlainDropdown(props: EqxDropdownProps) {
       <Select<string>
         labelId={labelId}
         label={label}
+        input={input}
+        MenuProps={MENU_PROPS}
         displayEmpty={placeholder !== undefined}
         value={props.value ?? ''}
         onChange={(e) => {
@@ -141,7 +168,7 @@ function PlainDropdown(props: EqxDropdownProps) {
     );
   }
   return (
-    <FormControl size="small" fullWidth disabled={disabled} data-testid={testId} sx={FIELD_SX}>
+    <FormControl variant="filled" size="small" fullWidth disabled={disabled} data-testid={testId} sx={FIELD_SX}>
       <InputLabel id={labelId} {...(placeholder === undefined ? {} : { shrink: true })}>
         {label}
       </InputLabel>
