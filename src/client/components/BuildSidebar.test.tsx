@@ -227,8 +227,8 @@ describe('BuildSidebar', () => {
     const sx = rightPaperSx(BUILD_PANEL_SIZE, true);
     expect(BUILD_PANEL_SIZE.touchFrac).toBe(0.4);
     expect(sx['width']).toBe(`clamp(${BUILD_PANEL_SIZE.touchMinW}px, 40vw, ${BUILD_PANEL_SIZE.width}px)`);
-    expect(sx['top']).toBe(0);
-    expect(sx['height']).toBe('100dvh');
+    expect(sx['top']).toBe('var(--app-bar-h, 0px)');
+    expect(sx['height']).toBe('calc(100dvh - var(--app-bar-h, 0px))');
     expect(sx['bgcolor']).not.toBe('transparent');
     // 0.4 × 915 = 366 px fits inside the clamp, so the phone gets the full 0.4.
     expect(915 * 0.4).toBeGreaterThanOrEqual(BUILD_PANEL_SIZE.touchMinW);

@@ -83,7 +83,7 @@ describe('BuildSidebar strip mode', () => {
     }
     expect(rightPaperSx(BUILD_STRIP_SIZE, true)['width']).toBe(100);
     // The full sidebar keeps its full-height dock.
-    expect(rightPaperSx(BUILD_PANEL_SIZE, false)['height']).toBe('100dvh');
+    expect(rightPaperSx(BUILD_PANEL_SIZE, false)['height']).toBe('calc(100dvh - var(--app-bar-h, 0px))');
   });
 
   it('on a phone the strip renders without the panel header', () => {
