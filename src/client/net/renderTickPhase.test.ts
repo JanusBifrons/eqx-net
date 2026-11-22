@@ -87,7 +87,7 @@ describe('local ship dead-reckon is measured from the tick due time', () => {
  */
 describe('slewTickDue: the drawn pose does not inherit anchor steps', () => {
   const F = 1000 / 60;
-  it('a one-tick anchor step moves the render due time by at most the slew', () => {
+  it('a one-tick anchor step moves the render due time by an eighth of it, not the whole tick', () => {
     let due = 1000;
     // Steady: the target advances exactly one tick per tick.
     for (let i = 1; i <= 10; i++) due = slewTickDue(due, 1000 + i * F, F, 0.5, 200);
@@ -95,7 +95,8 @@ describe('slewTickDue: the drawn pose does not inherit anchor steps', () => {
     // The anchor jumps a whole tick late: target = next + F.
     const before = due;
     due = slewTickDue(due, before + F + F, F, 0.5, 200);
-    expect(due - before).toBeCloseTo(F + 0.5, 6);
+    // The slew limit grows with the error (err / 8): 2.08 ms, not 16.67 ms.
+    expect(due - before).toBeCloseTo(F + F / 8, 6);
   });
 
   it('closes a sustained offset gradually, and snaps a stall-sized one', () => {

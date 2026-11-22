@@ -280,17 +280,22 @@ describe('other players\' ships through gaps and corrections — today\'s number
       // behind on this capture), so the ship draws a fixed 32 ms ahead and
       // a snapshot's velocity change adds dv x 32 ms to that frame's step
       // (the local ship does the same); the new snaps are snapshot frames.
-      expect(counters.snaps).toBe(35);
-      expect(counters.largestSnapU).toBeCloseTo(19.159, 2);
-      expect(counters.totalSnapU).toBeCloseTo(144.853, 2);
-      expect(counters.freezeFrames).toBe(38);
+      // Render due time slews with the error (err / 8 a tick, was 0.5 ms):
+      // it keeps up with the clock anchor, so catch-up runs under its cap
+      // (snaps 35 -> 18, largest 19.159 -> 19.873 u, total 144.853 ->
+      // 99.474 u, freeze 38 -> 0, mean -241.924 -> -259.486, max 1467.404
+      // -> 1482.235).
+      expect(counters.snaps).toBe(18);
+      expect(counters.largestSnapU).toBeCloseTo(19.873, 2);
+      expect(counters.totalSnapU).toBeCloseTo(99.474, 2);
+      expect(counters.freezeFrames).toBe(0);
       expect(counters.backwardSteps).toBe(0);
       // Negative: drawn ahead of the truth, which is read at the snapshots'
       // ARRIVAL times (one-way delay late) while remotes are forward-predicted.
-      expect(counters.meanLatenessMs).toBeCloseTo(-241.924, 2);
+      expect(counters.meanLatenessMs).toBeCloseTo(-259.486, 2);
       // Not investigated: on a turning track the lateness search (2 s either
       // side) may match a point the truth passed much earlier.
-      expect(counters.maxLatenessMs).toBeCloseTo(1467.404, 2);
+      expect(counters.maxLatenessMs).toBeCloseTo(1482.235, 2);
     });
   });
 
@@ -404,14 +409,17 @@ describe('other players\' ships through gaps and corrections — today\'s number
       // physics tick (freeze 60 -> 28, snaps 60 -> 40, total 1583.485 ->
       // 1529.626 u, mean -77.704 -> -100.878); the 28 left sit past the
       // catch-up cap.
+      // Render due time slews with the error (err / 8 a tick): catch-up runs
+      // under its cap, freeze 28 -> 0, snaps 40 -> 9, largest 1426.273 ->
+      // 1427.109 u, total 1529.626 -> 1446.008 u, mean -100.878 -> -87.193.
       expect(glideFrames).toBe(0);
-      expect(arrivalStepU).toBeCloseTo(1994.7, 0);
-      expect(counters.snaps).toBe(40);
-      expect(counters.largestSnapU).toBeCloseTo(1426.273, 2);
-      expect(counters.totalSnapU).toBeCloseTo(1529.626, 2);
-      expect(counters.freezeFrames).toBe(28);
+      expect(arrivalStepU).toBeCloseTo(1995.2, 0);
+      expect(counters.snaps).toBe(9);
+      expect(counters.largestSnapU).toBeCloseTo(1427.109, 2);
+      expect(counters.totalSnapU).toBeCloseTo(1446.008, 2);
+      expect(counters.freezeFrames).toBe(0);
       expect(counters.backwardSteps).toBe(2);
-      expect(counters.meanLatenessMs).toBeCloseTo(-100.878, 2);
+      expect(counters.meanLatenessMs).toBeCloseTo(-87.193, 2);
       expect(counters.maxLatenessMs).toBeCloseTo(19.6, 2);
     });
 
@@ -450,7 +458,7 @@ describe('other players\' ships through gaps and corrections — today\'s number
     // 0.5 ms a tick (30 ms/s) it fell 12-79 ms behind the anchor, whose EWMA
     // moves up to ~100 ms/s on jittery arrivals, so the catch-up time sat at
     // its cap and the ship stalled between ticks.
-    it.fails('the render due time keeps up with the clock anchor (catch-up under the cap)', () => {
+    it('the render due time keeps up with the clock anchor (catch-up under the cap)', () => {
       const over = frames.filter((f) => f.tickElapsedMs >= DEAD_RECKON_CAP_MS).length;
       expect(over / frames.length).toBeLessThan(0.05);
     });

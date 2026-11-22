@@ -47,9 +47,10 @@ export function tickBoundaryDueMs(
   return anchorPerfNow + (boundaryTick - anchorServerTick - leadTicks) * fixedMs;
 }
 
-/** Most the render due time may move toward the anchor's due time per tick
- *  (ms): 0.5 ms a tick = 30 ms/s, enough for real clock drift, invisible
- *  as motion (0.5 ms of velocity is a few hundredths of a unit). */
+/** Floor of the per-tick slew toward the anchor's due time (ms; the limit
+ *  grows to |error| / 8 on bigger errors, see `slewTickDue`): 0.5 ms a
+ *  tick = 30 ms/s, enough for real clock drift, invisible as motion (0.5 ms
+ *  of velocity is a few hundredths of a unit). */
 export const RENDER_DUE_SLEW_MS = 0.5;
 /** Past this gap the render due time snaps (a stall, a hard anchor snap). */
 export const RENDER_DUE_SNAP_MS = 200;
@@ -72,7 +73,7 @@ export function resetRenderDueSnapCount(): void {
 /**
  * The due time the local ship's drawn pose dead-reckons from, advanced one
  * tick per processed tick and SLEWED toward `targetDueMs` (the anchor-based
- * `tickBoundaryDueMs`), at most `slewMs` per tick.
+ * `tickBoundaryDueMs`), at most max(`slewMs`, |error| / 8) per tick.
  *
  * Why: the anchor is an EWMA of snapshot arrival times, so a late snapshot
  * moves it (a 166 ms gap moved it ~16 ms = one tick). Dead-reckoning straight
@@ -84,5 +85,10 @@ export function slewTickDue(prevDueMs: number, targetDueMs: number, fixedMs: num
   const next = prevDueMs + fixedMs;
   const err = targetDueMs - next;
   if (Math.abs(err) > snapMs) { renderDueSnapCount++; return targetDueMs; }
-  return next + Math.max(-slewMs, Math.min(slewMs, err));
+  // The limit grows with the error (1/8 of it a tick): a fixed 0.5 ms/tick
+  // (30 ms/s) fell 12-79 ms behind the anchor EWMA, which moves up to
+  // ~100 ms/s on jittery arrivals, pinning the catch-up time at its cap.
+  // Errors under 4 ms slew exactly as before.
+  const lim = Math.max(slewMs, Math.abs(err) / 8);
+  return next + Math.max(-lim, Math.min(lim, err));
 }
