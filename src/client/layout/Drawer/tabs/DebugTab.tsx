@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { Box, Button, Stack, TextField, Typography } from '@mui/material';
 import BugReportOutlinedIcon from '@mui/icons-material/BugReportOutlined';
 import { useUIStore } from '../../../state/store';
+import { selectDrawerOpen } from '../../../state/rightPanel';
 import { ConnectionDiagnostics } from '../../../components/ConnectionDiagnostics';
 import { DevOverlay } from '../../../components/DevOverlay';
 import { LogPanel } from '../../../components/LogPanel';
@@ -35,7 +36,7 @@ export function DebugTab(): JSX.Element | null {
   // `useState` slots below are preserved across drawer-close/open cycles,
   // so a user typing a diagnostic note doesn't lose it if they
   // accidentally close the drawer.
-  const isDrawerOpen = useUIStore((s) => s.isDrawerOpen);
+  const isDrawerOpen = useUIStore(selectDrawerOpen);
   const [note, setNote] = useState('');
   const [status, setStatus] = useState<string | null>(null);
   const [capturing, setCapturing] = useState(false);

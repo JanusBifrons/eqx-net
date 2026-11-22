@@ -32,7 +32,7 @@ export function SettingsTab(): JSX.Element {
   const setShowLogPanel = useUIStore((s) => s.setShowLogPanel);
   const setShowServerGhost = useUIStore((s) => s.setShowServerGhost);
   const setPhase = useUIStore((s) => s.setPhase);
-  const setDrawerOpen = useUIStore((s) => s.setDrawerOpen);
+  const setRightPanel = useUIStore((s) => s.setRightPanel);
 
   // Graphics: the Machined look (default) or today's flat look. Per device;
   // read when the game loads, so a change applies on the next load.
@@ -69,7 +69,7 @@ export function SettingsTab(): JSX.Element {
 
   const onReturnToMenu = (): void => {
     setPhase('galaxy-map');
-    setDrawerOpen(false);
+    setRightPanel(null);
   };
 
   return (

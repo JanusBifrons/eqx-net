@@ -8,6 +8,7 @@
 import { memo, useEffect, useState } from 'react';
 import { Box, Typography } from '@mui/material';
 import { useUIStore } from '../../../state/store';
+import { selectDrawerTabShown } from '../../../state/rightPanel';
 import { fetchContracts, formatReward, formatTimeLeft } from '../../../net/contractsApi';
 import { sectorName } from '../../../net/tradeView';
 import type { Contract } from '../../../../shared-types/contracts';
@@ -35,7 +36,7 @@ function colorFor(c: Contract): string {
 }
 
 export const ContractsTab = memo(function ContractsTab(): JSX.Element {
-  const visible = useUIStore((s) => s.drawerTab === 'contracts' && s.isDrawerOpen);
+  const visible = useUIStore(selectDrawerTabShown('contracts'));
   const [contracts, setContracts] = useState<Contract[] | null>(null);
   const [now, setNow] = useState(() => Date.now());
 
@@ -58,7 +59,7 @@ export const ContractsTab = memo(function ContractsTab(): JSX.Element {
 
   const openMap = (): void => {
     const st = useUIStore.getState();
-    st.setDrawerOpen(false);
+    st.setRightPanel(null);
     st.setGalaxyMapOpen(true);
   };
 
