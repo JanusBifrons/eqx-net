@@ -53,7 +53,7 @@ import { bakedHullPaint } from './art/fields.js';
 
 /** A gun's (or AA barrel's) two layers: baked sun frames cross-faded, or
  *  (GPU-lit art) one lit mesh in `a`, lit by `litPass`, and `b` unused. */
-interface GunLayers { a: Sprite | LitShipMesh; b: Sprite; lit: boolean }
+export interface GunLayers { a: Sprite | LitShipMesh; b: Sprite; lit: boolean }
 
 /** True when `c` sits under a capital's hull sprite (checked once, at build). */
 function onCapitalHull(c: Container | null): boolean {
@@ -61,8 +61,8 @@ function onCapitalHull(c: Container | null): boolean {
   return false;
 }
 
-/** Build a gun's layers under `parent` at x. */
-function gunLayers(art: ShipArt, parent: Container, x: number): GunLayers {
+/** Build a gun's layers under `parent` at x (also a structure wreck piece's static gun, `structureWreckRigArt`). */
+export function gunLayers(art: ShipArt, parent: Container, x: number): GunLayers {
   const settings = litPass.settings;
   if (art.lit && settings) {
     const l = art.lit, tex = art.frames[0]!;
@@ -876,7 +876,7 @@ export class MountVisualManager {
  * mount-local space). Coloured to match the ship's kind so the visual blends
  * coherently. A darker tip suggests "this end is the muzzle".
  */
-function buildTurretGfx(_mount: WeaponMount, color: number): Graphics {
+export function buildTurretGfx(_mount: WeaponMount, color: number): Graphics {
   const g = new Graphics();
   // Body of the barrel (origin = mount pivot; barrel extends forward).
   g.rect(-BARREL_HALF_WIDTH, -BARREL_LENGTH, BARREL_HALF_WIDTH * 2, BARREL_LENGTH);

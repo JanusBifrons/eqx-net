@@ -21,7 +21,8 @@ import type { BattleWreckSaves } from './wreckLineageSaves.js';
 import type { WreckFieldSource } from './WreckFieldSource.js';
 import type { CutFieldSubsystem } from './CutFieldSubsystem.js';
 import type { ShipKindId } from '../../shared-types/shipKinds.js';
-import { SWARM_KIND_DRONE } from '../../shared-types/swarmWireFormat.js';
+import { SWARM_KIND_DRONE, SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
+import type { RoomWreckSpawns } from './features/wreckSpawns.js';
 import { FLAG_SLEEPING, SLOT_FLAGS_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase, slotPoseInto } from '../../shared-types/sabLayout.js';
 import { rockViewOf } from './rockCut.js';
 import { relayPieceSplit } from './lockSplit.js';
@@ -59,6 +60,9 @@ export interface CapitalWreckRoomHost {
   /** The room's cut field (field rock cut 1C-b: its rocks are cut, woken and
    *  marked consumed through it); undefined: none. */
   cutField: () => Pick<CutFieldSubsystem, 'navOpts' | 'wakeRock' | 'markConsumed'> | undefined;
+  /** Structure break-up T6: a structure's wreck source (null: it does not
+   *  break here) and its registry owner (the pieces' livery). */
+  structures: Pick<RoomWreckSpawns, 'structureWreckSourceOf' | 'structureOwnerOf'>;
 }
 
 /** Capital destruction S2a: build the wreck subsystem (flag on only). */
@@ -67,14 +71,17 @@ export function buildCapitalWrecks(h: CapitalWreckRoomHost): CapitalWreckSubsyst
     serverTick: () => h.serverTick(),
     wreckKindOf: (id) => {
       const rec = h.swarmRegistry.get(id);
+      if (rec?.kind === SWARM_KIND_STRUCTURE) return h.structures.structureWreckSourceOf(id);
       if (rec) return rec.kind === SWARM_KIND_DRONE && rec.shipKind && h.wreckKindAllowed(rec.shipKind) ? (rec.shipKind as ShipKindId) : null;
       const ship = h.getActiveShip(id) ?? h.state().ships.get(id);
       return ship !== undefined && h.wreckKindAllowed(ship.kind) ? (ship.kind as ShipKindId) : null;
     },
     // The livery owner, as the client resolves it for the live hull: a
     // player hull (active by playerId, parked by shipInstanceId) its
-    // pilot's id, a patrol its faction (snapshot `fac`), else none.
+    // pilot's id, a patrol its faction (snapshot `fac`), a structure its
+    // registry owner, else none.
     ownerOf: (id) => {
+      if (h.swarmRegistry.get(id)?.kind === SWARM_KIND_STRUCTURE) return h.structures.structureOwnerOf(id);
       if (h.swarmRegistry.has(id)) return h.patrols.count > 0 ? h.patrols.factionOf(id) : undefined;
       const ship = h.getActiveShip(id) ?? h.state().ships.get(id);
       return ship !== undefined && ship.playerId !== '' ? ship.playerId : undefined;

@@ -34,7 +34,8 @@ import { scrapColliderFor } from '../../core/geometry/scrapCollider.js';
 import { getShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
 import { SCRAP_BURST_SPEED, SCRAP_HP, MAX_LIVE_SCRAP } from '../../core/swarm/scrapConstants.js';
 import type { Vec2 } from '../../core/swarm/asteroidShape.js';
-import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
+import { SWARM_KIND_DRONE, SWARM_KIND_SCRAP, SWARM_KIND_STRUCTURE } from '../../shared-types/swarmWireFormat.js';
+import { structureBreaks } from '../../core/destruction/wreckSource.js';
 import { SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, SLOT_ANGLE_OFF, slotBase, slotPoseInto } from '../../shared-types/sabLayout.js';
 import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import { droneMaxHealthOf } from '../rooms/droneKindHelpers.js';
@@ -199,6 +200,12 @@ export interface DroneScrapHost {
     pose: { x: number; y: number; vx: number; vy: number; angle: number; angvel?: number },
     maxHull: number, bodySlot?: number, bodyId?: string,
   ): boolean;
+  /** Structure break-up switch (`structureWrecks` / `EQX_STRUCTURE_WRECKS`). */
+  structureWrecksOn(): boolean;
+  /** A structure's registry kind and built state, or undefined. */
+  structureOf(id: string): { kind: string; isConstructed: boolean } | undefined;
+  /** Break a dying structure into wreck pieces (`RoomWreckSpawns.spawnStructureWreck`); true = vaporised. */
+  spawnStructureWreck(rec: SwarmEntityRecord): boolean;
 }
 
 /**
@@ -216,6 +223,14 @@ export function spawnScrapFromDrone(h: DroneScrapHost, rec: SwarmEntityRecord): 
   // piece would shatter into more scrap forever. Only a DRONE (kind 1) death
   // spawns scrap here.
   if (rec.kind === SWARM_KIND_SCRAP) return false;
+  // Structure break-up T6: a destroyed structure (kind 2) breaks into wreck
+  // pieces through the same death path, behind its switch. It never reaches
+  // the ship fallback below (`getShipKind` would read it as a fighter).
+  if (rec.kind === SWARM_KIND_STRUCTURE) {
+    if (!h.hasCapitalWrecks() || !h.structureWrecksOn()) return false;
+    const s = h.structureOf(rec.id);
+    return s !== undefined && structureBreaks(s.kind, s.isConstructed) && h.spawnStructureWreck(rec);
+  }
   // S2a — a capital drone breaks into wreck bodies (flag on). Pose from the
   // SAB: the drone's body is still live here (evicted right after).
   // Sub-capital break-up slice 2: any kind whose profile breaks (flags).

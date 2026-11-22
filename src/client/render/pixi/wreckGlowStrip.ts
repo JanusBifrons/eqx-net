@@ -12,8 +12,52 @@
  * and each cut edge glows only along its drawn span (`drawnSpan`).
  * Detail: docs/architecture/capital-destruction.md "Cut glow colours".
  */
-import { getShipKind, isShipKindId } from '../../../shared-types/shipKinds.js';
+import { SHIP_KINDS_LIST, getShipKind, isShipKindId } from '../../../shared-types/shipKinds.js';
+import { destructionProfileOf } from '../../../shared-types/shipScale/destructionProfile.js';
 import { shipParts } from '../art/fields.js';
+
+/** The simple (sub-capital) glow's band into the piece, share of the wreck
+ *  radius. Round 3 (2026-11-13): at 0.4 it filmed as an opaque orange
+ *  crescent over much of each piece, not a line along the cut; 0.1 reads as
+ *  an edge line (~2–3 px at fleet-fight zoom, 0.45). */
+const SIMPLE_GLOW_W_R = 0.1;
+/** ...but never under 2 px at fleet-fight zoom (2 / 0.45 ≈ 4.4 u), so the
+ *  smallest hulls still show it (round 2: "a thin orange line"). */
+const SIMPLE_GLOW_MIN_W = 4.5;
+let _shipSimpleMaxW = -1;
+
+/** The widest simple glow any ship draws: its share of the largest ship
+ *  kind whose profile glows `simple` (the sub-capitals). Computed once. */
+export function shipSimpleGlowMaxWidth(): number {
+  if (_shipSimpleMaxW < 0) {
+    let r = 0;
+    for (const k of SHIP_KINDS_LIST) {
+      if (destructionProfileOf({ type: 'ship', kindId: k.id }).fx.glowStyle === 'simple') r = Math.max(r, k.radius);
+    }
+    _shipSimpleMaxW = Math.max(SIMPLE_GLOW_MIN_W, r * SIMPLE_GLOW_W_R);
+  }
+  return _shipSimpleMaxW;
+}
+
+/** The simple glow's full line width (world u) for a wreck of radius
+ *  `hullR` cut from `source` (`wreckSourceKindOf`). A ship's and a rock's
+ *  is a share of the hull. A structure's follows the same rule but never
+ *  passes the widest ship's: the share was tuned on sub-capital hulls, and
+ *  on a 330 u base Capital it was a ~33 u flat orange slab, not an edge. */
+export function simpleGlowWidth(hullR: number, source: string): number {
+  const w = Math.max(SIMPLE_GLOW_MIN_W, hullR * SIMPLE_GLOW_W_R);
+  return source === 'structure' ? Math.min(w, shipSimpleGlowMaxWidth()) : w;
+}
+
+/** Whether a simple glow's band straddles the cut (half past the piece's
+ *  face, over the neighbour while they touch) or lies wholly inside the
+ *  piece (each face its half of the line, as the full glow draws). Ships
+ *  and rocks straddle (a hairline in the gap once the pieces part); a
+ *  structure's pieces drew dark bands over the starfield past every face,
+ *  so a structure's band stays on the piece. */
+export function simpleGlowStraddles(source: string): boolean {
+  return source !== 'structure';
+}
 
 /** A point test in a piece's body-local math-up frame. */
 export type InsideTest = (x: number, y: number) => boolean;

@@ -45,6 +45,7 @@ import { rocksInChunk, unpackRockKey, type ChunkOpts } from '../terrain/fieldLay
 import { fieldRockBody } from '../terrain/chunkStreamer.js';
 import { getStructureKind, SOCKET_OUTLINE_STYLE, structureOutline, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { destructionProfile } from '../../shared-types/shipScale/destructionProfile.js';
+import { structurePartScale } from './structureParting.js';
 
 /** The descriptor's `parentKind` of a rock's wreck (not a ship kind). */
 export const ROCK_WRECK_PARENT_KIND = WRECK_ROCK_PARENT_KIND;
@@ -105,6 +106,11 @@ export interface WreckSource {
   readonly pushMax: number;
   readonly separate: number;
   readonly crack: number;
+  /** The share of its profile's per-radius parting speed the source parts
+   *  at (already in `pushMin`..`crack`; also scales the settle speed,
+   *  `wreckBodyParams`). 1: a ship or a rock; a structure's: a ship of its
+   *  size's (`structurePartScale`). */
+  readonly partScale: number;
 }
 
 function ringArea(r: ReadonlyArray<readonly [number, number]>): number {
@@ -131,7 +137,7 @@ export function shipWreckSource(kindId: ShipKindId): WreckSource {
     ship: kindId, rock: null, structure: null, outline, scale: sc, area: ringArea(outline) * sc * sc,
     bodyMass: shipBodyMass(kind), maxHull: kind.maxHealth, radius: kind.radius, inset: t.wreckColliderInset,
     profile: DESTRUCTION_PROFILES[t.destruction],
-    pushMin: t.wreckPushMin, pushMax: t.wreckPushMax, separate: t.wreckSeparate, crack: t.wreckCrack,
+    pushMin: t.wreckPushMin, pushMax: t.wreckPushMax, separate: t.wreckSeparate, crack: t.wreckCrack, partScale: 1,
   };
   shipCache.set(kindId, s);
   return s;
@@ -183,7 +189,7 @@ export function rockWreckSource(rock: WreckRockSource, field: ChunkOpts | null |
     bodyMass: Math.max(1e-3, area * ROCK_WRECK_DENSITY), maxHull: area * ROCK_INTEGRITY_PER_AREA, radius: r,
     inset: WRECK_COLLIDER_INSET_PER_RADIUS * r, profile: DESTRUCTION_PROFILES.rock,
     pushMin: WRECK_PUSH_MIN_PER_RADIUS * r, pushMax: WRECK_PUSH_MAX_PER_RADIUS * r,
-    separate: WRECK_SEPARATE_PER_RADIUS * r, crack: WRECK_CRACK_PER_RADIUS * r,
+    separate: WRECK_SEPARATE_PER_RADIUS * r, crack: WRECK_CRACK_PER_RADIUS * r, partScale: 1,
   };
   if (rockCache.size >= ROCK_CACHE_MAX) rockCache.clear();
   rockCache.set(key, s);
@@ -195,8 +201,8 @@ const structureCache = new Map<StructureKindId, WreckSource>();
 /** A structure kind's source (memoised per kind). Area from its outline;
  *  mass `STRUCTURE_WRECK_DENSITY` × area; "max hull" the kind's catalogue
  *  `maxHealth` (base, unlevelled: the integrity scale of its pieces);
- *  radius the outline's farthest vertex; inset and parting per radius like
- *  a rock's. */
+ *  radius the outline's farthest vertex; inset per radius like a rock's;
+ *  parting per radius × `structurePartScale` (a ship of its size's). */
 export function structureWreckSource(ref: WreckStructureRef): WreckSource {
   let s = structureCache.get(ref.k);
   if (s !== undefined) return s;
@@ -211,12 +217,14 @@ export function structureWreckSource(ref: WreckStructureRef): WreckSource {
   }
   const area = polygonArea(verts);
   const r = Math.sqrt(r2);
+  // A ship of its size's parting speed (structureParting.ts).
+  const ps = structurePartScale(r);
   s = {
     ship: null, rock: null, structure: { k: kind.id }, outline, scale: 1, area,
     bodyMass: Math.max(1e-3, area * STRUCTURE_WRECK_DENSITY), maxHull: kind.maxHealth, radius: r,
     inset: WRECK_COLLIDER_INSET_PER_RADIUS * r, profile: DESTRUCTION_PROFILES.structure,
-    pushMin: WRECK_PUSH_MIN_PER_RADIUS * r, pushMax: WRECK_PUSH_MAX_PER_RADIUS * r,
-    separate: WRECK_SEPARATE_PER_RADIUS * r, crack: WRECK_CRACK_PER_RADIUS * r,
+    pushMin: WRECK_PUSH_MIN_PER_RADIUS * r * ps, pushMax: WRECK_PUSH_MAX_PER_RADIUS * r * ps,
+    separate: WRECK_SEPARATE_PER_RADIUS * r * ps, crack: WRECK_CRACK_PER_RADIUS * r * ps, partScale: ps,
   };
   structureCache.set(ref.k, s);
   return s;

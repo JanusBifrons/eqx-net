@@ -53,6 +53,7 @@ import { BufferImageSource, Container, Geometry, Mesh, MeshGeometry, Sprite, Tex
 import { WRECK_CRACK_MS } from '../../../shared-types/wreckTiming.js';
 import { LitShipMesh } from '../art/litShipShader.js';
 import { litPass } from '../art/litPass.js';
+import { flatLook } from '../art/lightingSettings.js';
 import type { ShipArt } from '../art/ArtService.js';
 import { sunFrameBlend, type SunBlend } from '../art/machinedShipLight.js';
 import { buildWreckPieceGfx, wreckPieceColors } from './spriteBuilders.js';
@@ -75,11 +76,15 @@ export {
   SPLINTER_GLOW_WIDTH_MUL, WRECK_GLOW_EMBER_S, WRECK_GLOW_END_S, WRECK_GLOW_TINTS, glowTintOf, glowWidthMul,
   simpleGlowAt, wreckGlowAt, type WreckGlow,
 } from './wreckGlowCurves.js';
-import { drawnSpan, insideWidth, lastChamferRatio, onDrawnHull, pointInRing, stripInside, writeStrip, type InsideTest } from './wreckGlowStrip.js';
+import {
+  drawnSpan, insideWidth, lastChamferRatio, onDrawnHull, pointInRing, simpleGlowStraddles, simpleGlowWidth, stripInside, writeStrip,
+  type InsideTest,
+} from './wreckGlowStrip.js';
 import type { WreckDescriptor } from '../../../shared-types/messages/wreckDescriptor.js';
 import type { WreckSource } from '../../../core/destruction/wreckSource.js';
 import { wreckFrameScale, wreckProfileOf, wreckSourceKindOf } from '../../net/wreckRootSource.js';
 import { type DestructionFx, type DestructionProfileId, type WreckGlowStyle } from '../../../shared-types/shipScale/destruction.js';
+import { structureWreckRigArt } from './structureWreckRigArt.js';
 
 /** Container + meshes (≤ 6 tiles) + one glow mesh (the crack strokes). */
 export const WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX = 8;
@@ -117,14 +122,6 @@ export const WRECK_FRONT_HIDDEN_SHARE = 0.2;
  *  2026-11-13: the glow over an opening gap read as a thin dark sliver
  *  piece that then "faded away"). */
 const GLOW_CORE_R = 0.018;
-/** The simple (sub-capital) glow's band into the piece, share of the wreck
- *  radius. Round 3 (2026-11-13): at 0.4 it filmed as an opaque orange
- *  crescent over much of each piece, not a line along the cut; 0.1 reads as
- *  an edge line (~2–3 px at fleet-fight zoom, 0.45). */
-const SIMPLE_GLOW_W_R = 0.1;
-/** ...but never under 2 px at fleet-fight zoom (2 / 0.45 ≈ 4.4 u), so the
- *  smallest hulls still show it (round 2: "a thin orange line"). */
-const SIMPLE_GLOW_MIN_W = 4.5;
 const GLOW_HEAD_MUL = 1.8;
 /** The head's length along the crack (share of the wreck radius). */
 const GLOW_HEAD_LEN_R = 0.06;
@@ -1144,6 +1141,8 @@ export class WreckPieceSprite extends Container {
     private readonly speckFill: number | null = null,
     /** What the wreck was cut from (`WreckGeometryStore.sourceOf`); null = by `parentKind`. */
     source: WreckSource | null = null,
+    /** A structure piece's gun bakes (`structureWreckGunArts`), per turret place; null = the bar. */
+    structGuns: ReadonlyArray<ShipArt | null> | null = null,
   ) {
     super();
     this.piece = piece;
@@ -1161,17 +1160,21 @@ export class WreckPieceSprite extends Container {
       const L = wreckTexLayout(art);
       const lit = art.lit;
       const tint = info.fx.burntArt ? burntTint(piece, info) : 0xffffff;
+      // A structure's piece (its bake via `structArtAsShipArt`) is lit as
+      // the structure was (`flatLook`: real-length shadows).
+      const flat = source !== null && source.structure !== null;
       for (const m of wreckPieceMeshes(piece, L)) {
         const tex = art.frames[m.tile]!;
-        const mesh = new LitShipMesh({ tex, w: lit.w, rows: tex.frame.height, y0: m.tile * art.tileH, hullH: lit.h, ppu: lit.ppu, maxH: lit.maxH, emisMax: lit.emisMax }, settings);
+        const mesh = new LitShipMesh({ tex, w: lit.w, rows: tex.frame.height, y0: m.tile * art.tileH, hullH: lit.h, ppu: lit.ppu, maxH: lit.maxH, emisMax: lit.emisMax }, flat ? flatLook(settings) : settings);
         mesh.geometry = litPieceGeometry(m, tex, piece);
         mesh.position.set(-piece.cx, piece.cy);
-        mesh.capitalHull = true;
+        mesh.capitalHull = !flat; // a structure's, like the live structure, is shaded by capitals
         // Wreck-piece art (the dead bake) casts no self shadow: the shader
         // marches the PARENT's whole height map, so a piece sat in the
         // shadow of hull the break removed (beam take 7 review: one half of
         // a sliced frigate black, the other lit).
-        if (info.fx.deadArt) mesh.selfShadow = false;
+        // Likewise a structure's piece (its height map is the whole structure).
+        if (info.fx.deadArt || flat) mesh.selfShadow = false;
         mesh.tint = tint;
         this.addChild(mesh);
         litPass.register(mesh);
@@ -1194,6 +1197,9 @@ export class WreckPieceSprite extends Container {
     } else {
       this.artParts.push(this.addChild(buildWreckPieceGfx(piece.outline, parentKind)));
     }
+    // A structure's piece also wears what is drawn over its bake (rig parts, guns).
+    const rigArt = art !== null && source?.structure ? structureWreckRigArt(source.structure.k, piece, structGuns) : null;
+    if (rigArt !== null) { rigArt.tint = info.fx.burntArt ? burntTint(piece, info) : 0xffffff; this.artParts.push(this.addChild(rigArt)); }
     // A profile dead tint, if any, from the first frame whatever path built
     // the piece. None today: a sub-cap piece keeps its ship's normal art
     // (owner 2026-11-13: "Why would it darken when destroyed? It should just
@@ -1234,7 +1240,11 @@ export class WreckPieceSprite extends Container {
     // The simple glow's band is a share of the hull (a small hull's core
     // alone is a hairline at fleet-fight zoom: round-2 review, "a thin orange
     // line on one edge"); `insideWidth` keeps it inside the piece.
-    this.simpleW = Math.max(SIMPLE_GLOW_MIN_W, info.hullR * SIMPLE_GLOW_W_R);
+    // A structure's is capped at the widest ship's (`simpleGlowWidth`), and
+    // sized by its own radius (`shipRadius`: its source's), as a ship kind of
+    // that radius: its wedges' extent (`hullR`, ~1.6 × r) drew a turret the cap.
+    const src = wreckSourceKindOf(this.parentKind);
+    this.simpleW = simpleGlowWidth(src === 'structure' ? this.shipRadius : info.hullR, src);
     const reach = this.simple ? Math.max(this.halfHalo, this.simpleW) : this.halfHalo;
     let k = 0;
     // On the piece AS DRAWN (`wreckGlowStrip`): a capital's outline spans
@@ -1357,6 +1367,8 @@ export class WreckPieceSprite extends Container {
     const uvs = new Float32Array(S * 8);
     const indices = new Uint32Array(S * 6);
     const u0 = simpleGlowU(0);
+    // A structure's band lies wholly on its piece (`simpleGlowStraddles`).
+    const straddle = simpleGlowStraddles(wreckSourceKindOf(this.parentKind));
     for (let k = 0; k < S; k++) {
       const v0 = k * 4, ii = k * 6, q = k * SEG_STRIDE;
       indices[ii] = v0; indices[ii + 1] = v0 + 1; indices[ii + 2] = v0 + 2;
@@ -1364,11 +1376,11 @@ export class WreckPieceSprite extends Container {
       const v = simpleGlowV(this.segTint[k]!);
       for (let c = 0; c < 4; c++) { uvs[(v0 + c) * 2] = u0; uvs[(v0 + c) * 2 + 1] = v; }
       const mx = s[q + 10]!, my = s[q + 11]!;
-      const half = (this.simpleW / 2) * s[q + 14]!;
+      const half = (this.simpleW / 2) * s[q + 14]!, out = straddle ? half : 0;
       writeStrip(
         positions, v0,
-        s[q]! - mx * half, s[q + 1]! - my * half, s[q + 2]! - mx * half, s[q + 3]! - my * half,
-        mx, my, half + Math.min(half, s[q + 12]!), half + Math.min(half, s[q + 13]!), s[q + 15]!, s[q + 16]!,
+        s[q]! - mx * out, s[q + 1]! - my * out, s[q + 2]! - mx * out, s[q + 3]! - my * out,
+        mx, my, out + Math.min(half, s[q + 12]!), out + Math.min(half, s[q + 13]!), s[q + 15]!, s[q + 16]!,
       );
     }
     this.grown = true;
