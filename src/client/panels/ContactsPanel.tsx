@@ -116,7 +116,7 @@ export const ContactsPanel = memo(function ContactsPanel(): JSX.Element {
           data-testid="contacts-group" />
         <EqxSegmented options={CONTACT_SORTS} value={hostilesFirst ? 'hostile' : 'nearest'}
           onChange={(id) => setHostilesFirst(id === 'hostile')} label="Sort contacts" data-testid="contacts-sort" />
-        <EqxSection title="Nearby"data-testid="contacts-list">
+        <EqxSection title="Nearby" data-testid="contacts-list">
           {view.rows.length === 0 && <EqxListRow primary="Nothing to lock nearby" data-testid="contacts-empty" />}
           {view.rows.map((r) => <Row key={r.key} r={r} groups={groups} activeIdx={activeIdx} onTap={onRow} />)}
         </EqxSection>
