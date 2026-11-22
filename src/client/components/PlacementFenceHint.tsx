@@ -6,19 +6,14 @@
  * Mounted only while a shot-firing kind is being placed; HIDDEN by default.
  * `gameRafLoop` decides each frame (`turretFireCrossesWall`, alloc-free) and
  * toggles `hidden` + positions it under the projected ghost by direct DOM
- * writes, so the per-frame check never re-renders React. On touch it is
- * docked under the top-centre placement banner instead (not moved).
+ * writes, so the per-frame check never re-renders React. A world hint on
+ * desktop and touch alike (the placing tools are on the left strip, U3-7).
  */
 import { memo } from 'react';
 import { Box, Typography } from '@mui/material';
 import { useUIStore } from '../state/store';
-import { isTouchDevice } from '../input/TouchInput';
 import { turretRangeOf } from '../structures/fenceFireHint';
 
-const LOOK_SX = {
-  bgcolor: 'rgba(40, 18, 12, 0.85)',
-  border: '1px solid rgba(255, 150, 90, 0.7)',
-} as const;
 const HINT_SX = {
   position: 'fixed',
   left: '50%',
@@ -30,21 +25,16 @@ const HINT_SX = {
   px: 0.75,
   py: 0.25,
   borderRadius: 1,
-  ...LOOK_SX,
+  bgcolor: 'rgba(40, 18, 12, 0.85)',
+  border: '1px solid rgba(255, 150, 90, 0.7)',
 } as const;
 const TEXT_SX = { fontSize: 10, color: '#ffb48a', whiteSpace: 'nowrap' } as const;
 
-/** Docked inside the touch placement banner's top-centre block (no per-frame
- *  positioning: `data-docked`); undocked it follows the ghost (desktop). */
-const DOCKED_SX = { pointerEvents: 'none', px: 0.75, py: 0.25, borderRadius: 1, ...LOOK_SX } as const;
-
-export const PlacementFenceHint = memo(function PlacementFenceHint({ docked = false }: { docked?: boolean }) {
+export const PlacementFenceHint = memo(function PlacementFenceHint() {
   const placementKind = useUIStore((s) => s.placementKind);
   if (!placementKind || turretRangeOf(placementKind) <= 0) return null;
-  // Touch shows the docked copy (inside the banner); never both.
-  if (!docked && isTouchDevice()) return null;
   return (
-    <Box data-docked={docked ? '1' : undefined} data-testid="placement-fence-hint" sx={docked ? DOCKED_SX : HINT_SX} hidden>
+    <Box data-testid="placement-fence-hint" sx={HINT_SX} hidden>
       <Typography sx={TEXT_SX}>A shield wall in range will stop this turret&apos;s fire</Typography>
     </Box>
   );

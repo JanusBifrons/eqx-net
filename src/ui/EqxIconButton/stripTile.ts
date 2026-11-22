@@ -64,7 +64,8 @@ export function stripTileSx(
   return { ...TILE_BASE, ...look, '&:hover': { bgcolor: bg } } as SxProps<Theme>;
 }
 
-/** Round identity tile: health-coloured edge + inset ring; gold icon, or `iconColor` (e.g. a stance colour). */
+/** Round identity tile: health-coloured edge + inset ring; gold icon, or `iconColor` (e.g. a stance colour).
+ *  An `<img>` icon (a building's portrait) fills the circle. */
 export function stripIdentitySx(ring: string, iconColor?: string): SxProps<Theme> {
   return {
     ...TILE_BASE,
@@ -73,6 +74,7 @@ export function stripIdentitySx(ring: string, iconColor?: string): SxProps<Theme
     boxShadow: `inset 0 0 0 1px ${ring}`,
     color: iconColor ?? HUD.color.credits,
     '&:hover': { bgcolor: S.cell },
+    '& img': { width: S.tile - 4, height: S.tile - 4, objectFit: 'cover', borderRadius: '50%', display: 'block' },
   } as SxProps<Theme>;
 }
 

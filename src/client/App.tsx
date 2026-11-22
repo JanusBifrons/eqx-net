@@ -60,7 +60,6 @@ import { captureDeviceInfo } from './debug/deviceInfo';
 import { useMountLog } from './debug/useMountLog';
 import { useWarpOrchestration } from './useWarpOrchestration';
 import { WarpStatusChip } from './components/WarpPicker';
-import { StructurePlacementBanner } from './components/StructurePlacementBanner';
 import { PlacementFenceHint } from './components/PlacementFenceHint';
 import { PlacementLinkHint } from './components/PlacementLinkHint';
 import { TeleportWarning } from './components/TeleportWarning';
@@ -957,12 +956,8 @@ function GameSurface({
        *  level-up (the WS-B1 `pendingLevelUp` seam) to spend the earned point. */}
       <UpgradeModalHost />
       <HyperspaceOverlay onCancel={handleCancelTransit} />
-      {/* Structure placement confirm — WORLD-ANCHORED (smoke handoff 2026-06-06,
-       *  Issue 5). Rendered OUTSIDE the Slot system as a `position:fixed`,
-       *  high-z element so it sits ABOVE the thumb-cluster/dial (the old
-       *  bottom-center/Z.hud slot put it UNDER them on mobile). gameRafLoop
-       *  moves it to the projected on-screen position of the blueprint ghost. */}
-      <StructurePlacementBanner />
+      {/* The ghost's world hints (under the ghost, moved by gameRafLoop); the
+       *  placing tools are on the left strip (layout/placingStripItems.tsx). */}
       <PlacementFenceHint />
       <PlacementLinkHint />
       <LostConnectionOverlay />
