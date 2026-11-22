@@ -58,6 +58,18 @@ describe('SpeedDialMenu closes when a game window opens', () => {
     expect(sidebarOpen()).toBe(false);
   });
 
+  it('closes the placing strip when a GameWindow opens', () => {
+    render(<Harness />);
+    act(() => useUIStore.getState().setBuildMode(true));
+    fireEvent.click(screen.getByTestId('build-cat-economy'));
+    fireEvent.click(screen.getByTestId('build-solar').querySelector('button')!);
+    expect(screen.getByTestId('build-strip')).toBeTruthy();
+    act(() => openWindow());
+    expect(screen.queryByTestId('build-strip')).toBeNull();
+    expect(useUIStore.getState().placementKind).toBe('solar');
+    act(() => useUIStore.setState({ placementKind: null }));
+  });
+
   it('leaves a closed dial closed when a window opens', () => {
     render(<Harness />);
     act(() => openWindow());

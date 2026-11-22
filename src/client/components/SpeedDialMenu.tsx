@@ -15,6 +15,11 @@ import { useTouchClickActivate } from './touchClickActivate';
 import { onGameWindowOpen } from './GameWindow';
 import { FIT_OPEN_LIST_SX, useFitActionsToViewport } from './speedDialFit';
 import { BuildSidebar, onBuildSidebarRequest } from './BuildSidebar';
+import { cancelPlacement } from '../structures/placementCancel';
+
+/** The Build sidebar's view: closed, the full list, or folded to the placing
+ *  strip (only shown while a kind is picked). */
+type BuildView = 'closed' | 'full' | 'strip';
 
 /**
  * Consolidated bottom-right action menu (speed-dial UI refactor).
@@ -51,10 +56,12 @@ import { BuildSidebar, onBuildSidebarRequest } from './BuildSidebar';
  * (BuildSidebar.tsx: a category rail and kind tiles), and a Build tap while
  * already in Build reopens it after a ✕ (onBuildSidebarRequest). The dial keeps
  * the basics only (Panels, Map, Weapon, Warp) until its own redesign. Picking a kind sets
- * `placementKind` (entering Build mode) and hides the sidebar, so it never
- * covers the ghost; Confirm keeps placing the same building (placementCancel.ts)
- * with it hidden, and Cancel (the ghost goes, Build stays) brings it back;
- * entering Build opens it, leaving Build closes it.
+ * `placementKind` (entering Build mode) and folds the sidebar to the placing
+ * strip (BuildPlacingStrip.tsx), so it never covers the ghost; Confirm keeps
+ * placing the same building (placementCancel.ts) with it folded; the strip's
+ * portrait expands it (placement stays live) and the full sidebar's ✕ folds it
+ * back; Cancel (the strip's ✕ too: the ghost goes, Build stays) brings the full
+ * list back; entering Build opens it, leaving Build closes it.
  * Categories live client-side only (no wire field, no version bump, no netgate).
  *
  * Perf: all static `sx` is hoisted to module-level consts (no per-render alloc,
@@ -85,7 +92,7 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
 
   const [open, setOpen] = useState(false);
   // The Build sidebar (BuildSidebar.tsx) — pure presentation, local state.
-  const [buildOpen, setBuildOpen] = useState(false);
+  const [buildView, setBuildView] = useState<BuildView>('closed');
 
   // Multitouch support (smoke handoff 2026-06-06). We drive the FAB + actions on
   // `onTouchStart` so a SECOND simultaneous touch opens/activates them; the
@@ -97,7 +104,7 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
   // the Build sidebar (one right panel at a time): the window takes focus, so no blur.
   const collapse = useCallback(() => {
     setOpen(false);
-    setBuildOpen(false);
+    setBuildView('closed');
   }, []);
   useEffect(() => onGameWindowOpen(collapse), [collapse]);
 
@@ -113,15 +120,16 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
 
   // Build mode keeps the build menu ready: entering Build (the mode switch) and
   // every placement end (Cancel, or a place-once kind placed: the ghost goes,
-  // Build stays) open the Build sidebar for the next structure. A Confirm keeps
-  // placing, so it stays hidden. Leaving Build closes it and the dial.
+  // Build stays) open the Build sidebar for the next structure, so the strip
+  // goes. A Confirm keeps placing, so it stays folded. Leaving Build closes it
+  // and the dial.
   const building = useUIStore((s) => s.buildMode);
   const buildListReady = useUIStore((s) => s.buildMode && s.placementKind === null);
   const wasBuilding = useRef(false);
   useEffect(() => {
     if (buildListReady) {
       setOpen(false);
-      setBuildOpen(true);
+      setBuildView('full');
     } else if (!building && wasBuilding.current) {
       collapse();
     }
@@ -162,20 +170,24 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
   useEffect(() => onBuildSidebarRequest(() => {
     if (!useUIStore.getState().buildMode) return;
     setOpen(false);
-    setBuildOpen(true);
+    setBuildView('full');
   }), []);
-  const closeBuild = useCallback(() => setBuildOpen(false), []);
+  // The full sidebar's ✕ / swipe: while placing it folds to the strip.
+  const closeBuild = useCallback(() => {
+    setBuildView(useUIStore.getState().placementKind !== null ? 'strip' : 'closed');
+  }, []);
+  const expandBuild = useCallback(() => setBuildView('full'), []);
   // The open list fits the screen (sideways phone) and scrolls: speedDialFit.ts.
   const dialRef = useRef<HTMLDivElement>(null);
   useFitActionsToViewport(dialRef, direction, open);
 
-  // Pick a kind to place: raise the placement ghost and hide the sidebar, so it
-  // never covers the ghost (build mode, stills review 2026-11-20). Cancel
-  // brings it back on the same category (the R2.6 repeat-build need).
+  // Pick a kind to place: raise the placement ghost and fold the sidebar to the
+  // strip, so it never covers the ghost (build mode, stills review 2026-11-20).
+  // Cancel brings it back on the same category (the R2.6 repeat-build need).
   const handlePickBuild = useCallback(
     (kind: StructureKindId) => {
       setPlacementKind(kind);
-      setBuildOpen(false);
+      setBuildView('strip');
       (document.activeElement as HTMLElement | null)?.blur();
     },
     [setPlacementKind],
@@ -244,7 +256,8 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
 
   return (
     <>
-    <BuildSidebar open={buildOpen} onClose={closeBuild} onPick={handlePickBuild} />
+    <BuildSidebar open={buildView === 'full'} strip={buildView === 'strip'} onClose={closeBuild}
+      onPick={handlePickBuild} onExpand={expandBuild} onCancel={cancelPlacement} />
     <SpeedDial
       ref={dialRef}
       ariaLabel="Game actions"

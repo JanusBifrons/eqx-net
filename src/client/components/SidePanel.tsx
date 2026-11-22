@@ -10,7 +10,8 @@
  * draws the header itself (the title is the grab handle, plus a ✕). A size
  * with `touchToolbarRow` then runs the full height on a phone, its header in
  * the top-right toolbar's row beside a see-through notch the toolbar shows
- * (and is tapped) through.
+ * (and is tapped) through. A `centred` size is a slim strip of its own
+ * children only, vertically centred on the right edge (the folded Build sidebar).
  *
  * Used by the galaxy map's sector drawer (SectorInfoDrawer.tsx) and the
  * building settings panel (StructureSettingsModal.tsx) and the Build sidebar
@@ -42,6 +43,10 @@ export interface SidePanelSize {
    *  and put the header in the top-right toolbar's row beside a see-through
    *  notch (TOOLBAR_NOTCH_W × TOOLBAR_ROW_H), so no empty band sits above it. */
   touchToolbarRow?: boolean;
+  /** A slim strip: auto height, vertically centred on the right edge (any
+   *  orientation), no notch, no header, no grab handle; `width` on desktop,
+   *  `touchMinW` on touch. */
+  centred?: boolean;
 }
 
 /** The see-through notch left for the top-right toolbar (TopRightToolbar.tsx:
@@ -61,6 +66,13 @@ export const SECTOR_PANEL_SIZE: SidePanelSize = {
  *  on desktop. */
 export const BUILD_PANEL_SIZE: SidePanelSize = {
   width: 380, touchFrac: 0.4, touchMinW: 280, touchTop: PANEL_TOUCH_TOP, touchToolbarRow: true,
+};
+
+/** The Build sidebar folded while placing (BuildPlacingStrip.tsx): a slim
+ *  strip, vertically centred on the right edge with auto height; ~100 px wide
+ *  on a sideways phone. Same panel as BUILD_PANEL_SIZE, never a second one. */
+export const BUILD_STRIP_SIZE: SidePanelSize = {
+  width: 112, touchFrac: 0, touchMinW: 100, touchTop: null, centred: true,
 };
 
 /** Esc closes a panel, unless typing in a field or another Esc owner took the
@@ -95,6 +107,7 @@ const PAPER_COMMON = {
 
 /** The right dock's Paper sx (exported for the size locks). */
 export function rightPaperSx(size: SidePanelSize, touch: boolean): Record<string, unknown> {
+  if (size.centred === true) return centredPaperSx(size, touch);
   const right = {
     ...PAPER_COMMON,
     width: size.width,
@@ -119,6 +132,22 @@ export function rightPaperSx(size: SidePanelSize, touch: boolean): Record<string
     ...right,
     width,
     ...(size.touchTop !== null && { top: `${size.touchTop}px`, height: `calc(100dvh - ${size.touchTop}px)` }),
+  };
+}
+
+/** The centred strip: top and bottom 0 with a fit-content height and auto
+ *  margins centres it (no transform: the Drawer slide owns the transform). */
+function centredPaperSx(size: SidePanelSize, touch: boolean): Record<string, unknown> {
+  return {
+    ...PAPER_COMMON,
+    width: touch ? size.touchMinW : size.width,
+    top: 0,
+    bottom: 0,
+    height: 'fit-content',
+    maxHeight: '100dvh',
+    my: 'auto',
+    borderRadius: '8px 0 0 8px',
+    borderRight: 'none',
   };
 }
 
@@ -199,7 +228,10 @@ export function SidePanel({
   open, onClose, testId, handleTestId, size = SECTOR_PANEL_SIZE, closeOnEscape = false, paperAttrs, children,
   title, headerTestId, closeTestId,
 }: SidePanelProps): JSX.Element {
-  const anchor = useSidePanelDock();
+  const dock = useSidePanelDock();
+  const centred = size.centred === true;
+  // A centred strip always docks right; it never becomes the bottom sheet.
+  const anchor: FocusPanelDock = centred ? 'right' : dock;
   const touch = isTouchDevice();
   // The toolbar row needs the panel-drawn header; without one, the plain dock.
   const notch = title !== undefined && anchor === 'right' && touch && size.touchToolbarRow === true;
@@ -285,7 +317,8 @@ export function SidePanel({
         ...paperAttrs,
       }}
     >
-      {title !== undefined && (notch ? (
+      {centred && children}
+      {!centred && title !== undefined && (notch ? (
         <>
           <Box sx={TOP_ROW_SX}>
             {header(true)}
@@ -300,7 +333,7 @@ export function SidePanel({
         </>
       ))}
       {/* Grab handle (swipe-to-close), when the content draws its own header. */}
-      {title === undefined && <Box
+      {!centred && title === undefined && <Box
         sx={HANDLE_WRAP_SX}
         onPointerDown={onHandleDown}
         onPointerMove={onHandleMove}
@@ -324,7 +357,7 @@ export function SidePanel({
           }}
         />
       </Box>}
-      {title === undefined && children}
+      {!centred && title === undefined && children}
     </Drawer>
     </Portal>
   );
