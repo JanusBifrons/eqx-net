@@ -11,7 +11,7 @@
  * frames before the drawn shell got there (rail take 6 review). While the
  * KILLING hit is held for its drawn shell (`NavalHitHold.holdsKill`), the
  * ship stays drawn alive; it dies when that hit is released (`release`, each
- * frame from `place`) or its deadline passes (#16: `MAX_HOLD_MS`). Its
+ * frame from `place`) or its deadline passes (#16: `matchedHoldMs`). Its
  * new wreck pieces wait too (`mirror.wreckRevealFromTick`).
  *
  * Records are pooled and mutated in place; no allocation once warm (#14).
@@ -19,7 +19,8 @@
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import type { DamageEvent, LaserFiredEvent } from '@shared-types/messages';
 import type { ShellEnd, ShellSalvo } from '@shared-types/messages/shellEvents';
-import { MAX_HOLD_MS, type HeldDamageSink, type NavalHitHold } from './navalHitHold';
+import { matchedHoldMs, type HeldDamageSink, type NavalHitHold } from './navalHitHold';
+import { isSwarmDelayOffPilotActive } from './swarmInterpolation';
 import type { ShellSalvoStore } from './shellSalvoStore';
 import { isParkedHull } from '../render/shipOwnership.js';
 
@@ -96,9 +97,10 @@ export class DrawnShellTiming {
     store.applyEnd(msg, mirror.pendingShellEnds ??= []);
     if (hold.size === 0) return;
     const now = this.host.now();
+    const offPilot = isSwarmDelayOffPilotActive();
     // Held hits wait for the drawn shell to REACH the hit, a fraction of a
     // step after the reported tick (`ShellSalvoStore.hitTick`), like its burst.
-    for (const e of msg.e) hold.onShellEnd(store.hitTick(e[0], e[1], e[2], e[3]), e[2], e[3], now);
+    for (const e of msg.e) hold.onShellEnd(store.hitTick(e[0], e[1], e[2], e[3]), e[2], e[3], now, offPilot);
   }
 
   /** One frame of event shells at `displayTick`: draw, burst, and release
@@ -141,7 +143,7 @@ export class DrawnShellTiming {
       this.swarmKills.set(entityId, k);
     }
     k.wireId = wireId; k.kind = entry.kind; k.shipKind = entry.shipKind; k.vaporised = vaporised;
-    k.deadline = this.host.now() + MAX_HOLD_MS;
+    k.deadline = this.host.now() + matchedHoldMs(isSwarmDelayOffPilotActive());
     this.holdWrecks();
     return true;
   }
@@ -165,7 +167,7 @@ export class DrawnShellTiming {
       this.shipKills.set(wireId, k);
     }
     k.wireId = wireId; k.kind = 0; k.shipKind = undefined; k.vaporised = vaporised;
-    k.deadline = this.host.now() + MAX_HOLD_MS;
+    k.deadline = this.host.now() + matchedHoldMs(isSwarmDelayOffPilotActive());
     this.holdWrecks();
     return true;
   }

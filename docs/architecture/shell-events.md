@@ -258,7 +258,12 @@ Now (`net/drawnShellTiming.ts`, `DrawnShellTiming.deferKill` / `release`):
   `deathTick` is on or after it until no death is held; pieces already drawn
   are never hidden. The dying-hull hold then hands over as before.
 - Bounded (#16): the held hit's own safety deadline (`UNMATCHED_HOLD_MS` /
-  `MAX_HOLD_MS`) and the deferral's `MAX_HOLD_MS` game-ms deadline; a welcome
+  `matchedHoldMs`) and the deferral's `matchedHoldMs` game-ms deadline. The
+  matched deadline is `MAX_HOLD_MS` (1500) piloting and `OFF_PILOT_MAX_HOLD_MS`
+  (5100 = 1500 + the off-pilot max delay 4000 − the pilot max 400) while the
+  display delay is on its off-pilot bounds (Command, Build, spectate, catch-up):
+  there the drawn shell may lag up to 4 s, and a 1.5 s deadline fired the hit
+  before it arrived. A welcome
   or sector handoff releases or clears them. Snapshots still say the ship is
   dead; the event only sets WHEN it is drawn dying. A death with no held hit
   (a beam, a hit already drawn) dies on arrival as before. An id recycled
@@ -324,6 +329,27 @@ Now (`net/drawnShellTiming.ts`, `DrawnShellTiming.deferKill` / `release`):
   650 u short; its "beam kill … dies at once" cases failed first: the hull
   stayed drawn after the beam's destroy), `ColyseusClient.damageAfterDeath.test.ts`
   (the number comes with the deferred explosion).
+
+## Stamped release: holding for the drone timeline (2026-11-22)
+
+Off-pilot event timing, slice 1 of 6. One-shot server events (damage FX,
+drone kills, detonations) carry no tick and fire on arrival, but drones,
+scrap and missiles are drawn on the drone display delay (up to
+`OFF_PILOT_MAX_TOTAL_DISPLAY_DELAY_MS` behind off pilot), so the FX lead the
+drawn target. `NavalHitHold` gets a second release condition instead of a
+second queue: `holdStamped(evt, …, stampTick, nowWall, nowGame, offPilot)`
+holds a hit stamped with the newest snapshot tick at arrival
+(`anchorTick()`), placed on the drone tick clock with `swarmTickToStampMs`
+(not held before that clock is seeded). `release(…, readPointMs)` frees it
+once the drones' read point, `swarmReadPointMs(now)` = now − the held
+display delay (the time `interpolateSwarmPose` reads), reaches that stamp.
+Safety deadline: the current delay (game ms) + `STAMPED_HOLD_MARGIN_MS`
+(`MAX_HOLD_MS` − `MAX_TOTAL_DISPLAY_DELAY_MS`), capped by `matchedHoldMs`.
+Stamped entries share the pool, `holdsKill` (so `deferKill` holds their
+deaths), `flushTarget` and the welcome flush; shell matching (`onShellEnd`,
+`releaseHitAt`) skips them. Nothing calls it yet; later slices route
+non-shell damage FX, missile detonations, `shell_blast` / `mine_detonated`
+and the swarm sweep through it. Lock: `navalHitHold.stamped.test.ts`.
 
 ## Client rules in detail
 
