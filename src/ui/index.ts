@@ -9,3 +9,5 @@ export { EqxIconButton, type EqxIconButtonProps } from './EqxIconButton/EqxIconB
 export { EqxTooltip, type EqxTooltipProps } from './EqxTooltip/EqxTooltip.js';
 export { EqxSwitch, type EqxSwitchProps } from './EqxSwitch/EqxSwitch.js';
 export { EqxThemeProvider, type EqxThemeProviderProps } from './EqxThemeProvider/EqxThemeProvider.js';
+export { EQX_ICONS, EQX_ICON_NAMES, type EqxIconName } from './icons.js';
+export { EqxIcon, type EqxIconProps, type EqxIconSize } from './EqxIcon/EqxIcon.js';

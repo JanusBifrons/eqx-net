@@ -31,6 +31,7 @@ import { warpStopMargin } from '../../core/galaxy/warpTarget';
 import { getShipKind } from '../../shared-types/shipKinds';
 import { isTouchDevice } from '../input/TouchInput';
 import { useFreshPress, type FreshPressProps } from './touchClickActivate';
+import { RAIL_W_CSS } from '../layout/railWidth';
 
 type WarpUi = 'list' | 'map';
 /** `?warpui=` wins; else the list on touch (big rows, readable on a phone)
@@ -42,7 +43,7 @@ export function readWarpUi(search: string, touch: boolean): WarpUi {
 }
 
 const PANEL_SX = {
-  position: 'fixed' as const, right: 'max(12px, env(safe-area-inset-right, 0px))', bottom: 96, zIndex: 1400,
+  position: 'fixed' as const, right: `calc(max(12px, env(safe-area-inset-right, 0px)) + ${RAIL_W_CSS})`, bottom: 96, zIndex: 1400,
   width: 280, maxHeight: '60dvh', overflowY: 'auto' as const, p: 0.75, bgcolor: 'rgba(12,16,26,0.94)', color: '#e6ecf5',
   border: '1px solid #2c3a52',
 };

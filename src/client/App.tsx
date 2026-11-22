@@ -42,7 +42,7 @@ import { sendFleetOrder } from './ships/shipActionsClient';
 import { installFleetCommandSenders } from './fleet/installFleetCommandSenders';
 import { canFinishFleetPick } from './fleet/fleetPickView';
 import { TouchInput, isTouchDevice } from './input/TouchInput';
-import { useUIStore, useGameReady, useIsLoadingActive, selectControlMode } from './state/store';
+import { useUIStore, useGameReady, useIsLoadingActive, selectControlMode, selectDrawerOpen } from './state/store';
 import { useAuthStore } from './auth/authStore';
 import { decideContextMenuPlacement } from './structures/contextMenuPlacement';
 import { cancelPlacement } from './structures/placementCancel';
@@ -863,7 +863,7 @@ function GameSurface({
   // sub-second waits. While the drawer is open the user is focused on
   // UI not the game, so the gameplay frame-rate drop is invisible.
   // See `docs/LESSONS.md` 2026-05-13 §6.
-  const isDrawerOpen = useUIStore((s) => s.isDrawerOpen);
+  const isDrawerOpen = useUIStore(selectDrawerOpen);
   // **Real users get full 60 fps even when overlays are open** — the
   // drawer is partial-width and the gameplay underneath should keep
   // animating at full rate. We ONLY intervene when the E2E harness sets

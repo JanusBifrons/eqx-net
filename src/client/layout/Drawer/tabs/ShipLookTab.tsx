@@ -9,6 +9,7 @@
 import { memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { Box, Typography } from '@mui/material';
 import { useUIStore } from '../../../state/store';
+import { selectDrawerTabShown } from '../../../state/rightPanel';
 import { loadStoredPlayerId } from '../../../identity/token';
 import { fetchFactions } from '../../../net/tradeApi';
 import type { PlayerFactionsView } from '../../../../shared-types/factions';
@@ -18,7 +19,7 @@ import { FactionLookPicker } from './FactionLookPicker';
 const POLL_MS = 4000;
 
 export const ShipLookTab = memo(function ShipLookTab(): JSX.Element {
-  const visible = useUIStore((s) => s.drawerTab === 'look' && s.isDrawerOpen);
+  const visible = useUIStore(selectDrawerTabShown('look'));
   const [view, setView] = useState<PlayerFactionsView | null>(null);
   const playerId = loadStoredPlayerId();
 
