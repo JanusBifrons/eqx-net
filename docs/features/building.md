@@ -81,8 +81,13 @@ extend the web. (The grid + connections land in Phase 3.)
 
 **Cables never cross.** A link whose cable would cross another cable is refused
 ("Can't link: crosses another cable"), like one blocked by a rock or a building;
-auto-link tries the next hub instead. Cables fanning out from the same structure
-don't count, and shield-fence walls are not cables.
+auto-link tries the next hub instead. Cables never overlap either: each keeps at
+least a cable's width clear of every other, including cables fanning out from
+the same structure. Shield-fence walls are not cables.
+
+**Keep buildings apart.** Two linked buildings stand at least 67 u apart, edge
+to edge, so every cable shows at least one clear section. Closer than that the
+ghost draws the link red and says "Can't connect: too close".
 
 ## The grid (Phase 3 — shipped)
 

@@ -4,7 +4,7 @@
  * gets minerals (its buffer) plus crystal (storage). A Gas Collector gathers
  * gas only in a nebula sector.
  *
- * Layout: Capital (0,0) → Connector (0,-350) → Solar (500,-500) and the
+ * Layout: Capital (0,0) → Connector (0,-380) → Solar (500,-500) and the
  * extractor (0,-700); a Cargo Bay (-450,-350) is the base's storage.
  */
 import { describe, it, expect, afterEach } from 'vitest';
@@ -28,7 +28,7 @@ describe('SectorRoom integration — extraction (P2c)', () => {
       sectorFeatures: features,
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 },
-        { kind: 'connector', x: 0, y: -350 },
+        { kind: 'connector', x: 0, y: -380 },
         { kind: 'solar', x: 500, y: -500 },
         { kind: extractor, x: 0, y: -700 },
         { kind: 'cargo_bay', x: -450, y: -350 },

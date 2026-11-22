@@ -37,7 +37,7 @@ function poweredBase(opts?: { second?: boolean; owner?: string }) {
     broadcastBeam: () => {},
   });
   const capital = placement.place(owner, 'capital', 0, 0, { rot: 180 })!;
-  const relay = placement.place(owner, 'connector', 0, 350)!;
+  const relay = placement.place(owner, 'connector', 0, 380)!;
   const r = registry.get(relay)!;
   r.isConstructed = true;
   r.constructionProgress = r.constructionCost;

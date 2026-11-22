@@ -98,12 +98,12 @@ describe('ConnectorRenderer — placement connection preview', () => {
     const structures = new Map<number, StructureRenderState>([
       [capitalId, structureState({ connTo: [] })],
     ]);
-    // Ghost connector 300 u below the capital (its +y side is the landing
+    // Ghost connector 400 u below the capital (a cable length clear, edge to edge) (its +y side is the landing
     // pad: no sockets, solid); edge distance well within 600.
     const mirror: RenderMirror = {
       swarm,
       structures,
-      pendingPlacementPreview: { kind: 'connector', x: 0, y: -300, angle: 0 },
+      pendingPlacementPreview: { kind: 'connector', x: 0, y: -400, angle: 0 },
     } as unknown as RenderMirror;
 
     const r = new ConnectorRenderer();
@@ -352,7 +352,7 @@ describe('ConnectorRenderer — placement connection preview', () => {
     const mirror: RenderMirror = {
       swarm,
       structures,
-      pendingPlacementPreview: { kind: 'connector', x: 0, y: -300, angle: 0, pending: false },
+      pendingPlacementPreview: { kind: 'connector', x: 0, y: -400, angle: 0, pending: false },
     } as unknown as RenderMirror;
 
     const r = new ConnectorRenderer();
@@ -401,7 +401,7 @@ describe('ConnectorRenderer — placement connection preview', () => {
       swarm,
       structures,
       localPlayerId: 'me',
-      pendingPlacementPreview: { kind: 'connector', x: 0, y: -300, angle: 0 },
+      pendingPlacementPreview: { kind: 'connector', x: 0, y: -400, angle: 0 },
     } as unknown as RenderMirror;
 
     const r = new ConnectorRenderer();
@@ -479,7 +479,7 @@ describe('ConnectorRenderer — placement connection preview', () => {
       swarm,
       structures,
       localPlayerId: 'me',
-      pendingPlacementPreview: { kind: 'connector', x: 0, y: -300, angle: 0 },
+      pendingPlacementPreview: { kind: 'connector', x: 0, y: -400, angle: 0 },
     } as unknown as RenderMirror;
 
     const r = new ConnectorRenderer();

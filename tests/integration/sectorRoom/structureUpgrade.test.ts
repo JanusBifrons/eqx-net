@@ -44,7 +44,7 @@ describe('SectorRoom integration — structure leveling / Upgrade (WS-B4)', () =
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0, rot: 180 }, // crane bay pad south, clear of the +y relay
         { kind: 'connector', ...SCENARIO.connectorN },
-        { kind: 'turret', x: 130, y: 420 }, // beside the N relay (phase V footprints)
+        { kind: 'turret', x: 170, y: 420 }, // beside the N relay (phase V footprints)
       ],
       prebuiltStructuresOwner: OWNER_UUID,
     });

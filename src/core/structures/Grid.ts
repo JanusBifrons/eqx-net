@@ -103,13 +103,13 @@ export type CanConnectReason =
    *  only within 90° of its outward side, never behind the building). */
   | 'no-facing-socket'
   /** Every free facing socket pair in reach is under `MIN_CABLE_LENGTH`
-   *  stud to stud (owner: "keep buildings apart"). Socket cables only. */
+   *  apart, footprint box edge to box edge (owner: "keep buildings apart"). Socket cables only. */
   | 'too-short'
   /** Phase 5 — a shield-pylon dual-cap violation: a 2nd connector, a 4th pylon,
    *  or a pylon↔non-(connector|pylon) target. */
   | 'pylon-rule'
-  /** Owner rule: every free pair's cable would cross a stored cable (fan-outs
-   *  sharing an end and fence links never count; `cableCrossesExisting`). */
+  /** Owner rule: every free pair's cable would cross or run within a cable body
+   *  width of a stored cable (fan-outs too; fence links never count; `cableCrossesExisting`). */
   | 'crosses-cable';
 
 export type CanConnectResult = { ok: true } | { ok: false; reason: CanConnectReason };

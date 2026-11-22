@@ -99,10 +99,11 @@ describe('autoConnectStructure — WS-5 (R2.17) multi-connect', () => {
     const registry = new StructureRegistry();
     // 3 connectors at distinct angles + distances from the origin (all in range,
     // no mutual LOS blocking). The solar (cap 1) must pick ONLY the nearest.
-    // (Phase V: the Solar is a 360×150 box, the connectors 64×64.)
-    registry.add(record('hub-near', 'connector', 0, 150)); // edge dist 43
-    registry.add(record('hub-c', 'connector', -290, 0)); // edge dist 78
-    registry.add(record('hub-b', 'connector', 0, -230)); // edge dist 123
+    // (The Solar is a 700×300 box, the connectors 64×64; every gap is over
+    // MIN_CABLE_LENGTH, box edge to box edge.)
+    registry.add(record('hub-near', 'connector', 0, 250)); // edge dist 68
+    registry.add(record('hub-c', 'connector', -480, 0)); // edge dist 98
+    registry.add(record('hub-b', 'connector', 0, -300)); // edge dist 118
     const placedId = 'solar';
     registry.add(record(placedId, 'solar', 0, 0));
 
@@ -227,16 +228,16 @@ describe('links store the cable sockets canConnect picked (0d slice 5)', () => {
   });
 });
 
-describe('one cable per socket: a held connector face moves to make room', () => {
-  // The breakIn layout: capital west of a connector, solar east, turret just
-  // below. The capital and solar cables first take the two LOWER diagonal faces
-  // (nearest pairs); the straight-down face is under MIN_CABLE_LENGTH to the
-  // turret. Two upper faces stay free, so the turret must still be powered: the
-  // capital's cable moves up one face and the turret takes the freed one.
-  it('capital, solar and a turret 140 below all link to one connector', () => {
+describe('one cable per socket: capital, solar and turret share one connector', () => {
+  // The breakIn layout: capital west of a connector, solar east, turret below
+  // (a cable length clear, box edge to box edge). Each cable takes its own
+  // connector face. (With the turret 140 below, the old stud-to-stud minimum
+  // made the straight-down face too short and a held face had to move; the
+  // edge-to-edge rule refuses that whole link instead.)
+  it('capital, solar and a turret 180 below all link to one connector', () => {
     const registry = new StructureRegistry();
     for (const [id, kind, x, y] of [
-      ['cap', 'capital', 0, 0], ['con', 'connector', 400, 0], ['sol', 'solar', 900, 0], ['tur', 'turret', 400, 140],
+      ['cap', 'capital', 0, 0], ['con', 'connector', 400, 0], ['sol', 'solar', 900, 0], ['tur', 'turret', 400, 180],
     ] as const) {
       registry.add(record(id, kind, x, y));
       autoConnectStructure(registry, id);
