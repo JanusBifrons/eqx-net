@@ -23,7 +23,7 @@ import { clearFleetOrder, defendAt, stepFleetPatrol } from '../../fleet/fleetShi
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
 import type { TransitOrchestrator } from '../../transit/TransitOrchestrator.js';
 import type { ShipState } from '../schema/SectorState.js';
-import type { LockSubsystem } from '../LockSubsystem.js';
+import type { LockSubsystem, WireGroup } from '../LockSubsystem.js';
 import type { WeaponMountTicker } from '../WeaponMountTicker.js';
 import type { PlayerFireResolver } from '../PlayerFireResolver.js';
 import type { WorkerCmd } from '../PhysicsWorkerProxy.js';
@@ -33,6 +33,12 @@ const KEEP_SQUAD = Object.freeze({ keepSquad: true });
 /** RTS Part B: an owned hull's AI controller registration (keys as pilot
  *  INPUT, no AI fire path). */
 const HULL_AI_REGISTRATION = Object.freeze({ hull: true });
+
+/** A weapon group holds a lock that is not draining (released). */
+function holdsLiveLock(grp: WireGroup): boolean {
+  for (let i = 0; i < grp.l.length; i++) if (grp.l[i]!.r !== 1) return true;
+  return false;
+}
 
 /** What the wingman pilots need from the room; getters read the live field. */
 export interface WingmanPilotsHost {
@@ -478,13 +484,17 @@ export class WingmanPilots {
   }
 
   /**
-   * Every ~10 Hz (the lock step cadence): each AI-flown hull points every
-   * weapon group's lock at its AI pilot brain's target (`getTargetId`; MAN
-   * groups: `requestLock`; a new target drops the old locks). Hold fire, or
-   * no target ⇒ every lock is cancelled (RTS Part B slice 2). The trigger is
-   * the brain's `intent.fire` (`tickWingmanFire`). The lock still takes the
-   * time a pilot's would (fights aren't instant), and a neutral target runs
-   * the failsafe.
+   * Every ~10 Hz (the lock step cadence): each AI-flown hull fills its
+   * weapon groups' locks (MAN groups: `requestLock`). A group already
+   * holding a lock KEEPS it (owner rule 2026-11-22: the pilot's locks, moved
+   * here when they hand the hull over, stay until the target dies or leaves
+   * lock range; the lock step drops those); only an empty group takes the AI
+   * pilot brain's target (`getTargetId`). An attack order is obeyed: every
+   * group retargets to it. Hold fire locks only an ordered target, else every
+   * lock is cancelled (RTS Part B slice 2). The trigger is the brain's
+   * `intent.fire` (`tickWingmanFire`). The lock still takes the time a
+   * pilot's would (fights aren't instant), and a neutral target runs the
+   * failsafe.
    */
   tickWingmanTargets(): void {
     const fleet = this.h.fleet;
@@ -522,7 +532,8 @@ export class WingmanPilots {
       const key = target === null ? null : this.wingmanLockKey(sid, target);
       const groups = this.h.wingmanLocks().wireFor(sid);
       if (key === null) {
-        if (groups !== undefined) for (let g = 0; g < groups.length; g++) {
+        // Hold fire drops every lock; otherwise held locks stay (owner rule).
+        if (groups !== undefined && w.stance === 'holdFire') for (let g = 0; g < groups.length; g++) {
           if (groups[g]!.l.length > 0) this.h.wingmanLocks().cancelLock(sid, groups[g]!.id);
         }
         continue;
@@ -532,6 +543,9 @@ export class WingmanPilots {
       for (let g = 0; g < gs.length; g++) {
         const grp = gs[g]!;
         if (grp.l.length === 1 && grp.l[0]!.t === key) continue;
+        // A live lock (the lock step drops a dead or out-of-range one) is kept
+        // unless an attack order names the target.
+        if (ordered === null && holdsLiveLock(grp)) continue;
         if (grp.l.length > 0) this.h.wingmanLocks().cancelLock(sid, grp.id);
         this.h.wingmanLocks().requestLock(sid, grp.id, key);
       }
