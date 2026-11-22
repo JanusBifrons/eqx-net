@@ -79,6 +79,33 @@ export const HUD = {
     /** Selected option that differs from the applied value (mock `.seg b.chg`). */
     changedBg: 'rgba(255,176,46,0.2)',
   },
+  /**
+   * EqxTextField / EqxDropdown in a panel (mock `.field`, 1cqw = 9.15 px): an
+   * edge2 box, the label small and dim at the top-left, the value under it.
+   * Px and colours.
+   */
+  field: {
+    /** Value text (1.2cqw). */
+    font: 11,
+    /** Floating label (.9cqw), tracking (.05em) and its top inset (.3cqw). */
+    labelFont: 8,
+    labelTracking: '0.05em',
+    labelTop: 3,
+    /** Label sitting in the empty box (mock kit `.kf.rest`): vertically centred. */
+    labelRestTop: 10,
+    /** Padding: 1.5cqw top (room for the label), .9cqw sides, .5cqw bottom. */
+    padTop: 14,
+    padX: 8,
+    padBottom: 5,
+    /** Focus ring (mock `.field.focus`: 0 0 0 .15cqw). */
+    focusRing: 1.5,
+    focusRingColor: 'rgba(52,216,255,0.25)',
+    /** Option list (mock kit `.kmenu`): padding, item padding, picked item wash. */
+    menuPad: 3,
+    itemPadY: 4,
+    itemPadX: 7,
+    itemSelectedBg: 'rgba(52,216,255,0.15)',
+  },
   /** Layout sizes (UI language plan B3), px. */
   size: {
     /** Right rail width on a phone. */

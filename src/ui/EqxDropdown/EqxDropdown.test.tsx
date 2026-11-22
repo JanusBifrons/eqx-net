@@ -77,3 +77,20 @@ describe('EqxDropdown (searchable, MUI Autocomplete)', () => {
     expect(screen.getByRole('combobox').getAttribute('placeholder')).toBe('Search');
   });
 });
+
+describe('EqxDropdown panel look (mock .field)', () => {
+  it('plain and searchable are the compact filled field: no underline, no outlined notch', () => {
+    render(
+      <>
+        <EqxDropdown options={SHIPS} value="barge" onChange={() => {}} label="Ship" data-testid="plain" />
+        <EqxDropdown searchable options={SHIPS} value={null} onChange={() => {}} label="Find" data-testid="search" />
+      </>,
+    );
+    for (const id of ['plain', 'search']) {
+      const root = screen.getByTestId(id);
+      expect(root.querySelector('.MuiFilledInput-root')).not.toBeNull();
+      expect(root.querySelector('.MuiFilledInput-underline')).toBeNull();
+      expect(root.querySelector('.MuiOutlinedInput-notchedOutline')).toBeNull();
+    }
+  });
+});
