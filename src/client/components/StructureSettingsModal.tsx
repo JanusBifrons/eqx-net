@@ -182,7 +182,7 @@ export function StructureSettingsModal({ open, entityId, title, onClose }: Struc
   useEffect(() => {
     if (open && focusId !== openedOn.current) onClose();
   }, [open, focusId, onClose]);
-  // The speed dial collapses as for a game window; the HUD drops the
+  // The Build sidebar closes as for a game window; the HUD drops the
   // right-edge weapon strip that would sit under the panel.
   useEffect(() => {
     if (!open) return undefined;

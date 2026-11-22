@@ -29,7 +29,7 @@ NPC ships can warp within a sector the same way (wrap-up W2a, for flagship fleet
 
 ## Picking a destination
 
-The **Warp ▸** action in the speed dial (solar-system sectors only) opens the destination picker. It has two views (both kept, user 2026-11-08), chosen by device; `?warpui=list|map` overrides:
+The **Warp in this system** button on the rail's **Galaxy** page (solar-system sectors only; it was the retired speed dial's Warp ▸) opens the destination picker. It has two views (both kept, user 2026-11-08), chosen by device; `?warpui=list|map` overrides:
 
 - **List (touch devices):** every pocket by name ("Home", "Asteroid belt", "Vega Reach gate", "Battle zone"), nearest first with its distance, the far ones grouped. Big rows, readable on a phone.
 - **System map (desktop):** the whole ±200 km system with each pocket, the ship and any pad link. Click a pocket, then Warp.

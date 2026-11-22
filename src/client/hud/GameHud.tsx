@@ -6,10 +6,11 @@
  *  - Status capsule (shield/hull rings, energy, credits + mineral bank; in Build: base stored
  *    power + credits, no ship health): bottom-centre on
  *    desktop and landscape touch (above the fleet panel when it shows); top-centre on portrait touch, where the thumbs fill the bottom.
- *  - Top: lock status band (top-centre), sector chip (top-left), speed dial
- *    (top-right), weapon strip (right edge, one chip per weapon group).
+ *  - Top: lock status band (top-centre), sector chip (top-left), weapon strip
+ *    (right edge, one chip per weapon group). Map, Warp and the panels live on
+ *    the right rail (layout/RightPanelHost.tsx).
  *  - Desktop: hold LMB on a ship to lock it (MouseLock.ts), RMB boost and a key
- *    hint. Building goes through the Build sidebar (BuildSidebar.tsx, from the dial).
+ *    hint. Building goes through the Build sidebar (BuildSidebarHost.tsx).
  *  - Touch: floating move stick (left thumb), lock-line stick + BOOST (right).
  *
  * Every weapon group fires only at a target it has a completed lock on.
@@ -19,7 +20,7 @@ import { selectControlMode, useShouldRenderHud, useUIStore } from '../state/stor
 import type { TouchInput } from '../input/TouchInput';
 import { Slot } from '../layout/Slot';
 import { RAIL_W_CSS } from '../layout/railWidth';
-import { SpeedDialMenu } from '../components/SpeedDialMenu';
+import { BuildSidebarHost } from '../components/BuildSidebarHost';
 import { FleetPanel } from '../components/FleetPanel';
 import { FleetStrip } from '../components/FleetStrip';
 import { getGameClient } from '../net/clientSingleton';
@@ -80,9 +81,8 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
       {flying && !settingsOpen && rightPanel === null && <FcStripDock scale={scale} />}
       {/* Contacts overview (lock list): left edge, the strip's mirror. */}
       {flying && <ContactsOverview />}
-      {/* pointer-events none: the open list's column lets taps through to the base
-          under it; the dial's own buttons re-enable taps (MUI + speedDialFit). */}
-      <Slot anchor="top-right" order={2} pointerEvents="none"><SpeedDialMenu direction="down" /></Slot>
+      {/* The Build sidebar portals to <body> (EqxPanel): no Slot. */}
+      <BuildSidebarHost />
 
       {/* ── Bottom ──────────────────────────────────────────────────────────── */}
       {/* Status capsule: bottom-centre on desktop and landscape touch; order 3 stacks it

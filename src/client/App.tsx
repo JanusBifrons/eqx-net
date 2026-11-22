@@ -211,7 +211,7 @@ function GameSurface({
   const pilotMode = useUIStore((s) => s.pilotMode);
   // Per-setter selectors, NOT a no-arg `useUIStore()` whole-store subscription.
   // A no-arg subscription re-renders GameSurface — the entire HUD subtree
-  // (every Slot, SpeedDialMenu, the MUI bars/panels) — on EVERY store write,
+  // (every Slot, the rail, the MUI bars/panels) — on EVERY store write,
   // including per-hit shield/hull + swarm-count churn during combat. That
   // cascaded an Emotion style-reserialization storm that pegged the main
   // thread (~75% busy, render dropping to ~30Hz) — the on-device "lag"
@@ -299,8 +299,8 @@ function GameSurface({
   }, [radarTransitState]);
 
   // Radar — keep icons out from under the DOM HUD. Measures the slot-host
-  // widgets at a low cadence (2 Hz; widgets mount/unmount and the speed dial
-  // opens) and pushes only on change. Not a per-frame path.
+  // widgets at a low cadence (2 Hz; widgets mount/unmount and panels
+  // open) and pushes only on change. Not a per-frame path.
   useEffect(() => {
     let last: RadarInsets | null = null;
     const tick = (): void => {
@@ -932,7 +932,7 @@ function GameSurface({
       ) : (
         <>
       {/* The piloting HUD: status capsule, sector chip, weapon strip + lock
-       *  band, speed dial, thumb sticks (touch) / lock line (desktop). */}
+       *  band, Build sidebar, thumb sticks (touch) / lock line (desktop). */}
       <GameHud touchInput={isTouchRef.current ? touchInputRef.current : null} />
       {/* Living World P1a — carried cargo + pickup popups. */}
       <Slot anchor="top-left" order={3}><CargoChip /></Slot>
