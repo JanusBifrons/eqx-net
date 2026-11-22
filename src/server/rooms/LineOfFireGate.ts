@@ -46,8 +46,9 @@ export interface LineOfFireGateDeps<R extends LineOfFireBody> {
   /** Current server tick: the grid is rebuilt once per tick at most. */
   tick: () => number;
   /** Narrow phase: distance along the unit ray to `rec` at (cx, cy, ca), or
-   *  null when it misses within `maxDist`. */
-  rayHit: (rec: R, fx: number, fy: number, dx: number, dy: number, maxDist: number, cx: number, cy: number, ca: number) => number | null;
+   *  null when it misses within `maxDist`. `hw`: the shot's half-width (a
+   *  bolt's hit radius; absent ⇒ a thin ray). */
+  rayHit: (rec: R, fx: number, fy: number, dx: number, dy: number, maxDist: number, cx: number, cy: number, ca: number, hw?: number) => number | null;
 }
 
 export class LineOfFireGate<R extends LineOfFireBody> {
@@ -89,12 +90,14 @@ export class LineOfFireGate<R extends LineOfFireBody> {
    * (`svx`, `svy`), which the shot inherits): each friendly is ALSO tested
    * against the shot's path relative to it over the whole flight, so a
    * friend crossing the line during the shot's flight holds it too. Absent
-   * (0) ⇒ the pose at the grid build only.
+   * (0) ⇒ the pose at the grid build only. `shotRadius`: the shot's own hit
+   * radius (a bolt's catalogue `radius`, the one the projectile sweep uses),
+   * so a friend the bolt would graze holds it too; 0 ⇒ a thin ray.
    */
   blocked(
     fx: number, fy: number, dx: number, dy: number, maxDist: number,
     shooterId: string, targetId: string, friendly: (rec: R) => boolean,
-    shotSpeed = 0, svx = 0, svy = 0,
+    shotSpeed = 0, svx = 0, svy = 0, shotRadius = 0,
   ): boolean {
     if (!(maxDist > 0)) return false;
     this.checks++;
@@ -105,7 +108,7 @@ export class LineOfFireGate<R extends LineOfFireBody> {
     const bp = this.bp;
     const moving = shotSpeed > 0;
     // A body can close at most (its speed + the shooter's) × the flight time.
-    const pad = moving ? (this.maxSpeed + Math.hypot(svx, svy)) * (maxDist / shotSpeed) : 0;
+    const pad = (moving ? (this.maxSpeed + Math.hypot(svx, svy)) * (maxDist / shotSpeed) : 0) + shotRadius;
     bp.query(fx, fy, dx * maxDist, dy * maxDist, pad);
     const n = bp.outCount;
     this.candidates += n;
@@ -115,7 +118,7 @@ export class LineOfFireGate<R extends LineOfFireBody> {
       if (rec.id === shooterId || rec.id === targetId || !friendly(rec)) continue;
       this.narrow++;
       let cx = bp.x[i]!, cy = bp.y[i]!;
-      let hit = d.rayHit(rec, fx, fy, dx, dy, maxDist, cx, cy, bp.angle[i]!) !== null;
+      let hit = d.rayHit(rec, fx, fy, dx, dy, maxDist, cx, cy, bp.angle[i]!, shotRadius) !== null;
       if (!hit && moving) {
         // The shot's path as the friend sees it (the friend held still): the
         // shot flies at (shooter v + dir × speed) − friend v for its whole
@@ -128,7 +131,7 @@ export class LineOfFireGate<R extends LineOfFireBody> {
         const rl = Math.sqrt(rx * rx + ry * ry);
         if (rl > 1e-6) {
           this.narrow++;
-          hit = d.rayHit(rec, fx, fy, rx / rl, ry / rl, rl * (maxDist / shotSpeed), cx, cy, bp.angle[i]!) !== null;
+          hit = d.rayHit(rec, fx, fy, rx / rl, ry / rl, rl * (maxDist / shotSpeed), cx, cy, bp.angle[i]!, shotRadius) !== null;
         }
       }
       if (hit) {
