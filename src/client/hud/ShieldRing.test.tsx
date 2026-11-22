@@ -56,4 +56,18 @@ describe('shield ring toggle', () => {
     expect(toggle().style.pointerEvents).toBe('auto');
     expect((document.querySelector('[data-testid="hud-status"]') as HTMLElement).style.pointerEvents).toBe('none');
   });
+
+  it('keeps its full drawn width in the layout, so the credits beside it never overlap', () => {
+    render(<StatusCapsule scale={1} />);
+    // The tap padding must sit outside the ring width (app CSS is border-box).
+    expect(toggle().style.boxSizing).toBe('content-box');
+  });
+
+  it('puts DOWN above the ring, not inside its hole', () => {
+    useUIStore.setState({ shieldsLowered: true, shieldPct: 0 });
+    const { getByText } = render(<StatusCapsule scale={1} />);
+    const down = getByText('DOWN') as HTMLElement;
+    expect(down.style.bottom).toBe('100%');
+    expect(down.style.top).toBe('');
+  });
 });
