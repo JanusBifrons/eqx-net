@@ -83,6 +83,7 @@ import {
   type DropDetector,
 } from './snapshotDropDetector';
 import { resetPredictionState } from './prediction/resetPrediction.js';
+import { reconcileReplayTick } from './prediction/reconcileReplayTick.js';
 import { tryInitPredWorld, syncSwarmIntoPredWorld, rekeyOwnShipFromHull, dropRemoteShip, rekeyShip, ensureRemoteShipBody } from './prediction/predWorldSync.js';
 import { disposeClient, type ClientTeardownCtx } from './connection/clientTeardown.js';
 import {
@@ -121,7 +122,7 @@ import { stepTravel, TRAVEL_OUT_S, type TravelTrip } from './mirror/travelPass.j
 import { DisplayPoseHitscan } from '../combat/displayPoseHitscan.js';
 import { preResetRemoteShips, applyRemoteShipInputs, type RemoteInput, type PreResetEntry, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyShipWarp, applyActivatedMounts, applyParkedHullShieldDown, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
 import { computeRemoteLerpOffsets, type RemoteShipOffset } from './remoteLerpOffsets.js';
-import { useUIStore, type ConnectionStatus } from '../state/store';
+import { useUIStore, computeIsLoadingActive, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled, isFullDiagMode } from '../debug/ClientLogger';
 import { readHeapUsedMb } from './perfStats';
 import { TransitInstrumentation } from '../debug/TransitInstrumentation';
@@ -1895,12 +1896,14 @@ export class ColyseusGameClient {
           logEvent('teleport_reseed', { epoch, x: serverState.x, y: serverState.y });
         }
       }
-      const replayWindow = this.inputTick - ackedTick;
+      // Curtain up = tickPhysics paused: nothing predicted live, so no replay.
+      const replayTo = reconcileReplayTick(computeIsLoadingActive(useUIStore.getState()), this.inputTick, ackedTick);
+      const replayWindow = replayTo - ackedTick;
       const reconcileStartMs = this.clock.now();
       if (!teleported) this.reconciler.reconcile(
         serverState,
         snap.serverTick,
-        this.inputTick,
+        replayTo,
         ackedTick,
         (t) => {
           // Structure rig parts (restyle 2d) replay on the live loop's tick numbering.
