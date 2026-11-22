@@ -10,10 +10,10 @@ raw `@mui/*` and `@emotion/*` imports live only inside `src/ui/`.
 |---|---|---|
 | `theme` | The MUI theme, built only from `hud/tokens.ts` | none |
 | `EqxButton` | Text button | `tone` (primary / secondary / danger), `size` (small / medium / large, default small), `disabled`, `onClick`, `data-testid` |
-| `EqxIconButton` | The one icon button (rail, left strip, fly-outs). One fixed box (`HUD.size.iconButton`), icon centred, no label | `icon`, **required** `tooltip` (also the aria-label), `tone`, `active`, `badge`, `holdMs`, `disabled`, `onClick`, `data-testid` |
+| `EqxIconButton` | The one icon button (rail, left strip, fly-outs). One fixed box (`HUD.size.iconButton`), icon centred, no label | `icon`, **required** `tooltip` (also the aria-label), `tone`, `active`, `badge`, `holdMs`, `disabled`, `variant` (`round` default; `rail` / `railTool`: the right-rail tile, dim / bright), `onClick`, `data-testid` |
 | `EqxTooltip` | Tooltip: hover on desktop, press-and-hold on touch | `title`, `holdMs` |
 | `EqxSwitch` | On / off | `checked`, `onChange(checked)`, `label` (also the accessible name), `disabled`, `data-testid` |
-| `EqxRail` | The slim right rail: EqxIconButtons top to bottom, cog pinned at the bottom, labels only in tooltips; at most 8 items plus the cog (more throws in dev, prod shows 8). Width `HUD.size.railPhone` when `compact`, else `railDesktop`; `compact` defaults to the `(pointer: coarse)` query. Fills its parent; never positions itself | `items` (`id`, `icon`, `tooltip`, `badge`), `activeId`, `onPick(id)`, `cog` (`{ icon, tooltip, id }`, or `true` for the default cog with id `cog`), `compact`, `data-testid` (buttons get `<testid>-<id>`) |
+| `EqxRail` | The slim right rail (mock .rail): a full-height rail-paper column; the mode `tools` (bright tiles), a divider, the always-there `items` (dim tiles), the cog pinned at the bottom; labels only in tooltips; at most 8 items plus the cog (more throws in dev, prod shows 8). Width `HUD.size.railPhone` when `compact`, else `railDesktop`; `compact` defaults to the `(pointer: coarse)` query. Fills its parent; never positions itself | `tools`, `items` (each `id`, `icon`, `tooltip`, `badge`), `activeId`, `onPick(id)`, `cog` (`{ icon, tooltip, id }`, or `true` for the default cog with id `cog`), `compact`, `data-testid` (buttons get `<testid>-<id>`) |
 
 ## Extend, never hand-roll
 

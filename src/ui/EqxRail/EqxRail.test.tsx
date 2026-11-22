@@ -6,6 +6,10 @@ import TuneIcon from '@mui/icons-material/Tune';
 import { EqxRail, RAIL_COG_ID, RAIL_MAX_ITEMS, type EqxRailItem } from './EqxRail.js';
 import { HUD } from '../../client/hud/tokens.js';
 
+const TOOLS: EqxRailItem[] = [
+  { id: 'contacts', icon: <TuneIcon />, tooltip: 'Contacts' },
+  { id: 'hold', icon: <TuneIcon />, tooltip: 'Hold', badge: 2 },
+];
 const ITEMS: EqxRailItem[] = [
   { id: 'galaxy', icon: <PublicIcon />, tooltip: 'Galaxy' },
   { id: 'jobs', icon: <WorkIcon />, tooltip: 'Jobs' },
@@ -66,9 +70,9 @@ describe('EqxRail', () => {
     expect(pressed()).toHaveLength(0);
   });
 
-  it('every button, cog included, is the same box', () => {
-    render(<EqxRail items={ITEMS} onPick={() => {}} cog />);
-    const px = `${HUD.size.iconButton}px`;
+  it('every button, cog included, is the same rail tile box', () => {
+    render(<EqxRail items={ITEMS} tools={TOOLS} onPick={() => {}} cog />);
+    const px = `${HUD.size.railItem}px`;
     for (const b of screen.getAllByRole('button')) {
       const cs = getComputedStyle(b);
       expect({ w: cs.width, h: cs.height }).toEqual({ w: px, h: px });
@@ -93,5 +97,32 @@ describe('EqxRail', () => {
     rerender(<EqxRail items={ITEMS} onPick={() => {}} compact={false} data-testid="rail" />);
     expect(rail().dataset['compact']).toBe('false');
     expect(getComputedStyle(rail()).width).toBe(`${HUD.size.railDesktop}px`);
+  });
+
+  it('tools sit above a divider, brighter, then the items; no divider without tools', () => {
+    const { rerender } = render(<EqxRail items={ITEMS} tools={TOOLS} onPick={() => {}} cog data-testid="rail" />);
+    const rail = screen.getByTestId('rail');
+    const order = Array.from(rail.querySelectorAll('button, [role="separator"]')).map(
+      (e) => e.getAttribute('aria-label') ?? 'divider',
+    );
+    expect(order).toEqual(['Contacts', 'Hold', 'divider', 'Galaxy', 'Jobs', 'Trade', 'Settings']);
+    expect(screen.getByTestId('rail-contacts').dataset['variant']).toBe('railTool');
+    expect(screen.getByTestId('rail-galaxy').dataset['variant']).toBe('rail');
+    expect(screen.getByTestId('rail-cog').dataset['variant']).toBe('rail');
+    rerender(<EqxRail items={ITEMS} onPick={() => {}} cog data-testid="rail" />);
+    expect(screen.queryByTestId('rail-divider')).toBeNull();
+  });
+
+  it('tools count toward the cap of 8', () => {
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    expect(() => render(<EqxRail items={many(RAIL_MAX_ITEMS - 1)} tools={TOOLS} onPick={() => {}} />)).toThrow(/at most 8/);
+    err.mockRestore();
+  });
+
+  it('is a rail-paper column with a left edge', () => {
+    render(<EqxRail items={ITEMS} onPick={() => {}} data-testid="rail" />);
+    const cs = getComputedStyle(screen.getByTestId('rail'));
+    expect(cs.borderLeftStyle).toBe('solid');
+    expect(cs.backgroundColor.split(' ').join('')).toBe(HUD.color.railBg);
   });
 });
