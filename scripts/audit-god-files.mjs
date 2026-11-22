@@ -63,7 +63,7 @@ const RATCHET_ONLY =
  * Path keys are repo-root-relative, POSIX-style (forward slashes).
  */
 export const ALLOWLIST = {
-  'src/client/app/gameRafLoop.ts': { cap: 710, target: 600, reason: 'RTS command layer (#677) grew it past the ceiling; split is a tracked follow-up (.resume/rts-command.md). May only shrink.' },
+  'src/client/app/gameRafLoop.ts': { cap: 670, target: 600, reason: 'RTS command layer (#677) grew it past the ceiling; split is a tracked follow-up (.resume/rts-command.md). May only shrink.' },
   'src/client/state/store.ts': { cap: 617, target: 600, reason: 'RTS command layer (#677) grew it past the ceiling; split is a tracked follow-up (.resume/rts-command.md). May only shrink.' },
   'src/server/fleet/FleetCommandSubsystem.ts': { cap: 891, target: 600, reason: 'RTS command layer (#677) grew it past the ceiling; split is a tracked follow-up (.resume/rts-command.md). May only shrink.' },
   'src/server/transit/TransitOrchestrator.ts': { cap: 909, target: 600, reason: 'RTS command layer (#677) grew it past the ceiling; split is a tracked follow-up (.resume/rts-command.md). May only shrink.' },

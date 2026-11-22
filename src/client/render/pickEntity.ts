@@ -58,6 +58,17 @@ export interface PickedEntity {
  *  deliberate gesture and a near-miss is more annoying than an over-grab. */
 export const TAP_SLOP = 24;
 
+/** A finger's grab slop in SCREEN pixels (the ghost-drag finger slop's size):
+ *  a touch pick converts it to world units at the camera zoom, so a zoomed-out
+ *  Command view still gives a fingertip-sized reach. */
+export const FINGER_SLOP_PX = 24;
+
+/** World-unit pick slop for a touch at camera scale `scale` (screen px per
+ *  world unit): the finger's screen slop, never less than {@link TAP_SLOP}. */
+export function fingerSlopWorld(scale: number): number {
+  return scale > 0 ? Math.max(TAP_SLOP, FINGER_SLOP_PX / scale) : TAP_SLOP;
+}
+
 /** Fallback collision radius when a ship kind can't be resolved. */
 const SHIP_FALLBACK_RADIUS = 20;
 
@@ -65,6 +76,8 @@ export function pickEntityAt(
   worldX: number,
   worldY: number,
   mirror: RenderMirror,
+  /** Extra grab reach in world units (a touch passes {@link fingerSlopWorld}). */
+  slop: number = TAP_SLOP,
 ): PickedEntity | null {
   let bestId: string | null = null;
   let bestKind: PickedEntityKind = 'ship';
@@ -79,7 +92,7 @@ export function pickEntityAt(
     const dx = ship.x - worldX;
     const dy = ship.y - worldY;
     const distSq = dx * dx + dy * dy;
-    const reach = radius + TAP_SLOP;
+    const reach = radius + slop;
     if (distSq <= reach * reach && distSq < bestDistSq) {
       bestDistSq = distSq;
       bestId = id;
@@ -105,11 +118,11 @@ export function pickEntityAt(
         // not select it. Inline (no allocation — runs on pointer-move hover).
         const fp = getStructureKind(sw.shipKind).footprint;
         const quarter = Math.round((sw.angle * 2) / Math.PI) % 2 !== 0;
-        const hw = (quarter ? fp.h : fp.w) / 2 + TAP_SLOP;
-        const hh = (quarter ? fp.w : fp.h) / 2 + TAP_SLOP;
+        const hw = (quarter ? fp.h : fp.w) / 2 + slop;
+        const hh = (quarter ? fp.w : fp.h) / 2 + slop;
         hit = Math.abs(dx) <= hw && Math.abs(dy) <= hh;
       } else {
-        const reach = sw.radius + TAP_SLOP;
+        const reach = sw.radius + slop;
         hit = distSq <= reach * reach;
       }
       if (hit && distSq < bestDistSq) {

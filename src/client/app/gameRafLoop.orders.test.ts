@@ -86,6 +86,24 @@ describe('gameRafLoop — fleet orders are sent (slice 6c)', () => {
     expect(sendFleetOrder).toHaveBeenCalledWith(['a'], { kind: 'attack', targetId: 's:7' });
   });
 
+  it('a move order ends a Move pick (tap rule T3); any other order leaves the pick alone', () => {
+    const s = storeState as typeof storeState & { fleetPick?: { kind: string } | null };
+    storeState.setFleetPick.mockClear();
+    s.fleetPick = { kind: 'move' };
+    const loop = buildLoop();
+    // A fresh seq (the loop's last-seen seq is module state across tests).
+    Object.assign(fb, { fleetSelIds: ['a'], orderSeq: 101, orderKind: 'move', orderX: 3, orderY: 4 });
+    loop(16.67);
+    expect(sendFleetOrder).toHaveBeenCalledWith(['a'], { kind: 'move', x: 3, y: 4, speed: 2 / 3 });
+    expect(storeState.setFleetPick).toHaveBeenCalledWith(null);
+    storeState.setFleetPick.mockClear();
+    s.fleetPick = { kind: 'patrol' };
+    fb.orderSeq = 102;
+    loop(40);
+    expect(storeState.setFleetPick).not.toHaveBeenCalled();
+    delete s.fleetPick;
+  });
+
   it('does not send with an empty selection', () => {
     const loop = buildLoop();
     Object.assign(fb, { fleetSelIds: [], orderSeq: 1, orderKind: 'move' });
