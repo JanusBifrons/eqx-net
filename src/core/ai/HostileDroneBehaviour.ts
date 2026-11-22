@@ -472,12 +472,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const leash = this._guardReturn.leashes() || roam, g = this._guardReturn;
     // A kept lock on a hostile candidate wins over the ship's own pick (owner
     // rule 2026-11-22: locks stay until the target dies); an order outranks it.
-    let target: MountTargetView | null = null;
-    const kept = this._tgt.keptLockId;
-    if (kept !== null && ordered === null) {
-      for (let i = 0; i < n; i++) if (cand[i]!.id === kept && cand[i]!.hostile) { target = cand[i]!; break; }
-    }
-    if (target === null) target = tp.pick(self, n, this._tgt.prevTargetId, sinceTicks, ordered, orderedLive, leash, g.x, g.y, g.r, anyHostile);
+    const target = this._tgt.keptPick(cand, n, ordered) ?? tp.pick(self, n, this._tgt.prevTargetId, sinceTicks, ordered, orderedLive, leash, g.x, g.y, g.r, anyHostile);
     const newId = target?.id ?? null;
     if (newId !== this._tgt.prevTargetId) this._tgt.prevTargetSinceTick = view.tick;
     this._tgt.prevTargetId = newId;

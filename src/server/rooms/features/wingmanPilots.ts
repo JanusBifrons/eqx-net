@@ -23,22 +23,17 @@ import { clearFleetOrder, defendAt, stepFleetPatrol } from '../../fleet/fleetShi
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
 import type { TransitOrchestrator } from '../../transit/TransitOrchestrator.js';
 import type { ShipState } from '../schema/SectorState.js';
-import type { LockSubsystem, WireGroup } from '../LockSubsystem.js';
+import type { LockSubsystem } from '../LockSubsystem.js';
 import type { WeaponMountTicker } from '../WeaponMountTicker.js';
 import type { PlayerFireResolver } from '../PlayerFireResolver.js';
 import type { WorkerCmd } from '../PhysicsWorkerProxy.js';
+import { holdsLiveLock, WingmanKeptLocks } from './wingmanKeptLocks.js';
 
 /** RTS slice 4b — `fleet.detach` options when the owner takes a member's helm. */
 const KEEP_SQUAD = Object.freeze({ keepSquad: true });
 /** RTS Part B: an owned hull's AI controller registration (keys as pilot
  *  INPUT, no AI fire path). */
 const HULL_AI_REGISTRATION = Object.freeze({ hull: true });
-
-/** A weapon group holds a lock that is not draining (released). */
-function holdsLiveLock(grp: WireGroup): boolean {
-  for (let i = 0; i < grp.l.length; i++) if (grp.l[i]!.r !== 1) return true;
-  return false;
-}
 
 /** What the wingman pilots need from the room; getters read the live field. */
 export interface WingmanPilotsHost {
@@ -68,7 +63,7 @@ export interface WingmanPilotsHost {
 }
 
 export class WingmanPilots {
-  constructor(private readonly h: WingmanPilotsHost) {}
+  constructor(private readonly h: WingmanPilotsHost) { this.keptLocks = new WingmanKeptLocks(h); }
 
   /** Scratch for a wingman attack target's pose (#14). */
   readonly wingmanTargetPose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
@@ -347,7 +342,7 @@ export class WingmanPilots {
     this.h.lastFireClientTick.delete(shipInstanceId);
     this.h.lockActivated().delete(shipInstanceId);
     this.wingmanFireKeys.delete(shipInstanceId);
-    this.keptLockIds.delete(shipInstanceId);
+    this.keptLocks.forget(shipInstanceId);
     const slot = this.h.lingeringSlots.get(shipInstanceId);
     if (slot === undefined) return;
     const cmd = this.wingmanInputCmd;
@@ -426,29 +421,8 @@ export class WingmanPilots {
 
   /** Per wingman: the target it is locking and that target's lock key. */
   readonly wingmanFireKeys = new Map<string, { id: string; key: string }>();
-  /** Per hull: its kept lock's key and the brain id it names (cache). */
-  private readonly keptLockIds = new Map<string, { key: string; id: string | null }>();
-
-  /** The brain id of the first live lock hull 'sid' holds (`s:<entityId>` ⇒
-   *  the swarm record id, `p:<id>` ⇒ that id), or null. Cached per hull: a
-   *  string is built only when the lock changes. */
-  private keptLockTarget(sid: string): string | null {
-    const groups = this.h.wingmanLocks().wireFor(sid);
-    if (groups === undefined) return null;
-    let key: string | null = null;
-    for (let g = 0; g < groups.length && key === null; g++) {
-      const l = groups[g]!.l;
-      for (let i = 0; i < l.length; i++) if (l[i]!.r !== 1) { key = l[i]!.t; break; }
-    }
-    if (key === null) return null;
-    const cached = this.keptLockIds.get(sid);
-    if (cached !== undefined && cached.key === key) return cached.id;
-    let id: string | null;
-    if (key.startsWith('s:')) id = this.h.swarmRegistry.getByEntityId(Number(key.slice(2)))?.id ?? null;
-    else id = key.startsWith('p:') ? key.slice(2) : null;
-    if (cached !== undefined) { cached.key = key; cached.id = id; } else this.keptLockIds.set(sid, { key, id });
-    return id;
-  }
+  /** Per hull: its kept lock (capital S2; `wingmanKeptLocks.ts`). */
+  private readonly keptLocks: WingmanKeptLocks;
   /** A swarm record by registry id or wire id (`swarm-<entityId>`, what the
    *  client's attack order names). Alloc-free digit parse. */
   private swarmRecByAnyId(id: string): SwarmEntityRecord | null {
@@ -548,9 +522,7 @@ export class WingmanPilots {
       if (hb !== null) this.syncHullOrder(hb, w.order);
       // A kept lock steers the brain's pick: the ship fights what it is locked
       // on (owner rule); an attack order or Hold fire overrides it.
-      if (hb?.setKeptLockTarget !== undefined) {
-        hb.setKeptLockTarget(ordered === null && w.stance !== 'holdFire' ? this.keptLockTarget(sid) : null);
-      }
+      this.keptLocks.steer(hb, sid, ordered === null && w.stance !== 'holdFire');
       // The brain's target; with none, a live ordered target keeps the locks
       // (its pilot's take-controls handshake hides it from the brain's
       // candidates for a few ticks; the lock must not restart).
