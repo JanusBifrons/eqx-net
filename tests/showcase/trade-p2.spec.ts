@@ -81,7 +81,7 @@ test('Living World P2: a trade deal, a raid, an escort', async ({ page }, testIn
   await page.waitForTimeout(1_200);
   await page.getByTestId('trade-deal-confirm').click();
   await page.waitForTimeout(1_500);
-  await page.getByTestId('drawer-close').click();
+  await page.getByTestId('trade-panel-close').click();
 
   // 3) The hauler flies in; raiders jump it → the red escort prompt.
   await page.waitForFunction(() => {
