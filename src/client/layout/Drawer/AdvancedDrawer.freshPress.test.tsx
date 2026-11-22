@@ -10,6 +10,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { AdvancedDrawer } from './AdvancedDrawer';
 import { MENU_ARM_MS } from '../../components/touchClickActivate';
 import { useUIStore } from '../../state/store';
+import { selectDrawerOpen } from '../../state/rightPanel';
 
 /** A tap's synthesized click carries detail 1 (a keyboard click carries 0). */
 const tapClick = (el: Element): void => { fireEvent.click(el, { detail: 1 }); };
@@ -17,20 +18,20 @@ const touchDown = (el: Element): void => { fireEvent.pointerDown(el, { pointerTy
 
 beforeEach(() => {
   vi.useFakeTimers();
-  useUIStore.setState({ isDrawerOpen: false, drawerTab: 'galaxy' });
+  useUIStore.setState({ rightPanel: null, drawerTab: 'galaxy' });
 });
-afterEach(() => { useUIStore.setState({ isDrawerOpen: false }); vi.useRealTimers(); });
+afterEach(() => { useUIStore.setState({ rightPanel: null }); vi.useRealTimers(); });
 
 function openByPress(): void {
   render(<AdvancedDrawer />);
-  act(() => { useUIStore.getState().setDrawerOpen(true); });
+  act(() => { useUIStore.getState().setRightPanel('galaxy'); });
 }
 
 describe('AdvancedDrawer: the opening press never acts inside it', () => {
   it('the leftover release on Close does not close the drawer', () => {
     openByPress();
     tapClick(screen.getByTestId('drawer-close'));
-    expect(useUIStore.getState().isDrawerOpen).toBe(true);
+    expect(selectDrawerOpen(useUIStore.getState())).toBe(true);
   });
 
   it('the leftover release on a tab does not switch tabs', () => {
@@ -60,6 +61,6 @@ describe('AdvancedDrawer: the opening press never acts inside it', () => {
   it('keyboard activation (detail 0) still acts', () => {
     openByPress();
     fireEvent.click(screen.getByTestId('drawer-close'));
-    expect(useUIStore.getState().isDrawerOpen).toBe(false);
+    expect(selectDrawerOpen(useUIStore.getState())).toBe(false);
   });
 });

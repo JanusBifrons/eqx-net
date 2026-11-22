@@ -212,7 +212,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 
 ### Contracts tab (Living World P4c, plan peppy-jumping-pinwheel)
 
-- `layout/Drawer/tabs/ContractsTab.tsx` rebuilds ONLY from `GET /galaxy/contracts` (#16), polled only while `drawerTab === 'contracts' && isDrawerOpen`. It lives under `/galaxy` on purpose, so no new Vite proxy path is needed (see the `/trade` collision rule above).
+- `layout/Drawer/tabs/ContractsTab.tsx` rebuilds ONLY from `GET /galaxy/contracts` (#16), polled only while `selectDrawerTabShown('contracts')`. It lives under `/galaxy` on purpose, so no new Vite proxy path is needed (see the `/trade` collision rule above).
 - World notices (`world_notice`: elites, events, bounties) reuse the trade toast stack with the gold `world` tone, which is not tappable. They are accelerators; the truth is the snapshot (`drones[].elite`) and the galaxy snapshot (`SectorLiveState.elite` / `.event`).
 - Lock: `ContractsTab.test.tsx`.
 ## Server implementation notes

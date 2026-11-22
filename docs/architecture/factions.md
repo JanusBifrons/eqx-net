@@ -148,7 +148,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 
 ### Factions tab (plan soft-leaping-truffle v4, F3)
 
-- `layout/Drawer/tabs/FactionsTab.tsx` is rebuilt ONLY from `GET /trade/factions` (#16), polled only while `drawerTab === 'factions' && isDrawerOpen`.
+- `layout/Drawer/tabs/FactionsTab.tsx` is rebuilt ONLY from `GET /trade/factions` (#16), polled only while `selectDrawerTabShown('factions')`.
 - The policy selects send `set_faction_policy` (`sendSetFactionPolicy`) and refetch.
 - Rows show names, never ids. Standing labels come from the shared `standingLabel` scale (−100..100).
 - Locks: `FactionsTab.test.tsx`, `tests/e2e/factions-tab.spec.ts`.

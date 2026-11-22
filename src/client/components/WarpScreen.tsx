@@ -176,7 +176,7 @@ export function WarpScreen({ targetSectorKey = null }: WarpScreenProps = {}): JS
     ui.setCurrentSectorKey(null);
     ui.setDead(false);
     ui.setGalaxyMapOpen(false);
-    ui.setDrawerOpen(false);
+    ui.setRightPanel(null);
     ui.setPendingShipSwap(null);
     ui.setSectorAlert('Connection issue — please retry');
     ui.setPhase('galaxy-map');

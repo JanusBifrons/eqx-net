@@ -10,6 +10,7 @@ import FlagOutlinedIcon from '@mui/icons-material/FlagOutlined';
 import PaletteOutlinedIcon from '@mui/icons-material/PaletteOutlined';
 import CloseIcon from '@mui/icons-material/Close';
 import { useUIStore } from '../../state/store';
+import { selectDrawerOpen } from '../../state/rightPanel';
 import { useFreshPressSurface } from '../../components/touchClickActivate';
 import { ProfileTab } from './tabs/ProfileTab';
 import { SettingsTab } from './tabs/SettingsTab';
@@ -143,7 +144,7 @@ const ACTIVE_PANEL_SX = { flex: 1, minWidth: 0, overflow: 'auto' } as const;
  * background-render objection now applies only to snapshot-rate subscribers
  * in hidden tabs (`tabs/DebugTab.tsx`, `components/ConnectionDiagnostics.tsx`,
  * `components/DevOverlay.tsx`, `components/LogPanel.tsx`) — each MUST gate
- * on `drawerTab === '<id>' && isDrawerOpen` so they pay zero cost when
+ * on `selectDrawerTabShown('<id>')` (state/rightPanel.ts) so they pay zero cost when
  * their tab isn't on screen.
  *
  * Pixi keeps running underneath — the drawer paints on a higher z-index
@@ -155,12 +156,12 @@ const TOP_TABS = TABS.filter((t) => !t.bottom);
 const BOTTOM_TABS = TABS.filter((t) => t.bottom);
 
 export function AdvancedDrawer(): JSX.Element {
-  const isDrawerOpen = useUIStore((s) => s.isDrawerOpen);
+  const isDrawerOpen = useUIStore(selectDrawerOpen);
   // The dial's Menu action opens the drawer on touchstart: the same finger's
   // release must not hit the tab, row or backdrop now under it.
   const freshPress = useFreshPressSurface(isDrawerOpen);
   const drawerTab = useUIStore((s) => s.drawerTab);
-  const setDrawerOpen = useUIStore((s) => s.setDrawerOpen);
+  const setRightPanel = useUIStore((s) => s.setRightPanel);
   const setDrawerTab = useUIStore((s) => s.setDrawerTab);
 
   // `useMemo` here, not because the computation is expensive, but
@@ -177,7 +178,7 @@ export function AdvancedDrawer(): JSX.Element {
   // Stable handler identity so child IconButton / RailButton don't
   // see new props on every parent render and skip their React.memo
   // (once memoised — see the wrappers below).
-  const handleClose = useCallback(() => setDrawerOpen(false), [setDrawerOpen]);
+  const handleClose = useCallback(() => setRightPanel(null), [setRightPanel]);
 
   // Active-panel sx depends on activeId only via the `data-testid`,
   // not via styling, so it stays in the static block above. The

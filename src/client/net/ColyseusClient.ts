@@ -2039,7 +2039,7 @@ export class ColyseusGameClient {
       // 2026-05-26 heap-growth gate step 11: gate the per-snapshot
       // setDevData dispatch on the Debug tab actually being mounted.
       // The sole reader (`ConnectionDiagnostics`) lives inside
-      // `DebugTab`, which returns `null` when `!isDrawerOpen` (see
+      // `DebugTab`, which returns `null` while the drawer is closed (see
       // `src/client/layout/Drawer/tabs/DebugTab.tsx:43`). With the
       // drawer closed OR on a non-debug tab, no subscriber exists, so
       // pushing a fresh 19-field object into Zustand at 20 Hz pays
@@ -2047,7 +2047,7 @@ export class ColyseusGameClient {
       // via `getState()` (non-subscribing, sync) is the established
       // pattern in this file (see clientSingleton.ts).
       const _ui = useUIStore.getState();
-      if (_ui.isDrawerOpen && _ui.drawerTab === 'debug') {
+      if (_ui.rightPanel === 'cog' && _ui.drawerTab === 'debug') {
         _ui.setDevData({
           rtt: this.stats.rttMs,
           drift: drift,

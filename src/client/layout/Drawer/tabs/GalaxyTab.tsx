@@ -11,6 +11,7 @@ import {
 } from '@mui/material';
 import HexagonOutlinedIcon from '@mui/icons-material/HexagonOutlined';
 import { useUIStore, type ArrivalMode } from '../../../state/store';
+import { selectDrawerTabShown } from '../../../state/rightPanel';
 import { getSector } from '../../../../core/galaxy/galaxy';
 import { getGameClient } from '../../../net/clientSingleton';
 import {
@@ -81,7 +82,7 @@ export function GalaxyTab(): JSX.Element {
   const transitState   = useUIStore((s) => s.transitState);
   const currentSectorKey = useUIStore((s) => s.currentSectorKey);
   const setGalaxyMapOpen = useUIStore((s) => s.setGalaxyMapOpen);
-  const setDrawerOpen    = useUIStore((s) => s.setDrawerOpen);
+  const setRightPanel    = useUIStore((s) => s.setRightPanel);
   const arrivalMode      = useUIStore((s) => s.arrivalMode);
   const arrivalTargetX   = useUIStore((s) => s.arrivalTargetX);
   const arrivalTargetY   = useUIStore((s) => s.arrivalTargetY);
@@ -89,8 +90,6 @@ export function GalaxyTab(): JSX.Element {
   const homePosY         = useUIStore((s) => s.homePosY);
   const setArrivalMode   = useUIStore((s) => s.setArrivalMode);
   const setArrivalTarget = useUIStore((s) => s.setArrivalTarget);
-  const isDrawerOpen     = useUIStore((s) => s.isDrawerOpen);
-  const drawerTab        = useUIStore((s) => s.drawerTab);
 
   const sector = currentSectorKey ? getSector(currentSectorKey) : null;
   const inTransit = transitState !== 'DOCKED';
@@ -100,7 +99,7 @@ export function GalaxyTab(): JSX.Element {
   // keep spatial reads out of Zustand (per src/client/CLAUDE.md invariant
   // #2). Polling only runs when this tab is the visible one.
   const [snapshot, setSnapshot] = useState<{ x: number; y: number } | null>(null);
-  const tabVisible = isDrawerOpen && drawerTab === 'galaxy';
+  const tabVisible = useUIStore(selectDrawerTabShown('galaxy'));
   useEffect(() => {
     if (!tabVisible || arrivalMode !== 'same') {
       setSnapshot(null);
@@ -145,7 +144,7 @@ export function GalaxyTab(): JSX.Element {
     // scrim (GalaxyOverviewSelectChrome) which just dimmed the game + showed
     // the roster. The map is the single unified surface (Phase 7).
     setGalaxyMapOpen(true);
-    setDrawerOpen(false);
+    setRightPanel(null);
   };
 
   const onModeChange = (_e: unknown, next: ArrivalMode | null): void => {

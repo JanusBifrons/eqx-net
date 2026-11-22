@@ -9,6 +9,7 @@ import GpsFixedIcon from '@mui/icons-material/GpsFixed';
 import FastForwardIcon from '@mui/icons-material/FastForward';
 import { SOLAR_SECTORS } from '../../shared-types/sectorBounds';
 import { useUIStore, useShouldRenderHud } from '../state/store';
+import { openDrawerPanel } from '../state/rightPanel';
 import { getShipKind } from '@shared-types/shipKinds';
 import { type StructureKindId } from '@shared-types/structureKinds';
 import { useTouchClickActivate } from './touchClickActivate';
@@ -79,7 +80,6 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
   const shouldRender = useShouldRenderHud();
   const isDead = useUIStore((s) => s.isDead);
   const isGalaxyMapOpen = useUIStore((s) => s.isGalaxyMapOpen);
-  const setDrawerOpen = useUIStore((s) => s.setDrawerOpen);
   const toggleGalaxyMapOpen = useUIStore((s) => s.toggleGalaxyMapOpen);
   const activeSlotId = useUIStore((s) => s.activeSlotId);
   const shipKindId = useUIStore((s) => s.selectedShipKind);
@@ -140,8 +140,8 @@ export function SpeedDialMenu({ direction = 'up' }: SpeedDialMenuProps = {}): JS
 
   const handleMenu = useCallback(() => {
     close();
-    setDrawerOpen(true);
-  }, [close, setDrawerOpen]);
+    openDrawerPanel(useUIStore.getState());
+  }, [close]);
 
   const handleWarp = useCallback(() => {
     close();

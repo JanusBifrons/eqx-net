@@ -31,11 +31,11 @@ describe('ShipLookTab (galaxy map 0c)', () => {
     drawn.length = 0;
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => VIEW })));
     useUIStore.getState().setDrawerTab('look');
-    useUIStore.getState().setDrawerOpen(true);
+    useUIStore.getState().setRightPanel('faction');
   });
   afterEach(() => {
     vi.unstubAllGlobals();
-    useUIStore.getState().setDrawerOpen(false);
+    useUIStore.getState().setRightPanel(null);
   });
 
   it('lists free sigils, marks the current look, shows ship and big sigil, and claims a picked one', async () => {

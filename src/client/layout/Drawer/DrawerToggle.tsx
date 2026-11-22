@@ -1,6 +1,7 @@
 import { Box, IconButton, Tooltip } from '@mui/material';
 import MenuIcon from '@mui/icons-material/Menu';
 import { useUIStore, useShouldRenderHud } from '../../state/store';
+import { openDrawerPanel } from '../../state/rightPanel';
 
 /**
  * Subtle top-right icon button that opens the AdvancedDrawer. The slotting
@@ -10,7 +11,6 @@ import { useUIStore, useShouldRenderHud } from '../../state/store';
 export function DrawerToggle(): JSX.Element | null {
   // Plan: crispy-kazoo, Commit 5 — hide HUD during loading curtain.
   const shouldRender = useShouldRenderHud();
-  const setDrawerOpen = useUIStore((s) => s.setDrawerOpen);
   if (!shouldRender) return null;
   return (
     <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5 }}>
@@ -18,7 +18,7 @@ export function DrawerToggle(): JSX.Element | null {
         <IconButton
           aria-label="Open advanced panels"
           data-testid="drawer-toggle"
-          onClick={() => setDrawerOpen(true)}
+          onClick={() => openDrawerPanel(useUIStore.getState())}
           sx={{
             p: 0.5,
             opacity: 0.55,

@@ -22,6 +22,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
+import { selectDrawerOpen } from '../state/rightPanel.js';
 import { SpeedDialMenu } from './SpeedDialMenu.js';
 
 describe('SpeedDialMenu close() blurs focus (WS-F #18)', () => {
@@ -65,7 +66,7 @@ describe('SpeedDialMenu close() blurs focus (WS-F #18)', () => {
     fireEvent.click(menuBtn);
 
     // The Menu action opens the drawer and closes the dial; focus is dropped.
-    expect(useUIStore.getState().isDrawerOpen).toBe(true);
+    expect(selectDrawerOpen(useUIStore.getState())).toBe(true);
     expect(document.activeElement).not.toBe(menuBtn);
   });
 });
