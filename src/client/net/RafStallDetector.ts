@@ -26,7 +26,19 @@
 
 import { logEvent } from '../debug/ClientLogger';
 import { readHeapUsedMb } from './perfStats';
-import { recordLaneFrame, withLaneStallContext } from '../debug/perf/laneFrameSummary';
+import { LANE_HITCH_MS, recordLaneFrame, withLaneStallContext } from '../debug/perf/laneFrameSummary';
+
+/** A frame over this is a stall the player can't miss (ms); also a hitch. */
+export const FRAME_SEVERE_HITCH_MS = 250;
+/** A gap over this is a backgrounded tab resuming, not a hitch (ms). */
+export const FRAME_HITCH_IGNORE_ABOVE_MS = 5000;
+// Cumulative frame-hitch counters (net-health HUD device item). Scalars only.
+let frameHitchCount = 0;
+let frameSevereHitchCount = 0;
+/** Frames over `LANE_HITCH_MS` (the phone-lane `perf_summary` hitch bound) since load. */
+export function getFrameHitchCount(): number { return frameHitchCount; }
+/** Frames over `FRAME_SEVERE_HITCH_MS` since load. */
+export function getFrameSevereHitchCount(): number { return frameSevereHitchCount; }
 
 export class RafStallDetector {
   private rafSampleCounter = 0;
@@ -115,6 +127,10 @@ export class RafStallDetector {
    */
   detectGap(elapsedMs: number, inputTickBefore: number, nowMs: number): void {
     recordLaneFrame(elapsedMs); // phone-lane frame-time summary (no-op off the lane)
+    if (elapsedMs > LANE_HITCH_MS && elapsedMs <= FRAME_HITCH_IGNORE_ABOVE_MS) {
+      frameHitchCount++;
+      if (elapsedMs > FRAME_SEVERE_HITCH_MS) frameSevereHitchCount++;
+    }
     // r2 — accumulate window stats every RAF.
     this.rafCountSinceSample += 1;
     this.rafElapsedTotalMsSinceSample += elapsedMs;

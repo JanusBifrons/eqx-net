@@ -113,6 +113,7 @@ import {
   type ShipRouterCtx,
 } from './snapshotShipRouter.js';
 import { applySnapshotPerfStats } from './snapshotPerfStats.js';
+import { noteSnapshotArrival } from './snapshotArrivalStats.js';
 import { syncTidiFromRoom } from './tidiSync.js';
 import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
 import { stepTravel, TRAVEL_OUT_S, type TravelTrip } from './mirror/travelPass.js';
@@ -1528,8 +1529,10 @@ export class ColyseusGameClient {
       ? recvAtMs - this._lastSnapshotRecvAtMs
       : -1;
     this._lastSnapshotRecvAtMs = recvAtMs;
+    this.stats.lastSnapshotRecvAtMs = recvAtMs; // net-health HUD wait readout
     const serverSendPerfNow = (snap as { serverSendPerfNow?: number }).serverSendPerfNow;
     // Emit-when-non-zero on the server (2026-11-14 trim): absent means 0.
+    noteSnapshotArrival(recvAtMs, serverSendPerfNow); // net-health HUD: network vs server
     const wsBufferedAmountBytes = (snap as { wsBufferedAmountBytes?: number }).wsBufferedAmountBytes ?? 0;
     logEvent('snapshot_received', {
       serverTick: snap.serverTick,
