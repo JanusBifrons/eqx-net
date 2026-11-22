@@ -1,7 +1,16 @@
 import type { Preview } from '@storybook/react';
+import { EqxThemeProvider } from '../src/ui/index.js';
 
 /** Dark space-y backgrounds so the badges/silhouettes read as they do in-game. */
 const preview: Preview = {
+  // Every story gets the game theme and HUD fonts, as in-game (main.tsx).
+  decorators: [
+    (Story) => (
+      <EqxThemeProvider>
+        <Story />
+      </EqxThemeProvider>
+    ),
+  ],
   parameters: {
     backgrounds: {
       default: 'space',
