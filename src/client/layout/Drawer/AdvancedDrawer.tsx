@@ -1,10 +1,10 @@
 /**
  * The rail's page panels (UI language plan A4, drawer mapping): Galaxy, Jobs
- * and Faction (Trade and the cog are their own panels, `panels/TradePanel.tsx`
+ * (Trade, Faction and the cog are their own panels, `panels/TradePanel.tsx`
  * and `panels/CogPanel.tsx`). Each rail item opens ONLY its own pages in the one
  * right panel (`EqxPanel`); there is no tab column (owner 2026-11-22: the old
  * drawer's sidebar is redundant next to the rail). A panel with more than one
- * page (Faction: Factions / Ship look) shows a
+ * page shows a
  * page switch at the top; `drawerTab` is the page shown.
  *
  * **Performance contract** (docs/LESSONS.md 2026-05-13 "Drawer perf paradigm"):
@@ -24,8 +24,6 @@ import { useUIStore } from '../../state/store';
 import { DRAWER_TAB_PANEL, type RailId } from '../../state/rightPanel';
 import { GalaxyTab } from './tabs/GalaxyTab';
 import { ContractsTab } from './tabs/ContractsTab';
-import { FactionsTab } from './tabs/FactionsTab';
-import { ShipLookTab } from './tabs/ShipLookTab';
 
 interface PageSpec {
   id: string;
@@ -39,13 +37,11 @@ interface PageSpec {
 const PAGES: readonly PageSpec[] = [
   { id: 'galaxy', label: 'Galaxy', node: <GalaxyTab /> },
   { id: 'contracts', label: 'Jobs', node: <ContractsTab /> },
-  { id: 'factions', label: 'Factions', node: <FactionsTab /> },
-  { id: 'look', label: 'Ship look', node: <ShipLookTab /> },
 ];
 
 /** The panel title per rail item. */
 const PANEL_TITLE: Readonly<Partial<Record<RailId, string>>> = {
-  galaxy: 'Galaxy', jobs: 'Jobs', faction: 'Faction',
+  galaxy: 'Galaxy', jobs: 'Jobs',
 };
 
 /** The pages of each panel, in order (from `DRAWER_TAB_PANEL`). */

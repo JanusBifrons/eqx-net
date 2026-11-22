@@ -9,7 +9,7 @@
  * - Driven by the store's `rightPanel` flag: a rail pick sets it, a second pick
  *   of the open item, ✕ or Esc clears it. Renders the panels the flag opens,
  *   including today's advanced drawer (moved here from App.tsx), the Trade
- *   drill-down (`panels/TradePanel.tsx`), the cog panel (`panels/CogPanel.tsx`) and the
+ *   drill-down (`panels/TradePanel.tsx`), the cog panel (`panels/CogPanel.tsx`), Faction (`panels/FactionPanel.tsx`) and the
  *   selection's Details panel (opened from the left strip's ⚙, not a rail item).
  *   The Build panel (`build`) is mounted by GameHud (BuildSidebarHost) and opens
  *   on the same flag.
@@ -25,6 +25,7 @@ import { TradePanel } from '../panels/TradePanel';
 import { FleetRailPanel } from '../panels/FleetPanel';
 import { DetailsPanel } from '../panels/DetailsPanel';
 import { CogPanel } from '../panels/CogPanel';
+import { FactionPanel } from '../panels/FactionPanel';
 import { Slot } from './Slot';
 import { RAIL_COG, railItemById, railTools, RAIL_COMMON, type RailItemSpec } from './railItems';
 
@@ -81,6 +82,7 @@ export function RightPanelHost(): JSX.Element {
       <FleetRailPanel />
       <DetailsPanel />
       <CogPanel />
+      <FactionPanel />
     </>
   );
 }

@@ -9,8 +9,6 @@ import { useUIStore } from '../../state/store';
 
 vi.mock('./tabs/GalaxyTab', () => ({ GalaxyTab: () => <div>galaxy page</div> }));
 vi.mock('./tabs/ContractsTab', () => ({ ContractsTab: () => <div>jobs page</div> }));
-vi.mock('./tabs/FactionsTab', () => ({ FactionsTab: () => <div>factions page</div> }));
-vi.mock('./tabs/ShipLookTab', () => ({ ShipLookTab: () => <div>look page</div> }));
 
 const { AdvancedDrawer, pagesOfPanel } = await import('./AdvancedDrawer');
 
@@ -22,7 +20,7 @@ describe('AdvancedDrawer: each rail panel shows only its own pages', () => {
     expect(pagesOfPanel('galaxy').map((p) => p.id)).toEqual(['galaxy']);
     expect(pagesOfPanel('trade')).toEqual([]); // its own drill-down, panels/TradePanel.tsx
     expect(pagesOfPanel('jobs').map((p) => p.id)).toEqual(['contracts']);
-    expect(pagesOfPanel('faction').map((p) => p.id)).toEqual(['factions', 'look']);
+    expect(pagesOfPanel('faction')).toEqual([]); // its own drill-down, panels/FactionPanel.tsx
     // The cog draws its own panel (panels/CogPanel.tsx).
     expect(pagesOfPanel('cog')).toEqual([]);
   });
@@ -44,13 +42,11 @@ describe('AdvancedDrawer: each rail panel shows only its own pages', () => {
     expect(screen.queryByTestId('drawer-tab-settings')).toBeNull();
   });
 
-  it('Faction: its two pages on a switch; a pick changes the page', () => {
+  it('stays shut while the Faction panel is open (FactionPanel draws it)', () => {
     render(<AdvancedDrawer />);
-    act(() => { useUIStore.getState().setDrawerTab('factions'); });
-    fireEvent.click(screen.getByTestId('drawer-tab-look'));
-    expect(useUIStore.getState().drawerTab).toBe('look');
+    act(() => { useUIStore.getState().setDrawerTab('look'); });
     expect(useUIStore.getState().rightPanel).toBe('faction');
-    expect(screen.getByTestId('drawer-panel-look').textContent).toBe('look page');
+    expect(screen.getByTestId('advanced-drawer')).not.toBeVisible();
   });
 
   it('✕ closes the panel', () => {
