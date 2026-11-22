@@ -90,8 +90,13 @@ export class MoveToHelm {
       : this.handling.cruiseSpeed * CALM_CRUISE_FRAC * (leaderCruise ? LEADER_CRUISE_THROTTLE : 1);
     const speed = Math.min(cruise, brakingSpeed(this.handling, steer.dist));
     // Close in: keep the nose where it is and just brake (no turn-around for
-    // an overshoot of a few lengths).
-    const facing = steer.dist > t.flockFollow ? facingOf(steer.dirX, steer.dirY) : self.angle;
+    // an overshoot). A flock follower keeps it inside its flock spacing; an
+    // owner's order (cruiseCap >= 0: Move, Retreat) only inside the arrival
+    // radius, so a short move beside or behind the ship turns and flies there
+    // instead of sliding sideways or backwards on reverse thrust. Once arrived
+    // the travel writes cruiseCap -1 again, so a small overshoot never spins it round.
+    const keepNose = cruiseCap >= 0 ? t.wingmanArrive : t.flockFollow;
+    const facing = steer.dist > keepNose ? facingOf(steer.dirX, steer.dirY) : self.angle;
     this.out(facing, steer.dirX * speed, steer.dirY * speed, boostOk);
     return false;
   }
