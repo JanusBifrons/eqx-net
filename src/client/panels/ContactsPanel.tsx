@@ -2,14 +2,15 @@
  * The Contacts right panel (UI language plan A4, job U2-3): an EVE-style table
  * of what you can lock, for picking far targets without zooming out (owner,
  * 2026-11-10: "lock and pick targets like you do in Eve where you're reduced
- * to a list view like you use when you warp to"). Columns (owner, 2026-11-22):
- * Name (kind icon), Lock (locking-you, lock state), Type, Faction, Stance,
- * Distance. The lock marks get their own narrow column so the name never
- * loses width to them on a phone.
+ * to a list view like you use when you warp to"). Columns (owner, 2026-11-22,
+ * slimmed): Name (kind icon), Type (an icon), Faction (a badge in the
+ * faction's colour), Distance. No Stance column (the row colour says it) and
+ * no Lock column (the active group's lock washes the row).
  * Every header taps to sort (the tapped column becomes the primary key, the
  * previous one the tie-break: `tapContactSort`); default nearest first. Row
- * text is the stance colour. Paged (`CONTACTS_PAGE_SIZE`); the filter button
- * shows Type / Stance / Faction filters.
+ * text is the stance colour (hostile red, friendly green, neutral the normal
+ * ink). Paged (`CONTACTS_PAGE_SIZE`; EqxTable's arrow + page-number pager);
+ * the filter button shows Type / Stance / Faction filters.
  *
  * Opened by the rail's Contacts item (every control mode) or the O key
  * (`input/MouseLock.ts`): `rightPanel = 'contacts'`. ✕ and Esc clear the flag.
@@ -18,7 +19,7 @@
  * The renderer focuses the entity exactly as a map tap does
  * (`IFleetView.focusEntity`, key → pick id via `contactFocusTarget`) and the
  * panel closes, so the left strip shows its icons (Details to inspect, Lock
- * to lock). The Lock column only displays lock state.
+ * to lock). Lock state rides the row's data attributes only.
  *
  * Data: the render mirror polled at 4 Hz while open (the TeleporterPanel /
  * warp picker pattern), re-rendering only when what's shown changes
@@ -35,18 +36,18 @@ import { getGameClient } from '../net/clientSingleton';
 import type { IFleetView } from '@core/contracts/render/IFleetView';
 import { contactFocusTarget } from '../components/contactFocus';
 import { ENTITY_VISUALS, entityBadgePolygon, type EntityKind } from '../render/entityVisuals';
-import { FAILSAFE_COLOUR, THREAT_COLOUR_HEX, groupColourHex } from '../hud/groupColours';
+import { groupColourHex } from '../hud/groupColours';
+import { cssHex } from '../components/sectorPanelParts';
 import { HUD } from '../hud/tokens';
 import {
   CONTACTS_PAGE_SIZE, CONTACT_STANCE_LABEL, STANCE_COLOUR, CONTACT_TYPE_LABEL, DEFAULT_CONTACT_SORT, NO_CONTACT_FILTER,
-  buildContactRows, contactFactions, contactsSignature, filterContacts, formatContactKm,
+  buildContactRows, contactFactions, contactsSignature, factionInitials, filterContacts, formatContactKm,
   sortContacts, tapContactSort,
   type ContactFilter, type ContactRow, type ContactSort, type ContactSortKey, type ContactStance,
   type ContactType, type GroupReach,
 } from '../components/contactRows';
 
 const POLL_MS = 250;
-const FAILSAFE_HEX = `#${FAILSAFE_COLOUR.toString(16)}`;
 const ALL = 'all';
 const FACTION_PREFIX = 'f:';
 
@@ -68,16 +69,22 @@ const HEAD_STYLE: CSSProperties = { display: 'flex', alignItems: 'center', gap: 
 const GROW_STYLE: CSSProperties = { flex: 1, minWidth: 0 };
 const NAME_STYLE: CSSProperties = { display: 'flex', alignItems: 'center', gap: 4, minWidth: 0 };
 const NAME_TEXT_STYLE: CSSProperties = { flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis' };
-const LOCK_CELL_STYLE: CSSProperties = { display: 'flex', alignItems: 'center', gap: 3, minWidth: 0 };
-const LOCK_STYLE: CSSProperties = { flex: 'none', fontWeight: 700, fontSize: HUD.table.smallFont };
-const THREAT_STYLE: CSSProperties = { flex: 'none', color: THREAT_COLOUR_HEX, fontWeight: 700 };
+const ICON_CELL_STYLE: CSSProperties = { display: 'flex', alignItems: 'center', minWidth: 0 };
+/** The faction badge: a filled disc in the faction's colour with its initials
+ *  (factions have no emblem the UI can draw; the warp briefing's owner dot is
+ *  the same idea). */
+const BADGE_STYLE: CSSProperties = {
+  display: 'inline-flex', alignItems: 'center', justifyContent: 'center', flex: 'none',
+  width: 18, height: 18, borderRadius: '50%', color: HUD.color.onAccent,
+  fontFamily: HUD.font.label, fontSize: 8, fontWeight: 700, lineHeight: 1, letterSpacing: 0,
+};
 const ICON_STYLE: CSSProperties = { display: 'block', flex: 'none' };
 const REACH_STYLE: CSSProperties = { marginRight: 3 };
 
 /** Column widths, px (a ~305 px table body on a phone held sideways: 36vw of
- *  915, minus padding). Name takes 2.5 shares of what is left, Faction 1. */
-const COL_W = { lock: 44, type: 46, stance: 46, dist: 50 } as const;
-const NAME_GROW = 2.5;
+ *  915, minus padding). Type and Faction are icons, sized to their header
+ *  words; Name takes the rest. */
+const COL_W = { type: 34, faction: 48, dist: 50 } as const;
 
 /** The kind icon: the shared visual-language shape, no count. */
 function KindIcon({ kind }: { kind: EntityKind }): JSX.Element {
@@ -148,7 +155,7 @@ export const ContactsPanel = memo(function ContactsPanel({ rendererRef }: Contac
   const onSort = (id: string): void => { setSort((s) => tapContactSort(s, id as ContactSortKey)); setPage(0); };
   const patchFilter = (p: Partial<ContactFilter>): void => { setFilter((f) => ({ ...f, ...p })); setPage(0); };
   const filtersOn = filter.type !== null || filter.faction !== null || filter.stance !== null;
-  const columns = contactColumns(groups, activeIdx);
+  const columns = contactColumns(activeIdx);
   const primary = sort[0] ?? null;
 
   return (
@@ -235,14 +242,19 @@ function rowAttrs(r: ContactRow): Record<string, string | number> {
   };
 }
 
-function contactColumns(groups: ReadonlyArray<{ id: string }>, activeIdx: number): EqxTableColumn<ContactRow>[] {
+function contactColumns(activeIdx: number): EqxTableColumn<ContactRow>[] {
   const reachCol = activeIdx >= 0 ? groupColourHex(activeIdx) : HUD.color.inkDim;
   return [
-    { id: 'name', label: 'Name', grow: NAME_GROW, cell: (r) => <NameCell r={r} /> },
-    { id: 'lock', label: 'Lock', width: COL_W.lock, cell: (r) => <LockCell r={r} groups={groups} /> },
-    { id: 'type', label: 'Type', width: COL_W.type, cell: (r) => CONTACT_TYPE_LABEL[r.type] },
-    { id: 'faction', label: 'Faction', grow: 1, cell: (r) => r.faction },
-    { id: 'stance', label: 'Stance', width: COL_W.stance, cell: (r) => CONTACT_STANCE_LABEL[r.stance] },
+    { id: 'name', label: 'Name', cell: (r) => <NameCell r={r} /> },
+    {
+      id: 'type', label: 'Type', width: COL_W.type,
+      cell: (r) => (
+        <span style={ICON_CELL_STYLE} title={CONTACT_TYPE_LABEL[r.type]}>
+          <EqxIcon name={r.type} size="small" title={CONTACT_TYPE_LABEL[r.type]} />
+        </span>
+      ),
+    },
+    { id: 'faction', label: 'Faction', width: COL_W.faction, cell: (r) => <FactionBadge r={r} /> },
     {
       id: 'dist', label: 'Dist', width: COL_W.dist, alignRight: true, numeric: true,
       cell: (r) => {
@@ -268,20 +280,12 @@ function NameCell({ r }: { r: ContactRow }): JSX.Element {
   );
 }
 
-/** Locking you (⚠ locked / ◎ locking, threat colour), then your lock (LOCK or
- *  the acquiring percent, in the holding group's colour); empty otherwise. */
-function LockCell({ r, groups }: { r: ContactRow; groups: ReadonlyArray<{ id: string }> }): JSX.Element {
-  const lock = r.lock;
-  const lockIdx = lock ? groups.findIndex((g) => g.id === lock.groupId) : -1;
-  const lockCol = lock ? (lock.stage === 0 ? FAILSAFE_HEX : groupColourHex(lockIdx)) : undefined;
+/** The faction as a badge in its colour, named by title / aria-label. */
+function FactionBadge({ r }: { r: ContactRow }): JSX.Element {
   return (
-    <span style={LOCK_CELL_STYLE}>
-      {r.lockingYou > 0 && (
-        <span title={r.lockingYou === 2 ? 'has you locked' : 'locking you'} style={THREAT_STYLE}>
-          {r.lockingYou === 2 ? '⚠' : '◎'}
-        </span>
-      )}
-      {lock !== null && <span style={{ ...LOCK_STYLE, color: lockCol }}>{lock.stage === 2 ? 'LOCK' : `${lock.pct}%`}</span>}
+    <span role="img" aria-label={r.faction} title={r.faction} data-testid="contact-faction"
+      style={{ ...BADGE_STYLE, background: cssHex(r.factionColor) }}>
+      {factionInitials(r.faction)}
     </span>
   );
 }

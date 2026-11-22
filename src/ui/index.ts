@@ -30,4 +30,4 @@ export { EqxBar, barColor, type EqxBarProps, type EqxBarTone } from './EqxBar/Eq
 export { EqxSection, type EqxSectionProps } from './EqxSection/EqxSection.js';
 export { EqxListRow, type EqxListRowProps } from './EqxListRow/EqxListRow.js';
 export { EqxTable, tableGridTemplate, type EqxTableProps, type EqxTableColumn, type EqxTableSort, type EqxSortDir } from './EqxTable/EqxTable.js';
-export { tablePageWindow, type EqxTablePageWindow } from './EqxTable/tablePaging.js';
+export { TABLE_PAGER_SLOTS, tablePageList, tablePageWindow, type EqxTablePageSlot, type EqxTablePageWindow } from './EqxTable/tablePaging.js';

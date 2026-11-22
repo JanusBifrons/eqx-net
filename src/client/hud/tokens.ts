@@ -297,8 +297,9 @@ export const HUD = {
     cellPadX: 3,
     /** Gap before a header's sort arrow. */
     arrowGap: 2,
-    /** Gap between the pager's parts. */
-    footGap: 8,
+    /** Pager: gap between its buttons, and a button's height / min width. */
+    pageGap: 3,
+    pageBtn: 22,
   },
 } as const;
 

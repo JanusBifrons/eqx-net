@@ -6,10 +6,14 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { RenderMirror } from '@core/contracts/IRenderer';
+import { teamColorOf } from '@shared-types/factions';
 import {
-  DEFAULT_CONTACT_SORT, NO_CONTACT_FILTER, buildContactRows, contactFactions, contactStance, focusStance,
-  contactsSignature, filterContacts, formatContactKm, sortContacts, tapContactSort, type ContactSort,
+  DEFAULT_CONTACT_SORT, NO_CONTACT_FILTER, STANCE_COLOUR, buildContactRows, contactFactions, contactStance, focusStance,
+  contactsSignature, factionInitials, filterContacts, formatContactKm, sortContacts, tapContactSort, type ContactSort,
 } from './contactRows';
+import { HUD } from '../hud/tokens';
+import { ENTITY_VISUALS } from '../render/entityVisuals';
+import { DEFAULT_FACTION_COLOR } from '../render/galaxy/galaxyTerritories';
 
 const PLAYER_ID = '0a1b2c3d-4e5f-4000-8000-000000000001';
 
@@ -167,6 +171,27 @@ describe('type, faction and stance', () => {
     expect(byKey.get('s:14')!.faction).toBe('Unknown');
     expect(byKey.get('s:15')!.faction).toBe('Unknown');
     for (const r of byKey.values()) expect(r.faction).not.toContain(PLAYER_ID);
+    // The badge colour is the faction's own (the ships' team colour); unknown is the default grey.
+    expect(byKey.get('s:7')!.factionColor).toBe(teamColorOf('drones'));
+    expect(byKey.get('s:8')!.factionColor).toBe(teamColorOf('core'));
+    expect(byKey.get('p:' + PLAYER_ID)!.factionColor).toBe(teamColorOf(PLAYER_ID));
+    expect(byKey.get('s:10')!.factionColor).toBe(teamColorOf('someone'));
+    expect(byKey.get('s:13')!.factionColor).toBe(teamColorOf('traders'));
+    expect(byKey.get('s:15')!.factionColor).toBe(DEFAULT_FACTION_COLOR);
+  });
+
+  it('faction initials: one letter for one word, else the first letters of the first two words', () => {
+    expect(factionInitials('Drones')).toBe('D');
+    expect(factionInitials('Sol Dominion')).toBe('SD');
+    expect(factionInitials('verdant reach miners')).toBe('VR');
+    expect(factionInitials('  Ripley ')).toBe('R');
+    expect(factionInitials('')).toBe('?');
+  });
+
+  it('stance colours: hostile red, friendly green, neutral the normal panel ink (not amber)', () => {
+    expect(STANCE_COLOUR.hostile).toBe(ENTITY_VISUALS.hostile.cssColor);
+    expect(STANCE_COLOUR.friendly).toBe(ENTITY_VISUALS.ship.cssColor);
+    expect(STANCE_COLOUR.neutral).toBe(HUD.color.ink);
   });
 
   it('stance: hostile wins; other pilots and their structures are friendly; the rest neutral', () => {
@@ -196,10 +221,8 @@ describe('sortContacts', () => {
     expect(keysOf(sortContacts([...rows], [{ key: 'dist', dir: 'desc' }]))).toEqual(['s:10', 'p:' + PLAYER_ID, 's:7', 's:8']);
   });
 
-  it('stance asc puts hostiles first; the secondary key orders within each stance', () => {
+  it('the secondary key orders within the primary', () => {
     const rows = buildContactRows(mirror(), 'guns', REACHES);
-    const byStance: ContactSort = [{ key: 'stance', dir: 'asc' }, { key: 'dist', dir: 'asc' }];
-    expect(keysOf(sortContacts([...rows], byStance))).toEqual(['s:7', 's:8', 'p:' + PLAYER_ID, 's:10']);
     const byTypeThenFar: ContactSort = [{ key: 'type', dir: 'asc' }, { key: 'dist', dir: 'desc' }];
     expect(keysOf(sortContacts([...rows], byTypeThenFar))).toEqual(['p:' + PLAYER_ID, 's:7', 's:8', 's:10']);
   });
@@ -215,14 +238,6 @@ describe('sortContacts', () => {
     expect(keysOf(sortContacts([...rows].reverse(), [{ key: 'name', dir: 'asc' }]))).toEqual(['s:22', 's:20', 's:21']);
   });
 
-  it('lock asc: locked, then acquiring, then locking you, then the rest', () => {
-    const byLock: ContactSort = [{ key: 'lock', dir: 'asc' }];
-    expect(keysOf(sortContacts(buildContactRows(mirror(), 'guns', REACHES), byLock))).toEqual(['s:8', 's:7', 'p:' + PLAYER_ID, 's:10']);
-    const m = mirror({ localGroups: [{ id: 'guns', m: 1, l: [{ t: 's:8', s: 2, p: 100 }] }], localLockedBy: [{ t: 's:10', s: 2, p: 100 }] });
-    expect(keysOf(sortContacts(buildContactRows(m, 'guns', REACHES), byLock))).toEqual(['s:8', 's:10', 's:7', 'p:' + PLAYER_ID]);
-    expect(keysOf(sortContacts(buildContactRows(m, 'guns', REACHES), [{ key: 'lock', dir: 'desc' }]))).toEqual(['s:7', 'p:' + PLAYER_ID, 's:10', 's:8']);
-  });
-
   it('no cap: every contact is kept (the panel pages them)', () => {
     const swarm = new Map<number, unknown>();
     for (let i = 0; i < 60; i++) swarm.set(100 + i, { kind: 1, shipKind: 'fighter', x: i * 10, y: 0 });
@@ -233,12 +248,12 @@ describe('sortContacts', () => {
 describe('tapContactSort', () => {
   it('the primary flips; another column becomes primary (asc) and the old primary secondary', () => {
     expect(tapContactSort(DEFAULT_CONTACT_SORT, 'dist')).toEqual([{ key: 'dist', dir: 'desc' }]);
-    const s1 = tapContactSort(DEFAULT_CONTACT_SORT, 'stance');
-    expect(s1).toEqual([{ key: 'stance', dir: 'asc' }, { key: 'dist', dir: 'asc' }]);
-    expect(tapContactSort(s1, 'stance')).toEqual([{ key: 'stance', dir: 'desc' }, { key: 'dist', dir: 'asc' }]);
-    expect(tapContactSort(s1, 'faction')).toEqual([{ key: 'faction', dir: 'asc' }, { key: 'stance', dir: 'asc' }]);
+    const s1 = tapContactSort(DEFAULT_CONTACT_SORT, 'type');
+    expect(s1).toEqual([{ key: 'type', dir: 'asc' }, { key: 'dist', dir: 'asc' }]);
+    expect(tapContactSort(s1, 'type')).toEqual([{ key: 'type', dir: 'desc' }, { key: 'dist', dir: 'asc' }]);
+    expect(tapContactSort(s1, 'faction')).toEqual([{ key: 'faction', dir: 'asc' }, { key: 'type', dir: 'asc' }]);
     // Tapping the secondary promotes it (fresh asc); the old primary drops to secondary.
-    expect(tapContactSort(s1, 'dist')).toEqual([{ key: 'dist', dir: 'asc' }, { key: 'stance', dir: 'asc' }]);
+    expect(tapContactSort(s1, 'dist')).toEqual([{ key: 'dist', dir: 'asc' }, { key: 'type', dir: 'asc' }]);
   });
 });
 

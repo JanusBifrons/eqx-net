@@ -10,15 +10,17 @@
  *   `rowColor` tints a row's text, `rowDim` fades it, `rowSelected` washes it;
  *   `rowTestId` / `rowDataAttrs` for tests.
  * - Paging: with `pageSize` the table shows page `page` (0-based, clamped,
- *   `tablePageWindow`) and, when there is more than one page, a footer:
- *   ‹ prev, "Page X of Y", next › calling `onPageChange`.
+ *   `tablePageWindow`) and, when there is more than one page, a footer: a ◀
+ *   arrow at the far left, ▶ at the far right (no labels; disabled at the
+ *   ends) and numbered page buttons between them, the current one lit. Too
+ *   many pages to fit: first, last, current ±1 and … gaps (`tablePageList`,
+ *   at most 7 slots). Every button calls `onPageChange`.
  * - Does not position itself.
  */
 import type { KeyboardEvent, ReactNode } from 'react';
 import { Box } from '@mui/material';
 import { HUD } from '../../client/hud/tokens.js';
-import { EqxButton } from '../EqxButton/EqxButton.js';
-import { tablePageWindow } from './tablePaging.js';
+import { tablePageList, tablePageWindow } from './tablePaging.js';
 
 export type EqxSortDir = 'asc' | 'desc';
 
@@ -135,13 +137,36 @@ const EMPTY_SX = { py: `${L.rowPadY}px`, px: `${T.cellPadX}px`, color: HUD.color
 const FOOT_SX = {
   display: 'flex',
   alignItems: 'center',
-  justifyContent: 'center',
-  gap: `${T.footGap}px`,
+  justifyContent: 'space-between',
+  gap: `${T.pageGap}px`,
   pt: `${T.rowPadY}px`,
   fontFamily: HUD.font.num,
   fontSize: T.smallFont,
   color: HUD.color.inkDim,
 } as const;
+const PAGES_SX = { display: 'flex', alignItems: 'center', gap: `${T.pageGap}px`, minWidth: 0 } as const;
+const PAGE_BTN_SX = {
+  minWidth: T.pageBtn,
+  height: T.pageBtn,
+  px: '3px',
+  m: 0,
+  display: 'inline-flex',
+  alignItems: 'center',
+  justifyContent: 'center',
+  border: `1px solid ${HUD.color.edge2}`,
+  borderRadius: `${HUD.panel.radius}px`,
+  bgcolor: 'transparent',
+  color: HUD.color.ink,
+  fontFamily: HUD.font.num,
+  fontSize: T.smallFont,
+  lineHeight: 1,
+  cursor: 'pointer',
+  '&:hover:not(:disabled)': { bgcolor: HUD.color.panel },
+  '&:focus-visible': { outline: `1px solid ${HUD.color.auto}`, outlineOffset: 1 },
+  '&:disabled': { opacity: HUD.panel.offOpacity, cursor: 'default' },
+} as const;
+const PAGE_CURRENT_SX = { bgcolor: HUD.color.auto, borderColor: HUD.color.auto, color: HUD.color.onAccent, '&:hover:not(:disabled)': { bgcolor: HUD.color.auto } } as const;
+const GAP_SX = { minWidth: T.pageBtn, textAlign: 'center' } as const;
 
 /** `grid-template-columns` for the columns: fixed px, else a share of the rest. */
 export function tableGridTemplate(columns: readonly { width?: number; grow?: number }[]): string {
@@ -223,12 +248,21 @@ export function EqxTable<R>({
         })}
       </Box>
       {win !== null && win.pages > 1 && (
-        <Box sx={FOOT_SX} data-testid={sub('pager')}>
-          <EqxButton onClick={() => onPageChange?.(win.page - 1)} disabled={win.page === 0} data-testid={sub('prev')}>‹ Prev</EqxButton>
-          <Box component="span" data-testid={sub('page')} data-page={win.page} data-pages={win.pages}>
-            {`Page ${win.page + 1} of ${win.pages}`}
+        <Box component="nav" aria-label={`${label} pages`} sx={FOOT_SX} data-testid={sub('pager')}>
+          <Box component="button" type="button" aria-label="Previous page" sx={PAGE_BTN_SX}
+            onClick={() => onPageChange?.(win.page - 1)} disabled={win.page === 0} data-testid={sub('prev')}>◀</Box>
+          <Box sx={PAGES_SX} data-testid={sub('page')} data-page={win.page} data-pages={win.pages}>
+            {tablePageList(win.page, win.pages).map((p) => (typeof p === 'number' ? (
+              <Box key={p} component="button" type="button" aria-label={`Page ${p + 1}`}
+                aria-current={p === win.page ? 'page' : undefined}
+                sx={[PAGE_BTN_SX, p === win.page && PAGE_CURRENT_SX]}
+                onClick={() => onPageChange?.(p)} data-testid={sub(`page-${p + 1}`)}>{p + 1}</Box>
+            ) : (
+              <Box key={p} component="span" aria-hidden sx={GAP_SX}>…</Box>
+            )))}
           </Box>
-          <EqxButton onClick={() => onPageChange?.(win.page + 1)} disabled={win.page >= win.pages - 1} data-testid={sub('next')}>Next ›</EqxButton>
+          <Box component="button" type="button" aria-label="Next page" sx={PAGE_BTN_SX}
+            onClick={() => onPageChange?.(win.page + 1)} disabled={win.page >= win.pages - 1} data-testid={sub('next')}>▶</Box>
         </Box>
       )}
     </Box>

@@ -98,13 +98,13 @@ describe('LeftStripHost: ships selected + a not-mine focus (T2)', () => {
     expect(screen.getByTestId('left-strip-identity').getAttribute('data-state')).toBeNull();
   });
 
-  it('a focus-only pick tints the one identity: a neutral structure reads yellow, structure glyph', () => {
+  it('a focus-only pick tints the one identity: a neutral structure reads the normal ink (not amber), structure glyph', () => {
     panelData = { name: 'Depot', hpPct: 100, shieldPct: null, stance: 'neutral' };
     mount();
     select([], 'swarm-9', 'structure');
     const id = screen.getByTestId('left-strip-identity');
     expect(id.getAttribute('data-state')).toBe('neutral');
-    expect(getComputedStyle(id).color).toBe('rgb(255, 212, 121)');
+    expect(getComputedStyle(id).color).toBe('rgb(223, 232, 245)');
     expect(id.querySelector('svg')?.getAttribute('data-icon')).toBe('structure');
   });
 

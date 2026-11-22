@@ -3,7 +3,8 @@
  * it on the one `rightPanel` flag; ✕ and Esc close it. Rows show names, never
  * ids; a tap SELECTS the row's entity (the renderer focus, like a map tap;
  * owner: "it's never tap to lock") and closes the panel so the left strip's
- * Details / Lock icons show. The Lock column is a read-only display.
+ * Details / Lock icons show. Columns: Name, Type (icon), Faction (badge),
+ * Distance; no Stance or Lock column (the row colour and wash say those).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
@@ -89,20 +90,19 @@ const rowKeys = (): string[] => [...screen.getByTestId('contacts-panel').querySe
   .map((r) => r.getAttribute('data-key')!);
 
 describe('ContactsPanel: the table', () => {
-  it('lists contacts by name (no ids), nearest first, with type, faction, stance, km and reach', () => {
+  it('lists contacts by name (no ids), nearest first, with type, faction, km and reach', () => {
     render(<ContactsPanel />);
     const panel = screen.getByTestId('contacts-panel');
     expect(panel.textContent).toContain('Fighter');
     expect(panel.textContent).toContain('Heavy');
-    expect(panel.textContent).toContain('Ripley'); // the pilot, in the Faction column
+    expect(within(panel).getByRole('img', { name: 'Ripley' })).toBeTruthy(); // the pilot, the Faction badge's name
     expect(panel.textContent).not.toContain(PLAYER_ID);
     expect(panel.textContent).not.toMatch(/s:\d|p:/);
     expect(panel.getAttribute('data-count')).toBe('3');
     expect(rowKeys()).toEqual(['s:7', 's:8', `p:${PLAYER_ID}`]);
     const hostile = screen.getByTestId('contact-row-s:7');
     expect(hostile.textContent).toContain('400 m');
-    expect(hostile.textContent).toContain('Hostile');
-    expect(hostile.textContent).toContain('Drones');
+    expect(within(hostile).getByRole('img', { name: 'Drones' })).toBeTruthy();
     expect(hostile.getAttribute('data-in-reach')).toBe('active');
     expect(hostile.getAttribute('data-stance')).toBe('hostile');
     expect(screen.getByTestId('contact-row-s:8').getAttribute('data-in-reach')).toBe('none');
@@ -112,10 +112,33 @@ describe('ContactsPanel: the table', () => {
     expect(pilot.getAttribute('data-type')).toBe('ship');
   });
 
-  it('row text is the stance colour', () => {
+  it('columns: Name, Type, Faction, Dist; no Stance or Lock column', () => {
+    render(<ContactsPanel />);
+    const heads = within(screen.getByTestId('contacts-list')).getAllByRole('columnheader').map((h) => h.textContent);
+    expect(heads).toEqual(['Name', 'Type', 'Faction', 'Dist▲']);
+    expect(screen.queryByTestId('contacts-list-sort-stance')).toBeNull();
+    expect(screen.queryByTestId('contacts-list-sort-lock')).toBeNull();
+  });
+
+  it('type is an icon named for its type; faction a badge in the faction colour, named for it', () => {
+    render(<ContactsPanel />);
+    const cells = within(screen.getByTestId('contact-row-s:7')).getAllByRole('cell');
+    const typeIcon = cells[1]!.querySelector('svg')!;
+    expect(typeIcon.getAttribute('data-icon')).toBe('ship');
+    expect(typeIcon.getAttribute('aria-label')).toBe('Ship');
+    const badge = within(cells[2]!).getByTestId('contact-faction');
+    expect(badge.getAttribute('aria-label')).toBe('Drones');
+    expect(badge.getAttribute('title')).toBe('Drones');
+    expect(badge.textContent).toBe('D');
+    expect(getComputedStyle(badge).backgroundColor).toBe('rgb(255, 68, 68)'); // the Drones colour, 0xff4444
+    // No stance word in the row: the colour says it.
+    expect(screen.getByTestId('contact-row-s:7').textContent).not.toContain('Hostile');
+  });
+
+  it('row text is the stance colour: hostile red, neutral the normal ink, friendly green', () => {
     render(<ContactsPanel />);
     expect(getComputedStyle(screen.getByTestId('contact-row-s:7')).color).toBe('rgb(255, 107, 107)');
-    expect(getComputedStyle(screen.getByTestId('contact-row-s:8')).color).toBe('rgb(255, 212, 121)');
+    expect(getComputedStyle(screen.getByTestId('contact-row-s:8')).color).toBe('rgb(223, 232, 245)');
     expect(getComputedStyle(screen.getByTestId(`contact-row-p:${PLAYER_ID}`)).color).toBe('rgb(107, 255, 155)');
   });
 
@@ -124,11 +147,11 @@ describe('ContactsPanel: the table', () => {
     expect(screen.getByTestId('contacts-list-sort-dist').getAttribute('data-sorted')).toBe('asc');
     fireEvent.click(screen.getByTestId('contacts-list-sort-dist'));
     expect(rowKeys()).toEqual([`p:${PLAYER_ID}`, 's:8', 's:7']);
-    fireEvent.click(screen.getByTestId('contacts-list-sort-stance'));
-    // Hostile, neutral, friendly (each stance ordered by the old primary).
-    expect(rowKeys()).toEqual(['s:7', 's:8', `p:${PLAYER_ID}`]);
-    expect(screen.getByTestId('contacts-list-sort-stance').getAttribute('data-sorted')).toBe('asc');
-    fireEvent.click(screen.getByTestId('contacts-list-sort-stance'));
+    fireEvent.click(screen.getByTestId('contacts-list-sort-faction'));
+    // Drones (s:8 before s:7: the old primary, farthest first), then Ripley.
+    expect(rowKeys()).toEqual(['s:8', 's:7', `p:${PLAYER_ID}`]);
+    expect(screen.getByTestId('contacts-list-sort-faction').getAttribute('data-sorted')).toBe('asc');
+    fireEvent.click(screen.getByTestId('contacts-list-sort-faction'));
     expect(rowKeys()).toEqual([`p:${PLAYER_ID}`, 's:8', 's:7']);
   });
 
@@ -173,19 +196,26 @@ describe('ContactsPanel: the table', () => {
     expect(rowKeys()).toEqual([`p:${PLAYER_ID}`]);
   });
 
-  it('pages: 8 rows a page, prev / next, page X of Y', () => {
+  it('pages: 8 rows a page; arrows and numbered page buttons', () => {
     for (let i = 0; i < 10; i++) fakeMirror.swarm.set(100 + i, { kind: 1, shipKind: 'fighter', x: 5000 + i * 10, y: 0 });
     try {
       render(<ContactsPanel />);
       expect(screen.getByTestId('contacts-panel').getAttribute('data-count')).toBe('13');
       expect(rowKeys()).toHaveLength(8);
-      expect(screen.getByTestId('contacts-list-page')).toHaveTextContent('Page 1 of 2');
+      const page = (): string | null => screen.getByTestId('contacts-list-page').getAttribute('data-page');
+      expect(page()).toBe('0');
+      expect(screen.getByTestId('contacts-list-page').getAttribute('data-pages')).toBe('2');
+      expect(screen.getByTestId('contacts-list-prev').getAttribute('aria-label')).toBe('Previous page');
       fireEvent.click(screen.getByTestId('contacts-list-next'));
       expect(rowKeys()).toHaveLength(5);
-      expect(screen.getByTestId('contacts-list-page')).toHaveTextContent('Page 2 of 2');
+      expect(page()).toBe('1');
+      expect(screen.getByTestId('contacts-list-page-2').getAttribute('aria-current')).toBe('page');
+      fireEvent.click(screen.getByTestId('contacts-list-page-1'));
+      expect(page()).toBe('0');
+      fireEvent.click(screen.getByTestId('contacts-list-page-2'));
       // A sort change goes back to page 1.
       fireEvent.click(screen.getByTestId('contacts-list-sort-name'));
-      expect(screen.getByTestId('contacts-list-page')).toHaveTextContent('Page 1 of 2');
+      expect(page()).toBe('0');
     } finally {
       for (let i = 0; i < 10; i++) fakeMirror.swarm.delete(100 + i);
     }
@@ -215,13 +245,12 @@ describe('ContactsPanel: the table', () => {
     expect(useUIStore.getState().rightPanel).toBeNull(); // the strip and the entity show
   });
 
-  it('a tap on a locked row selects it too (no unlock); the Lock column still reads LOCK', () => {
+  it('a tap on a locked row selects it too (no unlock); the lock shows in its data attrs', () => {
     fakeMirror.localGroups[0]!.l = [{ t: 's:7', s: 2, p: 100 }];
     const focusEntity = vi.fn();
     render(<ContactsPanel rendererRef={{ current: { focusEntity } }} />);
     const row = screen.getByTestId('contact-row-s:7');
     expect(row.getAttribute('data-lock')).toBe('locked');
-    expect(row.textContent).toContain('LOCK');
     fireEvent.click(row);
     expect(cancelLock).not.toHaveBeenCalled();
     expect(requestLock).not.toHaveBeenCalled();
@@ -240,36 +269,14 @@ describe('ContactsPanel: the table', () => {
     expect(screen.getByTestId('contacts-group')).toHaveTextContent('Tap a contact to select it');
   });
 
-  it('the lock marks sit in their own Lock column, not in the name cell', () => {
-    fakeMirror.localGroups[0]!.l = [{ t: 's:7', s: 2, p: 100 }];
+  it('locking-you rides the row data attrs (no Lock column)', () => {
     fakeMirror.localLockedBy = [{ t: 's:7', s: 2, p: 100 }, { t: 's:8', s: 1, p: 40 }];
     render(<ContactsPanel />);
-    const heads = within(screen.getByTestId('contacts-list')).getAllByRole('columnheader').map((h) => h.textContent);
-    const nameIdx = heads.indexOf('Name');
-    const lockIdx = heads.indexOf('Lock');
-    expect(lockIdx).toBeGreaterThanOrEqual(0);
-    const cells = (key: string): HTMLElement[] => within(screen.getByTestId(`contact-row-${key}`)).getAllByRole('cell');
-    const both = cells('s:7');
-    expect(both[nameIdx]!.textContent).toBe('Fighter');
-    expect(both[lockIdx]!.textContent).toContain('⚠');
-    expect(both[lockIdx]!.textContent).toContain('LOCK');
-    expect(within(both[lockIdx]!).getByTitle('has you locked')).toBeTruthy();
-    const lockingOnly = cells('s:8');
-    expect(lockingOnly[nameIdx]!.textContent).toBe('Heavy');
-    expect(lockingOnly[lockIdx]!.textContent).toBe('◎');
-    expect(cells(`p:${PLAYER_ID}`)[lockIdx]!.textContent).toBe('');
     expect(screen.getByTestId('contact-row-s:7').getAttribute('data-locking-you')).toBe('2');
+    expect(screen.getByTestId('contact-row-s:8').getAttribute('data-locking-you')).toBe('1');
   });
 
-  it('the Lock header sorts locked rows first, then rows locking you', () => {
-    fakeMirror.localGroups[0]!.l = [{ t: `p:${PLAYER_ID}`, s: 2, p: 100 }];
-    fakeMirror.localLockedBy = [{ t: 's:8', s: 1, p: 40 }];
-    render(<ContactsPanel />);
-    fireEvent.click(screen.getByTestId('contacts-list-sort-lock'));
-    expect(rowKeys()).toEqual([`p:${PLAYER_ID}`, 's:8', 's:7']);
-  });
-
-  it('acquiring shows a capped percent, and refreshes from the mirror while open', () => {
+  it('the lock state refreshes from the mirror while open', () => {
     vi.useFakeTimers();
     try {
       render(<ContactsPanel />);
@@ -278,7 +285,6 @@ describe('ContactsPanel: the table', () => {
       act(() => { vi.advanceTimersByTime(300); });
       const row = screen.getByTestId('contact-row-s:8');
       expect(row.getAttribute('data-lock')).toBe('acquiring');
-      expect(row.textContent).toContain('99%');
     } finally {
       vi.useRealTimers();
     }

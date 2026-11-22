@@ -22,27 +22,30 @@ import { getStructureKind } from '@shared-types/structureKinds';
 import { ENTITY_VISUALS, type EntityKind } from '../render/entityVisuals';
 import { farIconRelation } from '../render/relationToLocal';
 import { acquiringPct } from '../hud/lockPct';
-import { isOwnedByMe } from '../render/shipOwnership';
+import { isOwnedByMe, shipOwner } from '../render/shipOwnership';
+import { factionColor as ownerColor } from '../render/galaxy/galaxyTerritories';
+import { HUD } from '../hud/tokens';
 import { structureOwnerLabel } from './ownerLabel';
 
-/** Coarse object type (the Type column / filter). */
+/** Coarse object type (the Type column's icon / filter). */
 export type ContactType = 'ship' | 'structure';
-/** Stance to you (the Stance column / filter and the row text colour). */
+/** Stance to you (the Stance filter and the row text colour). */
 export type ContactStance = 'hostile' | 'neutral' | 'friendly';
 
 export const CONTACT_TYPE_LABEL: Readonly<Record<ContactType, string>> = { ship: 'Ship', structure: 'Structure' };
 export const CONTACT_STANCE_LABEL: Readonly<Record<ContactStance, string>> = {
   hostile: 'Hostile', neutral: 'Neutral', friendly: 'Friendly',
 };
-/** Stance colour: the shared relationship colours (radar, far icons). The
- *  contacts table's row text and the left strip's focus icon both read it. */
+/** Stance colour (owner, 2026-11-22: "neutral should be grey, the normal
+ *  colour, not amber. Only green for friendly/own/allied and red for enemy"):
+ *  hostile and friendly are the shared relationship colours (radar, far
+ *  icons); neutral is the panel's normal ink. The contacts table's row text
+ *  and the left strip's focus icon both read it. */
 export const STANCE_COLOUR: Readonly<Record<ContactStance, string>> = {
   hostile: ENTITY_VISUALS.hostile.cssColor,
-  neutral: ENTITY_VISUALS.neutral.cssColor,
+  neutral: HUD.color.ink,
   friendly: ENTITY_VISUALS.ship.cssColor,
 };
-/** Ascending stance order: hostiles first. */
-export const CONTACT_STANCE_ORDER: readonly ContactStance[] = ['hostile', 'neutral', 'friendly'];
 
 const UNKNOWN = 'Unknown';
 
@@ -71,6 +74,9 @@ export interface ContactRow {
   /** Whose it is: an NPC faction's name, a pilot's name, "you"-free (yours
    *  are never contacts), or "Unknown". Never an id. */
   faction: string;
+  /** The faction's colour (the ships' team colour, `teamColorOf`, as the
+   *  galaxy map tints it); the default grey when unknown. 0xRRGGBB. */
+  factionColor: number;
   stance: ContactStance;
   /** Centre-to-centre, game units. */
   dist: number;
@@ -108,13 +114,22 @@ function factionName(id: string | undefined): string | undefined {
   return id === undefined ? undefined : factionDisplayName(id as FactionId);
 }
 
-/** A structure's owner for the Faction column (`parseOwner` decides who). */
-function structureFaction(owner: string | undefined, ownerName: string | undefined, localId: string): { faction: string; player: boolean } {
-  if (owner === undefined) return { faction: UNKNOWN, player: false };
+/** A structure's owner for the Faction column (`parseOwner` decides who);
+ *  `id` is the owning faction (a player's is their id), '' when none. */
+function structureFaction(owner: string | undefined, ownerName: string | undefined, localId: string): { faction: string; id: string; player: boolean } {
+  if (owner === undefined) return { faction: UNKNOWN, id: '', player: false };
   const ref = parseOwner(owner);
-  if (ref.kind === 'npc') return { faction: factionName(ref.faction) ?? ownerName ?? UNKNOWN, player: false };
-  if (ref.kind === 'none') return { faction: ownerName ?? UNKNOWN, player: false };
-  return { faction: structureOwnerLabel(owner, ownerName, localId), player: true };
+  if (ref.kind === 'npc') return { faction: factionName(ref.faction) ?? ownerName ?? UNKNOWN, id: ref.faction, player: false };
+  if (ref.kind === 'none') return { faction: ownerName ?? UNKNOWN, id: '', player: false };
+  return { faction: structureOwnerLabel(owner, ownerName, localId), id: ref.faction, player: true };
+}
+
+/** The faction badge's letters: the first letter of each of the first two
+ *  words ("Sol Dominion" → "SD", "Drones" → "D"); "?" when there is no name. */
+export function factionInitials(name: string): string {
+  const words = name.trim().split(/\s+/).filter((w) => w.length > 0);
+  if (words.length === 0) return '?';
+  return words.slice(0, 2).map((w) => w[0]!.toUpperCase()).join('');
 }
 
 /** "450 m", "3.2 km", "38 km" (1 km = 1,000 u). Below 10 km keeps a decimal:
@@ -158,7 +173,7 @@ export function buildContactRows(
 
   const rows: ContactRow[] = [];
   const add = (
-    key: string, icon: EntityKind, name: string, type: ContactType, faction: string,
+    key: string, icon: EntityKind, name: string, type: ContactType, faction: string, factionId: string,
     playerSide: boolean, shipKind: string | undefined, x: number, y: number, hostileHint: boolean,
   ): void => {
     const dist = Math.hypot(x - me.x, y - me.y);
@@ -176,7 +191,7 @@ export function buildContactRows(
     const lockingYou: 0 | 1 | 2 = by >= 2 ? 2 : by >= 1 ? 1 : 0;
     const hostile = hostileHint || lockingYou > 0;
     rows.push({
-      key, icon, name, type, faction, stance: contactStance(hostile, playerSide, shipKind), dist,
+      key, icon, name, type, faction, factionColor: ownerColor(factionId), stance: contactStance(hostile, playerSide, shipKind), dist,
       hostile,
       inActiveReach: activeReach > 0 && dist <= activeReach,
       inAnyReach: anyReach > 0 && dist <= anyReach,
@@ -192,14 +207,15 @@ export function buildContactRows(
       const hostile = e.isHostileToLocal === true;
       const name = e.eliteName ?? (e.shipKind ? getShipKind(e.shipKind).displayName : 'Ship');
       // A patrol flies for its faction, else its kind's allegiance (as its livery reads).
-      const faction = factionName(e.faction ?? allegianceOfKind(e.shipKind)) ?? UNKNOWN;
-      add(`s:${id}`, hostile ? 'hostile' : 'neutral', name, 'ship', faction, false, e.shipKind, e.x, e.y, hostile);
+      const factionId = e.faction ?? allegianceOfKind(e.shipKind);
+      const faction = factionName(factionId) ?? UNKNOWN;
+      add(`s:${id}`, hostile ? 'hostile' : 'neutral', name, 'ship', faction, faction === UNKNOWN ? '' : factionId, false, e.shipKind, e.x, e.y, hostile);
     } else if (e.kind === 2) {
       const st = mirror.structures?.get(id);
       if (st?.owner !== undefined && st.owner === localId) return; // your own: not lockable
       const name = e.shipKind ? getStructureKind(e.shipKind).displayName : 'Structure';
       const who = structureFaction(st?.owner, st?.ownerName, localId);
-      add(`s:${id}`, 'structure', name, 'structure', who.faction, who.player, undefined, e.x, e.y,
+      add(`s:${id}`, 'structure', name, 'structure', who.faction, who.id, who.player, undefined, e.x, e.y,
         st?.turretTargetPlayerId === localId);
     }
   });
@@ -209,7 +225,7 @@ export function buildContactRows(
     // Named by its hull; the pilot (`displayName`, the server's owner label) is its faction.
     if (isOwnedByMe(mirror, key, s)) return;
     const name = s.kind ? getShipKind(s.kind).displayName : 'Ship';
-    add(`p:${key}`, 'ship', name, 'ship', s.displayName || UNKNOWN, true, s.kind, s.x, s.y, false);
+    add(`p:${key}`, 'ship', name, 'ship', s.displayName || UNKNOWN, shipOwner(key, s), true, s.kind, s.x, s.y, false);
   });
   return rows;
 }
@@ -249,7 +265,7 @@ export function focusStance(mirror: RenderMirror, focusId: string, focusKind: st
 }
 
 /** A sortable column. */
-export type ContactSortKey = 'name' | 'lock' | 'type' | 'faction' | 'stance' | 'dist';
+export type ContactSortKey = 'name' | 'type' | 'faction' | 'dist';
 export type ContactSortDir = 'asc' | 'desc';
 /** Primary key first, then the secondary (the previously tapped column). */
 export type ContactSort = ReadonlyArray<{ readonly key: ContactSortKey; readonly dir: ContactSortDir }>;
@@ -258,7 +274,7 @@ export const DEFAULT_CONTACT_SORT: ContactSort = [{ key: 'dist', dir: 'asc' }];
 
 /** A header tap: the primary column flips direction; any other column becomes
  *  the primary (ascending) and the old primary its secondary, so you can
- *  cross-sort (tap Distance, then Stance = by stance, nearest first). */
+ *  cross-sort (tap Distance, then Faction = by faction, nearest first). */
 export function tapContactSort(sort: ContactSort, key: ContactSortKey): ContactSort {
   const primary = sort[0];
   if (primary === undefined) return [{ key, dir: 'asc' }];
@@ -266,19 +282,12 @@ export function tapContactSort(sort: ContactSort, key: ContactSortKey): ContactS
   return [{ key, dir: 'asc' }, primary];
 }
 
-/** Lock column rank: your lock (locked over acquiring) first, then how hard it is locking you. */
-function lockRank(r: ContactRow): number {
-  return (r.lock === null ? 0 : r.lock.stage === 2 ? 2 : 1) * 3 + r.lockingYou;
-}
-
 function compareBy(key: ContactSortKey, a: ContactRow, b: ContactRow): number {
   switch (key) {
     case 'dist': return a.dist - b.dist;
-    case 'stance': return CONTACT_STANCE_ORDER.indexOf(a.stance) - CONTACT_STANCE_ORDER.indexOf(b.stance);
     case 'type': return CONTACT_TYPE_LABEL[a.type].localeCompare(CONTACT_TYPE_LABEL[b.type]);
     case 'faction': return a.faction.localeCompare(b.faction);
     case 'name': return a.name.localeCompare(b.name);
-    case 'lock': return lockRank(b) - lockRank(a);
   }
 }
 
@@ -323,7 +332,7 @@ export function contactFactions(rows: ReadonlyArray<ContactRow>): string[] {
 export function contactsSignature(rows: ReadonlyArray<ContactRow>): string {
   let s = '';
   for (const r of rows) {
-    s += `${r.key}|${r.name}|${r.type}|${r.faction}|${r.stance}|${formatContactKm(r.dist)}|${r.hostile ? 1 : 0}${r.inActiveReach ? 1 : 0}${r.inAnyReach ? 1 : 0}|`
+    s += `${r.key}|${r.name}|${r.type}|${r.faction}|${r.factionColor}|${r.stance}|${formatContactKm(r.dist)}|${r.hostile ? 1 : 0}${r.inActiveReach ? 1 : 0}${r.inAnyReach ? 1 : 0}|`
       + `${r.lock ? `${r.lock.groupId}:${r.lock.stage}:${r.lock.pct}` : '-'}|${r.activeLock ? 1 : 0}|${r.lockingYou};`;
   }
   return s;
