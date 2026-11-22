@@ -27,6 +27,7 @@ import type { LockSubsystem } from '../LockSubsystem.js';
 import type { WeaponMountTicker } from '../WeaponMountTicker.js';
 import type { PlayerFireResolver } from '../PlayerFireResolver.js';
 import type { WorkerCmd } from '../PhysicsWorkerProxy.js';
+import { holdsLiveLock, WingmanKeptLocks } from './wingmanKeptLocks.js';
 
 /** RTS slice 4b — `fleet.detach` options when the owner takes a member's helm. */
 const KEEP_SQUAD = Object.freeze({ keepSquad: true });
@@ -62,7 +63,7 @@ export interface WingmanPilotsHost {
 }
 
 export class WingmanPilots {
-  constructor(private readonly h: WingmanPilotsHost) {}
+  constructor(private readonly h: WingmanPilotsHost) { this.keptLocks = new WingmanKeptLocks(h); }
 
   /** Scratch for a wingman attack target's pose (#14). */
   readonly wingmanTargetPose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
@@ -341,6 +342,7 @@ export class WingmanPilots {
     this.h.lastFireClientTick.delete(shipInstanceId);
     this.h.lockActivated().delete(shipInstanceId);
     this.wingmanFireKeys.delete(shipInstanceId);
+    this.keptLocks.forget(shipInstanceId);
     const slot = this.h.lingeringSlots.get(shipInstanceId);
     if (slot === undefined) return;
     const cmd = this.wingmanInputCmd;
@@ -419,6 +421,8 @@ export class WingmanPilots {
 
   /** Per wingman: the target it is locking and that target's lock key. */
   readonly wingmanFireKeys = new Map<string, { id: string; key: string }>();
+  /** Per hull: its kept lock (capital S2; `wingmanKeptLocks.ts`). */
+  private readonly keptLocks: WingmanKeptLocks;
   /** A swarm record by registry id or wire id (`swarm-<entityId>`, what the
    *  client's attack order names). Alloc-free digit parse. */
   private swarmRecByAnyId(id: string): SwarmEntityRecord | null {
@@ -478,13 +482,17 @@ export class WingmanPilots {
   }
 
   /**
-   * Every ~10 Hz (the lock step cadence): each AI-flown hull points every
-   * weapon group's lock at its AI pilot brain's target (`getTargetId`; MAN
-   * groups: `requestLock`; a new target drops the old locks). Hold fire, or
-   * no target ⇒ every lock is cancelled (RTS Part B slice 2). The trigger is
-   * the brain's `intent.fire` (`tickWingmanFire`). The lock still takes the
-   * time a pilot's would (fights aren't instant), and a neutral target runs
-   * the failsafe.
+   * Every ~10 Hz (the lock step cadence): each AI-flown hull fills its
+   * weapon groups' locks (MAN groups: `requestLock`). A group already
+   * holding a lock KEEPS it (owner rule 2026-11-22: the pilot's locks, moved
+   * here when they hand the hull over, stay until the target dies or leaves
+   * lock range; the lock step drops those); only an empty group takes the AI
+   * pilot brain's target (`getTargetId`). An attack order is obeyed: every
+   * group retargets to it. Hold fire locks only an ordered target, else every
+   * lock is cancelled (RTS Part B slice 2). The trigger is the brain's
+   * `intent.fire` (`tickWingmanFire`). The lock still takes the time a
+   * pilot's would (fights aren't instant), and a neutral target runs the
+   * failsafe.
    */
   tickWingmanTargets(): void {
     const fleet = this.h.fleet;
@@ -512,6 +520,9 @@ export class WingmanPilots {
       // Slice 11: a patrolling hull walks its route.
       if (hb !== null && w.order === null && w.mode === 'patrol' && fleet.squadFollowOf(sid) === null) this.stepHullPatrol(w, hb, pose.x, pose.y, false);
       if (hb !== null) this.syncHullOrder(hb, w.order);
+      // A kept lock steers the brain's pick: the ship fights what it is locked
+      // on (owner rule); an attack order or Hold fire overrides it.
+      this.keptLocks.steer(hb, sid, ordered === null && w.stance !== 'holdFire');
       // The brain's target; with none, a live ordered target keeps the locks
       // (its pilot's take-controls handshake hides it from the brain's
       // candidates for a few ticks; the lock must not restart).
@@ -522,7 +533,8 @@ export class WingmanPilots {
       const key = target === null ? null : this.wingmanLockKey(sid, target);
       const groups = this.h.wingmanLocks().wireFor(sid);
       if (key === null) {
-        if (groups !== undefined) for (let g = 0; g < groups.length; g++) {
+        // Hold fire drops every lock; otherwise held locks stay (owner rule).
+        if (groups !== undefined && w.stance === 'holdFire') for (let g = 0; g < groups.length; g++) {
           if (groups[g]!.l.length > 0) this.h.wingmanLocks().cancelLock(sid, groups[g]!.id);
         }
         continue;
@@ -532,6 +544,9 @@ export class WingmanPilots {
       for (let g = 0; g < gs.length; g++) {
         const grp = gs[g]!;
         if (grp.l.length === 1 && grp.l[0]!.t === key) continue;
+        // A live lock (the lock step drops a dead or out-of-range one) is kept
+        // unless an attack order names the target.
+        if (ordered === null && holdsLiveLock(grp)) continue;
         if (grp.l.length > 0) this.h.wingmanLocks().cancelLock(sid, grp.id);
         this.h.wingmanLocks().requestLock(sid, grp.id, key);
       }

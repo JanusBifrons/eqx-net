@@ -8,7 +8,7 @@
  *            10/30/60 min, number of visits, price band)
  *   Deals    your deals (state, next visit, cancel)
  *   History  what happened, newest first
- *   Gift     send goods or credits to a side for standing
+ *   Gift / Blueprints  panels/TradeGiftPage.tsx, BlueprintMarketSection.tsx
  *
  * Truth = `GET /trade/economy` + `/trade/offers` (#16), polled by `useTradeData`
  * only while the Trade panel is on screen (drawer-perf rule) and refetched at
@@ -24,16 +24,14 @@ import { getGameClient } from '../../../net/clientSingleton';
 import { loadStoredPlayerId } from '../../../identity/token';
 import { loadToken } from '../../../auth/tokenStorage';
 import { fetchEconomy, fetchOffers, saveTradeLastSeen } from '../../../net/tradeApi';
-import { formatPrice, formatStanding, goodName, itemName, ownStorages, repFill, repLabel, sectorName, type OwnStorage } from '../../../net/tradeView';
-import { sendAcceptOffer, sendCancelDeal, sendGift } from '../../../net/tradeClient';
+import { formatPrice, formatStanding, itemName, ownStorages, repFill, repLabel, sectorName, type OwnStorage } from '../../../net/tradeView';
+import { sendAcceptOffer, sendCancelDeal } from '../../../net/tradeClient';
 import {
   ECON_ALLEGIANCES,
   MAX_OFFER_QTY,
-  type EconAllegiance,
   type PlayerEconomyView,
   type TradeOffer,
 } from '../../../../shared-types/economy';
-import { GOOD_IDS, type GoodId } from '../../../../shared-types/goods';
 
 const POLL_MS = 5000;
 
@@ -307,43 +305,5 @@ function DealDialog({ offer, baseId, onClose }: { offer: TradeOffer; baseId: num
         </Button>
       </DialogActions>
     </Dialog>
-  );
-}
-
-export function GiftForm({ baseId }: { baseId: number | null }): JSX.Element {
-  const [to, setTo] = useState<EconAllegiance>('traders');
-  const [good, setGood] = useState<GoodId | 'credits'>('credits');
-  const [amount, setAmount] = useState(100);
-  const send = (): void => {
-    if (baseId === null) return;
-    const n = Math.max(1, Math.floor(amount));
-    sendGift({
-      allegiance: to,
-      networkEntityId: baseId,
-      good: good === 'credits' ? null : good,
-      qty: good === 'credits' ? 0 : n,
-      credits: good === 'credits' ? n : 0,
-    });
-  };
-  return (
-    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1 }} data-testid="trade-gift">
-      <Typography sx={MUTED_SX}>A hauler collects the gift from your base. Standing gained shrinks if you give a lot at once.</Typography>
-      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-        <Typography sx={MUTED_SX}>To</Typography>
-        <Select size="small" value={to} onChange={(e) => setTo(e.target.value as EconAllegiance)} sx={SELECT_SX} data-testid="trade-gift-to">
-          {ECON_ALLEGIANCES.map((a) => <MenuItem key={a} value={a} sx={{ fontSize: 11, textTransform: 'capitalize' }}>{a}</MenuItem>)}
-        </Select>
-      </Box>
-      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-        <TextField label="Amount" type="number" size="small" value={amount} onChange={(e) => setAmount(Number(e.target.value))} sx={FIELD_SX} />
-        <Select size="small" value={good} onChange={(e) => setGood(e.target.value as GoodId | 'credits')} sx={SELECT_SX} data-testid="trade-gift-good">
-          <MenuItem value="credits" sx={{ fontSize: 11 }}>Credits</MenuItem>
-          {GOOD_IDS.map((g) => <MenuItem key={g} value={g} sx={{ fontSize: 11 }}>{goodName(g)}</MenuItem>)}
-        </Select>
-      </Box>
-      <Button size="small" variant="outlined" sx={{ fontSize: 11, alignSelf: 'flex-start' }} disabled={baseId === null} onClick={send} data-testid="trade-gift-send">
-        Send gift
-      </Button>
-    </Box>
   );
 }

@@ -190,12 +190,17 @@ export function WarpScreen({ targetSectorKey = null }: WarpScreenProps = {}): JS
   // Terminal (curtain mid-fade / hidden): WARP COMPLETE.
   const statusText = currentStep >= 0 ? steps[currentStep]!.name : 'WARP COMPLETE';
 
-  // Which sector the briefing names: a stalled trip's destination; before
-  // `welcome` the join's own target (`currentSectorKey` may still be the
-  // last sector); after it the live `currentSectorKey`.
-  const preWelcome = connectionStatus !== 'connected' || localShipInstanceId === null;
+  // Which sector the briefing names: a trip's destination (set by
+  // `transit_ready`, also for a commander following their fleet; cleared by
+  // the new sector's `welcome`); before `welcome` the join's own target
+  // (`currentSectorKey` may still be the last sector; `targetSectorKey` is
+  // the Hangar launch room, never moved by a trip); after it the live
+  // `currentSectorKey`. A commander (spectator) has no ship id, so for them
+  // a connected room counts as welcomed.
+  const preWelcome = connectionStatus !== 'connected'
+    || (localShipInstanceId === null && pilotMode !== 'spectator');
   const briefingKey =
-    travelling && transitTargetSectorKey !== null ? transitTargetSectorKey
+    transitTargetSectorKey !== null ? transitTargetSectorKey
     : preWelcome ? (targetSectorKey ?? currentSectorKey)
     : (currentSectorKey ?? targetSectorKey);
 

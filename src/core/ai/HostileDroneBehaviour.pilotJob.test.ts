@@ -158,7 +158,11 @@ const SCENES: Record<string, () => Trace> = {
  *  flockLeaderGone flies the orbit (`moving` ⇒ `idle`); leaving, after the
  *  run, flies the course to its drop point (`idle` ⇒ `moving`); travelFiring
  *  on its arrival tick flew travel and posted, not the fight (`chasing`
- *  dropped for that one tick). */
+ *  dropped for that one tick). The owner short-move turn (moveTo.ts: an
+ *  owner's order keeps its nose only inside wingmanArrive, not flockFollow)
+ *  changed the controls of holdFireTravel and travelArrive only: both short
+ *  travels now turn to face the point on the last stretch instead of sliding
+ *  there nose-fixed; their labels are unchanged. */
 const EXPECTED: Record<string, Trace> = {
   orbit: { activities: ['idle'], hash: 2473974824, bits: 2829683080 },
   orbitFar: { activities: ['idle'], hash: 474350843, bits: 3680974707 },
@@ -168,14 +172,14 @@ const EXPECTED: Record<string, Trace> = {
   guardPostHold: { activities: ['moving', 'guarding'], hash: 1375265895, bits: 1658740194 },
   travel: { activities: ['moving'], hash: 2680883185, bits: 1012981025 },
   patrolLeg: { activities: ['patrolling'], hash: 3391953992, bits: 401342200 },
-  holdFireTravel: { activities: ['moving'], hash: 2667841088, bits: 205188528 },
+  holdFireTravel: { activities: ['moving'], hash: 2809715492, bits: 1698488116 },
   flockFollow: { activities: ['moving'], hash: 1363681713, bits: 984585117 },
   flockLeaderGone: { activities: ['idle'], hash: 880472628, bits: 1650270408 },
   flockWithPost: { activities: ['moving'], hash: 2687486342, bits: 1712373666 },
   hunt: { activities: ['searching'], hash: 1793141760, bits: 746650452 },
   huntThenCourse: { activities: ['moving'], hash: 1796483839, bits: 1668080087 },
   leaving: { activities: ['retreating', 'moving'], hash: 1421539877, bits: 1894031765 },
-  travelArrive: { activities: ['moving', 'guarding'], hash: 4260918485, bits: 2730095765 },
+  travelArrive: { activities: ['moving', 'guarding'], hash: 2949910939, bits: 3195831271 },
   travelFiring: { activities: ['moving', 'guarding'], hash: 3741288517, bits: 3753688765 },
   patrolLegFight: { activities: ['patrolling', 'chasing', 'attacking'], hash: 2851019941, bits: 3732694268 },
   huntLong: { activities: ['searching'], hash: 2146711092, bits: 4192992930 },

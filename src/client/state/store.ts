@@ -167,7 +167,6 @@ export const useUIStore = create<UIStore>((set, get) => ({
   activeSlotId: 'primary',
   placementKind: null,
   warpPickerOpen: false,
-  contactsOpen: false,
   structureSettingsOpen: false,
   warpHeldTo: null,
   selection: EMPTY_SELECTION,
@@ -292,7 +291,6 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setActiveSlotId: (id) => set({ activeSlotId: id, lastFireMs: null }),
   setPlacementKind: (k) => set(k === null ? { placementKind: null } : { placementKind: k, buildMode: true }),
   setWarpPickerOpen: (open) => set({ warpPickerOpen: open }),
-  setContactsOpen: (open) => set({ contactsOpen: open }),
   setWarpHeldTo: (label) => set({ warpHeldTo: label }),
   // No ships left to command ⇒ nothing to pick a target for (slice 14b).
   setSelection: (ids, focusId, focusKind) => {

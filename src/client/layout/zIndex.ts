@@ -6,7 +6,7 @@
  * z-index from this table once; widgets do not set their own.
  *
  * Tier ordering (lowest → highest):
- *   canvas  < hud < mobileControls < hudOverSticks < panel < railStrip < drawer < appBar < overlay
+ *   canvas  < hud < mobileControls < hudOverSticks < panel < railStrip < overStrip < drawer < appBar < overlay
  *   < modal < prompt < transit
  *   < rotatePrompt (above the galaxy map chrome at 2000, below the
  *   lost-connection and error overlays at 9999)
@@ -24,6 +24,10 @@
  * the HUD, the thumb-stick zones and the panel they open; under the old
  * modal drawer (`drawer`).
  *
+ * `overStrip`: HUD that must draw over the left strip and right rail without
+ * touching them (the warp spool bar, owner 2026-11-22: it drew under the
+ * strip); under `drawer`.
+ *
  * `prompt`: the top-centre answer-me prompt (plan B2), above Windows
  * (`modal`) so it is never hidden, below the drag ghost (`transit`).
  *
@@ -37,6 +41,7 @@ export const Z = {
   hudOverSticks: 16,
   panel: 1050,
   railStrip: 1100,
+  overStrip: 1150,
   drawer: 1200,
   appBar: 1300,
   overlay: 1400,
