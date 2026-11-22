@@ -31,10 +31,10 @@ describe('SectorRoom integration — Shipyard builds from the starter skiff copy
       sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [],
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 },
-        { kind: 'connector', x: 0, y: -350 },
+        { kind: 'connector', x: 0, y: -380 },
         { kind: 'connector', x: 450, y: -350 },
-        { kind: 'reactor', x: 650, y: 0 },
-        { kind: 'shipyard', x: 0, y: -760 },
+        { kind: 'reactor', x: 650, y: 50 },
+        { kind: 'shipyard', x: 0, y: -790 },
       ],
       prebuiltStructuresOwner: owner,
       defaultSpawnX: 0,

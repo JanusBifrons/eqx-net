@@ -52,8 +52,8 @@ function starterBase(extra: Array<[string, number, number]> = []) {
     return id!;
   };
   const capital = placement.place(OWNER, 'capital', 0, 0)!;
-  build(placement.place(OWNER, 'connector', 0, -350));
-  const yardId = build(placement.place(OWNER, 'shipyard', 0, -760));
+  build(placement.place(OWNER, 'connector', 0, -380));
+  const yardId = build(placement.place(OWNER, 'shipyard', 0, -790));
   for (const [kind, x, y] of extra) build(placement.place(OWNER, kind, x, y));
   registry.topologyDirty = true;
   // The yard's bill (many hulls' worth) in the Capital bank, a BPO in its slot.
