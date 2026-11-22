@@ -196,7 +196,8 @@ the follow camera's spring smoothed its own motion, so the ship shook on
 screen). The live client decodes with `stampByTick`, which stamps each packet
 `swarmArrivalStampMs(tick, now)`: `tick × tickMs + offset` (tick ms = 1000/60
 ÷ the sector speed), where `offset` follows the least-delayed arrival at once
-and drifts up toward later ones by `TICK_CLOCK_DRIFT_UP` (1 %) a packet, never
+and drifts up toward later ones by `TICK_CLOCK_DRIFT_UP` (1 %) at most once a
+frame (see "One drift per frame" below), never
 stamps a packet later than it arrived, and re-seeds when an arrival is more
 than `TICK_CLOCK_RESYNC_MS` (1 s) off (new room, reconnect, long stall). A
 speed change keeps the newest stamp in place. Lock:
@@ -365,6 +366,28 @@ floor, every drawn step within the 2 u snap tolerance of the true step through
 the stall). `swarmTickToStampMs` shares the rule. Scalars only;
 `resetSwarmDisplayDelay` clears the last step clock. Locks:
 `src/client/net/swarmTickClockFrameStall.test.ts`, `gapSmoothing.drones.test.ts`.
+
+**One drift per frame.** Packets that arrive between two frames are all
+handled before the next frame step, and a late burst (the end of a
+swarm-only silence, a jitter spike) used to drift the tick-clock offset 1 %
+per packet: a dozen late packets moved it ~12 % of their lateness in one
+frame, the stamps ran late, and the first on-time packet took the offset back
+at once (0.7x gap-swarm-only: the clock drifted 28.6 ms late, then a 2.8 u
+back-step and a 9 u snap; 2x jitter-4g: a 40 ms reset, a 26.8 u snap). Now
+only the first later-arrival drift since the last `stepSwarmDisplayDelay`
+moves the offset; the rest of the burst is stamped by tick on it (an earlier
+arrival and a re-seed still apply). `swarmArrivalStampMs` spends the frame's
+drift; `swarmTickToStampMs` (read-only) honours a spent drift but never
+spends one, so it still returns exactly what `swarmArrivalStampMs` would. Drone
+lan-clean is bit-identical at 0.7x, 1x and 2x; the missile on lan-clean now
+reads the drone timeline exactly (lateness 102.15 -> 102 ms, the drone's 102:
+the 0.15 ms was a second same-frame drift the read-only path still took). Fixtures:
+1x gap-200 snap 3.6 u -> 0; 1x jitter-4g largest snap 9.56 -> 5.27 u (4 -> 5
+snaps, total 26.53 -> 19.43 u); 0.7x gap-400 / gap-swarm-only back-steps
+1 -> 0; capture replay snaps 38 -> 35. At 2x the clock no longer hides the
+200 wall ms hold limit, so 2x jitter-4g now re-syncs once (8 snaps, 9
+freezes) until the 2x hold limit is fixed. Lock: `gapSmoothing.drones.test.ts`
+(target "0.7x gap-swarm-only: zero back-steps and zero snaps").
 
 **Ease the resume step (S4b).** The drawn pose of a drone or scrap piece is
 `resolveSwarmDrawnPose` (`src/client/net/swarmResumeOffset.ts`): the

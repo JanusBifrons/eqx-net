@@ -17,6 +17,7 @@
 import type { SwarmRenderState, PoseRingEntry } from '../../core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../core/contracts/IRenderer.js';
 import { isImplausibleJump } from './plausibleSpeed.js';
+import { wrapAngle } from '../../core/ai/virtualPilot.js';
 import {
   ADAPTIVE_DELAY_CEILING_MS, DISPLAY_DELAY_MS, EXTRAPOLATION_LIMIT_MS, OFF_PILOT_MAX_TOTAL_DISPLAY_DELAY_MS, SERVER_TICK_MS,
   nextSwarmInterArrivalEwmaMs, ringThinningSpacingMs, swarmDelayTargetWallMs, type SwarmDelayMode,
@@ -133,6 +134,7 @@ export function stepSwarmDisplayDelay(frameDtMs: number, nowMs: number = Number.
   holdDisplayDelay(_drone, nowMs, _streamNewestStampMs, glideLimitWallMs(), _displaySpeed, swarmHoldMaxWallMs(_mode, _displaySpeed));
   _ringCoverMs = isOffPilotBoundsActive(_mode) ? Math.max(_drone.delayMs, _drone.targetMs) : 0;
   if (Number.isFinite(nowMs)) _lastFrameStepMs = nowMs;
+  _tickClockDriftedThisFrame = false;
 }
 
 /** Size the display delay for the local player's mode (S5-9): `pilot` while
@@ -258,6 +260,8 @@ let _tickClockSeeded = false;
 let _tickClockOffsetMs = 0;
 let _tickClockLastTick = 0;
 let _tickClockLastStampMs = 0;
+/** Set by the first later-arrival drift since the last frame step (see `nextTickClockOffsetMs`). */
+let _tickClockDriftedThisFrame = false;
 
 // Drone stream counters (netcode gap smoothing, S0-2). Read-only telemetry:
 // nothing here feeds a pose, delay or clock. Scalars only (no allocation).
@@ -334,7 +338,7 @@ export function noteSwarmResync(): void { _drone.resyncCount++; }
  */
 export function swarmArrivalStampMs(tick: number, nowMs: number): number {
   const tickWallMs = SERVER_TICK_MS / _displaySpeed;
-  _tickClockOffsetMs = nextTickClockOffsetMs(nowMs - tick * tickWallMs, nowMs);
+  _tickClockOffsetMs = nextTickClockOffsetMs(nowMs - tick * tickWallMs, nowMs, true);
   _tickClockSeeded = true;
   const stamp = Math.min(nowMs, tick * tickWallMs + _tickClockOffsetMs);
   const lateMs = nowMs - stamp;
@@ -353,12 +357,15 @@ export function swarmArrivalStampMs(tick: number, nowMs: number): number {
  *  pulls the offset up by TICK_CLOCK_DRIFT_UP, except while the stall hold is
  *  parked (the backlog is late by design, S4-5) or the packet is frame-stall
  *  backlog (handled at `nowMs` more than TICK_CLOCK_FRAME_STALL_MS after the
- *  last frame step, S5-1b); off pilot, outage backlog keeps it (S5-9). Pure. */
-function nextTickClockOffsetMs(cand: number, nowMs: number): number {
+ *  last frame step, S5-1b); off pilot, outage backlog keeps it (S5-9). One
+ *  drift per frame, not per packet of a burst: `commit` (only
+ *  `swarmArrivalStampMs`) spends it; without `commit` the function is pure. */
+function nextTickClockOffsetMs(cand: number, nowMs: number, commit = false): number {
   if (_tickClockSeeded && isOffPilotClockBacklog(_mode, cand - _tickClockOffsetMs, _displaySpeed)) return _tickClockOffsetMs;
   if (!_tickClockSeeded || Math.abs(cand - _tickClockOffsetMs) > TICK_CLOCK_RESYNC_MS) return cand;
   if (cand < _tickClockOffsetMs) return cand;
-  if (_drone.holdActive || isFrameStallBacklog(nowMs)) return _tickClockOffsetMs;
+  if (_drone.holdActive || isFrameStallBacklog(nowMs) || _tickClockDriftedThisFrame) return _tickClockOffsetMs;
+  if (commit) _tickClockDriftedThisFrame = true;
   return _tickClockOffsetMs + (cand - _tickClockOffsetMs) * TICK_CLOCK_DRIFT_UP;
 }
 
@@ -387,6 +394,7 @@ export function swarmTickToStampMs(tick: number, nowMs: number): number {
  *  display delay (tests; a new room re-seeds on its own). */
 export function resetSwarmTickClock(): void {
   _tickClockSeeded = false;
+  _tickClockDriftedThisFrame = false;
   _latenessLastMs = 0;
   _latenessMaxMs = 0;
   _latenessSumMs = 0;
@@ -435,14 +443,6 @@ export interface InterpolatedPose {
   x: number;
   y: number;
   angle: number;
-}
-
-/** Wraps (a − b) to [−π, π] so we always lerp the short way around. */
-function shortestArc(target: number, source: number): number {
-  let d = target - source;
-  while (d >  Math.PI) d -= 2 * Math.PI;
-  while (d < -Math.PI) d += 2 * Math.PI;
-  return d;
 }
 
 /**
@@ -591,7 +591,7 @@ export function interpolateSwarmPose(
   }
 
   const t = span > 0 ? Math.max(0, Math.min(1, (targetMs - a.arrivalMs) / span)) : 0;
-  const dAngle = shortestArc(b.angle, a.angle);
+  const dAngle = wrapAngle(b.angle - a.angle); // the short way around
   out.x = a.x + (b.x - a.x) * t;
   out.y = a.y + (b.y - a.y) * t;
   out.angle = a.angle + dAngle * t;

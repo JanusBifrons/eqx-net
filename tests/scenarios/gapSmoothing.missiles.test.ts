@@ -318,16 +318,23 @@ type MissileProfile = Exclude<GapProfileName, 'gap-swarm-only'>;
  *  instead of sitting at the 100 ms floor); jitter-4g lateness 292.26 ->
  *  154.46 (max 342.02 -> 185.93), 7 snaps as before, largest 6.85 -> 6.95,
  *  total 32.23 -> 35.05, backward steps 1 -> 0 (the smaller delay leaves the
- *  50 ms tick pair above). Snaps and freezes are otherwise unchanged. */
+ *  50 ms tick pair above). Snaps and freezes are otherwise unchanged. One
+ *  tick-clock drift per frame (the drone clock no longer drifts once per
+ *  packet of a burst; `swarmTickToStampMs` sees the same spent drift, so the
+ *  missile reads the drone timeline exactly): lan-clean lateness 102.15 ->
+ *  102 (= the drone), other profiles 0.04-0.1 ms sooner (max 147.52 -> 147.42);
+ *  gap-200 drone 141.41 -> 141.1; jitter-4g snaps 7 -> 5, largest 6.95 ->
+ *  5.21, total 35.05 -> 23.53, lateness 154.46 -> 152.83 (max 185.93 ->
+ *  184.44), drone 155.44 -> 153.88. */
 const TODAY: Readonly<Record<MissileProfile, Recorded>> = {
-  'lan-clean': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 102.15, maxLatenessMs: 102.15, droneMeanLatenessMs: 102 },
-  'gap-200': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 141.13, maxLatenessMs: 147.52, droneMeanLatenessMs: 141.41 },
-  'gap-400': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 160.56, maxLatenessMs: 233.33, droneMeanLatenessMs: 155.54 },
-  'gap-600': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 256.68, maxLatenessMs: 433.33, droneMeanLatenessMs: 238.53 },
-  'burst-600-both-streams': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 256.68, maxLatenessMs: 433.33, droneMeanLatenessMs: 238.53 },
-  'gap-json-only': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 160.56, maxLatenessMs: 233.33, droneMeanLatenessMs: 147.65 },
-  'frame-stall-250': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 142.01, maxLatenessMs: 147.52, droneMeanLatenessMs: 141.92 },
-  'jitter-4g': { snaps: 7, largestSnapU: 6.95, totalSnapU: 35.05, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 154.46, maxLatenessMs: 185.93, droneMeanLatenessMs: 155.44 },
+  'lan-clean': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 102, maxLatenessMs: 102, droneMeanLatenessMs: 102 },
+  'gap-200': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 141.03, maxLatenessMs: 147.42, droneMeanLatenessMs: 141.1 },
+  'gap-400': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 160.48, maxLatenessMs: 233.33, droneMeanLatenessMs: 155.54 },
+  'gap-600': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 256.64, maxLatenessMs: 433.33, droneMeanLatenessMs: 238.53 },
+  'burst-600-both-streams': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 17, backwardSteps: 0, meanLatenessMs: 256.64, maxLatenessMs: 433.33, droneMeanLatenessMs: 238.53 },
+  'gap-json-only': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 5, backwardSteps: 0, meanLatenessMs: 160.48, maxLatenessMs: 233.33, droneMeanLatenessMs: 147.65 },
+  'frame-stall-250': { snaps: 0, largestSnapU: 0, totalSnapU: 0, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 141.92, maxLatenessMs: 147.42, droneMeanLatenessMs: 141.92 },
+  'jitter-4g': { snaps: 5, largestSnapU: 5.21, totalSnapU: 23.53, freezeFrames: 0, backwardSteps: 0, meanLatenessMs: 152.83, maxLatenessMs: 184.44, droneMeanLatenessMs: 153.88 },
 };
 
 const PROFILES = Object.keys(TODAY) as MissileProfile[];
