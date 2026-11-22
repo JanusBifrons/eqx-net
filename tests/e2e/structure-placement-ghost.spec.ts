@@ -48,8 +48,8 @@ async function joinAndOpenBuild(
     }, undefined,
     { timeout: 12_000 },
   );
-  await page.locator('[data-testid="speed-dial-fab"]').click();
-  await page.locator('[data-testid="speed-dial-build"]').click();
+  // Build mode is the only way to build (owner 2026-11-22): the switch opens the sidebar.
+  await page.locator('[data-testid="build-toggle"]').click();
   // Build opens the Build sidebar. Every test here builds a Capital (Core
   // category), so pick Core on its rail for the per-test `build-capital` click.
   await page.locator('[data-testid="build-cat-core"]').click();

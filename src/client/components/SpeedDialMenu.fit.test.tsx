@@ -130,15 +130,15 @@ describe('SpeedDialMenu main list fits 863x360 with Warp shown', () => {
     Object.defineProperty(window, 'innerHeight', { configurable: true, value: innerHeight });
   });
 
-  it('every main-menu entry, Build ▸ included, fits without scrolling', () => {
+  it('every main-menu entry fits without scrolling', () => {
     render(<SpeedDialMenu direction="down" />);
     fireEvent.click(screen.getByTestId('speed-dial-fab'));
     expect(screen.getByTestId('speed-dial-warp')).toBeTruthy();
-    expect(screen.getByTestId('speed-dial-build')).toBeTruthy();
+    expect(screen.queryByTestId('speed-dial-build')).toBeNull(); // the dial no longer builds
 
     const list = screen.getByTestId('speed-dial').querySelector<HTMLElement>('.MuiSpeedDial-actions')!;
     const n = list.children.length;
-    expect(n).toBe(5);
+    expect(n).toBe(4);
     const max = parseFloat(list.style.maxHeight);
     expect(max).toBe(SHORT_H - TOP - FIT_EDGE_MARGIN_PX);
     const cs = getComputedStyle(list);

@@ -50,8 +50,8 @@ test('a habitat station shows its habitation modules; the Build menu offers both
   await expect.poll(async () => (await kinds()).filter((k) => k === 'habitat_module').length, { timeout: 20_000 }).toBeGreaterThan(0);
   expect(await kinds()).toContain('tower_module');
 
-  await page.locator('[data-testid="speed-dial-fab"]').click();
-  await page.locator('[data-testid="speed-dial-build"]').click();
+  // Build mode is the only way to build (owner 2026-11-22): the switch opens the sidebar.
+  await page.locator('[data-testid="build-toggle"]').click();
   await page.locator('[data-testid="build-cat-habitation"]').click();
   await expect(page.locator('[data-testid="build-habitat_module"]')).toBeVisible({ timeout: 5_000 });
   await expect(page.locator('[data-testid="build-tower_module"]')).toBeVisible();

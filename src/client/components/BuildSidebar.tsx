@@ -1,6 +1,8 @@
 /**
- * The Build menu: a right-hand side panel (SidePanel.tsx) opened from the speed
- * dial's Build action and by entering Build mode. A vertical rail of the build
+ * The Build menu: a right-hand side panel (SidePanel.tsx). Build mode is the
+ * only way in (owner, 2026-11-22: one way to build): entering Build opens it, and
+ * tapping Build again while in Build brings it back after a ✕
+ * ({@link requestBuildSidebar}). The speed dial no longer builds. A vertical rail of the build
  * categories (buildCategories.tsx) runs down its LEFT edge; the active category
  * shows a grid of kind tiles (BuildKindTile.tsx, drawn by the shared HullTile).
  * A tile tap is the dial's old kind pick (`onPick` → `setPlacementKind`);
@@ -33,6 +35,19 @@ import { BuildKindDetails, BuildKindTile } from './BuildKindTile';
 import { BUILD_PANEL_SIZE, SidePanel } from './SidePanel';
 import { WINDOW_ROOT_SX } from './GameWindow';
 import { buildMenuKeyAction, setBuildMenuKeysOpen, stepCategory } from '../input/buildMenuKeys';
+
+const reopenListeners = new Set<() => void>();
+/** Run `fn` when the Build mode switch asks for the sidebar again (a Build tap
+ *  while already in Build); returns the unsubscribe. SpeedDialMenu owns the
+ *  open flag and listens. */
+export function onBuildSidebarRequest(fn: () => void): () => void {
+  reopenListeners.add(fn);
+  return () => { reopenListeners.delete(fn); };
+}
+/** Ask for the Build sidebar (PilotSpectatorToggle's Build tap while in Build). */
+export function requestBuildSidebar(): void {
+  for (const fn of reopenListeners) fn();
+}
 
 const CATEGORY_IDS: readonly BuildCategoryId[] = BUILD_CATEGORIES.map((c) => c.id);
 
