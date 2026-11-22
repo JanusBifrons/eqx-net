@@ -289,7 +289,7 @@ test('RTS slice 10: a command-view join lands in Command, ship parked; Fly takes
     () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'spectator', undefined,
     { timeout: 15_000 },
   );
-  await expect(page.locator('[data-testid="pilot-spectator-toggle"]')).toHaveAttribute('data-control-mode', 'command');
+  await expect(page.locator('[data-testid="pilot-spectator-toggle"]')).toHaveAttribute('data-value', 'command');
 
   // Fly with nothing selected lists our parked ship; picking it takes the controls.
   await page.locator('[data-testid="pilot-toggle"]').click();
@@ -298,6 +298,6 @@ test('RTS slice 10: a command-view join lands in Command, ship parked; Fly takes
     () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'pilot', undefined,
     { timeout: 10_000 },
   );
-  await expect(page.locator('[data-testid="pilot-spectator-toggle"]')).toHaveAttribute('data-control-mode', 'fly');
+  await expect(page.locator('[data-testid="pilot-spectator-toggle"]')).toHaveAttribute('data-value', 'fly');
   await ctx.close();
 });

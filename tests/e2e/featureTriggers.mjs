@@ -38,7 +38,7 @@ export const FEATURE_TRIGGERS = [
   {
     area: 'spectator and ship switching',
     paths: ['src/client/spectator/', 'src/client/components/PilotSpectatorToggle', 'src/client/net/snapshotShipRouter', 'src/client/ships/',
-      'src/client/net/snapshotRemoteSync', 'src/client/net/displayMountAngles'],
+      'src/client/net/snapshotRemoteSync', 'src/client/net/displayMountAngles', 'src/ui/EqxSegmented/'],
     specs: ['spectator-mode', 'spectator-npc-turrets', 'spectate-no-phantom-own-ship'],
   },
   {

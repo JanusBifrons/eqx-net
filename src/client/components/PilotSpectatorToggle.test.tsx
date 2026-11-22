@@ -65,7 +65,7 @@ describe('PilotSpectatorToggle — Fly / Command / Build', () => {
     render(<PilotSpectatorToggle />);
     fireEvent.click(screen.getByTestId('build-toggle'));
     expect(useUIStore.getState().buildMode).toBe(true);
-    expect(screen.getByTestId('pilot-spectator-toggle')).toHaveAttribute('data-control-mode', 'build');
+    expect(screen.getByTestId('pilot-spectator-toggle')).toHaveAttribute('data-value', 'build');
     expect(screen.getByTestId('build-toggle')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId('pilot-toggle')).toHaveAttribute('aria-pressed', 'false');
   });
@@ -76,7 +76,7 @@ describe('PilotSpectatorToggle — Fly / Command / Build', () => {
     fireEvent.click(screen.getByTestId('spectator-toggle'));
     expect(useUIStore.getState().buildMode).toBe(false);
     expect(useUIStore.getState().placementKind).toBeNull();
-    expect(screen.getByTestId('pilot-spectator-toggle')).toHaveAttribute('data-control-mode', 'command');
+    expect(screen.getByTestId('pilot-spectator-toggle')).toHaveAttribute('data-value', 'command');
     expect(sendCommand).not.toHaveBeenCalled();
     expect(sendPilotShip).not.toHaveBeenCalled();
   });
@@ -116,7 +116,7 @@ describe('PilotSpectatorToggle — Fly / Command / Build', () => {
     useUIStore.getState().setPendingCommandStart(true);
     render(<PilotSpectatorToggle />);
     expect(useUIStore.getState().pilotMode).toBe('pilot'); // the server flip has not landed yet
-    expect(screen.getByTestId('pilot-spectator-toggle')).toHaveAttribute('data-control-mode', 'command');
+    expect(screen.getByTestId('pilot-spectator-toggle')).toHaveAttribute('data-value', 'command');
     expect(screen.getByTestId('spectator-toggle')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId('pilot-toggle')).toHaveAttribute('aria-pressed', 'false');
   });
@@ -134,7 +134,8 @@ describe('PilotSpectatorToggle — Fly / Command / Build', () => {
     render(<PilotSpectatorToggle />);
     expect(screen.getByTestId('spectator-toggle')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId('pilot-toggle')).toHaveAttribute('aria-pressed', 'false');
-    expect(screen.getByTestId('pilot-spectator-toggle')).toHaveAttribute('data-control-mode', 'command');
+    expect(screen.getByTestId('pilot-toggle')).toHaveAttribute('aria-label', 'Fly a ship');
+    expect(screen.getByTestId('pilot-spectator-toggle')).toHaveAttribute('data-value', 'command');
   });
 
   it('Fly with ONE own ship selected takes that ship at once (no menu)', () => {
