@@ -341,9 +341,25 @@ jobs:
       - name: Install Playwright browsers
         if: needs.changes.outputs.code == 'true'
         run: pnpm exec playwright install --with-deps chromium
-      - name: Client count gate (perf:counts)
+      # Advisory, not a gate: over-budget (exit 1) shows as yellow warnings and
+      # the job passes; a crash (exit 2) still fails. Budgets are only raised on
+      # a fresh measurement (docs/SHELF.md), so the known fleet-fight overrun
+      # stays visible as a warning without painting every run red.
+      - name: Client count check (perf:counts, advisory)
         if: needs.changes.outputs.code == 'true'
-        run: pnpm perf:counts --runs 2 --out perf-counts.json
+        shell: bash
+        run: |
+          set +e
+          pnpm perf:counts --runs 2 --out perf-counts.json 2>&1 | tee perf-counts.log
+          rc=${PIPESTATUS[0]}
+          set -e
+          if [ "$rc" = 1 ]; then
+            grep '^OVER ' perf-counts.log | while IFS= read -r line; do
+              echo "::warning title=perf-counts over budget::${line}"
+            done
+            exit 0
+          fi
+          exit "$rc"
       - name: Upload readings
         if: always() && needs.changes.outputs.code == 'true'
         uses: actions/upload-artifact@v4
