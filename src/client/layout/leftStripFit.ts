@@ -14,7 +14,7 @@
  * `--hud-tl-bottom` (bottom edge of the top-left anchor), `--left-strip-h`
  * (the strip's height after scaling) and `--left-strip-scale`. It also writes
  * `--left-strip-w` (the strip's drawn width plus the edge gap, 0 while no strip
- * shows) so the `middle-left` anchor (the warp spool bar) sits beside the strip,
+ * shows) so the `middle-left` / `middle-left-over` anchors (the warp spool bar) sits beside the strip,
  * never under it (CI 2026-11-22: the strip's ✕ took the spool's Abort click). The natural
  * height is read from `offsetHeight` (layout size, ignores the transform) so
  * the scale never feeds back into itself. DOM-only: nothing goes in the store.

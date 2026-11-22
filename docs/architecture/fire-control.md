@@ -566,7 +566,7 @@ Locks: `tests/integration/sectorRoom/lockAiFlownHull.test.ts`,
   Lock: `lockMarkFrame.test.ts`.
 - HUD: `WeaponStrip`, `LockStatusBand` (polls the mirror at 10 Hz, re-renders on
   change), the left strip's Target button (`useTargetLock` in `components/targetLock.ts`: lock / cancel lock / unlock, `data-state`), `MouseLock` (desktop).
-- Contacts overview (`ContactsOverview`, O key / CONTACTS tab, left edge): an
+- Contacts panel (`panels/ContactsPanel.tsx`, the `contacts` right panel: rail item in every mode, or the O key): an
   EVE-style list of lockable contacts with distance, reach and lock state;
   a tap sends `lock_request` for the active group, a tap on its own lock
   sends `lock_cancel`. Reach is the group's fire reach `fcGroupReach` (locks reach the ship's longest gun, `shipLockRange`). See

@@ -23,7 +23,7 @@ import { CapitalWreckSubsystem, type WreckPieceSpawn } from '../../src/server/ro
 import type { WreckGeometryStore } from '../../src/client/net/wreckGeometryStore.js';
 import type { WreckDescriptor } from '../../src/shared-types/messages/snapshotMessages.js';
 import { anchorRemoteSwarmBodies } from '../../src/client/net/snapshotRemoteSync.js';
-import { PREDWORLD_STRUCTURE_HYSTERESIS, PREDWORLD_WRECK_RADIUS } from '../../src/shared-types/structureBudgets.js';
+import { PREDWORLD_STRUCTURE_HYSTERESIS, PREDWORLD_STRUCTURE_RADIUS, PREDWORLD_WRECK_RADIUS } from '../../src/shared-types/structureBudgets.js';
 import { PLAYABLE_SHIP_KINDS_LIST, getShipKind } from '../../src/shared-types/shipKinds.js';
 import { LEVEL_CAP } from '../../src/core/leveling/shipXp.js';
 import { deriveStatMultipliers, pointBudget } from '../../src/core/leveling/shipStats.js';
@@ -35,7 +35,7 @@ type Internals = {
   _wrecks: WreckGeometryStore;
   mirror: {
     localPlayerId: string | null;
-    ships: Map<string, { x: number; y: number }>;
+    ships: Map<string, { x: number; y: number; ownerPlayerId?: string; isActive?: boolean }>;
     swarm?: Map<number, SwarmRenderState>;
   };
   syncSwarmIntoPredWorld(): void;
@@ -141,6 +141,43 @@ describe('wreck pieces: predWorld cost per piece', () => {
       if (edge <= PREDWORLD_WRECK_RADIUS) expect(c.predWorld!.hasShip(`swarm-${eid}`), `piece ${eid} at ${edge.toFixed(0)} u`).toBe(true);
       if (edge > PREDWORLD_WRECK_RADIUS + PREDWORLD_STRUCTURE_HYSTERESIS) expect(c.predWorld!.hasShip(`swarm-${eid}`)).toBe(false);
     }
+  });
+
+  it('no own ship (Command view): structures and pieces stream around my parked hull, not all loaded', async () => {
+    // Phone soak 2026-11-22: Command view in a field put every structure (178)
+    // and every wreck piece in the predWorld. Same centre as the cut field.
+    const client = new ColyseusGameClient();
+    const c = client as unknown as Internals;
+    c.predWorld = await PhysicsWorld.create();
+    c.mirror.localPlayerId = 'me';
+    c.mirror.ships.set('hull-1', { x: 4300, y: 150, ownerPlayerId: 'me', isActive: false });
+    c.mirror.ships.set('other', { x: 0, y: 0, ownerPlayerId: 'them', isActive: true });
+    const { desc, pieces } = fighterWreck();
+    c._wrecks.apply([desc]);
+    const swarm = new Map<number, SwarmRenderState>();
+    for (let i = 0; i < 10; i++) swarm.set(100 + i, pieceEntry(desc, pieces[0]!, 50 * i, 300, false));
+    for (let i = 0; i < 20; i++) swarm.set(1000 + i, pieceEntry(desc, pieces[0]!, 4000 + i * 30, 0, false));
+    // Turrets: 5 by the hull, 40 far away.
+    const structure = (x: number, y: number): SwarmRenderState =>
+      ({ x, y, vx: 0, vy: 0, angle: 0, angvel: 0, radius: 40, kind: 2, shipKind: 'turret' }) as SwarmRenderState;
+    for (let i = 0; i < 5; i++) swarm.set(2000 + i, structure(4300 + i * 100, 400));
+    for (let i = 0; i < 40; i++) swarm.set(3000 + i, structure(-8000 + i * 100, -3000));
+    c.mirror.swarm = swarm;
+
+    c.syncSwarmIntoPredWorld();
+    for (const key of c.predSwarmKeys) {
+      const e = swarm.get(Number(key.slice('swarm-'.length)))!;
+      const edge = Math.hypot(e.x - 4300, e.y - 150) - e.radius;
+      expect(edge, key).toBeLessThanOrEqual(Math.max(PREDWORLD_WRECK_RADIUS, PREDWORLD_STRUCTURE_RADIUS));
+    }
+    for (let i = 0; i < 20; i++) expect(c.predWorld!.hasShip(`swarm-${1000 + i}`), 'pile piece by the hull').toBe(true);
+    for (let i = 0; i < 5; i++) expect(c.predWorld!.hasShip(`swarm-${2000 + i}`), 'turret by the hull').toBe(true);
+    expect(c.predSwarmKeys.size, 'only what is near the parked hull').toBe(25);
+
+    // No own ship and no own hull: nothing to centre on, so every body (unchanged).
+    c.mirror.ships.delete('hull-1');
+    c.syncSwarmIntoPredWorld();
+    expect(c.predSwarmKeys.size).toBe(swarm.size);
   });
 
   it('the fastest ship cannot cross the wreck radius within a reconcile replay', () => {

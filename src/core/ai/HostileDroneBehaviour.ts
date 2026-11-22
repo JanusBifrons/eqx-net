@@ -384,8 +384,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       if (this._decide.picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
       return this.tickJob(self, view, JOB_ORDER_TICK);
     }
-    const canEngageOnSight = this._tgt.engageOnSight && (this.onSightPlayers || (view.swarms !== undefined && view.swarms.length > 0));
-    if (this._tgt.state === 'IDLE' && !canEngageOnSight) {
+    // An owned ship sights enemy bases on every stance (`TargetPick.seesStructures`).
+    const canEngageOnSight = (this._tgt.engageOnSight && (this.onSightPlayers || (view.swarms !== undefined && view.swarms.length > 0))) || this._targets.seesStructures(view);
+    if (this._tgt.state === 'IDLE' && !canEngageOnSight && this._tgt.keptLockId === null) {
       if (this._decide.picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
       return this.tickJob(self, view, JOB_ORDER_TICK);
     }
@@ -416,7 +417,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const engageR2 = engageR * engageR;
     const onSight = this._tgt.engageOnSight;
     const ordered = this._tgt.orderedTargetId;
-    const n = tp.build(self, view, engageR2, onSight, ordered);
+    const n = tp.build(self, view, engageR2, onSight, ordered, this._tgt.keptLockId);
     let anyHostile = tp.anyHostile;
     // Hold fire under an attack order: the ordered target is the only foe.
     if (holdOrder) {
@@ -470,7 +471,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
       this._guardReturn.y = this._travel.leashY;
     }
     const leash = this._guardReturn.leashes() || roam, g = this._guardReturn;
-    const target = tp.pick(self, n, this._tgt.prevTargetId, sinceTicks, ordered, orderedLive, leash, g.x, g.y, g.r, anyHostile);
+    // A kept lock on a hostile candidate wins over the ship's own pick (owner
+    // rule 2026-11-22: locks stay until the target dies); an order outranks it.
+    const target = this._tgt.keptPick(cand, n, ordered) ?? tp.pick(self, n, this._tgt.prevTargetId, sinceTicks, ordered, orderedLive, leash, g.x, g.y, g.r, anyHostile);
     const newId = target?.id ?? null;
     if (newId !== this._tgt.prevTargetId) this._tgt.prevTargetSinceTick = view.tick;
     this._tgt.prevTargetId = newId;
@@ -768,6 +771,9 @@ export class HostileDroneBehaviour implements IAiBehaviour {
 
   /** The owner's ATTACK ORDER (rules: `PilotTargeting.setOrderedTarget`). */
   setOrderedTarget(id: string | null, atTick: number): void { this._tgt.setOrderedTarget(id, atTick); }
+
+  /** The hull's kept lock target (rules: `PilotTargeting.keptLockId`). */
+  setKeptLockTarget(id: string | null): void { this._tgt.keptLockId = id; }
 
   /** Test-visible: the attack-order target (null = none). */
   getOrderedTarget(): string | null { return this._tgt.orderedTargetId; }
