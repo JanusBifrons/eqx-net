@@ -101,9 +101,13 @@ export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
   // A single focus names itself ("Fighter", the building's name); a ship group keeps its count.
   const named = data !== null && data.name !== '' ? data.name : null;
   const tooltip = selection.ids.length === 0 && named !== null ? named : id.tooltip;
-  // The focus icon wears its stance colour (the contacts table's): red hostile, yellow neutral, green friendly.
+  // The focus icon wears its stance colour (the contacts table's): red hostile, neutral, green friendly.
+  // A focus that is not friendly rings in its stance colour too: a green ring would read as "ours".
   const stance = data?.stance;
-  const tint = stance === undefined ? {} : { iconColor: STANCE_COLOUR[stance], 'data-state': stance };
+  const tint = stance === undefined ? {} : {
+    iconColor: STANCE_COLOUR[stance], 'data-state': stance,
+    ...(stance === 'friendly' ? {} : { ringColor: STANCE_COLOUR[stance] }),
+  };
   return (
     <Slot anchor="left-strip">
       <EqxStrip aria-label="Selection" open={!panelOpen} data-testid="left-strip">

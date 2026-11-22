@@ -5,6 +5,7 @@
  * - the same outer box as a strip tile (`HUD.strip.tile`), icon centred, gold icon;
  * - `iconColor` tints the icon (the left strip: the focus's stance to you);
  * - edge + inset ring colour shows health (ok = hullOk green, warn = hullWarn gold, crit = hullCrit red);
+ *   `ringColor` overrides it (the left strip: a focus that is not friendly rings in its stance colour);
  * - `count` > 1 shows a gold pill badge (groups); the badge is the only text allowed on the strip;
  * - `tooltip` is required and is also the accessible name. No label prop.
  */
@@ -32,6 +33,8 @@ export interface EqxStripIdentityProps {
   health: EqxStripHealth;
   /** Icon colour (`#rrggbb`, e.g. the thing's stance to you); default gold. */
   iconColor?: string;
+  /** Ring colour override (`#rrggbb`, e.g. a hostile's stance red); default the health ring. */
+  ringColor?: string;
   /** Group size; a badge shows when > 1. */
   count?: number;
   onClick?: () => void;
@@ -50,10 +53,11 @@ export function EqxStripIdentity({
   onClick,
   holdMs,
   iconColor,
+  ringColor,
   'data-testid': testId,
   'data-state': dataState,
 }: EqxStripIdentityProps) {
-  const ring = HEALTH_RING[health];
+  const ring = ringColor ?? HEALTH_RING[health];
   const showCount = count !== undefined && count > 1;
   return (
     <EqxTooltip title={tooltip} {...(holdMs === undefined ? {} : { holdMs })}>

@@ -24,6 +24,7 @@ vi.mock('../net/clientSingleton', () => ({
 import { LayoutProvider } from './LayoutProvider';
 import { LeftStripHost, stripFocusIdentity, stripHealth, stripIdentity } from './LeftStripHost';
 import { STANCE_COLOUR } from '../components/contactRows';
+import { HUD } from '../hud/tokens';
 
 function stubMedia(): void {
   vi.stubGlobal('matchMedia', (q: string) => ({
@@ -61,6 +62,16 @@ afterEach(() => {
   selectFleetShips.mockReset(); attackFocus.mockReset(); lockSelected.mockReset();
 });
 
+/** The computed form jsdom gives a colour, so hex tokens compare to computed styles. */
+function computedColor(c: string): string {
+  const probe = document.createElement('div');
+  probe.style.borderColor = c;
+  document.body.appendChild(probe);
+  const v = getComputedStyle(probe).borderTopColor;
+  probe.remove();
+  return v;
+}
+
 const stripButtons = (): string[] =>
   Array.from(screen.getByTestId('left-strip').querySelectorAll('[data-testid]'))
     .map((b) => b.getAttribute('data-testid') ?? '')
@@ -96,6 +107,29 @@ describe('LeftStripHost: ships selected + a not-mine focus (T2)', () => {
     expect(focus.querySelector('svg')?.getAttribute('data-icon')).toBe('ship');
     // The fleet identity keeps its own (gold) look: only the focus is tinted.
     expect(screen.getByTestId('left-strip-identity').getAttribute('data-state')).toBeNull();
+  });
+
+  it('a hostile focus rings in the hostile colour, not the green selected ring', () => {
+    panelData = { name: 'Raider', hpPct: 100, shieldPct: null, stance: 'hostile' };
+    mount();
+    select(['a'], 'swarm-7', 'drone');
+    const ring = getComputedStyle(screen.getByTestId('left-strip-focus')).borderTopColor;
+    expect(ring).toBe(computedColor(STANCE_COLOUR.hostile));
+    expect(ring).not.toBe(computedColor(HUD.color.hullOk));
+  });
+
+  it('a neutral focus rings in the neutral colour', () => {
+    panelData = { name: 'Depot', hpPct: 100, shieldPct: null, stance: 'neutral' };
+    mount();
+    select([], 'swarm-9', 'structure');
+    expect(getComputedStyle(screen.getByTestId('left-strip-identity')).borderTopColor).toBe(computedColor(STANCE_COLOUR.neutral));
+  });
+
+  it('a friendly focus keeps the green (hull) ring', () => {
+    panelData = { name: 'Ally', hpPct: 100, shieldPct: null, stance: 'friendly' };
+    mount();
+    select(['a'], 'ally-1', 'ship');
+    expect(getComputedStyle(screen.getByTestId('left-strip-focus')).borderTopColor).toBe(computedColor(HUD.color.hullOk));
   });
 
   it('a focus-only pick tints the one identity: a neutral structure reads the normal ink (not amber), structure glyph', () => {
