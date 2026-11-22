@@ -747,7 +747,7 @@ export class ColyseusGameClient {
   private readonly _shellTiming = new DrawnShellTiming({
     mirror: () => this.mirror, store: () => this._shellStore,
     hold: () => this._navalHitHold, sink: () => this._heldDamageSink,
-    shellEvents: () => this._shellEvents, now: () => this.gameClock.now(),
+    shellEvents: () => this._shellEvents, now: () => this.gameClock.now(), wallNow: () => this.clock.now(),
     anchorTick: () => this.clockAnchorServerTick,
     killSwarmEntity: (id) => this.killSwarmEntity(id), killEntity: (id) => this.killEntity(id),
     despawnLinger: (id) => this.dropRemoteShip(id),
@@ -1180,7 +1180,7 @@ export class ColyseusGameClient {
     get skipHitscanVisual() { return ColyseusGameClient.SKIP_HITSCAN_VISUAL_FLAG; },
     get aiController() { return c._aiController; },
     gameFrameMs: (): number => c.gameFrameMs(),
-    placeShells: (displayTick: number): void => c.placeShells(displayTick),
+    placeShells: (displayTick: number, frameWallMs: number): void => c.placeShells(displayTick, frameWallMs),
     displayHitscan: (): DisplayPoseHitscan => c.displayHitscan(),
   }))(this);
   /** The ctx the `tickPhysics` prediction passes (`prediction/`) run with, built once (#14). */
@@ -1246,7 +1246,7 @@ export class ColyseusGameClient {
   private readonly _navalHitHold = new NavalHitHold();
   /** The sink `_navalHitHold.release` calls (built once, #14). */
   private readonly _heldDamageSink = {
-    applyHeldDamage: (h: HeldDamage): void => this.applyDamageFx(h.evt, h.suppressNumber),
+    applyHeldDamage: (h: HeldDamage): void => { if (h.evt.damage > 0) this.applyDamageFx(h.evt, h.suppressNumber); },
   };
   /** The ctx the damage / death path (`damagePath.ts`) runs with, built once (#14). */
   private readonly _damageCtx: DamagePathCtx = ((c: ColyseusGameClient): DamagePathCtx => ({
@@ -1480,7 +1480,7 @@ export class ColyseusGameClient {
   private applyShellEnd(msg: ShellEnd): void { this._shellTiming.onShellEnd(msg); }
 
   /** One frame of event shells at `displayTick` (`DrawnShellTiming.place`). */
-  private placeShells(displayTick: number): void { this._shellTiming.place(displayTick); }
+  private placeShells(displayTick: number, frameWallMs = Number.NaN): void { this._shellTiming.place(displayTick, frameWallMs); }
 
   // Ship re-key + remote bodies (`prediction/predWorldSync.ts`); handlers and tests use these.
   private rekeyOwnShipFromHull(playerId: string, welcomeShipInstanceId: string): void { rekeyOwnShipFromHull(this._predStepCtx, playerId, welcomeShipInstanceId); }
