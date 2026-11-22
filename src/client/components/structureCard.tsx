@@ -8,7 +8,7 @@
  * it is making and the cycle's progress (`prodFrac`).
  *
  * Detail (power numbers, recipe, blueprint, connections, hold, management)
- * lives in the settings side panel (StructureSettingsModal.tsx); the card
+ * lives in the Details panel's Settings section (StructureSettings.tsx); the card
  * reuses the same helpers: `inspectorPowerLine` for the power label and
  * `prodStatusLine` for the production state.
  */

@@ -3,7 +3,8 @@
  *
  * - Draws the active strip in `<Slot anchor="left-strip">`. For now that is the
  *   selection strip: identity (icon + count); for own ships in Command the fleet
- *   section (Order and Stance fly-outs and Stop, `fleetStripItems.tsx`);
+ *   section (Order and Stance fly-outs and Stop, `fleetStripItems.tsx`); for
+ *   your own building in Build its Power fly-out (`buildingStripItems.tsx`);
  *   the selection's quick actions (Target, cargo / pod, Pilot,
  *   `selectionStripItems.tsx`); then ⚙ and ✕. Doing-mode strips come with U3-7.
  * - Tap rule T2: with my ships selected and a focus that is not one of them
@@ -35,6 +36,7 @@ import { useSelectionPanelData, type PanelData } from '../components/selectionPa
 import { fleetLockApplies, lockFocus } from '../components/targetLock';
 import { Slot } from './Slot';
 import { useFleetStripItems } from './fleetStripItems';
+import { useBuildingStripItems } from './buildingStripItems';
 import { useSelectionStripItems } from './selectionStripItems';
 import { useLeftStripFit } from './leftStripFit';
 import { STANCE_COLOUR } from '../components/contactRows';
@@ -89,6 +91,7 @@ export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
   const setRightPanel = useUIStore((s) => s.setRightPanel);
   const fleetItems = useFleetStripItems();
   const data = useSelectionPanelData();
+  const buildingItems = useBuildingStripItems(data);
   const fleetLock = fleetLockApplies(selection)
     ? (): void => { lockFocus(useUIStore.getState().selection, rendererRef.current, () => false); }
     : null;
@@ -119,6 +122,7 @@ export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
           <EqxStripIdentity icon={<EqxIcon name={focus.icon} />} tooltip={named ?? focus.tooltip} health={stripHealth(data)}
             count={1} {...tint} data-testid="left-strip-focus" />
         )}
+        {buildingItems}
         {quickItems}
         <EqxStrip.Separator />
         <EqxIconButton variant="strip" icon={<EqxIcon name="cog" />} tooltip={panel === 'fleet' ? 'All orders and details' : 'Details'}

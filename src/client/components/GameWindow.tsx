@@ -4,9 +4,7 @@
  * in the HUD's palette (hud/tokens.ts), plus the parts its content draws: the
  * header (name, chips, ✕), the footer and its buttons.
  *
- * Used by the loot window (LootWindow.tsx, whose content is CargoPanel); the
- * building settings side panel (StructureSettingsModal.tsx, on SidePanel.tsx)
- * reuses its header / footer parts and open notice. A new full-screen
+ * Used by the loot window (LootWindow.tsx, whose content is CargoPanel). A new full-screen
  * game window builds on this, never on a copy of it.
  */
 import { useEffect, type ReactNode } from 'react';
@@ -62,8 +60,8 @@ export function onGameWindowOpen(fn: () => void): () => void {
   openListeners.add(fn);
   return () => { openListeners.delete(fn); };
 }
-/** Tell the {@link onGameWindowOpen} listeners a game window or panel opened
- *  (GameWindow below, and the building settings side panel). */
+/** Tell the {@link onGameWindowOpen} listeners a game window opened
+ *  (GameWindow below). */
 export function notifyGameWindowOpen(): void {
   for (const fn of openListeners) fn();
 }

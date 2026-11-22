@@ -10,26 +10,24 @@ import { ResearchLabPanel } from './ResearchLabPanel';
 import { ForeignTeleporterPanel, TeleporterPanel } from './TeleporterPanel';
 import { HullUnpack } from './HullUnpack';
 import { ACTION_BTN_SX, ICON_SX } from './StructureManageActions';
-import { StructureSettingsOpen } from './StructureSettingsModal';
+import { StructureSettings } from './StructureSettings';
 import type { PanelData } from './EntityStatsPanel';
 
 /**
  * Inspector sections and owner actions of the Details panel body
- * (`EntityStatsPanel`): the building's settings (Build mode), repair, refine,
- * bounty, blueprints, unpack, lab and teleporters. The one-tap actions (Target,
- * cargo, pod, Pilot) are on the left strip (`layout/selectionStripItems.tsx`).
+ * (`EntityStatsPanel`): repair, refine, your building's settings (Build mode:
+ * Power / Build / Manage, StructureSettings.tsx), bounty, blueprints, unpack,
+ * lab and teleporters. The one-tap actions (Target, cargo, pod, Pilot, a
+ * building's Power) are on the left strip (`layout/`).
  */
 export function EntityStatsActions({ data }: { data: PanelData }): JSX.Element {
   const manage = useUIStore(canManageBuildings);
   return (
     <>
-      {data.isOwn && data.entityId !== undefined && (manage || data.holdLine !== undefined || data.canRefine === true) && (
-        // Phase-1 issue 6 — owner-only action buttons.
-        // Open (the settings side panel, where building management lives) is
-        // Build mode only (`canManageBuildings`); repair and refine are pilot
-        // services and show in every mode.
+      {data.isOwn && data.entityId !== undefined && (data.holdLine !== undefined || data.canRefine === true) && (
+        // Phase-1 issue 6 — owner-only action buttons. Repair and refine are
+        // pilot services and show in every mode.
         <Box sx={ACTIONS_SX} data-testid="entity-stats-actions">
-          {manage && <StructureSettingsOpen entityId={data.entityId} title={data.name} />}
           {data.holdLine !== undefined && (
             // Living World P1a-2 — instant repair of MY ship here (credit sink).
             <Tooltip title="Repair your ship here (paid from your credits)">
@@ -58,6 +56,10 @@ export function EntityStatsActions({ data }: { data: PanelData }): JSX.Element {
             </Tooltip>
           )}
         </Box>
+      )}
+      {manage && data.isOwn === true && data.isStructure === true && data.entityId !== undefined && (
+        // Building management is Build mode only (`canManageBuildings`).
+        <StructureSettings key={data.entityId} entityId={data.entityId} />
       )}
       {data.bountyTarget !== undefined && <BountyAction targetPlayerId={data.bountyTarget} />}
       {data.blueprints !== undefined && data.entityId !== undefined && (

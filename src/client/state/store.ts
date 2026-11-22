@@ -167,7 +167,6 @@ export const useUIStore = create<UIStore>((set, get) => ({
   activeSlotId: 'primary',
   placementKind: null,
   warpPickerOpen: false,
-  structureSettingsOpen: false,
   warpHeldTo: null,
   selection: EMPTY_SELECTION,
   fleetPick: null,

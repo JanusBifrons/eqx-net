@@ -293,8 +293,6 @@ export interface UIStore extends ShieldToggleUi, RightPanelUi {
   placementKind: StructureKindId | null;
   /** Phase 4 warp-to: the warp destination picker is open (discrete UI flag). */
   warpPickerOpen: boolean;
-  /** The building settings side panel is open (discrete UI flag; the HUD hides the right-edge weapon strip under it). */
-  structureSettingsOpen: boolean;
   /** Where a held warp goes (the picker's label), shown by the warp chip; null when none. */
   warpHeldTo: string | null;
   /** THE selection (RTS Part A: one selection concept). See {@link UISelection}. */

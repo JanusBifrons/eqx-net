@@ -22,10 +22,10 @@ const MANAGEMENT = [
   'structure-action-deconstruct',
   'structure-action-reconnect',
   'structure-action-upgrade',
-  'structure-action-settings',
+  'structure-settings',
 ] as const;
 
-/** My own built Refinery (settings cog; level 1: upgrade). */
+/** My own built Refinery (Settings section; level 1: upgrade). */
 function ownRefinery(): void {
   setGameClient({
     mirror: {
@@ -88,20 +88,20 @@ describe('EntityStatsPanel — building management is Build mode only', () => {
     for (const id of MANAGEMENT) expect(screen.queryByTestId(id)).toBeNull();
   });
 
-  it('in Build mode your own building\'s card has Open; the rest sit in the Manage tab', () => {
+  it('in Build mode your own building\'s card has the Settings section (no Open step); the rest sit on its Manage page', () => {
     useUIStore.setState({ pilotMode: 'spectator', buildMode: true });
     ownRefinery();
     render(<EntityStatsPanel />);
     const card = screen.getByTestId('entity-stats-panel');
-    expect(within(card).getByTestId('structure-action-settings')).toHaveTextContent('Open');
+    expect(within(card).queryByTestId('structure-action-settings')).toBeNull();
+    expect(within(card).getByTestId('structure-settings')).toBeInTheDocument();
     for (const id of MANAGEMENT.slice(0, 3)) expect(within(card).queryByTestId(id)).toBeNull();
-    fireEvent.click(screen.getByTestId('structure-action-settings'));
     fireEvent.click(screen.getByTestId('structure-settings-tab-access'));
     const manage = screen.getByTestId('structure-settings-manage');
     for (const id of MANAGEMENT.slice(0, 3)) expect(within(manage).getByTestId(id)).toBeInTheDocument();
   });
 
-  it('my own shipyard: the card has Open and no deconstruct; the Manage tab has deconstruct', () => {
+  it('my own shipyard: the card has Settings and no deconstruct; the Manage page has deconstruct', () => {
     useUIStore.setState({ pilotMode: 'spectator', buildMode: true });
     setGameClient({
       mirror: {
@@ -114,13 +114,12 @@ describe('EntityStatsPanel — building management is Build mode only', () => {
     useUIStore.setState({ selection: { ids: [], focusId: 'swarm-5', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     const card = screen.getByTestId('entity-stats-panel');
-    expect(within(card).getByTestId('structure-action-settings')).toBeInTheDocument();
+    expect(within(card).getByTestId('structure-settings')).toBeInTheDocument();
     expect(within(card).queryByTestId('structure-action-deconstruct')).toBeNull();
     // Row 2: what it is making, half done; the chip says it is running.
     expect(within(card).getByTestId('entity-stats-making')).toHaveAttribute('data-prod-pct', '50');
     expect(within(card).getByTestId('entity-stats-status')).toHaveTextContent('Running');
-    fireEvent.click(screen.getByTestId('structure-action-settings'));
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Power', 'Build', 'Manage']);
+    expect(within(screen.getByTestId('structure-settings-tabs')).getAllByRole('button').map((t) => t.textContent)).toEqual(['Power', 'Build', 'Manage']);
     fireEvent.click(screen.getByTestId('structure-settings-tab-access'));
     expect(within(screen.getByTestId('structure-settings-manage')).getByTestId('structure-action-deconstruct')).toBeInTheDocument();
   });

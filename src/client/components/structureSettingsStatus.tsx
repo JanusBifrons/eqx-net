@@ -1,5 +1,5 @@
 /**
- * The settings side panel's status block, above the tabs: owner, level,
+ * The Settings section's status block (Details panel), above the pages: owner, level,
  * connections (a connector) and the hold summary (owned storage). These left
  * the inspector card (building-panels A2). Read from the structure slice and
  * the selection's server stats (the hold is owner-only on the wire) at the

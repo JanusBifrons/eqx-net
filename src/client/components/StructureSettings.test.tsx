@@ -1,19 +1,21 @@
 /**
- * Lock for the building settings window: the Open button in the inspector
- * card's owner action row opens a tabbed side panel on the Power tab
- * (read-only numbers from the structure slice), docked beside the live map
- * (SidePanel, no backdrop), with a status block (owner, level, connections,
- * hold) above the tabs; a building you do not own has no Open button.
+ * Lock for the building settings (UI language plan U3-6): in Build mode your
+ * own building's Details panel shows a Settings section (no "Open" step) on
+ * the Power page (read-only numbers from the structure slice), with a status
+ * block (owner, level, connections, hold) above a Power / Build / Manage
+ * segmented control; a building you do not own has none. The section lives
+ * in the Details panel (⚙ on the strip, the one `rightPanel` flag).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { act, cleanup, render, screen, fireEvent, within } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
+import { selectRightPanelOpen } from '../state/rightPanel.js';
 import { EntityStatsPanel } from './EntityStatsPanel.js';
+import { DetailsPanel } from '../panels/DetailsPanel.js';
 import { applySelectionStats, resetSelectionStats } from '../net/selectionStats.js';
 import { setGameClient } from '../net/clientSingleton.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
-import { SETTINGS_PANEL_SIZE, settingsTabsFor, StructureSettingsModal } from './StructureSettingsModal.js';
-import { rightPaperSx } from './SidePanel.js';
+import { settingsTabsFor, StructureSettings } from './StructureSettings.js';
 import { buildTileTip } from './structureSettingsBuild.js';
 import type { ProductionView } from './structureSettingsProduction.js';
 import { MAX_RECIPE_QUEUE, encodeRecipe } from '../../shared-types/production.js';
@@ -31,104 +33,85 @@ function seedTurret(owner: string, drawFull: boolean): void {
   useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
 }
 
+const openDetails = (): void => { act(() => useUIStore.getState().setRightPanel('details')); };
 
-describe('StructureSettingsModal', () => {
+describe('StructureSettings (Details panel)', () => {
   beforeEach(() => {
-    // Open is building management: Build mode only.
-    useUIStore.setState({ buildMode: true, selection: { ids: [], focusId: null, focusKind: null } });
+    // Settings are building management: Build mode only.
+    useUIStore.setState({ buildMode: true, rightPanel: null, selection: { ids: [], focusId: null, focusKind: null } });
     resetSelectionStats();
   });
-  afterEach(() => { setGameClient(null); vi.unstubAllGlobals(); });
+  afterEach(() => { cleanup(); setGameClient(null); vi.unstubAllGlobals(); useUIStore.setState({ rightPanel: null }); });
 
-  it('Open opens the settings window on the Power tab', () => {
+  it('shows the settings on the Power page, with no Open step', () => {
     seedTurret('me-123', true);
     render(<EntityStatsPanel />);
-    expect(screen.queryByTestId('structure-settings')).toBeNull();
-    fireEvent.click(screen.getByTestId('structure-action-settings'));
+    expect(screen.queryByTestId('structure-action-settings')).toBeNull();
     expect(screen.getByTestId('structure-settings')).toBeInTheDocument();
-    expect(screen.getByTestId('structure-settings-tab-power')).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByTestId('structure-settings-tab-power')).toHaveAttribute('aria-pressed', 'true');
     // Same figures as the inspector's PWR line: an engaging turret draws 15 in full.
     const power = screen.getByTestId('structure-settings-power');
     expect(power).toHaveAttribute('data-self-power', '-15');
     expect(power).toHaveAttribute('data-load', 'full');
     expect(screen.getByTestId('settings-power-grid')).toHaveTextContent('+35');
     expect(screen.getByTestId('entity-stats-power')).toHaveTextContent('PWR -15');
-    // The status block above the tabs: what left the card.
+    // The status block above the pages: what left the card.
     expect(screen.getByTestId('settings-status-owner')).toHaveTextContent('you');
     expect(screen.getByTestId('settings-status-level')).toHaveTextContent('1');
     expect(screen.queryByTestId('settings-status-conn')).toBeNull(); // not a connector
-    fireEvent.click(screen.getByTestId('structure-settings-close'));
-    expect(screen.queryByTestId('structure-settings')).toBeNull();
   });
 
-  it('the settings panel docks beside the map: no backdrop, world stays live', () => {
+  it('lives in the Details panel: ⚙ opens it, its ✕ closes it, the HUD sees one right panel', () => {
     seedTurret('me-123', true);
-    render(<EntityStatsPanel />);
-    fireEvent.click(screen.getByTestId('structure-action-settings'));
-    const settings = screen.getByTestId('structure-settings');
-    // A docked (persistent) drawer, not a modal: no backdrop, no game-window Dialog.
-    expect(settings).toHaveClass('MuiDrawer-docked');
-    expect(document.querySelector('.MuiBackdrop-root')).toBeNull();
-    expect(settings).not.toHaveAttribute('data-game-window');
-    expect(useUIStore.getState().structureSettingsOpen).toBe(true);
-    expect(settings).toHaveTextContent('Turret settings');
-    // Close in the footer, like the loot window.
-    fireEvent.click(screen.getByTestId('structure-settings-close-btn'));
+    render(<DetailsPanel />);
     expect(screen.queryByTestId('structure-settings')).toBeNull();
-    expect(useUIStore.getState().structureSettingsOpen).toBe(false);
+    openDetails();
+    expect(within(screen.getByTestId('rail-panel-details')).getByTestId('structure-settings')).toBeInTheDocument();
+    expect(selectRightPanelOpen(useUIStore.getState())).toBe(true);
+    fireEvent.click(screen.getByTestId('rail-panel-details-close'));
+    expect(useUIStore.getState().rightPanel).toBeNull();
+    expect(selectRightPanelOpen(useUIStore.getState())).toBe(false);
   });
 
-  it('the settings panel closes when the selection changes or clears', () => {
-    const onClose = vi.fn();
+  it('the Details panel closes when the selection clears', () => {
     seedTurret('me-123', true);
-    render(<StructureSettingsModal open entityId={9} title="Turret" onClose={onClose} />);
-    expect(onClose).not.toHaveBeenCalled();
-    act(() => { useUIStore.setState({ selection: { ids: [], focusId: 'swarm-4', focusKind: 'structure' } }); });
-    expect(onClose).toHaveBeenCalledTimes(1);
-    onClose.mockClear();
-    seedTurret('me-123', true);
-    render(<StructureSettingsModal open entityId={9} title="Turret" onClose={onClose} />);
+    render(<DetailsPanel />);
+    openDetails();
     act(() => { useUIStore.setState({ selection: { ids: [], focusId: null, focusKind: null } }); });
-    expect(onClose).toHaveBeenCalled();
+    expect(useUIStore.getState().rightPanel).toBeNull();
+    expect(screen.queryByTestId('structure-settings')).toBeNull();
   });
 
-  it('an idle building reads Idle on the Power tab', () => {
+  it('an idle building reads Idle on the Power page', () => {
     seedTurret('me-123', false);
     render(<EntityStatsPanel />);
-    fireEvent.click(screen.getByTestId('structure-action-settings'));
     expect(screen.getByTestId('structure-settings-power')).toHaveAttribute('data-load', 'idle');
     expect(screen.getByTestId('settings-power-draw')).toHaveTextContent('-3');
   });
 
-  it('no Open button on a building you do not own', () => {
+  it('no settings on a building you do not own, nor outside Build', () => {
     seedTurret('other-1', true);
-    render(<EntityStatsPanel />);
+    const { unmount } = render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-panel')).toBeInTheDocument();
-    expect(screen.queryByTestId('structure-action-settings')).toBeNull();
-  });
-
-  it('on a sideways phone the panel takes ~40% of the width, full height under the app bar', () => {
-    // jsdom drops clamp() from computed styles, so lock the Paper sx itself.
-    expect(rightPaperSx(SETTINGS_PANEL_SIZE, true)).toMatchObject({
-      width: 'clamp(280px, 40vw, 360px)', top: 'var(--app-bar-h, 48px)', height: 'calc(100dvh - var(--app-bar-h, 48px))',
-    });
-    expect(rightPaperSx(SETTINGS_PANEL_SIZE, false)).toMatchObject({ width: 360 });
-  });
-
-  it('the card has one Open button; management moved to the Manage tab', () => {
+    expect(screen.queryByTestId('structure-settings')).toBeNull();
+    unmount();
+    useUIStore.setState({ buildMode: false });
     seedTurret('me-123', true);
     render(<EntityStatsPanel />);
-    const open = screen.getByTestId('structure-action-settings');
-    expect(open.tagName).toBe('BUTTON');
-    expect(open).toHaveTextContent('Open');
+    expect(screen.queryByTestId('structure-settings')).toBeNull();
+  });
+
+  it('management is on the Manage page, not the card', () => {
+    seedTurret('me-123', true);
+    render(<EntityStatsPanel />);
     expect(screen.queryByTestId('structure-action-deconstruct')).toBeNull();
-    fireEvent.click(open);
     fireEvent.click(screen.getByTestId('structure-settings-tab-access'));
+    expect(screen.getByTestId('structure-settings-tab-access')).toHaveAttribute('aria-pressed', 'true');
     expect(screen.getByTestId('structure-settings-manage')).toBeInTheDocument();
     expect(screen.getByTestId('structure-action-deconstruct')).toBeInTheDocument();
   });
 
-  it('every building kind has the Power tab first', () => {
+  it('every building kind has the Power page first', () => {
     expect(settingsTabsFor('turret')[0]?.id).toBe('power');
     expect(settingsTabsFor('solar')[0]?.id).toBe('power');
     // Labels read Build / Power / Manage; the ids keep their old names.
@@ -155,7 +138,7 @@ function seedShipyard(left: number | undefined, extra: Record<string, unknown> =
 }
 
 function openProduction(): void {
-  render(<StructureSettingsModal open entityId={7} title="Shipyard" onClose={() => {}} />);
+  render(<StructureSettings entityId={7} />);
   fireEvent.click(screen.getByTestId('structure-settings-tab-production'));
 }
 
@@ -168,7 +151,7 @@ const queueMsg = (edit: Record<string, unknown>): Record<string, unknown> => ({ 
 /** Interceptor building, gunship then interceptor queued; both blueprints in stock. */
 const MIXED = { prodQueue: ['build_gunship', 'build_interceptor'], bpProduct: 'build_interceptor', bpAvailable: ['build_gunship'] };
 
-describe('StructureSettingsModal Build tab (hull picture tiles)', () => {
+describe('StructureSettings Build page (hull picture tiles)', () => {
   afterEach(() => { setGameClient(null); vi.useRealTimers(); });
 
   it('only buildings that make things get the Production tab', () => {
@@ -303,41 +286,32 @@ describe('StructureSettingsModal Build tab (hull picture tiles)', () => {
   });
 });
 
-describe('StructureSettingsModal desktop polish (Esc, hover tips)', () => {
-  afterEach(() => { cleanup(); setGameClient(null); useUIStore.setState({ placementKind: null, fleetPick: null }); });
+describe('StructureSettings desktop polish (Esc, hover tips)', () => {
+  beforeEach(() => { useUIStore.setState({ buildMode: true, rightPanel: null }); resetSelectionStats(); });
+  afterEach(() => { cleanup(); setGameClient(null); useUIStore.setState({ placementKind: null, fleetPick: null, rightPanel: null }); });
 
-  it('Esc closes the panel; other keys do not', () => {
-    const onClose = vi.fn();
+  it('Esc closes the Details panel; other keys do not', () => {
     seedTurret('me-123', true);
-    render(<StructureSettingsModal open entityId={9} title="Turret" onClose={onClose} />);
+    render(<DetailsPanel />);
+    openDetails();
     fireEvent.keyDown(window, { key: 'Enter' });
-    expect(onClose).not.toHaveBeenCalled();
+    expect(useUIStore.getState().rightPanel).toBe('details');
     fireEvent.keyDown(window, { key: 'Escape' });
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(useUIStore.getState().rightPanel).toBeNull();
   });
 
   it('Esc while typing in a field, placing a building or picking a fleet point leaves the panel open', () => {
-    const onClose = vi.fn();
     seedTurret('me-123', true);
-    render(<><input data-testid="field" /><StructureSettingsModal open entityId={9} title="Turret" onClose={onClose} /></>);
+    render(<><input data-testid="field" /><DetailsPanel /></>);
+    openDetails();
     fireEvent.keyDown(screen.getByTestId('field'), { key: 'Escape' });
-    expect(onClose).not.toHaveBeenCalled();
+    expect(useUIStore.getState().rightPanel).toBe('details');
     // Placement and a fleet map pick own Esc first (App.tsx keydown).
     act(() => { useUIStore.setState({ placementKind: 'turret' }); });
     fireEvent.keyDown(window, { key: 'Escape' });
     act(() => { useUIStore.setState({ placementKind: null, fleetPick: { kind: 'patrol', points: 0, doneSeq: 0 } }); });
     fireEvent.keyDown(window, { key: 'Escape' });
-    expect(onClose).not.toHaveBeenCalled();
-  });
-
-  it('a closed panel and an unmounted one never listen for Esc', () => {
-    const onClose = vi.fn();
-    seedTurret('me-123', true);
-    const { unmount } = render(<StructureSettingsModal open={false} entityId={9} title="Turret" onClose={onClose} />);
-    fireEvent.keyDown(window, { key: 'Escape' });
-    unmount();
-    fireEvent.keyDown(window, { key: 'Escape' });
-    expect(onClose).not.toHaveBeenCalled();
+    expect(useUIStore.getState().rightPanel).toBe('details');
   });
 
   it('build tiles hover-show the hull, its bill and why one is locked', () => {

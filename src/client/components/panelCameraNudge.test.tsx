@@ -1,6 +1,7 @@
 /**
- * Building panels A5: opening a building's side panel glides the camera once
- * so the building sits mid-way across the screen left of the panel — in Build
+ * Building panels A5: opening a building's settings (the Details panel's
+ * Settings section, UI plan U3-6) glides the camera once so the building sits
+ * mid-way across the screen left of the panel — in Build
  * and Command only (in Fly the follow camera owns the view).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
@@ -13,7 +14,8 @@ import { useUIStore } from '../state/store.js';
 import { setGameClient } from '../net/clientSingleton.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import { BUILD_VIEW_GLIDE_MS, resetBuildModeView, stepBuildModeView } from '../structures/buildModeView.js';
-import { SETTINGS_PANEL_SIZE, StructureSettingsModal } from './StructureSettingsModal.js';
+import { EQX_PANEL_SIZE } from '../../ui/index.js';
+import { StructureSettings } from './StructureSettings.js';
 import { panelNudgeX, rightPanelWidthPx } from './panelCameraNudge.js';
 
 const W = 1024;
@@ -39,21 +41,21 @@ function camera() {
 const frame = (cam: ReturnType<typeof camera>): void =>
   stepBuildModeView(useUIStore.getState().buildMode, VIEW, 'ship-1', cam, W, H);
 
-const open = (): void => { render(<StructureSettingsModal open entityId={9} title="Turret" onClose={() => {}} />); };
+const open = (): void => { render(<StructureSettings entityId={9} />); };
 
 describe('panelCameraNudge maths', () => {
-  it('panel width follows the right dock: 360 desktop, 40% on touch, 280 floor', () => {
-    expect(rightPanelWidthPx(SETTINGS_PANEL_SIZE, 1024, false)).toBe(360);
-    expect(rightPanelWidthPx(SETTINGS_PANEL_SIZE, 800, true)).toBe(320);
-    expect(rightPanelWidthPx(SETTINGS_PANEL_SIZE, 600, true)).toBe(280);
-    expect(rightPanelWidthPx(SETTINGS_PANEL_SIZE, 1200, true)).toBe(360);
+  it('panel width follows the right dock: 380 desktop, 36% on touch, 300 floor', () => {
+    expect(rightPanelWidthPx(EQX_PANEL_SIZE, 1024, false)).toBe(380);
+    expect(rightPanelWidthPx(EQX_PANEL_SIZE, 800, true)).toBe(300);
+    expect(rightPanelWidthPx(EQX_PANEL_SIZE, 600, true)).toBe(300);
+    expect(rightPanelWidthPx(EQX_PANEL_SIZE, 1200, true)).toBe(380);
   });
 
   it('the right rail widens the covered strip; at 0 nothing moves', () => {
-    expect(rightPanelWidthPx(SETTINGS_PANEL_SIZE, 1024, false, 0)).toBe(360);
-    expect(rightPanelWidthPx(SETTINGS_PANEL_SIZE, 1024, false, 56)).toBe(416);
-    expect(rightPanelWidthPx(SETTINGS_PANEL_SIZE, 800, true, 48)).toBe(368);
-    expect(panelNudgeX(100, rightPanelWidthPx(SETTINGS_PANEL_SIZE, 1024, false, 56), 2)).toBe(204);
+    expect(rightPanelWidthPx(EQX_PANEL_SIZE, 1024, false, 0)).toBe(380);
+    expect(rightPanelWidthPx(EQX_PANEL_SIZE, 1024, false, 56)).toBe(436);
+    expect(rightPanelWidthPx(EQX_PANEL_SIZE, 800, true, 48)).toBe(348);
+    expect(panelNudgeX(100, rightPanelWidthPx(EQX_PANEL_SIZE, 1024, false, 56), 2)).toBe(209);
   });
 
   it('shifts the camera +X by half the panel, in world units', () => {
@@ -81,7 +83,7 @@ describe('opening a building panel nudges the camera', () => {
     frame(cam);
     frame(cam);
     expect(cam.glideCameraTo).toHaveBeenCalledTimes(1);
-    expect(cam.glideCameraTo).toHaveBeenCalledWith(BX + 360 / 2 / 2, BY, BUILD_VIEW_GLIDE_MS);
+    expect(cam.glideCameraTo).toHaveBeenCalledWith(BX + 380 / 2 / 2, BY, BUILD_VIEW_GLIDE_MS);
   });
 
   it('in Command: the same one glide', () => {
@@ -91,7 +93,7 @@ describe('opening a building panel nudges the camera', () => {
     frame(cam);
     frame(cam);
     expect(cam.glideCameraTo).toHaveBeenCalledTimes(1);
-    expect(cam.glideCameraTo).toHaveBeenCalledWith(190, BY, BUILD_VIEW_GLIDE_MS);
+    expect(cam.glideCameraTo).toHaveBeenCalledWith(195, BY, BUILD_VIEW_GLIDE_MS);
   });
 
   it('in Fly: no glide (the follow camera owns the view)', () => {
