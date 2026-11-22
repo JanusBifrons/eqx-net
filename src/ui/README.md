@@ -9,7 +9,7 @@ raw `@mui/*` and `@emotion/*` imports live only inside `src/ui/`.
 | Entry | Purpose | Props |
 |---|---|---|
 | `theme` | The MUI theme, built only from `hud/tokens.ts` | none |
-| `EqxButton` | Text button | `tone` (primary / secondary / danger), `size` (small / medium / large, default small), `disabled`, `onClick`, `data-testid` |
+| `EqxButton` | Text button | `tone` (primary / secondary / danger / manual = amber), `size` (small / medium / large, default small), `disabled`, `onClick`, `data-testid` |
 | `EqxIconButton` | The one icon button (rail, left strip, fly-outs). One fixed box (`HUD.size.iconButton`), icon centred, no label | `icon`, **required** `tooltip` (also the aria-label), `tone`, `active`, `badge`, `holdMs`, `disabled`, `onClick`, `data-testid` |
 | `EqxTooltip` | Tooltip: hover on desktop, press-and-hold on touch | `title`, `holdMs` |
 | `EqxSwitch` | On / off | `checked`, `onChange(checked)`, `label` (also the accessible name), `disabled`, `data-testid` |
@@ -17,7 +17,7 @@ raw `@mui/*` and `@emotion/*` imports live only inside `src/ui/`.
 | `EqxTextField` | Text input | `label` (also the accessible name), `value`, `onChange(text)`, `error` (message; sets the error state), `placeholder`, `disabled`, `data-testid` |
 | `EqxSlider` | Range | `min`, `max`, `step` (default 1), `marks` (`true` or `{ value, label? }[]`), `value`, `onChange(number)`, `label` (aria-label), `disabled`, `data-testid` |
 | `EqxSegmented` | Pick one of 2-4 views or values (throws in dev outside 2-4); `onChange` once per pick | `options` (`id` + `label`, or `id` + `icon` + `tooltip`), `value`, `onChange(id)`, `label` (group name), `disabled`, `data-testid` |
-| `EqxPanel` | The one right panel (SidePanel evolved; `client/components/SidePanel.tsx` re-exports it). Right dock on landscape, bottom sheet on a portrait phone; closes by ✕, Esc (`closeOnEscape`) and a swipe out | `open`, `onClose`, `testId`, `title`, `onBack` (← back), `apply` (`onApply`, `dirty` → amber footer, `label`), `size`, `closeOnEscape`, `paperAttrs`, `handleTestId` / `headerTestId` / `closeTestId` |
+| `EqxPanel` | The one right panel (SidePanel evolved; `client/components/SidePanel.tsx` re-exports it). Right dock on landscape, bottom sheet on a portrait phone; closes by ✕, Esc (`closeOnEscape`) and a swipe out | `open`, `onClose`, `testId`, `title`, `onBack` (← back), `apply` (`onApply`, `dirty` → amber footer, `label`), `size`, `closeOnEscape`, `paperAttrs`, `handleTestId` / `headerTestId` / `closeTestId`. Known debts (move at U4-1): literal radii, grab-pill colour and swipe distance; `escapeClosesPanel` reads the store; imports GameWindow's header SX |
 
 ## Extend, never hand-roll
 

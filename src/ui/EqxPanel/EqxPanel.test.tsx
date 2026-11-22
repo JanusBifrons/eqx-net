@@ -75,6 +75,7 @@ describe('EqxPanel', () => {
     rerender(<EqxPanel {...base} onClose={() => {}} apply={{ onApply: () => {}, dirty: true }}>body</EqxPanel>);
     const dirty = screen.getByTestId('eqx-panel-footer');
     expect(dirty.getAttribute('data-dirty')).toBe('1');
+    expect(screen.getByTestId('eqx-panel-apply').dataset['tone']).toBe('manual');
     expect(getComputedStyle(dirty).color).toBe('rgb(255, 176, 46)');
     expect(HUD.color.manual).toBe('#ffb02e');
   });

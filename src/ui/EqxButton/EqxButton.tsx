@@ -8,13 +8,15 @@ import type { ReactNode } from 'react';
 import { HUD } from '../../client/hud/tokens.js';
 
 /** The three tones every Eqx control shares. */
-export type EqxTone = 'primary' | 'secondary' | 'danger';
+export type EqxTone = 'primary' | 'secondary' | 'danger' | 'manual';
 
 /** Tone -> token colour. One map, reused by EqxIconButton. */
 export const TONE_COLOR: Readonly<Record<EqxTone, string>> = {
   primary: HUD.color.brand,
   secondary: HUD.color.ink,
   danger: HUD.color.danger,
+  /** Amber: manual, or changed but not applied (plan B3). */
+  manual: HUD.color.manual,
 };
 
 export type EqxButtonSize = 'small' | 'medium' | 'large';
@@ -22,7 +24,7 @@ export type EqxButtonSize = 'small' | 'medium' | 'large';
 export interface EqxButtonProps {
   children: ReactNode;
   onClick?: () => void;
-  /** Default `secondary`. Primary is filled; secondary and danger are outlined. */
+  /** Default `secondary`. Primary is filled; secondary, danger and manual are outlined. */
   tone?: EqxTone;
   /** Default `small` (client rule: start tiny, grow on request). */
   size?: EqxButtonSize;

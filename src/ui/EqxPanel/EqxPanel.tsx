@@ -259,7 +259,7 @@ const FOOTER_DIRTY_SX = {
 function ApplyFooter({ apply }: { apply: EqxPanelApply }): JSX.Element {
   return (
     <Box sx={apply.dirty ? FOOTER_DIRTY_SX : FOOTER_SX} data-testid="eqx-panel-footer" data-dirty={apply.dirty ? '1' : '0'}>
-      <EqxButton onClick={apply.onApply} tone="secondary" data-testid="eqx-panel-apply">{apply.label ?? 'Apply'}</EqxButton>
+      <EqxButton onClick={apply.onApply} tone={apply.dirty ? 'manual' : 'secondary'} data-testid="eqx-panel-apply">{apply.label ?? 'Apply'}</EqxButton>
     </Box>
   );
 }
