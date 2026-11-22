@@ -1,4 +1,9 @@
 /**
+ * EqxPanel: the one right panel (UI language plan A4), SidePanel evolved and
+ * moved here; `src/client/components/SidePanel.tsx` re-exports it, so the old
+ * name and path still work. Panel-drawn header: optional ← back (`onBack`),
+ * title, ✕. Footer only with `apply`: an Apply button, amber while `dirty`.
+ *
  * The game's side panel shell: a docked, NON-dimming panel with the world live
  * and interactive behind it. Docks RIGHT on any landscape screen (narrower on a
  * phone) and as a BOTTOM sheet upright (`focusPanelDock`). MUI `persistent`
@@ -20,15 +25,16 @@
  */
 import { useEffect, useRef, type ReactNode } from 'react';
 import { Box, Drawer, Portal, useMediaQuery } from '@mui/material';
-import { Z } from '../layout/zIndex';
-import { HUD } from '../hud/tokens.js';
-import { WINDOW_HEAD_SX, WINDOW_TITLE_SX, WINDOW_X_SX } from './GameWindow';
-import { isTouchDevice } from '../input/TouchInput';
+import { Z } from '../../client/layout/zIndex.js';
+import { HUD } from '../../client/hud/tokens.js';
+import { WINDOW_HEAD_SX, WINDOW_TITLE_SX, WINDOW_X_SX } from '../../client/components/GameWindow.js';
+import { isTouchDevice } from '../../client/input/TouchInput.js';
 import {
   focusPanelDock, PANEL_RIGHT_W, PANEL_TOUCH_FRAC, PANEL_TOUCH_MIN_W, PANEL_TOUCH_TOP, SHEET_FRAC_PORTRAIT, SHEET_MAX_H,
   type FocusPanelDock,
-} from '../render/galaxy/galaxyFocus';
-import { useUIStore } from '../state/store';
+} from '../../client/render/galaxy/galaxyFocus.js';
+import { useUIStore } from '../../client/state/store.js';
+import { EqxButton } from '../EqxButton/EqxButton.js';
 
 const SWIPE_CLOSE_PX = 56; // swipe distance (in the dock-out direction) that closes
 
@@ -222,12 +228,45 @@ export interface SidePanelProps {
   headerTestId?: string;
   /** The ✕'s test id (with `title`). */
   closeTestId?: string;
+  /** A ← back button before the title (drill-down sub-pages; with `title`). */
+  onBack?: () => void;
+  /** The footer: an Apply button, amber while `dirty` (changed, not applied). No footer without it. */
+  apply?: EqxPanelApply;
   children: ReactNode;
 }
 
-export function SidePanel({
+/** The panel's Apply footer (plan A4): `dirty` = a changed but unapplied value. */
+export interface EqxPanelApply {
+  onApply: () => void;
+  dirty: boolean;
+  /** Default "Apply". */
+  label?: string;
+}
+
+/** The old name for the same props. */
+export type EqxPanelProps = SidePanelProps;
+
+const BACK_SX = { ...WINDOW_X_SX, mr: 1 } as const;
+const FOOTER_SX = {
+  flex: '0 0 auto', display: 'flex', justifyContent: 'flex-end', p: 1,
+  borderTop: `1px solid ${HUD.color.sidePanelEdge}`, bgcolor: HUD.color.sidePanelBg,
+} as const;
+const FOOTER_DIRTY_SX = {
+  ...FOOTER_SX, borderTop: `1px solid ${HUD.color.manual}`, boxShadow: `inset 0 1px 6px ${HUD.color.manualGlow}`,
+  color: HUD.color.manual,
+} as const;
+
+function ApplyFooter({ apply }: { apply: EqxPanelApply }): JSX.Element {
+  return (
+    <Box sx={apply.dirty ? FOOTER_DIRTY_SX : FOOTER_SX} data-testid="eqx-panel-footer" data-dirty={apply.dirty ? '1' : '0'}>
+      <EqxButton onClick={apply.onApply} tone="secondary" data-testid="eqx-panel-apply">{apply.label ?? 'Apply'}</EqxButton>
+    </Box>
+  );
+}
+
+export function EqxPanel({
   open, onClose, testId, handleTestId, size = SECTOR_PANEL_SIZE, closeOnEscape = false, paperAttrs, children,
-  title, headerTestId, closeTestId,
+  title, headerTestId, closeTestId, onBack, apply,
 }: SidePanelProps): JSX.Element {
   const dock = useSidePanelDock();
   const centred = size.centred === true;
@@ -291,6 +330,8 @@ export function SidePanel({
   // the ✕ sits outside it so the handle's pointer capture never takes its click.
   const header = (compact: boolean): JSX.Element => (
     <Box sx={compact ? HEAD_NOTCH_SX : HEAD_SX} data-testid={headerTestId} data-compact={compact ? '1' : '0'}>
+      {onBack !== undefined && <Box component="button" type="button" sx={compact ? X_NOTCH_SX : BACK_SX}
+        onClick={onBack} aria-label="Back" data-testid="eqx-panel-back">←</Box>}
       <Box sx={compact ? GRAB_TITLE_NOTCH_SX : GRAB_TITLE_SX} onPointerDown={onHandleDown} onPointerMove={onHandleMove}
         onPointerUp={onHandleUp} onPointerCancel={onHandleCancel} data-testid={handleTestId} aria-label="Drag to close">
         {title}
@@ -299,6 +340,8 @@ export function SidePanel({
         aria-label="Close" data-testid={closeTestId}>✕</Box>
     </Box>
   );
+
+  const footer = apply !== undefined ? <ApplyFooter apply={apply} /> : null;
 
   return (
     // Portal to <body> so the panel escapes the host chrome / GameSurface
@@ -325,12 +368,13 @@ export function SidePanel({
             {header(true)}
             <Box sx={NOTCH_SX} aria-hidden data-testid="side-panel-notch" />
           </Box>
-          <Box sx={NOTCH_BODY_SX}>{children}</Box>
+          <Box sx={NOTCH_BODY_SX}>{children}{footer}</Box>
         </>
       ) : (
         <>
           {header(false)}
           {children}
+          {footer}
         </>
       ))}
       {/* Grab handle (swipe-to-close), when the content draws its own header. */}
@@ -359,7 +403,11 @@ export function SidePanel({
         />
       </Box>}
       {!centred && title === undefined && children}
+      {!centred && title === undefined && footer}
     </Drawer>
     </Portal>
   );
 }
+
+/** The old name: the same component (src/client/components/SidePanel.tsx re-exports it). */
+export const SidePanel = EqxPanel;

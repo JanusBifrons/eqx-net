@@ -18,3 +18,4 @@ export {
 export { EqxTextField, type EqxTextFieldProps } from './EqxTextField/EqxTextField.js';
 export { EqxSlider, type EqxSliderProps, type EqxSliderMark } from './EqxSlider/EqxSlider.js';
 export { EqxSegmented, type EqxSegmentedProps, type EqxSegmentedOption } from './EqxSegmented/EqxSegmented.js';
+export { EqxPanel, type EqxPanelProps, type EqxPanelApply } from './EqxPanel/EqxPanel.js';

@@ -17,6 +17,7 @@ raw `@mui/*` and `@emotion/*` imports live only inside `src/ui/`.
 | `EqxTextField` | Text input | `label` (also the accessible name), `value`, `onChange(text)`, `error` (message; sets the error state), `placeholder`, `disabled`, `data-testid` |
 | `EqxSlider` | Range | `min`, `max`, `step` (default 1), `marks` (`true` or `{ value, label? }[]`), `value`, `onChange(number)`, `label` (aria-label), `disabled`, `data-testid` |
 | `EqxSegmented` | Pick one of 2-4 views or values (throws in dev outside 2-4); `onChange` once per pick | `options` (`id` + `label`, or `id` + `icon` + `tooltip`), `value`, `onChange(id)`, `label` (group name), `disabled`, `data-testid` |
+| `EqxPanel` | The one right panel (SidePanel evolved; `client/components/SidePanel.tsx` re-exports it). Right dock on landscape, bottom sheet on a portrait phone; closes by ✕, Esc (`closeOnEscape`) and a swipe out | `open`, `onClose`, `testId`, `title`, `onBack` (← back), `apply` (`onApply`, `dirty` → amber footer, `label`), `size`, `closeOnEscape`, `paperAttrs`, `handleTestId` / `headerTestId` / `closeTestId` |
 
 ## Extend, never hand-roll
 
