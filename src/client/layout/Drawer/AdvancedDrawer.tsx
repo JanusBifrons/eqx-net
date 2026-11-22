@@ -1,9 +1,10 @@
 /**
- * The rail's page panels (UI language plan A4, drawer mapping): Galaxy, Trade,
- * Jobs, Faction and the cog. Each rail item opens ONLY its own pages in the one
+ * The rail's page panels (UI language plan A4, drawer mapping): Galaxy, Jobs
+ * and Faction (Trade and the cog are their own panels, `panels/TradePanel.tsx`
+ * and `panels/CogPanel.tsx`). Each rail item opens ONLY its own pages in the one
  * right panel (`EqxPanel`); there is no tab column (owner 2026-11-22: the old
  * drawer's sidebar is redundant next to the rail). A panel with more than one
- * page (Faction: Factions / Ship look; cog: Profile / Settings / Debug) shows a
+ * page (Faction: Factions / Ship look) shows a
  * page switch at the top; `drawerTab` is the page shown.
  *
  * **Performance contract** (docs/LESSONS.md 2026-05-13 "Drawer perf paradigm"):
@@ -20,12 +21,8 @@ import { useCallback, useMemo, type ReactNode } from 'react';
 import { Box } from '@mui/material';
 import { EQX_PANEL_SIZE, EqxPanel, EqxSegmented } from '../../../ui/index.js';
 import { useUIStore } from '../../state/store';
-import { DRAWER_TAB_PANEL, selectDrawerOpen, type RailId } from '../../state/rightPanel';
-import { ProfileTab } from './tabs/ProfileTab';
-import { SettingsTab } from './tabs/SettingsTab';
+import { DRAWER_TAB_PANEL, type RailId } from '../../state/rightPanel';
 import { GalaxyTab } from './tabs/GalaxyTab';
-import { DebugTab } from './tabs/DebugTab';
-import { TradeTab } from './tabs/TradeTab';
 import { ContractsTab } from './tabs/ContractsTab';
 import { FactionsTab } from './tabs/FactionsTab';
 import { ShipLookTab } from './tabs/ShipLookTab';
@@ -37,21 +34,18 @@ interface PageSpec {
 }
 
 /** Every page, keyed by its `drawerTab` id. Which panel it belongs to is
- *  `DRAWER_TAB_PANEL` (the one mapping). */
+ *  `DRAWER_TAB_PANEL` (the one mapping); the cog's pages (`profile`,
+ *  `settings`, `debug`) are drawn by `panels/CogPanel.tsx`. */
 const PAGES: readonly PageSpec[] = [
   { id: 'galaxy', label: 'Galaxy', node: <GalaxyTab /> },
-  { id: 'trade', label: 'Trade', node: <TradeTab /> },
   { id: 'contracts', label: 'Jobs', node: <ContractsTab /> },
   { id: 'factions', label: 'Factions', node: <FactionsTab /> },
   { id: 'look', label: 'Ship look', node: <ShipLookTab /> },
-  { id: 'profile', label: 'Profile', node: <ProfileTab /> },
-  { id: 'settings', label: 'Settings', node: <SettingsTab /> },
-  { id: 'debug', label: 'Debug', node: <DebugTab /> },
 ];
 
 /** The panel title per rail item. */
 const PANEL_TITLE: Readonly<Partial<Record<RailId, string>>> = {
-  galaxy: 'Galaxy', trade: 'Trade', jobs: 'Jobs', faction: 'Faction', cog: 'Settings',
+  galaxy: 'Galaxy', jobs: 'Jobs', faction: 'Faction',
 };
 
 /** The pages of each panel, in order (from `DRAWER_TAB_PANEL`). */
@@ -66,12 +60,15 @@ const SWITCH_OPTIONS: Readonly<Partial<Record<RailId, { id: string; label: strin
     .filter(([, opts]) => opts.length > 1),
 );
 
+/** The panels this drawer draws (Trade has its own panel). */
+const OWN_PANELS: ReadonlySet<string> = new Set(PAGES.map((p) => DRAWER_TAB_PANEL[p.id]!));
+
 const DRAWER_PAPER_ATTRS = { 'data-testid': 'advanced-drawer' } as const;
 
 const PAGE_SX = { flex: 1, minWidth: 0, display: 'flex', flexDirection: 'column', gap: 1 } as const;
 
 export function AdvancedDrawer(): JSX.Element {
-  const isOpen = useUIStore(selectDrawerOpen);
+  const isOpen = useUIStore((s) => s.rightPanel !== null && OWN_PANELS.has(s.rightPanel));
   const drawerTab = useUIStore((s) => s.drawerTab);
   const setRightPanel = useUIStore((s) => s.setRightPanel);
   const setDrawerTab = useUIStore((s) => s.setDrawerTab);

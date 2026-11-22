@@ -6,7 +6,7 @@
  * player places starts stocked — the `seedStorageHold` bespoke trigger, so the
  * test never flies cargo home). The settlement / raid / refund paths are locked
  * deterministically by tests/integration/sectorRoom/tradeDeal.test.ts; this
- * spec locks the client half: tab, base picker, offers, the deal dialog, the
+ * spec locks the client half: panel, base picker, the Offers / Deals rows, offers, the deal dialog, the
  * accepted toast, the Deals list, and the hauler's arrival.
  *
  * The default `page` fixture carries the e2e login (trade needs an account).
@@ -56,13 +56,14 @@ test('Trade tab: post a deal and a trade hauler arrives', async ({ page }) => {
   }
   expect(await ownStructureCount(page)).toBeGreaterThan(0);
 
-  // Open the drawer on the Trade tab.
+  // Open the Trade panel (a drill-down: the top page lists the sections).
   await page.getByTestId('right-rail-trade').click();
-  await expect(page.getByTestId('trade-tab')).toBeVisible();
+  await expect(page.getByTestId('trade-panel')).toBeVisible();
   await expect(page.getByTestId('trade-rep-traders')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByTestId('trade-base-picker')).toBeVisible({ timeout: 10_000 });
 
-  // Sell salvage: pick the offer → the deal dialog → agree.
+  // Sell salvage: the Offers row → pick the offer → the deal dialog → agree.
+  await page.getByTestId('trade-section-offers').click();
   const offer = page.locator('[data-testid="trade-offer"][data-offer-kind="sell"][data-offer-good="salvage"]');
   await expect(offer).toBeVisible({ timeout: 10_000 });
   await offer.getByTestId('trade-offer-deal').click();
@@ -74,6 +75,7 @@ test('Trade tab: post a deal and a trade hauler arrives', async ({ page }) => {
   const toast = page.getByTestId('trade-toast').first();
   await expect(toast).toBeVisible({ timeout: 10_000 });
   expect(await toast.getAttribute('data-tone'), `server replied: ${await toast.textContent()}`).toBe('good');
+  await page.getByTestId('eqx-panel-back').click();
   await page.getByTestId('trade-section-deals').click();
   await expect(page.getByTestId('trade-deal').first()).toBeVisible({ timeout: 10_000 });
 

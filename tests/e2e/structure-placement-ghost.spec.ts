@@ -48,8 +48,9 @@ async function joinAndOpenBuild(
     }, undefined,
     { timeout: 12_000 },
   );
-  // Build mode is the only way to build (owner 2026-11-22): the switch opens the sidebar.
+  // Build mode is the only way to build (owner 2026-11-22): the switch enters it.
   await page.locator('[data-testid="build-toggle"]').click();
+  await page.locator('[data-testid="right-rail-build"]').click(); // no auto-open: the rail's Build item opens the panel
   // Build opens the Build sidebar. Every test here builds a Capital (Core
   // category), so pick Core on its rail for the per-test `build-capital` click.
   await page.locator('[data-testid="build-cat-core"]').click();

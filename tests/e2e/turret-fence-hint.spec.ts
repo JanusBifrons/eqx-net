@@ -56,8 +56,9 @@ test('placing a turret near a shield wall warns that the wall will stop its fire
       undefined,
       { timeout: 20_000 },
     );
-    // Build mode is the only way to build (owner 2026-11-22): the switch opens the sidebar.
+    // Build mode is the only way to build (owner 2026-11-22): the switch enters it.
     await page.locator('[data-testid="build-toggle"]').click();
+    await page.locator('[data-testid="right-rail-build"]').click(); // no auto-open: the rail's Build item opens the panel
     await page.locator('[data-testid="build-cat-defence"]').click();
     await page.locator('[data-testid="build-turret"] button').click();
 

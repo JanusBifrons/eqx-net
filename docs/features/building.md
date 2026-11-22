@@ -11,14 +11,15 @@ flash game *The Space Game*: place structures, link them through hubs, and a
 ## The right rail
 
 Discrete (tap) actions live on the **right rail**: in Build mode its **Build**
-item opens the Build sidebar; **Galaxy** holds the map and Warp. Your held
+item opens the Build panel (tap it again to close it); **Galaxy** holds the map and Warp. Your held
 controls (joystick / FIRE / BOOST) stay as dedicated buttons. (The old speed
 dial and its Build ▸ entry are gone.)
 
 ## The Build sidebar
 
-Switching to Build mode (or the rail's **Build** item while in Build) opens the **Build
-sidebar** on the right of the screen. It is the one place you pick a building:
+In Build mode, the rail's **Build** item (or tapping Build on the mode switch
+again) opens the **Build sidebar** on the right of the screen. Switching to
+Build mode on its own opens nothing. It is the one place you pick a building:
 
 - A **category rail** runs down its left edge (Core, Economy, Industry,
   Defence, Gun Batteries, Habitation, Transport). Tap an icon to show that

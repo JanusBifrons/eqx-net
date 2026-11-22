@@ -46,8 +46,9 @@ test('Build ▸ Capital places a structure', async ({ browser }) => {
     expect(await swarmCount(page)).toBe(0);
 
     // Build mode (sidebar) → Core on the rail → Capital tile → confirm.
-    // Build mode is the only way to build (owner 2026-11-22): the switch opens the sidebar.
+    // Build mode is the only way to build (owner 2026-11-22): the switch enters it.
     await page.locator('[data-testid="build-toggle"]').click();
+    await page.locator('[data-testid="right-rail-build"]').click(); // no auto-open: the rail's Build item opens the panel
     await page.locator('[data-testid="build-cat-core"]').click();
     await page.locator('[data-testid="build-capital"] button').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
