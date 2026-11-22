@@ -42,7 +42,7 @@ async function join(page: Page, opts: { worker0?: boolean } = {}): Promise<void>
   );
   // The HUD (speed dial, pilot toggle) mounts when the loading curtain lifts.
   await waitForInPlay(page);
-  await page.locator('[data-testid="speed-dial-fab"]').waitFor({ timeout: 10_000 });
+  await page.locator('[data-testid="right-rail"]').waitFor({ timeout: 10_000 });
 }
 
 function pilotMode(page: Page): Promise<string> {

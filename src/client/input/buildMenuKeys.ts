@@ -5,7 +5,7 @@
  * These moved here from the old bottom build hotbar (BottomControlPanel), whose
  * number keys picked the Nth building of a flattened palette.
  *
- * The sidebar's open flag is SpeedDialMenu's local React state (presentation,
+ * The sidebar's open flag is BuildSidebarHost's local React state (presentation,
  * never Zustand); the sidebar mirrors it here so the fire-control keys
  * (MouseLock.ts `installFcKeys`) stand down while it is open and 1–9 do not
  * also switch weapon groups.

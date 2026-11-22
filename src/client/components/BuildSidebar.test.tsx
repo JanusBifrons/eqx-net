@@ -10,7 +10,6 @@ import { useUIStore } from '../state/store.js';
 import { BuildSidebar } from './BuildSidebar.js';
 import { BUILD_CATEGORIES, categoryById } from './buildCategories.js';
 import { BUILD_PANEL_SIZE, rightPaperSx } from './SidePanel.js';
-import { PANEL_TOUCH_TOP } from '../render/galaxy/galaxyFocus.js';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { buildKindPower, packedBadge, DETAILS_SX, DESC_SX, STATS_SX, SHORT_SCREEN_MQ } from './BuildKindTile.js';
 import { buildEntry } from '@shared-types/packedStock';
@@ -212,35 +211,25 @@ describe('BuildSidebar', () => {
     expect('maxHeight' in DETAILS_SX).toBe(false);
   });
 
-  it('the panel draws a compact header on a phone, in the toolbar row beside a see-through notch', () => {
+  it('the panel draws its header on a phone too, and covers the top-right toolbar (no notch)', () => {
     isTouch.mockReturnValue(true);
     try {
       const { onClose } = renderSidebar();
       const head = screen.getByTestId('build-sidebar-head');
-      expect(head).toHaveAttribute('data-compact', '1');
       expect(head.textContent).toContain('Build');
-      const notch = screen.getByTestId('side-panel-notch');
-      expect(head.parentElement).toBe(notch.parentElement); // one row: header + notch
+      expect(screen.queryByTestId('side-panel-notch')).toBeNull();
       fireEvent.click(screen.getByTestId('build-sidebar-close'));
       expect(onClose).toHaveBeenCalledTimes(1);
     } finally { isTouch.mockReturnValue(false); }
   });
 
-  it('desktop: the same header, not compact, and no notch', () => {
-    renderSidebar();
-    expect(screen.getByTestId('build-sidebar-head')).toHaveAttribute('data-compact', '0');
-    expect(screen.queryByTestId('side-panel-notch')).toBeNull();
-  });
-
-  it('a sideways phone gets 0.4 of the width and the full height (header in the toolbar row)', () => {
+  it('a sideways phone gets 0.4 of the width and the full height, over ⛶ (owner 2026-11-22: no gap for it)', () => {
     const sx = rightPaperSx(BUILD_PANEL_SIZE, true);
     expect(BUILD_PANEL_SIZE.touchFrac).toBe(0.4);
     expect(sx['width']).toBe(`clamp(${BUILD_PANEL_SIZE.touchMinW}px, 40vw, ${BUILD_PANEL_SIZE.width}px)`);
-    expect(sx['top']).toBe(0);
-    expect(sx['height']).toBe('100dvh');
-    expect(sx['bgcolor']).toBe('transparent'); // the notch shows the toolbar through
-    // Without the toolbar row, the panel still starts below the toolbar.
-    expect(rightPaperSx({ ...BUILD_PANEL_SIZE, touchToolbarRow: false }, true)['top']).toBe(`${PANEL_TOUCH_TOP}px`);
+    expect(sx['top']).toBe('var(--app-bar-h, 0px)');
+    expect(sx['height']).toBe('calc(100dvh - var(--app-bar-h, 0px))');
+    expect(sx['bgcolor']).not.toBe('transparent');
     // 0.4 × 915 = 366 px fits inside the clamp, so the phone gets the full 0.4.
     expect(915 * 0.4).toBeGreaterThanOrEqual(BUILD_PANEL_SIZE.touchMinW);
     expect(915 * 0.4).toBeLessThanOrEqual(BUILD_PANEL_SIZE.width);

@@ -110,10 +110,12 @@ export const ANCHOR_STYLES: Record<AnchorName, CSSProperties> = {
     gap: STACK_GAP,
     pointerEvents: 'none',
   },
+  // Beside the left strip while it shows (`--left-strip-w`, layout/leftStripFit.ts),
+  // so the warp spool bar's Abort is never under the strip's ✕.
   'middle-left': {
     position: 'fixed',
     top: '50%',
-    left: SAFE_LEFT,
+    left: 'calc(env(safe-area-inset-left, 0px) + 16px + var(--left-strip-w, 0px))',
     transform: 'translateY(-50%)',
     zIndex: Z.hud,
     display: 'flex',
@@ -214,13 +216,17 @@ export const ANCHOR_STYLES: Record<AnchorName, CSSProperties> = {
     alignItems: 'stretch',
     pointerEvents: 'none',
   },
-  // Left strip (plan B2): left edge, centred down the side so it stays clear of
-  // the top-left corner (the mode switch and top-left HUD own it).
+  // Left strip (plan B2): left edge, centred at 57% of the height (the approved
+  // EqxLayout composition, mock .lbar), clear of the Fly contacts tab (left
+  // edge, top 30%). A tall strip never rises over the top-left HUD: its top is
+  // at least 8px under it (vars measured by layout/leftStripFit.ts).
   'left-strip': {
     position: 'fixed',
-    top: '50%',
+    top: 'max(calc(var(--hud-tl-bottom, 0px) + 8px), calc(57% - var(--left-strip-h, 0px) / 2))',
     left: SAFE_LEFT,
-    transform: 'translateY(-50%)',
+    // Scaled down only when taller than the room under the HUD (leftStripFit.ts).
+    transform: 'scale(var(--left-strip-scale, 1))',
+    transformOrigin: 'top left',
     zIndex: Z.railStrip,
     display: 'flex',
     flexDirection: 'column',

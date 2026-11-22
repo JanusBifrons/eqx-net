@@ -4,17 +4,11 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
 /**
  * Galaxy Map refactor (2026-05-10) — Map B regression lock.
  *
- * Map B is the in-game additive Pixi overlay (`GalaxyMapLayer`). Post the
- * speed-dial UI refactor (Phase 1) the React-side toggle is the **Map action
- * inside the consolidated bottom-right `SpeedDial`** (`data-testid` still
- * `galaxy-map-toggle`, on the action's Fab), not the old standalone
- * bottom-center MAP button. The action carries `aria-pressed` reflecting the
- * `isGalaxyMapOpen` store flag. The keyboard `M` shortcut is unchanged.
- *
- * The dial collapses its actions to `scale(0)` when closed (in the DOM but not
- * clickable / not "visible"), so any test that CLICKS the Map action must open
- * the dial first via the FAB. Tests that only read `aria-pressed` (the M-key
- * case) can query the attribute directly — it stays readable while collapsed.
+ * Map B is the in-game full-page warp map (`GalaxyPickerChrome`
+ * context='warp', testid `galaxy-map-screen`), shown while the
+ * `isGalaxyMapOpen` store flag is set. The speed dial's Map action is gone
+ * (UI language plan A7): the way in is the right rail's Galaxy item → the
+ * Galaxy page's "Show galaxy map" button, and the keyboard `M` shortcut.
  *
  * These specs lock the React-side toggle behaviour. The Pixi-side draw is
  * covered by the manual UX walk and the renderer's pure-graph adjacency logic
@@ -38,95 +32,37 @@ async function bootGame(page: import('@playwright/test').Page): Promise<void> {
   await page.locator('[data-testid="hud-sector"]').waitFor({ timeout: 30_000 });
 }
 
-/**
- * Open the consolidated SpeedDial and wait for the Map action to expand into
- * its clickable state. Idempotent for the purposes of these tests — they call
- * it again before each click because clicking an action collapses the dial.
- */
-async function openDial(page: import('@playwright/test').Page): Promise<void> {
-  await page.locator('[data-testid="speed-dial-fab"]').click();
-  await expect(page.locator('[data-testid="galaxy-map-toggle"]')).toBeVisible({ timeout: 5_000 });
-}
-
 test.describe('galaxy-map overlay (Map B)', () => {
-  test('desktop: MAP action in the speed-dial is reachable and reflects the open state', async ({ browser }) => {
+  test('desktop: keyboard M opens and closes the map', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     await bootGame(page);
 
-    const mapBtn = page.locator('[data-testid="galaxy-map-toggle"]');
-
-    // Open the dial → the Map action expands and reads "closed" (overlay off).
-    await openDial(page);
-    await expect(mapBtn).toHaveAttribute('aria-pressed', 'false');
-
-    // Click the action → overlay opens (and the dial collapses).
-    await mapBtn.click();
-    await expect(mapBtn).toHaveAttribute('aria-pressed', 'true');
-
-    // Re-open the dial, click again → overlay closes.
-    await openDial(page);
-    await mapBtn.click();
-    await expect(mapBtn).toHaveAttribute('aria-pressed', 'false');
-
-    await ctx.close();
-  });
-
-  test('desktop: keyboard M toggles the same overlay state as the button', async ({ browser }) => {
-    const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
-    const page = await ctx.newPage();
-    await bootGame(page);
-
-    const mapBtn = page.locator('[data-testid="galaxy-map-toggle"]');
-    await expect(mapBtn).toHaveAttribute('aria-pressed', 'false');
+    const mapScreen = page.locator('[data-testid="galaxy-map-screen"]');
+    await expect(mapScreen).toHaveCount(0);
 
     // M key opens.
     await page.keyboard.press('m');
-    await expect(mapBtn).toHaveAttribute('aria-pressed', 'true');
+    await expect(mapScreen).toBeVisible({ timeout: 5_000 });
 
     // M key closes.
     await page.keyboard.press('m');
-    await expect(mapBtn).toHaveAttribute('aria-pressed', 'false');
+    await expect(mapScreen).toHaveCount(0);
 
     await ctx.close();
   });
 
-  test('mobile: MAP and weapon-slot actions both live inside the consolidated dial', async ({ browser }) => {
+  test('mobile: the rail Galaxy page opens the map', async ({ browser }) => {
     const iPhone = devices['iPhone SE'];
     const ctx = await browser.newContext({ ...iPhone, viewport: { width: 667, height: 375 } });
     const page = await ctx.newPage();
     await bootGame(page);
 
-    const mapBtn = page.locator('[data-testid="galaxy-map-toggle"]');
-    // Speed-dial UI refactor (Phase 1): the MAP toggle and the weapon-slot
-    // selector are now sibling actions in the same SpeedDial (replacing the
-    // old scattered bottom-center MAP button + thumb-cluster slot toggle).
-    const weaponBtn = page.locator('[data-testid="slot-selector"]');
-
-    // Collapsed: actions are in the DOM but not visible (scale 0).
-    await expect(mapBtn).toBeHidden();
-    await expect(weaponBtn).toBeHidden();
-
-    // Open the dial → both actions expand and become reachable.
-    await page.locator('[data-testid="speed-dial-fab"]').tap();
-    await expect(mapBtn).toBeVisible();
-    await expect(weaponBtn).toBeVisible();
-
-    // MUI lays the actions out in a column, so they never overlap.
-    const mapBox = await mapBtn.boundingBox();
-    const weaponBox = await weaponBtn.boundingBox();
-    expect(mapBox).not.toBeNull();
-    expect(weaponBox).not.toBeNull();
-    if (mapBox && weaponBox) {
-      const overlap =
-        Math.max(0, Math.min(mapBox.x + mapBox.width, weaponBox.x + weaponBox.width) - Math.max(mapBox.x, weaponBox.x))
-        * Math.max(0, Math.min(mapBox.y + mapBox.height, weaponBox.y + weaponBox.height) - Math.max(mapBox.y, weaponBox.y));
-      expect(overlap).toBe(0);
-    }
-
-    // Tap the MAP action → overlay opens.
-    await mapBtn.tap();
-    await expect(mapBtn).toHaveAttribute('aria-pressed', 'true');
+    await page.locator('[data-testid="right-rail-galaxy"]').tap();
+    const showMap = page.locator('[data-testid="galaxy-tab-show-map"]');
+    await expect(showMap).toBeVisible({ timeout: 5_000 });
+    await showMap.tap();
+    await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 5_000 });
 
     await ctx.close();
   });
@@ -139,19 +75,16 @@ test.describe('galaxy-map overlay (Map B)', () => {
     // Open drawer → Galaxy tab → "Show galaxy map" button. Wait for each
     // surface to actually render before issuing the next click — clicking
     // on something whose ancestor is still mid-mount silently no-ops.
-    await page.locator('[data-testid="drawer-toggle"]').click();
+    await page.locator('[data-testid="right-rail-galaxy"]').click();
     await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible({ timeout: 5_000 });
-    await page.locator('[data-testid="drawer-tab-galaxy"]').click();
     await expect(page.locator('[data-testid="drawer-panel-galaxy"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="galaxy-tab-show-map"]').click();
 
     // Equinox Phase 8 (Bug 4): the drawer button now opens the REAL full-page
     // galaxy map (the warp-context GalaxyPickerChrome over the Pixi selector
-    // layer), NOT the old roster-scrim overview (`galaxy-overview-select`). The
-    // speed-dial Map toggle reflects the open state (isGalaxyMapOpen === true).
+    // layer), NOT the old roster-scrim overview (`galaxy-overview-select`).
     await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('[data-testid="galaxy-overview-select"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="galaxy-map-toggle"]')).toHaveAttribute('aria-pressed', 'true');
 
     // Close button restores gameplay.
     await page.locator('[data-testid="galaxy-warp-close"]').click();

@@ -17,7 +17,7 @@ import { fetchFactions } from '../../../net/tradeApi';
 import { sendSetFactionPolicy } from '../../../net/tradeClient';
 import { formatStanding, repLabel } from '../../../net/tradeView';
 import type { PlayerFactionsView, PlayerPolicyWire } from '../../../../shared-types/factions';
-import { DETAIL_SX, POLICY_LABEL_SX, SECTION_SX, TITLE_SX, hex } from './factionsTabStyles';
+import { DETAIL_SX, POLICY_LABEL_SX, SECTION_SX, hex } from './factionsTabStyles';
 
 const POLL_MS = 4000;
 const HOSTILE_STEPS = [-10, -25, -50, -75] as const;
@@ -69,7 +69,6 @@ export const FactionsTab = memo(function FactionsTab(): JSX.Element {
 
   return (
     <Box sx={{ p: 1 }} data-testid="factions-tab">
-      <Typography sx={TITLE_SX}>Factions</Typography>
 
       <Typography sx={SECTION_SX}>Your policy</Typography>
       <Box sx={POLICY_ROW_SX}>

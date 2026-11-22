@@ -258,7 +258,7 @@ Plan soft-leaping-truffle v3, phase C1. Auto-deposit banks everything you carry;
 
 Unit locks: `hold.test.ts` (`extractRequested`) and `StorageService.test.ts` (cargo access).
 
-**The panel (C1b).** Select any BUILT storage structure; the inspector shows an **Open cargo** button (`cargo-open-toggle`). It opens `CargoPanel`, which asks every second while open:
+**The panel (C1b).** Select any BUILT storage structure; the left strip shows a **Cargo** button (`cargo-open-toggle`). It opens `CargoPanel`, which asks every second while open:
 - **Here:** the structure's contents, each row with Take 1 / Take all.
 - **Aboard:** your hold, each row with Put 1 / Put all.
 - **Locked or far:** it shows why.
@@ -348,7 +348,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 
 ### Cargo panel (plan soft-leaping-truffle v3, C1)
 
-- `components/CargoPanel.tsx` (opened by `CargoAction` from the inspector, for any BUILT storage structure) is rebuilt ONLY from `cargo_state` replies (#16). It polls while mounted. The reply carries the structure's hold AND the ship's hold, so the panes never disagree.
+- `components/CargoPanel.tsx` (opened by the left strip's Cargo button, `layout/selectionStripItems.tsx`, for any BUILT storage structure) is rebuilt ONLY from `cargo_state` replies (#16). It polls while mounted. The reply carries the structure's hold AND the ship's hold, so the panes never disagree.
 - Rows come from the pure `components/cargoRows.ts`: names, never ids (uids ride inside the requests).
 - Every client → server message sender must pass its server schema: add a case to `tests/unit/tradeClientWireParity.test.ts` (strict schemas need the `type` the client's `send()` adds; LESSONS 2026-11-01).
 

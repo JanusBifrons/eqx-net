@@ -59,7 +59,7 @@ test('open your own storage and move cargo by hand', async ({ page }) => {
   await page.evaluate(([x, y]) => {
     (window as unknown as { __eqxSelectAtWorld?: (x: number, y: number) => string | null }).__eqxSelectAtWorld!(x!, y!);
   }, [cap!.x, cap!.y]);
-  await expect(page.getByTestId('entity-stats-panel')).toBeVisible({ timeout: 5_000 });
+  await expect(page.getByTestId('left-strip')).toBeVisible({ timeout: 5_000 });
 
   await page.getByTestId('cargo-open-toggle').click();
   const panel = page.getByTestId('cargo-panel');

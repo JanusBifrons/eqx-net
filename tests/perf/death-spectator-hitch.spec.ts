@@ -86,7 +86,7 @@ async function join(page: Page): Promise<void> {
     { timeout: 30_000 },
   );
   await waitForInPlay(page);
-  await page.locator('[data-testid="speed-dial-fab"]').waitFor({ timeout: 10_000 });
+  await page.locator('[data-testid="right-rail"]').waitFor({ timeout: 10_000 });
 }
 
 test('death → spectator long-frame attribution (print-only)', async ({ page }) => {

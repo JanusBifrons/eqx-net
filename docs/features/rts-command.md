@@ -79,8 +79,11 @@ Attack sends them after whatever you tapped.
 
 ## The fleet panel
 
-While ships are selected, the fleet panel replaces the build bar at the bottom
-of the screen (a slimmer fleet strip on a phone). It lists each ship by type,
+While ships are selected, the left strip shows the quick orders as icons:
+Order, Stance and Speed (tap one and its choices fly out beside it; a pick
+takes effect at once) and Stop. A selection whose ships differ shows a
+neutral dots icon. The ⚙ on the strip opens the full fleet panel on the right
+(a slimmer fleet strip on a phone). It lists each ship by type,
 its hull, and what it is doing in plain words: Idle, Moving, Patrolling,
 Chasing a Drone, Attacking, Guarding, Forming up, or Retreating with its hull
 percentage.

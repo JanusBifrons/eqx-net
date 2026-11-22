@@ -2,13 +2,13 @@
  * Cinematic HUD mode — how much of the DOM HUD is visible over the canvas.
  *
  *  - `full`    normal play (default).
- *  - `clean`   the full interactive HUD (speed-dial, inspector, banners) minus
+ *  - `clean`   the full interactive HUD (right rail, inspector, banners) minus
  *              debug-ish chrome: the sector-info panel (shows raw engineering
  *              room names), the pilot/spectate toggle and the idle
  *              "Nothing incoming" chip — the look for UI-driven footage.
  *  - `minimal` `clean`, and also keeps only the top status bars (shield/hull, energy, grid power) and
- *              the transit overlay; hides the header, thumb controls, speed-dial
- *              and drawer — the look for gameplay footage.
+ *              the transit overlay; hides the header, thumb controls, right
+ *              rail, left strip and drawer — the look for gameplay footage.
  *  - `none`    a clean frame: only the canvas (plus the transit/warp overlay,
  *              which IS the effect being filmed).
  *

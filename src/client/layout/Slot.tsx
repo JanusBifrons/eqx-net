@@ -29,8 +29,9 @@ interface Props {
   children: ReactNode;
 }
 
-/** Anchors whose contents should fill the entire host (vs. flex-stack). */
-const FILL_ANCHORS = new Set<AnchorName>(['fullscreen', 'transit', 'rotate']);
+/** Anchors whose contents should fill the entire host (vs. flex-stack). The
+ *  right rail fills its full-height host, so its cog pins to the bottom. */
+const FILL_ANCHORS = new Set<AnchorName>(['fullscreen', 'transit', 'rotate', 'right-rail']);
 
 /**
  * Portals its children into the host element registered for `anchor` by

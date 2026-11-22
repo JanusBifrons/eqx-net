@@ -44,7 +44,7 @@ export const breakIn: Shot = {
     const { page } = ctx;
     await ctx.sleep(1200);
     await selectAt(ctx, 0, 0);
-    await page.getByTestId('entity-stats-panel').waitFor({ state: 'visible', timeout: 5000 });
+    await page.getByTestId('cargo-open-toggle').waitFor({ state: 'visible', timeout: 5000 });
     await ctx.sleep(1200);
     await page.getByTestId('cargo-open-toggle').click();
     await page.getByTestId('cargo-locked').waitFor({ state: 'visible', timeout: 5000 });

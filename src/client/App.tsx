@@ -66,7 +66,6 @@ import { PlacementLinkHint } from './components/PlacementLinkHint';
 import { TeleportWarning } from './components/TeleportWarning';
 import { TeleportPrompts } from './components/TeleportPrompts';
 import { DisabledIndicator } from './components/DisabledIndicator';
-import { EntityStatsPanel } from './components/EntityStatsPanel';
 import { UpgradeModalHost } from './components/UpgradeModalHost';
 import { Hud } from './components/Hud';
 import { HudTestAttributes } from './components/HudTestAttributes';
@@ -83,7 +82,8 @@ import { PilotSpectatorToggle } from './components/PilotSpectatorToggle';
 import { GalaxyPickerChrome, type GalaxyPickerApi } from './components/GalaxyPickerChrome';
 import { LayoutProvider } from './layout/LayoutProvider';
 import { Slot } from './layout/Slot';
-import { AdvancedDrawer } from './layout/Drawer/AdvancedDrawer';
+import { RightPanelHost } from './layout/RightPanelHost';
+import { LeftStripHost } from './layout/LeftStripHost';
 import { TopRightToolbar } from './layout/TopRightToolbar';
 import { applyHudMode, applyHudOverlays, hudModeFromSearch, isHudMode } from './cinematic/hudMode';
 import type { CameraCue } from '@core/contracts/cameraScript';
@@ -210,7 +210,7 @@ function GameSurface({
   const pilotMode = useUIStore((s) => s.pilotMode);
   // Per-setter selectors, NOT a no-arg `useUIStore()` whole-store subscription.
   // A no-arg subscription re-renders GameSurface — the entire HUD subtree
-  // (every Slot, SpeedDialMenu, the MUI bars/panels) — on EVERY store write,
+  // (every Slot, the rail, the MUI bars/panels) — on EVERY store write,
   // including per-hit shield/hull + swarm-count churn during combat. That
   // cascaded an Emotion style-reserialization storm that pegged the main
   // thread (~75% busy, render dropping to ~30Hz) — the on-device "lag"
@@ -298,8 +298,8 @@ function GameSurface({
   }, [radarTransitState]);
 
   // Radar — keep icons out from under the DOM HUD. Measures the slot-host
-  // widgets at a low cadence (2 Hz; widgets mount/unmount and the speed dial
-  // opens) and pushes only on change. Not a per-frame path.
+  // widgets at a low cadence (2 Hz; widgets mount/unmount and panels
+  // open) and pushes only on change. Not a per-frame path.
   useEffect(() => {
     let last: RadarInsets | null = null;
     const tick = (): void => {
@@ -931,7 +931,7 @@ function GameSurface({
       ) : (
         <>
       {/* The piloting HUD: status capsule, sector chip, weapon strip + lock
-       *  band, speed dial, thumb sticks (touch) / lock line (desktop). */}
+       *  band, Build sidebar, thumb sticks (touch) / lock line (desktop). */}
       <GameHud touchInput={isTouchRef.current ? touchInputRef.current : null} />
       {/* Living World P1a — carried cargo + pickup popups. */}
       <Slot anchor="top-left" order={3}><CargoChip /></Slot>
@@ -949,28 +949,20 @@ function GameSurface({
       {/* Living World P2 — trade toasts (escort prompt when red). */}
       <Slot anchor="top-center" order={5}><TradeToasts /></Slot>
       <WhileAwayDialog />
-      {/* Phase 5 — the top-right X/Y · hull · ammo · speed · heading stat card
-       *  (ShipStatsCard) was REMOVED entirely (user request); the hull/shield
-       *  HUD bars + the in-world stat panel carry that info. */}
       {/* Phase 5 — always-visible Pilot/Spectate toggle (out of the speed-dial).
        *  No separate mode label: the switch itself shows the active mode
        *  (owner 2026-11-22). */}
       {/* The top-centre column carries status + lock warnings, so on a wide screen the
           toggle sits under the sector chip instead of over the ship. */}
       <PilotToggleSlot />
-      <AdvancedDrawer />
+      <RightPanelHost />
+      <LeftStripHost rendererRef={rendererRef} />
       {/* Phase 4 WS-A1 (D3) — the blocking DeathOverlay "You Died/Respawn" modal
        *  is removed. Death transitions INSTANTLY into spectator (free-roam
        *  construction camera); re-entry is via the galaxy map or (WS-A2) an
        *  owned ship's in-world Pilot action. */}
       {/* Phase 4 warp-to destination picker (portalled; solar sectors only). */}
       <WarpPicker />
-      {/* The selection card (any kind), docked LAST in the top-centre stack
-       *  (order 10, after the helm, toasts and the compact Pilot toggle at 9):
-       *  it appears, vanishes and changes height with the selection, so
-       *  nothing with buttons sits below it to be pushed about. Pointer-
-       *  transparent like before; its action row re-enables taps. */}
-      <Slot anchor="top-center" order={10} pointerEvents="none"><EntityStatsPanel /></Slot>
       {/* Phase 4 WS-B2 — ship stat-upgrade modal. Opens on the local ship's
        *  level-up (the WS-B1 `pendingLevelUp` seam) to spend the earned point. */}
       <UpgradeModalHost />

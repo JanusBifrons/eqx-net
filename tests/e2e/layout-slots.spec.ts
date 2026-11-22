@@ -155,45 +155,26 @@ test.describe('layout-slots', () => {
     await desktopCtx.close();
   });
 
-  test('drawer has 4 vertical icon-only tabs in order (galaxy first), debug pinned bottom', async ({ browser }) => {
+  test('each rail item opens only its own pages: no tab column inside the panel', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     await bootGame(page);
 
-    await page.locator('[data-testid="drawer-toggle"]').click();
+    // Galaxy: one page, no page switch and no other panel's tabs.
+    await page.locator('[data-testid="right-rail-galaxy"]').click();
     await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible();
-
-    const galaxy = page.locator('[data-testid="drawer-tab-galaxy"]');
-    const profile = page.locator('[data-testid="drawer-tab-profile"]');
-    const settings = page.locator('[data-testid="drawer-tab-settings"]');
-    const debug = page.locator('[data-testid="drawer-tab-debug"]');
-
-    await expect(galaxy).toBeVisible();
-    await expect(profile).toBeVisible();
-    await expect(settings).toBeVisible();
-    await expect(debug).toBeVisible();
-
-    const [gBox, pBox, sBox, dBox] = await Promise.all([
-      galaxy.boundingBox(),
-      profile.boundingBox(),
-      settings.boundingBox(),
-      debug.boundingBox(),
-    ]);
-    expect(gBox).not.toBeNull();
-    expect(pBox).not.toBeNull();
-    expect(sBox).not.toBeNull();
-    expect(dBox).not.toBeNull();
-
-    // Top three in document order from top-down: galaxy, profile, settings.
-    expect(gBox!.y).toBeLessThan(pBox!.y);
-    expect(pBox!.y).toBeLessThan(sBox!.y);
-
-    // Debug is pinned to the bottom — its y must be well below settings
-    // (the spacer between them flexes to fill).
-    expect(dBox!.y).toBeGreaterThan(sBox!.y + sBox!.height + 50);
-
-    // Galaxy is the default-selected tab — its panel renders.
     await expect(page.locator('[data-testid="drawer-panel-galaxy"]')).toBeVisible();
+    await expect(page.locator('[data-testid="drawer-tab"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="drawer-tab-trade"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="drawer-tab-settings"]')).toHaveCount(0);
+
+    // The cog: Profile, Settings, Debug only, Settings first.
+    await page.locator('[data-testid="right-rail-cog"]').click();
+    await expect(page.locator('[data-testid="drawer-panel-settings"]')).toBeVisible();
+    for (const id of ['profile', 'settings', 'debug']) {
+      await expect(page.locator(`[data-testid="drawer-tab-${id}"]`)).toBeVisible();
+    }
+    await expect(page.locator('[data-testid="drawer-tab-galaxy"]')).toHaveCount(0);
 
     await ctx.close();
   });
@@ -207,10 +188,10 @@ test.describe('layout-slots', () => {
     // The dev-overlay therefore is not present in the DOM at all.
     await expect(page.locator('[data-testid="dev-overlay"]')).toHaveCount(0);
 
-    await page.locator('[data-testid="drawer-toggle"]').click();
+    await page.locator('[data-testid="right-rail-cog"]').click();
     await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible();
 
-    // Default tab is Galaxy — dev-overlay still not rendered.
+    // The Settings page shows first — dev-overlay still not rendered.
     await expect(page.locator('[data-testid="dev-overlay"]')).toHaveCount(0);
 
     // Switch to Debug tab — dev-overlay + log-panel mount.
@@ -237,8 +218,7 @@ test.describe('layout-slots', () => {
     await expect(page.locator('[data-testid="mobile-map-button"]')).toHaveCount(0);
 
     // Galaxy tab still provides the action.
-    await page.locator('[data-testid="drawer-toggle"]').click();
-    await page.locator('[data-testid="drawer-tab-galaxy"]').click();
+    await page.locator('[data-testid="right-rail-galaxy"]').click();
     await expect(page.locator('[data-testid="galaxy-tab-show-map"]')).toBeVisible();
 
     await ctx.close();
@@ -263,13 +243,13 @@ test.describe('layout-slots', () => {
     const page = await ctx.newPage();
     await bootGame(page); // starts in /?room=test-sector → game phase
 
-    await page.locator('[data-testid="drawer-toggle"]').click();
+    await page.locator('[data-testid="right-rail-cog"]').click();
     await page.locator('[data-testid="drawer-tab-settings"]').click();
     await page.locator('[data-testid="settings-return-to-menu"]').click();
 
     await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 15_000 });
-    // Left the game: the in-game drawer toggle is gone (the map shares the canvas).
-    await expect(page.locator('[data-testid="drawer-toggle"]')).toHaveCount(0);
+    // Left the game: the in-game rail is gone (the map shares the canvas).
+    await expect(page.locator('[data-testid="right-rail-galaxy"]')).toHaveCount(0);
 
     await ctx.close();
   });
@@ -279,8 +259,8 @@ test.describe('layout-slots', () => {
     const page = await ctx.newPage();
     await bootGame(page);
 
-    await page.locator('[data-testid="drawer-toggle"]').click();
-    // Galaxy is now the default tab — switch to Profile to access logout.
+    // The cog opens the Settings page; Profile sits beside it.
+    await page.locator('[data-testid="right-rail-cog"]').click();
     await page.locator('[data-testid="drawer-tab-profile"]').click();
     const logoutButton = page.locator('[data-testid="profile-tab-logout"]');
     await expect(logoutButton).toBeVisible();

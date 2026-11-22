@@ -6,13 +6,14 @@
  * Command view (`startMode=command`): the second is a `newShip=1` rejoin,
  * which leaves the first parked (AI-flown) and parks the new one at its
  * arrival flip. Then, as a player would:
- *   box-select both (left-drag) → the fleet panel lists them;
+ *   box-select both (left-drag) → the left strip shows the fleet fly-outs;
  *   right-click empty space → a move order goes out and the server reports
- *     them moving (fleet_status row "Moving" or a hull actually moves);
- *   stance Hold fire → the server echoes it (the button reads pressed);
+ *     them moving (a hull actually moves);
+ *   strip Stance fly-out → Hold fire: the server echoes it (the trigger names it);
+ *   strip Order fly-out → Patrol: click two points, Done → "Patrolling";
+ *   ⚙ → the rail Fleet panel lists both ships, Patrol and Hold fire pressed;
  *   Form squad → the panel offers Disband; Disband → gone;
- *   Patrol: click two points, Done → the server reports "Patrolling";
- *   Stop → the server reports them holding ("Guarding");
+ *   Stop → the server reports them holding ("Guarding"); close the panel;
  *   shift-click one ship off the selection, Fly → you pilot it.
  *
  * Every wait is a state predicate (dataset / panel text / mirror), never a
@@ -117,10 +118,11 @@ test.describe('RTS fleet command loop @feature', () => {
     await page.mouse.move(x1, y1, { steps: 10 });
     await page.mouse.up();
     await expect.poll(() => selCount(page), { timeout: 3_000, message: 'box selects both own hulls' }).toBe(2);
-    const panel = page.locator('[data-testid="fleet-panel"]');
-    await expect(panel).toBeVisible();
-    await expect(panel).toHaveAttribute('data-fleet-count', '2');
-    await expect(page.locator('[data-testid="fleet-ship-row"]')).toHaveCount(2);
+    // Fleet orders live on the left strip now (UI plan U3-4), not a bottom panel.
+    await expect(page.locator('[data-testid="left-strip"]')).toHaveAttribute('data-open', 'true');
+    await expect(page.locator('[data-testid="left-strip-identity"]')).toHaveAttribute('aria-label', '2 ships selected');
+    await expect(page.locator('[data-testid="left-strip-order"]')).toBeVisible();
+    await expect(page.locator('[data-testid="fleet-panel"]')).toHaveCount(0);
 
     // ── Right-click empty space → move order; the server reports motion. ──
     const box = (await page.locator(SURFACE).boundingBox())!;
@@ -150,19 +152,15 @@ test.describe('RTS fleet command loop @feature', () => {
       }, { timeout: 5_000, message: 'the server moves the hulls on a right-click order' })
       .toBe('moving');
 
-    // ── Stance: Hold fire, echoed by the server's status. ─────────────────
-    await page.locator('[data-testid="fleet-stance-holdFire"]').click();
-    await expect(page.locator('[data-testid="fleet-stance-holdFire"]')).toHaveAttribute('aria-pressed', 'true', { timeout: 3_000 });
+    // ── Stance: Hold fire from the strip fly-out, echoed by the server. ────
+    await page.locator('[data-testid="left-strip-stance"]').click();
+    await page.locator('[data-testid="left-strip-stance-option-holdFire"]').click();
+    await expect(page.locator('[data-testid="left-strip-stance-options"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="left-strip-stance"]')).toHaveAttribute('aria-label', 'Stance: Hold fire', { timeout: 3_000 });
 
-    // ── Squad: form, then disband. ─────────────────────────────────────────
-    await page.locator('[data-testid="fleet-form-squad"]').click();
-    await expect(page.locator('[data-testid="fleet-disband-squad"]')).toBeVisible({ timeout: 3_000 });
-    await expect(page.locator('[data-testid="fleet-disband-squad"]')).toBeEnabled();
-    await page.locator('[data-testid="fleet-disband-squad"]').click();
-    await expect(page.locator('[data-testid="fleet-disband-squad"]')).toHaveCount(0, { timeout: 3_000 });
-
-    // ── Patrol: pick two points on the map, Done. ──────────────────────────
-    await page.locator('[data-testid="fleet-mode-patrol"]').click();
+    // ── Patrol from the strip: pick two points on the map, Done. ──────────
+    await page.locator('[data-testid="left-strip-order"]').click();
+    await page.locator('[data-testid="left-strip-order-option-patrol"]').click();
     await expect(page.locator('[data-testid="fleet-pick"]')).toHaveAttribute('data-fleet-pick', 'patrol');
     const py = box.y + Math.max(120, box.height * 0.25);
     await page.mouse.click(box.x + box.width * 0.35, py);
@@ -170,8 +168,23 @@ test.describe('RTS fleet command loop @feature', () => {
     await expect(page.locator('[data-testid="fleet-pick"]')).toHaveAttribute('data-fleet-pick-points', '2', { timeout: 2_000 });
     await page.locator('[data-testid="fleet-pick-done"]').click();
     await expect(page.locator('[data-testid="fleet-pick"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="left-strip-order"]')).toHaveAttribute('aria-label', 'Order: Patrol', { timeout: 5_000 });
+
+    // ── ⚙ → the rail Fleet panel: ship list, squad, Stop. ──────────────────
+    await page.locator('[data-testid="left-strip-cog"]').click();
+    const panel = page.locator('[data-testid="fleet-panel"]');
+    await expect(panel).toBeVisible();
+    await expect(panel).toHaveAttribute('data-fleet-count', '2');
+    await expect(page.locator('[data-testid="fleet-ship-row"]')).toHaveCount(2);
     await waitRowsActivity(page, /Patrolling/, 'the server reports the ships patrolling');
     await expect(page.locator('[data-testid="fleet-mode-patrol"]')).toHaveAttribute('aria-pressed', 'true');
+    await expect(page.locator('[data-testid="fleet-stance-holdFire"]')).toHaveAttribute('aria-pressed', 'true');
+
+    await page.locator('[data-testid="fleet-form-squad"]').click();
+    await expect(page.locator('[data-testid="fleet-disband-squad"]')).toBeVisible({ timeout: 3_000 });
+    await expect(page.locator('[data-testid="fleet-disband-squad"]')).toBeEnabled();
+    await page.locator('[data-testid="fleet-disband-squad"]').click();
+    await expect(page.locator('[data-testid="fleet-disband-squad"]')).toHaveCount(0, { timeout: 3_000 });
 
     // ── Fly: Stop, drop one ship from the selection, take the other. ──────
     await page.locator('[data-testid="fleet-stop"]').click();
@@ -180,6 +193,8 @@ test.describe('RTS fleet command loop @feature', () => {
     // click below lands on where the hull is drawn this frame (well inside its
     // pick radius).
     await waitRowsActivity(page, /^(?!.*Patrolling).*Guarding/, 'Stop ends the patrol and the ships hold');
+    await page.locator('[data-testid="rail-panel-fleet-close"]').click();
+    await expect(page.locator('[data-testid="left-strip"]')).toHaveAttribute('data-open', 'true');
     const target = (await ownHulls(page))[0]!;
     await page.keyboard.down('Shift');
     await page.mouse.click(target.sx, target.sy);

@@ -27,12 +27,12 @@ export const FEATURE_TRIGGERS = [
   {
     area: 'structures',
     paths: ['src/server/structures/', 'src/core/structures/', 'src/client/structures/', 'src/shared-types/structureKinds', 'src/shared-types/packedStock',
-      'src/client/components/StructurePlacementBanner', 'src/client/components/SpeedDialMenu', 'src/client/components/buildCategories',
+      'src/client/components/StructurePlacementBanner', 'src/client/components/BuildSidebarHost', 'src/client/components/buildCategories',
       'src/client/components/BuildSidebar', 'src/client/components/BuildKindTile', 'src/client/components/SidePanel', 'src/ui/EqxPanel/', 'src/client/input/buildMenuKeys',
       'src/client/components/BuildPlacingStrip', 'src/client/components/PlacementLinkHint', 'src/client/components/PlacementFenceHint', 'src/client/components/HullTile',
       'src/client/render/pixi/ConnectorRenderer', 'src/core/articulation/', 'src/server/rooms/scene/'],
     specs: ['structure-build-placement', 'structure-grid-web', 'structure-placement-ghost', 'structure-scenario', 'structure-mining-beam',
-      'structure-ram-blocked', 'structure-turret-range', 'structure-visible-damageable', 'speed-dial', 'gate-fly-through',
+      'structure-ram-blocked', 'structure-turret-range', 'structure-visible-damageable', 'build-sidebar', 'gate-fly-through',
       'structure-rig-sandbox', 'build-sidebar-fits-viewport', 'turret-fence-hint'],
   },
   {
@@ -83,7 +83,7 @@ export const FEATURE_TRIGGERS = [
     area: 'fire control and combat',
     paths: ['src/server/rooms/LockSubsystem', 'src/server/rooms/NpcLockSubsystem', 'src/server/rooms/PlayerFireResolver',
       'src/server/rooms/AiFireResolver', 'src/server/rooms/WeaponMountTicker',
-      'src/core/combat/lock', 'src/shared-types/combat/lockProfile', 'src/client/hud/WeaponStrip', 'src/client/components/TargetAction',
+      'src/core/combat/lock', 'src/shared-types/combat/lockProfile', 'src/client/hud/WeaponStrip', 'src/client/components/targetLock',
       'src/client/input/MouseLock', 'tests/e2e/helpers/fireControl', 'src/client/components/ContactsOverview',
       'src/client/components/contactRows'],
     specs: ['lock-to-fire-default', 'fire-control-lock', 'contacts-overview', 'auto-fire', 'auto-fire-multitouch', 'fx-weapons', 'drone-destruction'],
@@ -167,6 +167,6 @@ export const QUARANTINE = new Set([
   'interceptor-beam-stays-connected', // :142 beam origin while coasting: 90 s timeout.
   'prediction-idle-bounded', // :117 sub-snapshot poses while coasting: timeout.
   // Same pattern on shard 2 of the re-run (43253336850).
-  'speed-dial', // :187 Confirm keeps placing; Cancel brings the Build sidebar back.
+  'build-sidebar', // :98 Confirm keeps placing; Cancel brings the Build sidebar back (was speed-dial).
   'structure-placement-ghost', // (A) :94, (C) :158, (G) :368 ghost tracking.
 ]);

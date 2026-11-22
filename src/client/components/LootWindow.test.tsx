@@ -1,12 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen } from '@testing-library/react';
 
 const send = vi.fn();
 vi.mock('../net/clientSingleton', () => ({
   getGameClient: () => ({ getRoom: () => ({ send }) }),
 }));
 
-import { LootWindow, PodOpen } from './LootWindow';
+import { LootWindow } from './LootWindow';
 import { GRID_SLOTS } from './CargoPanel';
 import { useUIStore } from '../state/store';
 import type { CargoState } from '../../shared-types/messages/cargoMessages';
@@ -48,15 +48,6 @@ describe('LootWindow (cargo pods)', () => {
     expect(slotsIn('cargo-aboard-grid')).toBe(GRID_SLOTS);
     act(() => useUIStore.getState().setCargoState(pod({ hold: { goods: { salvage: 9, alloy: 3, core: 1 }, blueprints: [] } })));
     expect(slotsIn('cargo-here-grid')).toBe(GRID_SLOTS);
-  });
-
-  it("a pod's Open button opens the window; Close shuts it", async () => {
-    render(<PodOpen entityId={4} inReach subtitle="Huge" />);
-    expect(screen.queryByTestId('loot-window')).toBeNull();
-    fireEvent.click(screen.getByTestId('pod-open'));
-    expect(screen.getByTestId('loot-window')).toBeTruthy();
-    fireEvent.click(screen.getByTestId('loot-window-close'));
-    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull()); // after MUI's exit fade
   });
 
   it('on a phone a window with one line of content is as tall as the screen', () => {

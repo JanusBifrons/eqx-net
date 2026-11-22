@@ -82,12 +82,11 @@ describe('BuildSidebar strip mode', () => {
       expect(sx['transform']).toBeUndefined();
     }
     expect(rightPaperSx(BUILD_STRIP_SIZE, true)['width']).toBe(100);
-    expect(BUILD_STRIP_SIZE.touchToolbarRow).toBeUndefined();
     // The full sidebar keeps its full-height dock.
-    expect(rightPaperSx(BUILD_PANEL_SIZE, false)['height']).toBe('calc(100dvh - var(--app-bar-h, 48px))');
+    expect(rightPaperSx(BUILD_PANEL_SIZE, false)['height']).toBe('calc(100dvh - var(--app-bar-h, 0px))');
   });
 
-  it('on a phone the strip renders without the toolbar-row header', () => {
+  it('on a phone the strip renders without the panel header', () => {
     isTouch.mockReturnValue(true);
     renderStrip();
     expect(screen.getByTestId('build-strip')).toBeTruthy();

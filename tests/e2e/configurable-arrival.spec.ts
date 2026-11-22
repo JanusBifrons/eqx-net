@@ -29,10 +29,8 @@ async function bootGame(page: import('@playwright/test').Page): Promise<void> {
 }
 
 async function openGalaxyTab(page: import('@playwright/test').Page): Promise<void> {
-  await page.locator('[data-testid="drawer-toggle"]').click();
+  await page.locator('[data-testid="right-rail-galaxy"]').click();
   await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible();
-  // Galaxy is the default tab; click anyway to be explicit.
-  await page.locator('[data-testid="drawer-tab-galaxy"]').click();
   await expect(page.locator('[data-testid="drawer-panel-galaxy"]')).toBeVisible();
 }
 

@@ -1,18 +1,18 @@
 /**
- * Opening a game window closes the speed dial (phone stills, 2026-11-20).
+ * Opening a game window closes the Build sidebar (phone stills, 2026-11-20).
  *
- * Symptom: a building settings window opened while the dial's build menu
+ * Symptom: a building settings window opened while the build menu
  * stayed open underneath, poking out under the window's edge.
  *
- * Fix: GameWindow announces each open (onGameWindowOpen) and the dial and the
- * Build sidebar close on it. The sidebar and the settings panel never show
+ * Fix: GameWindow announces each open (onGameWindowOpen) and the Build
+ * sidebar closes on it. The sidebar and the settings panel never show
  * together (one right panel at a time).
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useState } from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
-import { SpeedDialMenu } from './SpeedDialMenu.js';
+import { BuildSidebarHost } from './BuildSidebarHost.js';
 import { GameWindow } from './GameWindow.js';
 import { StructureSettingsModal } from './StructureSettingsModal.js';
 import { requestBuildSidebar } from './BuildSidebar.js';
@@ -24,7 +24,7 @@ function Harness(): JSX.Element {
   openWindow = () => setOpen(true);
   return (
     <>
-      <SpeedDialMenu />
+      <BuildSidebarHost />
       <GameWindow open={open} onClose={() => setOpen(false)} testId="test-window">
         <div>window body</div>
       </GameWindow>
@@ -32,22 +32,11 @@ function Harness(): JSX.Element {
   );
 }
 
-const fabExpanded = (): string | null => screen.getByTestId('speed-dial-fab').getAttribute('aria-expanded');
-
 const sidebarOpen = (): boolean => screen.queryByTestId('build-rail') !== null;
 
-describe('SpeedDialMenu closes when a game window opens', () => {
+describe('BuildSidebarHost closes when a game window opens', () => {
   beforeEach(() => {
     useUIStore.setState({ phase: 'galaxy-map', isDead: false, isGalaxyMapOpen: false, buildMode: false, placementKind: null });
-  });
-
-  it('closes the open dial when a GameWindow opens', () => {
-    render(<Harness />);
-    fireEvent.click(screen.getByTestId('speed-dial-fab'));
-    expect(fabExpanded()).toBe('true');
-    act(() => openWindow());
-    expect(screen.getByTestId('test-window')).toBeTruthy();
-    expect(fabExpanded()).toBe('false');
   });
 
   it('closes the Build sidebar when a GameWindow opens', () => {
@@ -70,12 +59,6 @@ describe('SpeedDialMenu closes when a game window opens', () => {
     act(() => useUIStore.setState({ placementKind: null }));
   });
 
-  it('leaves a closed dial closed when a window opens', () => {
-    render(<Harness />);
-    act(() => openWindow());
-    expect(fabExpanded()).toBe('false');
-  });
-
   it('one right panel at a time: settings closes Build, and Build closes settings', () => {
     let openPanel: () => void = () => {};
     let panelOpen = false;
@@ -85,7 +68,7 @@ describe('SpeedDialMenu closes when a game window opens', () => {
       panelOpen = open;
       return (
         <>
-          <SpeedDialMenu />
+          <BuildSidebarHost />
           {open && <StructureSettingsModal open entityId={1} title="Refinery" onClose={() => setOpen(false)} />}
         </>
       );

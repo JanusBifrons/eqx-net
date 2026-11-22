@@ -7,6 +7,7 @@
  * fly-out box, mock .flyo), so the strip look lives in one place.
  * - The trigger is a cyan status tile showing the current option's icon (a
  *   `danger` option turns the icon red); open = cyan ring. `tooltip` is its name.
+ *   With no current value (null) it shows `emptyIcon` and no option is active.
  * - Options are plain icon-only tiles, tooltips on hover / hold; the current one is
  *   `active` (cyan edge + icon).
  * - A pick calls `onChange(id)` once and closes. An outside tap or Esc closes
@@ -33,8 +34,10 @@ export interface EqxStatusOption<Id extends string = string> {
 }
 
 export interface EqxStatusFlyoutProps<Id extends string = string> {
-  /** The current option's id. */
-  value: Id;
+  /** The current option's id; null when none applies (e.g. a mixed selection). */
+  value: Id | null;
+  /** The trigger icon while `value` is null (a neutral icon); no option is active then. */
+  emptyIcon?: ReactNode;
   options: readonly EqxStatusOption<Id>[];
   /** Called once with the picked id; the fly-out then closes. */
   onChange: (id: Id) => void;
@@ -49,6 +52,7 @@ export interface EqxStatusFlyoutProps<Id extends string = string> {
 
 export function EqxStatusFlyout<Id extends string = string>({
   value,
+  emptyIcon,
   options,
   onChange,
   tooltip,
@@ -81,7 +85,7 @@ export function EqxStatusFlyout<Id extends string = string>({
     <ClickAwayListener onClickAway={() => setOpen(false)}>
       <Box component="span" ref={anchorRef} sx={{ display: 'inline-flex' }}>
         <EqxIconButton
-          icon={current?.icon}
+          icon={current === undefined ? emptyIcon : current.icon}
           tooltip={tooltip}
           variant="strip"
           status={current?.tone === 'danger' ? 'alert' : 'calm'}

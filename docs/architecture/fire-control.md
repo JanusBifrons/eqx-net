@@ -87,7 +87,7 @@ the target's true hull (`mountInReach`). So:
   ("lock range is the NPC ship's longest gun", "outside it the lock holds but the refresh stops"),
   `npcLockParity.test.ts`, `navalReal/longRangeLock.test.ts`,
   `capitalLockGate.test.ts`, `ColyseusClient.longRangeLock.test.ts`,
-  `TargetAction.test.tsx`, `contactRows.test.ts`.
+  `targetLock.test.tsx`, `contactRows.test.ts`.
 
 **Neutral terrain locks** (plan partitioned-chasing-lark, PR 2). Mining lasers
 and tractors lock what they work on (#19), so terrain is lockable: asteroids
@@ -489,7 +489,7 @@ Target keys: `s:<entityId>` (swarm) or `p:<id>`, a player's ship: an ACTIVE
 ship by its pilot's playerId, or a parked hull flown by an AI pilot by its
 shipInstanceId (owner: "lock it like any player's ship"). The `p:` id is the
 ship's key in the client's one ship list, so the lock line, contacts,
-`lockSelected`, `TargetAction` and every mark resolve it through
+`lockSelected`, `useTargetLock` and every mark resolve it through
 `mirror.ships.get` with no second lookup. `FireControlLocks.resolveLockTarget` is the
 one resolver for both (hull: `lingeringSlots` + `isLingeringHull`, pose from
 `lingeringPoseCache`); the rules are the same (another player's ship runs the
@@ -565,7 +565,7 @@ Locks: `tests/integration/sectorRoom/lockAiFlownHull.test.ts`,
   (`threatPointerRadius`); the faint full ring stays.
   Lock: `lockMarkFrame.test.ts`.
 - HUD: `WeaponStrip`, `LockStatusBand` (polls the mirror at 10 Hz, re-renders on
-  change), `TargetAction` (LOCK / CANCEL LOCK / UNLOCK), `MouseLock` (desktop).
+  change), the left strip's Target button (`useTargetLock` in `components/targetLock.ts`: lock / cancel lock / unlock, `data-state`), `MouseLock` (desktop).
 - Contacts overview (`ContactsOverview`, O key / CONTACTS tab, left edge): an
   EVE-style list of lockable contacts with distance, reach and lock state;
   a tap sends `lock_request` for the active group, a tap on its own lock
@@ -596,7 +596,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 
 The per-weapon picker is GONE. Each ship fires its **catalogue-bound loadout** (scout/fighter/heavy/gunship → bolts, interceptor → beams, missile-frigate → missiles); the server ignores any claimed `weapon` field (Step 3). The pilot now selects the active **weapon slot**, not the weapon type.
 
-- `activeSlotId: string` is in Zustand (discrete UI selection — purity-clean). Slot selection lives in the **weapon-slot action of [SpeedDialMenu](../../src/client/components/SpeedDialMenu.tsx)** (`data-testid="slot-selector"`, `data-slot-id` = the hot slot) — it cycles to the next of the local ship's `slots`; today every gameplay ship has one slot so the cycle is a no-op affordance, forward-compatible with multi-slot kinds. (Pre-2026-06 this was a standalone `SlotSelector.tsx` `ToggleButtonGroup`; the speed-dial refactor consolidated it.) `Keyboard.ts` no longer binds 1/2/Q. `setActiveSlotId` clears `lastFireMs` so a slot swap resets the cooldown gate.
+- `activeSlotId: string` is in Zustand (discrete UI selection — purity-clean). No UI cycles it any more: the speed dial's weapon-slot action went with the dial (UI language plan A7, 2026-11-22), and weapon choice is the HUD weapon strip (`hud/WeaponStrip.tsx`, `fc-strip`, one chip per fire-control group → `activeGroupId`). (Pre-2026-06 a standalone `SlotSelector.tsx`, then the dial's action, cycled it.) `Keyboard.ts` no longer binds 1/2/Q. `setActiveSlotId` clears `lastFireMs` so a slot swap resets the cooldown gate.
 - `ColyseusClient.tickPhysics()` derives the firing weapon from the active slot's first mount (`localShipMounts()` → `resolveSlotMounts(kind, activeSlotId)`), computes the slot cooldown as the **max** over the slot's mounts, and clears `liveBeam` when the slot's weapon isn't hitscan. `sendFire()` spawns each ghost with its mount's bound `weaponId` and sends `{ weapon: slotWeapon, slotId: activeSlotId }`.
 - **Energy** is the local player's PREDICTED resource (`ColyseusClient.predEnergy`): regen + boost drain in `tickPhysics`, fire drain (once per slot trigger) in `sendFire`, hard-reconciled from `snap.states[localId].energy` each snapshot. Read per-frame by the GameHud status capsule's energy fill (`useEnergyFill`, bottom-centre on desktop and landscape phones, top-centre on portrait phones) via `getGameClient().getPredictedEnergy()` + a direct-DOM `scaleX` write — NEVER a per-frame Zustand write (Invariant #2). `energyMax` (the constant-per-kind denominator) is the one Zustand read, set on spawn. Local ghost fire/boost is gated on `canAfford(predEnergy, slotCost)` so prediction matches the server's gating. `data-energy-pct` is the E2E hook. Energy math is the shared pure `src/core/combat/Energy.ts`. Regression: [tests/e2e/energy-bar.spec.ts](../../tests/e2e/energy-bar.spec.ts) + reworked [tests/e2e/weapon-switching.spec.ts](../../tests/e2e/weapon-switching.spec.ts).
 

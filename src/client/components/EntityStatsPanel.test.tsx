@@ -11,11 +11,19 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { Profiler } from 'react';
 import { render, screen, fireEvent, act } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
-import { CARD_MAX_W, EntityStatsPanel } from './EntityStatsPanel.js';
+import { EntityStatsPanel } from './EntityStatsPanel.js';
+import { useSelectionPanelData } from './selectionPanelData.js';
+import { useSelectionStripItems } from '../layout/selectionStripItems.js';
 import { selectionStats, applySelectionStats, resetSelectionStats } from '../net/selectionStats.js';
 import { setGameClient } from '../net/clientSingleton.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
 import { SettingsStatus } from './structureSettingsStatus.js';
+
+/** The left strip's quick actions for the same selection (Cargo and Pilot moved there, U3-1). */
+function StripActions(): JSX.Element {
+  const { items, loot } = useSelectionStripItems(useSelectionPanelData());
+  return <>{items}{loot}</>;
+}
 
 // #1046 — the inspector reads the HUD size class (phone = tiny text).
 const hud = vi.hoisted(() => ({ size: "desk" as "phone" | "tablet" | "desk" }));
@@ -79,19 +87,15 @@ describe('EntityStatsPanel', () => {
     expect(panel).toHaveAttribute('data-entity-name', 'Ada');
   });
 
-  // Building-panels A2b: the card docks in the top-centre Slot (App.tsx). It
-  // renders in place (no Portal, no fixed position of its own to be moved
-  // per frame) and is capped to the room the open side panel leaves.
-  it('renders in place for its Slot: not portalled, not fixed, width-capped', () => {
+  // U3-2: the readout is the Details panel body; it renders in place (no
+  // Portal, no fixed position of its own).
+  it('renders in place in the Details panel: not portalled, not fixed', () => {
     applySelectionStats({ id: 'p1', name: 'Ada', hp: 75, hpMax: 100, shield: 30, shieldMax: 60 });
     useUIStore.setState({ selection: { ids: [], focusId: 'p1', focusKind: 'ship' } });
     const { container } = render(<EntityStatsPanel />);
     const panel = screen.getByTestId('entity-stats-panel');
     expect(container.contains(panel)).toBe(true);
     expect(getComputedStyle(panel).position).not.toBe('fixed');
-    // Sideways Pixel 7 (915 px): the side panel is min(360, 0.4 * 915) = 360,
-    // so the centred card may span 915 - 2 * 360 - 16 = 179 px.
-    expect(CARD_MAX_W).toBe('max(120px, 100vw - 2 * clamp(280px, 40vw, 360px) - 16px)');
   });
 
   it('renders a shield bar for a ship and none for a structure', () => {
@@ -99,8 +103,9 @@ describe('EntityStatsPanel', () => {
     applySelectionStats({ id: 'p1', name: 'Ada', hp: 75, hpMax: 100, shield: 30, shieldMax: 60 });
     useUIStore.setState({ selection: { ids: [], focusId: 'p1', focusKind: 'ship' } });
     const { unmount } = render(<EntityStatsPanel />);
-    // Two bar tracks (shield + hull) → look for the SHLD cap.
-    expect(screen.getByText('SHLD')).toBeInTheDocument();
+    // Two bars: shield + hull.
+    expect(screen.getByTestId('entity-stats-shield')).toBeInTheDocument();
+    expect(screen.getByTestId('entity-stats-hull')).toBeInTheDocument();
     unmount();
 
     // Structure: no shield.
@@ -109,7 +114,7 @@ describe('EntityStatsPanel', () => {
     useUIStore.setState({ selection: { ids: [], focusId: '42', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-name')).toHaveTextContent('Turret');
-    expect(screen.queryByText('SHLD')).toBeNull();
+    expect(screen.queryByTestId('entity-stats-shield')).toBeNull();
   });
 
   it('shows a placeholder name until the matching stats packet arrives', () => {
@@ -441,7 +446,7 @@ describe('EntityStatsPanel', () => {
     expect(screen.queryByTestId('entity-stats-guns')).toBeNull();
   });
 
-  it('C1: a BUILT storage structure offers Open cargo (anyone at all); a solar does not', () => {
+  it('C1: a BUILT storage structure offers Open cargo on the strip (anyone at all); a solar does not', () => {
     const swarm = new Map([
       [8, { kind: 2, shipKind: 'cargo_bay', radius: 40, x: 0, y: 0 }],
       [9, { kind: 2, shipKind: 'solar', radius: 40, x: 0, y: 0 }],
@@ -453,13 +458,13 @@ describe('EntityStatsPanel', () => {
     setGameClient(fakeClient({ structures, swarm }));
     applySelectionStats({ id: '8', name: 'Cargo Bay', hp: 300, hpMax: 300 });
     useUIStore.setState({ selection: { ids: [], focusId: 'swarm-8', focusKind: 'structure' } });
-    const { unmount } = render(<EntityStatsPanel />);
+    const { unmount } = render(<StripActions />);
     expect(screen.getByTestId('cargo-open-toggle')).toBeInTheDocument();
     unmount();
     resetSelectionStats();
     applySelectionStats({ id: '9', name: 'Solar Panel', hp: 300, hpMax: 300 });
     useUIStore.setState({ selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
-    render(<EntityStatsPanel />);
+    render(<StripActions />);
     expect(screen.queryByTestId('cargo-open-toggle')).toBeNull();
   });
 
@@ -491,7 +496,7 @@ describe('EntityStatsPanel', () => {
   });
 
   // ── Phase 4 WS-A2 — the in-world Pilot action on an OWNED lingering hull. ──
-  it("shows a Pilot action on the LOCAL player's own lingering hull and sends pilot_ship on click", () => {
+  it("shows a Pilot action (left strip) on the LOCAL player's own lingering hull and sends pilot_ship on click", () => {
     sendPilotShip.mockClear();
     setGameClient(
       fakeClient({
@@ -500,7 +505,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     useUIStore.setState({ selection: { ids: [], focusId: 'ship-mine', focusKind: 'lingering' } });
-    render(<EntityStatsPanel />);
+    render(<StripActions />);
     const btn = screen.getByTestId('ship-action-pilot');
     expect(btn).toBeInTheDocument();
     fireEvent.click(btn);
@@ -548,7 +553,7 @@ describe('EntityStatsPanel', () => {
       }),
     );
     useUIStore.setState({ selection: { ids: [], focusId: 'ship-theirs', focusKind: 'lingering' } });
-    render(<EntityStatsPanel />);
+    render(<StripActions />);
     expect(screen.queryByTestId('ship-action-pilot')).toBeNull();
   });
 

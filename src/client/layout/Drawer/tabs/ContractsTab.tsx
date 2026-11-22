@@ -65,7 +65,6 @@ export const ContractsTab = memo(function ContractsTab(): JSX.Element {
 
   return (
     <Box sx={{ p: 1 }} data-testid="contracts-tab">
-      <Typography sx={{ fontSize: 13, fontWeight: 700, color: '#dffff0', mb: 0.75 }}>Contracts</Typography>
       {contracts === null && <Typography sx={DETAIL_SX}>Loading…</Typography>}
       {contracts !== null && contracts.length === 0 && (
         <Typography sx={DETAIL_SX} data-testid="contracts-empty">

@@ -1,14 +1,13 @@
 import { Box, CircularProgress } from '@mui/material';
 import { GATE_ACCESS_LABELS } from '@shared-types/gateAccess';
-import { hullColor } from '../hud/tokens';
-import { Bar } from './inspectorBar';
+import { EqxBar } from '../../ui/index.js';
 import { phoneTiny } from './inspectorSizes';
 import { ELLIPSIS_SX } from './EntityStatsHeader';
 import type { PanelData } from './EntityStatsPanel';
 
 /**
- * Readout rows of the click-to-inspect panel (`EntityStatsPanel`): shield/hull
- * bars (or the info line / pending spinner) for non-structures, the battery
+ * Readout rows of the Details panel body (`EntityStatsPanel`): shield/hull
+ * bars (EqxBar) (or the info line / pending spinner) for non-structures, the battery
  * charge bar, and the gun / gate readout lines.
  */
 export function EntityStatsBars({ data }: { data: PanelData }): JSX.Element {
@@ -27,21 +26,12 @@ export function EntityStatsBars({ data }: { data: PanelData }): JSX.Element {
           </Box>
         ) : (
           <>
-            {data.shieldPct !== null && (
-              <>
-                <Cap>SHLD</Cap>
-                <Bar pct={data.shieldPct} color={SHIELD_COLOR} />
-              </>
-            )}
-            <Cap>HULL</Cap>
-            <Bar pct={data.hpPct} color={hullColor(data.hpPct)} />
+            {data.shieldPct !== null && <EqxBar label="Shield" tone="shield" pct={data.shieldPct} data-testid="entity-stats-shield" />}
+            <EqxBar label="Hull" pct={data.hpPct} data-testid="entity-stats-hull" />
           </>
         ))}
       {hasCharge && (
-        <>
-          <Cap>CHRG</Cap>
-          <Bar pct={chargePct} color={CHARGE_COLOR} />
-        </>
+        <EqxBar label="Charge" tone="charge" pct={chargePct} data-testid="entity-stats-charge" />
       )}
       {data.gunLine !== undefined && (
         // Coastal defences — reload + firing arc per gun size.
@@ -62,19 +52,6 @@ export function EntityStatsBars({ data }: { data: PanelData }): JSX.Element {
   );
 }
 
-const SHIELD_COLOR = '#36c8ff';
-const CHARGE_COLOR = '#cc8844';
-
-function Cap({ children }: { children: string }): JSX.Element {
-  return <Box component="span" sx={CAP_SX}>{children}</Box>;
-}
-
-const CAP_SX = {
-  ...phoneTiny({ fontSize: [8, 16] }),
-  letterSpacing: 0.5,
-  color: 'rgba(255,255,255,0.45)',
-  textTransform: 'uppercase' as const,
-};
 const POWER_SX = {
   gridColumn: '1 / -1',
   ...phoneTiny({ fontSize: [8, 16] }),

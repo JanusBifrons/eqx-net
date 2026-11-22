@@ -35,7 +35,10 @@ describe('rail space anchors', () => {
     const s = ANCHOR_STYLES['left-strip'];
     expect(s.position).toBe('fixed');
     expect(String(s.left)).toContain('safe-area-inset-left');
-    expect(s.top).toBe('50%');
+    // Centred at 57% while it fits, never above the top-left HUD (leftStripFit.ts).
+    expect(String(s.top)).toContain('57%');
+    expect(String(s.top)).toContain('--hud-tl-bottom');
+    expect(String(s.top)).toContain('--left-strip-h');
     expect(s.zIndex).toBe(Z.railStrip);
   });
 });
@@ -44,7 +47,7 @@ describe('z tiers (plan B2)', () => {
   it('full order, lowest to highest', () => {
     const order = (Object.keys(Z) as (keyof typeof Z)[]).sort((a, b) => Z[a] - Z[b]);
     expect(order).toEqual([
-      'canvas', 'hud', 'mobileControls', 'hudOverSticks', 'railStrip', 'drawer', 'appBar',
+      'canvas', 'hud', 'mobileControls', 'hudOverSticks', 'panel', 'railStrip', 'drawer', 'appBar',
       'overlay', 'modal', 'prompt', 'transit', 'rotatePrompt',
     ]);
     expect(new Set(Object.values(Z)).size).toBe(Object.keys(Z).length);

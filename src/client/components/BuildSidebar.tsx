@@ -2,19 +2,18 @@
  * The Build menu: a right-hand side panel (SidePanel.tsx). Build mode is the
  * only way in (owner, 2026-11-22: one way to build): entering Build opens it, and
  * tapping Build again while in Build brings it back after a ✕
- * ({@link requestBuildSidebar}). The speed dial no longer builds. A vertical rail of the build
+ * ({@link requestBuildSidebar}, also the rail's Build item). A vertical rail of the build
  * categories (buildCategories.tsx) runs down its LEFT edge; the active category
  * shows a grid of kind tiles (BuildKindTile.tsx, drawn by the shared HullTile).
  * A tile tap is the dial's old kind pick (`onPick` → `setPlacementKind`);
- * SpeedDialMenu owns the open flag. Under the grid, a details strip shows the
+ * BuildSidebarHost owns the open flag. Under the grid, a details strip shows the
  * hovered (desktop) or last tapped kind: a locked tile's tap shows why.
  *
  * One right panel at a time: opening this clears `structureSettingsOpen`, which
  * closes the building settings panel; that panel opening announces a game
- * window, which closes this (SpeedDialMenu's onGameWindowOpen).
+ * window, which closes this (BuildSidebarHost's onGameWindowOpen).
  *
- * Its ✕ (SidePanel draws the header; it covers the top-right dial; on a phone the
- * header shares the top-right toolbar's row), Esc (SidePanel) and a swipe on the
+ * Its ✕ (SidePanel draws the header; the panel covers the top-right toolbar), Esc (SidePanel) and a swipe on the
  * handle close it. The active category is local state (presentation only), kept
  * across closes so the next structure is one tap away.
  *
@@ -43,7 +42,7 @@ import { buildMenuKeyAction, setBuildMenuKeysOpen, stepCategory } from '../input
 
 const reopenListeners = new Set<() => void>();
 /** Run `fn` when the Build mode switch asks for the sidebar again (a Build tap
- *  while already in Build); returns the unsubscribe. SpeedDialMenu owns the
+ *  while already in Build); returns the unsubscribe. BuildSidebarHost owns the
  *  open flag and listens. */
 export function onBuildSidebarRequest(fn: () => void): () => void {
   reopenListeners.add(fn);

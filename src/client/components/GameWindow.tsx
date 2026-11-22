@@ -54,8 +54,8 @@ export const WINDOW_BTN_SECONDARY_SX = { ...WINDOW_BTN_BASE_SX, borderColor: C.p
 
 const openListeners = new Set<() => void>();
 /**
- * Run `fn` each time a game window opens; returns the unsubscribe. The speed
- * dial (SpeedDialMenu.tsx) collapses itself on it, so its open build menu never
+ * Run `fn` each time a game window opens; returns the unsubscribe. The Build
+ * sidebar (BuildSidebarHost.tsx) closes itself on it, so the open build menu never
  * pokes out from under a window.
  */
 export function onGameWindowOpen(fn: () => void): () => void {

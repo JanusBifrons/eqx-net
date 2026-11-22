@@ -148,6 +148,16 @@ describe('EqxStatusFlyout', () => {
     expect(warn).not.toHaveBeenCalled();
   });
 
+  it('no current value: the trigger shows emptyIcon and no option is active', () => {
+    render(
+      <EqxStatusFlyout value={null} emptyIcon={<EqxIcon name="mixed" />} options={OPTIONS} onChange={vi.fn()}
+        tooltip="Stance" data-testid="stance" />,
+    );
+    expect(screen.getByTestId('stance').querySelector('svg')).not.toBeNull();
+    fireEvent.click(screen.getByTestId('stance'));
+    for (const o of OPTIONS) expect(screen.getByTestId(`stance-option-${o.id}`).dataset['active']).toBe('false');
+  });
+
   it('disabled trigger does not open', () => {
     render(<EqxStatusFlyout value="hold" options={OPTIONS} onChange={vi.fn()} tooltip="Stance" disabled data-testid="stance" />);
     fireEvent.click(screen.getByTestId('stance'));
