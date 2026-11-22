@@ -2,18 +2,24 @@
  * EqxStrip: the left strip, one icon column (UI language plan A5).
  * - Children: EqxIconButton, EqxStripIdentity and EqxStrip.Separator only;
  *   anything else warns in dev. No text at all except count badges.
- * - Width is exactly one button (`HUD.size.iconButton`) plus the theme gap
- *   (`theme.spacing(1)`, the same 8 px as the layout STACK_GAP); every button centred.
+ * - Look = the mock .lbar: docked to the left edge (no left border, square left
+ *   corners), `HUD.strip` paper / edge / padding / gap. Width is exactly one strip
+ *   tile (`HUD.strip.tile`) plus padding and the right border; every tile centred.
+ *   Children use EqxIconButton `variant="strip"`.
  * - `open` (optional) slides it in from the left (MUI `Slide`), fully out of view
  *   when closed; duration / easing from `HUD.motion`; instant under
  *   prefers-reduced-motion. Omit `open` for an always-shown strip.
  * - Does not position itself: a layout Slot mounts it.
  */
-import { Box, Divider, Slide, useMediaQuery, useTheme } from '@mui/material';
+import { Box, Divider, Slide, useMediaQuery } from '@mui/material';
 import { Children, isValidElement, type ReactNode } from 'react';
 import { HUD } from '../../client/hud/tokens.js';
 import { EqxIconButton } from '../EqxIconButton/EqxIconButton.js';
 import { EqxStripIdentity } from '../EqxStripIdentity/EqxStripIdentity.js';
+
+const S = HUD.strip;
+/** Strip thickness: one tile + padding both sides + the one (right) border. */
+export const STRIP_WIDTH = S.tile + 2 * S.pad + 1;
 
 export interface EqxStripProps {
   /** EqxIconButton / EqxStripIdentity / EqxStrip.Separator only. */
@@ -35,7 +41,12 @@ function EqxStripSeparator({ 'data-testid': testId }: EqxStripSeparatorProps) {
     <Divider
       flexItem
       data-testid={testId}
-      sx={{ alignSelf: 'center', width: HUD.size.iconButton / 2, borderColor: HUD.color.panelEdge }}
+      sx={{
+        alignSelf: 'center',
+        width: S.tile - 2 * S.sepInset,
+        my: `${S.sepMargin}px`,
+        borderColor: S.edge,
+      }}
     />
   );
 }
@@ -57,9 +68,7 @@ function warnOnForeignChildren(children: ReactNode): void {
 
 export function EqxStrip({ children, open, 'aria-label': ariaLabel, 'data-testid': testId }: EqxStripProps) {
   warnOnForeignChildren(children);
-  const theme = useTheme();
   const reduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)');
-  const gap = Number.parseFloat(theme.spacing(1));
   const column = (
     <Box
       role="toolbar"
@@ -69,14 +78,16 @@ export function EqxStrip({ children, open, 'aria-label': ariaLabel, 'data-testid
       data-open={open === undefined ? undefined : String(open)}
       sx={{
         boxSizing: 'border-box',
-        width: HUD.size.iconButton + gap,
-        padding: `${gap / 2}px`,
+        width: STRIP_WIDTH,
+        padding: `${S.pad}px`,
         display: 'flex',
         flexDirection: 'column',
         alignItems: 'center',
-        gap: `${gap / 2}px`,
-        bgcolor: HUD.color.panel,
-        borderRadius: `${(HUD.size.iconButton + gap) / 2}px`,
+        gap: `${S.gap}px`,
+        bgcolor: S.bg,
+        border: `1px solid ${S.edge}`,
+        borderLeft: 0,
+        borderRadius: `0 ${S.radius}px ${S.radius}px 0`,
         pointerEvents: 'auto',
       }}
     >

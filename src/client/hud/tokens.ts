@@ -83,6 +83,51 @@ export const HUD = {
     /** A dragged panel snapping back to docked, ms. */
     snapBackMs: 160,
   },
+  /**
+   * Left strip + status fly-out look (owner-approved mock .lbar / .ib / .flyo,
+   * 1cqw = 9.15 px on a 915 px sideways phone). Px and colours.
+   */
+  strip: {
+    /** Strip / fly-out box paper. */
+    bg: 'rgba(8,12,24,0.97)',
+    /** Tile / strip / separator edge (mock --edge2). */
+    edge: 'rgba(160,200,255,0.3)',
+    /** Tile well (mock --cell). */
+    cell: '#0f1729',
+    /** Icon on a filled green "ok" tile. */
+    okInk: '#03140a',
+    /** Edge of a red "no" (stop / cancel) tile. */
+    noEdge: 'rgba(255,77,106,0.5)',
+    /** Edge of a cyan status tile. */
+    statusEdge: 'rgba(53,214,255,0.45)',
+    /** Count badge text on the gold pill. */
+    badgeInk: '#140c00',
+    /** Square tile side (3.9cqw). */
+    tile: 36,
+    /** Tile corner radius (.6cqw). */
+    tileRadius: 5,
+    /** Line icon size inside a tile (2cqw). */
+    icon: 18,
+    /** Strip padding (.5cqw) and gap between tiles (.45cqw). */
+    pad: 5,
+    gap: 4,
+    /** Strip right-hand corner radius (.8cqw); the left edge is docked square. */
+    radius: 7,
+    /** Separator side inset (.3cqw) and vertical margin (.15cqw). */
+    sepInset: 3,
+    sepMargin: 1,
+    /** Count badge pill: side (1.6cqw), offset past the tile corner (.5cqw), font (.9cqw). */
+    badge: 15,
+    badgeOffset: 5,
+    badgeFont: 8,
+    /** Fly-out: gap from the tile (.8cqw), radius (.7cqw), gap between options (.5cqw). */
+    flyOffset: 7,
+    flyRadius: 6,
+    flyGap: 5,
+    /** Fly-out slide-in: distance (1cqw) and duration. */
+    flyInPx: 9,
+    flyInMs: 220,
+  },
 } as const;
 
 export function hullColor(pct: number): string {

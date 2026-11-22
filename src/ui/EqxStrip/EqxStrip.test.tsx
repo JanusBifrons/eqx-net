@@ -4,7 +4,7 @@ import RocketIcon from '@mui/icons-material/RocketLaunch';
 import StopIcon from '@mui/icons-material/Stop';
 import SettingsIcon from '@mui/icons-material/Settings';
 import CloseIcon from '@mui/icons-material/Close';
-import { EqxStrip } from './EqxStrip.js';
+import { EqxStrip, STRIP_WIDTH } from './EqxStrip.js';
 import { EqxIconButton } from '../EqxIconButton/EqxIconButton.js';
 import { EqxStripIdentity } from '../EqxStripIdentity/EqxStripIdentity.js';
 import { HUD } from '../../client/hud/tokens.js';
@@ -12,9 +12,6 @@ import { HUD } from '../../client/hud/tokens.js';
 afterEach(() => {
   vi.restoreAllMocks();
 });
-
-/** Theme gap (`theme.spacing(1)` in the default MUI theme = layout STACK_GAP). */
-const GAP = 8;
 
 function SelectionStrip({ open, count }: { open?: boolean; count?: number }) {
   return (
@@ -26,10 +23,10 @@ function SelectionStrip({ open, count }: { open?: boolean; count?: number }) {
         data-testid="identity"
         {...(count === undefined ? {} : { count })}
       />
-      <EqxIconButton icon={<StopIcon />} tooltip="Stop" tone="danger" badge={2} />
+      <EqxIconButton variant="strip" icon={<StopIcon />} tooltip="Stop" tone="danger" badge={2} />
       <EqxStrip.Separator data-testid="sep" />
-      <EqxIconButton icon={<SettingsIcon fontSize="large" />} tooltip="Menu" />
-      <EqxIconButton icon={<CloseIcon />} tooltip="Deselect" />
+      <EqxIconButton variant="strip" icon={<SettingsIcon fontSize="large" />} tooltip="Menu" />
+      <EqxIconButton variant="strip" icon={<CloseIcon />} tooltip="Deselect" />
     </EqxStrip>
   );
 }
@@ -60,7 +57,7 @@ describe('EqxStrip', () => {
     render(<SelectionStrip />);
     const buttons = screen.getAllByRole('button');
     expect(buttons.length).toBe(4);
-    const px = `${HUD.size.iconButton}px`;
+    const px = `${HUD.strip.tile}px`;
     for (const b of buttons) {
       const cs = getComputedStyle(b);
       expect({ w: cs.width, h: cs.height }).toEqual({ w: px, h: px });
@@ -69,16 +66,26 @@ describe('EqxStrip', () => {
     }
   });
 
-  it('is one centred column exactly one button plus the gap wide, not self-positioned', () => {
+  it('is one centred column exactly one tile plus padding wide, not self-positioned', () => {
     render(<SelectionStrip />);
     const strip = screen.getByRole('toolbar', { name: 'Selection' });
     const cs = getComputedStyle(strip);
     expect(cs.flexDirection).toBe('column');
     expect(cs.alignItems).toBe('center');
     expect(cs.boxSizing).toBe('border-box');
-    expect(cs.width).toBe(`${HUD.size.iconButton + GAP}px`);
+    expect(cs.width).toBe(`${STRIP_WIDTH}px`);
     expect(cs.position).not.toBe('fixed');
     expect(cs.position).not.toBe('absolute');
+  });
+
+  it('is docked to the left edge: no left border, square left corners (mock .lbar)', () => {
+    render(<SelectionStrip />);
+    const cs = getComputedStyle(screen.getByTestId('strip'));
+    expect(cs.borderLeftWidth === '0' || cs.borderLeftWidth === '0px' || cs.borderLeftStyle === 'none').toBe(true);
+    expect(cs.borderRightWidth).toBe('1px');
+    expect(cs.borderRadius).toBe(`0 ${HUD.strip.radius}px ${HUD.strip.radius}px 0`);
+    expect(cs.padding).toBe(`${HUD.strip.pad}px`);
+    expect(cs.gap).toBe(`${HUD.strip.gap}px`);
   });
 
   it('separator is a thin rule with no text', () => {
@@ -92,7 +99,7 @@ describe('EqxStrip', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     render(
       <EqxStrip>
-        <EqxIconButton icon={<StopIcon />} tooltip="Stop" />
+        <EqxIconButton variant="strip" icon={<StopIcon />} tooltip="Stop" />
         <span>Stop</span>
       </EqxStrip>,
     );
@@ -108,7 +115,7 @@ describe('EqxStrip', () => {
 
   it('open=false slides it fully out of view to the left', () => {
     // jsdom has no layout: give the strip a slot position (16 px in, one strip wide).
-    const width = HUD.size.iconButton + GAP;
+    const width = STRIP_WIDTH;
     vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockReturnValue({
       left: 16, top: 0, right: 16 + width, bottom: 200, width, height: 200, x: 16, y: 0, toJSON: () => ({}),
     } as DOMRect);
