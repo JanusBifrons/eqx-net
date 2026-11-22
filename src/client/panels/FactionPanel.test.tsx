@@ -41,6 +41,9 @@ describe('FactionPanel (U2-7)', () => {
     expect(screen.getByTestId('faction-page-factions')).toBeTruthy();
     expect(screen.getByTestId('factions-tab')).toBeTruthy();
     expect(screen.getByTestId('faction-row-look')).toBeTruthy();
+    // The drill-down row sits above the standings so it is on screen on a phone.
+    const look = screen.getByTestId('faction-row-look');
+    expect(look.compareDocumentPosition(screen.getByTestId('factions-tab')) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.queryByTestId('eqx-panel-back')).toBeNull();
     await waitFor(() => expect(screen.getAllByTestId('faction-row')).toHaveLength(1));
   });
