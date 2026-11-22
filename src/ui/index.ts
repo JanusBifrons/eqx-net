@@ -8,3 +8,5 @@ export { EqxButton, TONE_COLOR, type EqxButtonProps, type EqxButtonSize, type Eq
 export { EqxIconButton, type EqxIconButtonProps } from './EqxIconButton/EqxIconButton.js';
 export { EqxTooltip, type EqxTooltipProps } from './EqxTooltip/EqxTooltip.js';
 export { EqxSwitch, type EqxSwitchProps } from './EqxSwitch/EqxSwitch.js';
+export { EQX_ICONS, EQX_ICON_NAMES, type EqxIconName } from './icons.js';
+export { EqxIcon, type EqxIconProps, type EqxIconSize } from './EqxIcon/EqxIcon.js';
