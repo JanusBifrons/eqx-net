@@ -25,7 +25,7 @@ import { ENTITY_VISUALS, entityBadgePolygon, type EntityKind } from '../render/e
 import { FAILSAFE_COLOUR, THREAT_COLOUR_HEX, groupColourHex } from '../hud/groupColours';
 import { HUD } from '../hud/tokens';
 import {
-  buildContactRows, contactTapAction, contactsSignature, formatContactKm, sortContacts,
+  DEFAULT_CONTACT_SORT, buildContactRows, contactTapAction, contactsSignature, formatContactKm, sortContacts,
   type ContactRow, type GroupReach,
 } from '../components/contactRows';
 
@@ -63,7 +63,8 @@ function poll(activeGroupId: string | null, groupIds: ReadonlyArray<string>, hos
   const c = getGameClient();
   if (!c) return { rows: [], sig: '' };
   const reaches: GroupReach[] = groupIds.map((id) => ({ id, reach: c.fcGroupReach(id) }));
-  const rows = sortContacts(buildContactRows(c.mirror, activeGroupId, reaches), hostilesFirst);
+  const rows = sortContacts(buildContactRows(c.mirror, activeGroupId, reaches),
+    hostilesFirst ? [{ key: 'stance', dir: 'asc' }, { key: 'dist', dir: 'asc' }] : DEFAULT_CONTACT_SORT);
   return { rows, sig: contactsSignature(rows) };
 }
 
