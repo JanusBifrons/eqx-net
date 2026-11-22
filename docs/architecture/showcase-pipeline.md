@@ -60,12 +60,12 @@ Output (gitignored) lands in `showcase-out/`:
      dropping their frames.
    - **Phone shots** are pillarboxed into the 16:9 frame.
    - **Captions:** a lower-third, rendered from HTML, fades in and out.
-     When the RTS fleet map-pick bar shows along the bottom, the recorder reads its
-     top edge (`fleet-pick`, after setup, after each `ctx.spectate()` and at
+     When a bottom HUD bar shows (the spectator build bar), the recorder reads its
+     top edge (after setup, after each `ctx.spectate()` and at
      the end; `bottomHudTop` in `manifest.json`) and the caption's box ends
      16 px above it (`captionPlacement.ts`). Without it the caption keeps its
-     default place. (The old bottom build bar is gone: building is in the
-     Build sidebar.) The game UI is never moved or hidden (record as is).
+     default place. (The fleet map-pick tools live on the left strip, so
+     they never move the caption.) The game UI is never moved or hidden (record as is).
 6. **QA.** Each shot gets up to 3 takes and keeps the smoothest (see "Frame
    rate" below). A clip is flagged, never silently used, if its best take:
    - delivered < 55 fps or had a frame gap > 100 ms (at 60 fps output);

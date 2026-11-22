@@ -36,7 +36,7 @@ function renderSidebar(open = true): { onClose: ReturnType<typeof vi.fn>; onPick
 
 describe('BuildSidebar', () => {
   beforeEach(() => {
-    useUIStore.setState({ placementKind: null, fleetPick: null, packedStock: null, currentSectorKey: '0,0', structureSettingsOpen: false });
+    useUIStore.setState({ placementKind: null, fleetPick: null, packedStock: null, currentSectorKey: '0,0' });
   });
   afterEach(() => { cleanup(); useUIStore.setState({ currentSectorKey: null }); });
 
@@ -160,12 +160,6 @@ describe('BuildSidebar', () => {
     expect(screen.queryByTestId('build-rail')).toBeNull();
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(onClose).not.toHaveBeenCalled();
-  });
-
-  it('opening it clears the building settings flag (one right panel at a time)', () => {
-    useUIStore.setState({ structureSettingsOpen: true });
-    renderSidebar();
-    expect(useUIStore.getState().structureSettingsOpen).toBe(false);
   });
 
   it('no ×0 badge on a buildable kind with no crate; a ×2 badge with two', () => {

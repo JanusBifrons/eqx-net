@@ -10,12 +10,17 @@
  * only). The current values come from the structure slice (`switchedOff`,
  * `throttle` decoded from the flags), read by the Power tab's 4 Hz poll, so
  * the window follows the server.
+ *
+ * `PowerTab` is the Power page of the building settings section in the
+ * Details panel (StructureSettings.tsx): the numbers, then these controls.
  */
 import { useEffect, useState } from 'react';
 import { Box, Slider, Switch } from '@mui/material';
 import { HUD } from '../hud/tokens';
 import { WINDOW_BTN_SECONDARY_SX } from './GameWindow';
-import { hasPowerSwitch, hasPowerThrottle, signed, type PowerSummary } from './structureSettingsPower';
+import { hasPowerSwitch, hasPowerThrottle, powerSummary, signed, type PowerSummary } from './structureSettingsPower';
+import { getGameClient } from '../net/clientSingleton';
+import { GRID_SX, LABEL_SX, ROW_SX, SETTINGS_POLL_MS, VALUE_SX } from './structureSettingsSx';
 import { GridBar, HeldNote } from './structureSettingsPowerBar';
 import { sendSetStructurePower } from '../structures/structureActionsClient';
 import { getStructureKind } from '@shared-types/structureKinds';
@@ -89,6 +94,52 @@ export function PowerControls({ entityId, kindId, p, labelSx }: PowerControlsPro
         </>
       )}
     </>
+  );
+}
+
+/** The building's kind id from the render mirror (low cadence only). */
+export function readStructureKind(entityId: number): string | undefined {
+  return getGameClient()?.mirror.swarm?.get(entityId)?.shipKind;
+}
+
+function readPower(entityId: number): PowerSummary | null {
+  const st = getGameClient()?.mirror.structures?.get(entityId);
+  const kindId = readStructureKind(entityId);
+  return st && kindId ? powerSummary(kindId, st) : null;
+}
+
+function samePower(a: PowerSummary | null, b: PowerSummary | null): boolean {
+  if (a === null || b === null) return a === b;
+  return a.selfPower === b.selfPower && a.load === b.load && a.gridNet === b.gridNet && a.powered === b.powered
+    && a.on === b.on && a.throttle === b.throttle && a.prodState === b.prodState && a.storedPower === b.storedPower;
+}
+
+const LOAD_LABEL: Record<PowerSummary['load'], string> = { full: 'Full (working)', idle: 'Idle (trickle)', none: 'Never draws' };
+
+function drawNowText(p: PowerSummary): string {
+  if (p.selfPower > 0) return `${signed(p.selfPower)} (making)`;
+  if (p.selfPower === 0) return '0';
+  return p.powered ? signed(p.selfPower) : `${signed(p.selfPower)} (unpowered)`;
+}
+
+/** The Power page: draw now, load, grid net, then the owner's controls. Re-reads the mirror at 4 Hz while shown. */
+export function PowerTab({ entityId }: { entityId: number }): JSX.Element {
+  const [p, setP] = useState<PowerSummary | null>(() => readPower(entityId));
+  useEffect(() => {
+    const h = window.setInterval(() => setP((prev) => {
+      const next = readPower(entityId);
+      return samePower(prev, next) ? prev : next;
+    }), SETTINGS_POLL_MS);
+    return () => window.clearInterval(h);
+  }, [entityId]);
+  if (p === null) return <Box sx={ROW_SX}>No power data</Box>;
+  return (
+    <Box data-testid="structure-settings-power" data-self-power={p.selfPower} data-load={p.load} data-grid-net={p.gridNet} sx={GRID_SX}>
+      <Box sx={LABEL_SX}>Draw now</Box><Box sx={VALUE_SX} data-testid="settings-power-draw">{drawNowText(p)}</Box>
+      <Box sx={LABEL_SX}>Load</Box><Box sx={VALUE_SX} data-testid="settings-power-load">{LOAD_LABEL[p.load]}</Box>
+      <Box sx={LABEL_SX}>Grid net</Box><Box sx={VALUE_SX} data-testid="settings-power-grid">{signed(p.gridNet)}</Box>
+      <PowerControls entityId={entityId} kindId={readStructureKind(entityId) ?? ''} p={p} labelSx={LABEL_SX} />
+    </Box>
   );
 }
 

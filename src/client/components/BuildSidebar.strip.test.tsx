@@ -27,7 +27,7 @@ function renderStrip(): { onPick: ReturnType<typeof vi.fn>; onExpand: ReturnType
 
 describe('BuildSidebar strip mode', () => {
   beforeEach(() => {
-    useUIStore.setState({ placementKind: 'solar', rightPanel: null, fleetPick: null, packedStock: null, currentSectorKey: '0,0', structureSettingsOpen: false });
+    useUIStore.setState({ placementKind: 'solar', rightPanel: null, fleetPick: null, packedStock: null, currentSectorKey: '0,0' });
   });
   afterEach(() => { cleanup(); isTouch.mockReturnValue(false); useUIStore.setState({ placementKind: null, currentSectorKey: null }); });
 

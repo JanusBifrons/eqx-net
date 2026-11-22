@@ -37,7 +37,7 @@ let disposeFc: (() => void) | null = null;
 describe('BuildSidebar keys', () => {
   beforeEach(() => {
     useUIStore.setState({
-      placementKind: null, packedStock: null, currentSectorKey: '0,0', structureSettingsOpen: false,
+      placementKind: null, packedStock: null, currentSectorKey: '0,0',
       fcGroups: [
         { id: 'g1', name: 'One', mode: 'manual', colour: 0, capacity: 1, locks: [] },
         { id: 'g2', name: 'Two', mode: 'manual', colour: 1, capacity: 1, locks: [] },

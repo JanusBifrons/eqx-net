@@ -279,6 +279,10 @@ function GameSurface({
   useEffect(() => {
     if (fleetPickDoneSeq > 0) rendererRef.current?.commitFleetPick();
   }, [fleetPickDoneSeq]);
+  const fleetPickUndoSeq = useUIStore((s) => s.fleetPick?.undoSeq ?? 0);
+  useEffect(() => {
+    if (fleetPickUndoSeq > 0) rendererRef.current?.undoFleetPickPoint();
+  }, [fleetPickUndoSeq]);
 
   // Radar (plan sparkling-wondering-rose) — clear the off-screen radar only
   // while IN_TRANSIT / ARRIVED (the mirror still holds the OLD sector). It stays

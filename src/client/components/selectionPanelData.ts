@@ -20,7 +20,7 @@ import { isAlienGateKind, isTeleporterKind } from '../../shared-types/teleport';
 import { alienGateLine } from './alienGateInfo';
 import { getStructureKind } from '@shared-types/structureKinds';
 import { structureGunLines } from './structureGunLines';
-import { structureSelfPower } from './structureSettingsPower';
+import { hasPowerSwitch, structureSelfPower } from './structureSettingsPower';
 import type { PickedEntityKind } from '../render/pickEntity';
 import { droneName, parkedHullLabels, parseEntityId, structureName, structureSliceFor, structureSubtype } from './entityStatsLookups';
 import { buildStalledLine, isBuildAwaitingClear } from '../structures/buildAwaitingClear';
@@ -77,6 +77,8 @@ export interface PanelData {
   storedPowerMax?: number;
   /** The owner switched it Off (power icon grey). */
   switchedOff?: boolean;
+  /** My own building of a kind its owner may switch On/Off (`hasPowerSwitch`): the strip's Power fly-out. */
+  powerSwitch?: boolean;
   /** Owner in display form ("you", their name or "Unknown"; never a raw id) —
    *  so players can identify whose base it is. */
   owner?: string;
@@ -151,7 +153,7 @@ export interface PanelData {
 // field forces a deliberate decision here instead of silently mis-comparing.
 const PANEL_DATA_KEYS: ReadonlyArray<keyof PanelData> = [
   'name', 'hpPct', 'shieldPct', 'pending', 'noHull', 'infoLine', 'buildPct', 'buildBlocked', 'buildStalled', 'powered', 'built',
-  'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'switchedOff', 'owner',
+  'netPower', 'selfPower', 'storedPower', 'storedPowerMax', 'switchedOff', 'powerSwitch', 'owner',
   'entityId', 'isOwn', 'isStructure', 'level', 'pilotShipId',
   'holdLine', 'canRefine', 'gateAccess', 'bountyTarget', 'blueprints',
   'recipe', 'prodState', 'prodStatus', 'makes', 'prodPct', 'gunLine', 'noAmmo', 'noFuel', 'breach',
@@ -230,6 +232,8 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
         data.owner = structureOwnerLabel(st.owner, st.ownerName, localId);
         // Phase-1 issue 6 — action buttons are OWN-only.
         data.isOwn = st.owner === localId;
+        // The strip's Power fly-out: my own building of a kind its owner may switch.
+        if (data.isOwn && subtype && hasPowerSwitch(subtype)) data.powerSwitch = true;
       }
       // The numeric id to act on; the render gates the buttons on `isOwn`.
       const eid = parseEntityId(id);

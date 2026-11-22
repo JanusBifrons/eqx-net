@@ -7,7 +7,6 @@ import { MODE_LABELS, STANCE_LABELS } from '../fleet/fleetView.js';
 import type { FleetCommands } from '../fleet/fleetCommands.js';
 import { resolveFleetCommands, useFleetSelectionView } from '../fleet/useFleetSelectionView.js';
 import { modeNeedsPick } from '../fleet/fleetPickView.js';
-import { FleetPickBar } from './FleetPickBar.js';
 import { HelmPanel } from './HelmPanel.js';
 
 /**
@@ -62,7 +61,6 @@ export function FleetStrip({ commands }: Props): JSX.Element | null {
   const compact = useIsCompact();
   const { ids } = view;
 
-  const picking = useUIStore((s) => s.fleetPick !== null);
   const setPick = useUIStore((s) => s.setFleetPick);
   // Patrol / escort / retreat need a target on the map first (slice 14b).
   const onMode = useCallback((e: ChangeEvent<HTMLSelectElement>) => {
@@ -85,7 +83,6 @@ export function FleetStrip({ commands }: Props): JSX.Element | null {
   return (
     <Box sx={STRIP_SX} data-testid="fleet-strip" data-fleet-count={n} data-hud-exclusion="">
       <Box component="span" sx={COUNT_SX}>{n === 1 ? '1 ship' : `${n} ships`}</Box>
-      {picking ? <FleetPickBar ids={ids} {...(commands !== undefined ? { commands } : {})} /> : (<>
       <select aria-label="Mode" data-testid="fleet-strip-mode" style={SELECT_STYLE} value={modeValue} onChange={onMode}>
         <option value={NONE} disabled>{view.mode === 'mixed' ? 'Mixed' : 'Mode'}</option>
         {FLEET_STATUS_MODES.map((m) => <option key={m} value={m}>{MODE_LABELS[m]}</option>)}
@@ -96,7 +93,6 @@ export function FleetStrip({ commands }: Props): JSX.Element | null {
       </select>
       <Button size="small" variant="outlined" color="warning" sx={BTN_SX} data-testid="fleet-stop" onClick={onStop}>Stop</Button>
       <HelmPanel />
-      </>)}
     </Box>
   );
 }
