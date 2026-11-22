@@ -32,7 +32,7 @@ function select(ids: string[], focusId: string | null = null, focusKind: 'ship' 
 beforeEach(() => {
   stubMedia();
   useUIStore.setState({
-    rightPanel: null, contactsOpen: false, travelling: true, pilotMode: 'spectator',
+    rightPanel: null, travelling: true, pilotMode: 'spectator',
     buildMode: false, placementKind: null, fleetPick: null,
     selection: { ids: [], focusId: null, focusKind: null },
   });

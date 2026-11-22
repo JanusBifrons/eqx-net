@@ -245,6 +245,9 @@ export const HUD = {
     rowSmallFont: 9,
     /** Hover / pressed wash on a row that opens a page (mock .lrow.on). */
     rowHoverBg: 'rgba(52,216,255,0.1)',
+    /** A faded row (out of reach) and a washed row (selected: the active group's lock). */
+    rowDimOpacity: 0.6,
+    rowSelectedBg: 'rgba(255,255,255,0.06)',
   },
 } as const;
 

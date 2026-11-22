@@ -20,7 +20,9 @@ vi.mock('../layout/Drawer/tabs/TradeTab', () => ({
   TradeOffersPage: () => <div data-testid="trade-offers">offers</div>,
   TradeDealsPage: () => <div data-testid="trade-deals">deals</div>,
   TradeHistoryPage: () => <div data-testid="trade-history">history</div>,
-  GiftForm: () => <div data-testid="trade-gift">gift</div>,
+}));
+vi.mock('./TradeGiftPage', () => ({
+  TradeGiftPage: () => <div data-testid="trade-gift">gift</div>,
 }));
 vi.mock('../layout/Drawer/tabs/BlueprintMarketSection', () => ({
   BlueprintMarketSection: () => <div data-testid="trade-blueprints">blueprints</div>,

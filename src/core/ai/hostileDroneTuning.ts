@@ -141,6 +141,14 @@ export const PATROL_INWARD_GAIN = 1.0;
  *  which the drone ramps thrust down so per-kind damping brakes it to a stop
  *  (the "slow down and come to a stop in formation, don't float past" feel). */
 export const MOVE_ARRIVE_SLOW_RADIUS = 300;
+/** The fly-to's settle band (`ai/pilot/moveTo.ts`) as a share of the hull
+ *  radius: a parked or guarding ship this close to its spot counts as there
+ *  (never less than one tap's coast). Keeps a big hull from tapping thrust
+ *  for ever to correct a few units. */
+export const MOVE_SETTLE_HULL_FRAC = 0.05;
+/** Once settled, the ship flies again only when it drifts past this many
+ *  settle bands (hysteresis: no on/off thrust at the band's edge). */
+export const MOVE_SETTLE_RELEASE_MUL = 2;
 /** Travel (RTS Part B slice 9, `setTravel`): a leg longer than this many
  *  guard radii (`shipTuning.guardRadiusMin`, #18) flies at the top speed and
  *  may boost (the old wingman's long-leg rule, 3 × its guard radius). */

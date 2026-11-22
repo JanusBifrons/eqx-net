@@ -27,6 +27,15 @@ describe('EqxTextField', () => {
     expect(screen.getByText('Name taken')).toBeTruthy();
   });
 
+  it('onBlur fires when focus leaves; inputMode picks the keyboard', () => {
+    const onBlur = vi.fn();
+    render(<EqxTextField label="X" value="1" onChange={() => {}} onBlur={onBlur} inputMode="decimal" />);
+    const input = screen.getByRole('textbox');
+    expect(input.getAttribute('inputmode')).toBe('decimal');
+    fireEvent.blur(input);
+    expect(onBlur).toHaveBeenCalledTimes(1);
+  });
+
   it('disabled blocks input', () => {
     render(<EqxTextField label="A" value="" onChange={() => {}} disabled />);
     expect(screen.getByRole('textbox')).toHaveProperty('disabled', true);

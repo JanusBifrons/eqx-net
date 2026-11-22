@@ -67,7 +67,7 @@ import {
   type RemotePredictionGuard,
 } from './remotePredictionGuard';
 import { shipMirrorKey, type ShipMirrorKeyLocal } from './shipMirrorKey.js';
-import { isParkedHull } from '../render/shipOwnership.js';
+import { isParkedHull, streamCentreShip } from '../render/shipOwnership.js';
 import { findRekeySource } from './shipRekey.js';
 import { copySchemaHealth } from './shipSchemaHealth.js';
 import {
@@ -83,6 +83,7 @@ import {
   type DropDetector,
 } from './snapshotDropDetector';
 import { resetPredictionState } from './prediction/resetPrediction.js';
+import { reconcileReplayTick } from './prediction/reconcileReplayTick.js';
 import { tryInitPredWorld, syncSwarmIntoPredWorld, rekeyOwnShipFromHull, dropRemoteShip, rekeyShip, ensureRemoteShipBody } from './prediction/predWorldSync.js';
 import { disposeClient, type ClientTeardownCtx } from './connection/clientTeardown.js';
 import {
@@ -121,7 +122,7 @@ import { stepTravel, TRAVEL_OUT_S, type TravelTrip } from './mirror/travelPass.j
 import { DisplayPoseHitscan } from '../combat/displayPoseHitscan.js';
 import { preResetRemoteShips, applyRemoteShipInputs, type RemoteInput, type PreResetEntry, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyShipWarp, applyActivatedMounts, applyParkedHullShieldDown, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
 import { computeRemoteLerpOffsets, type RemoteShipOffset } from './remoteLerpOffsets.js';
-import { useUIStore, type ConnectionStatus } from '../state/store';
+import { useUIStore, computeIsLoadingActive, type ConnectionStatus } from '../state/store';
 import { logEvent, isDiagEnabled, isFullDiagMode } from '../debug/ClientLogger';
 import { readHeapUsedMb } from './perfStats';
 import { TransitInstrumentation } from '../debug/TransitInstrumentation';
@@ -691,7 +692,7 @@ export class ColyseusGameClient {
    *  into `mirror.helmCourse` (spatial ⇒ mirror, never Zustand, #2). */
   private _helmCourseSeq = 0;
   private readonly _helmMark: HelmCourseMark = makeHelmCourseMark();
-  /** A3 — the local ship's pose for distance-streaming walls (NaN ⇒ none). */
+  /** A3 — the stream centre's pose for distance-streaming walls (NaN ⇒ none). */
   private _predWallShipX = NaN;
   private _predWallShipY = NaN;
   private readonly _predWallVisitor: DerivedWallVisitor = {
@@ -1895,12 +1896,14 @@ export class ColyseusGameClient {
           logEvent('teleport_reseed', { epoch, x: serverState.x, y: serverState.y });
         }
       }
-      const replayWindow = this.inputTick - ackedTick;
+      // Curtain up = tickPhysics paused: nothing predicted live, so no replay.
+      const replayTo = reconcileReplayTick(computeIsLoadingActive(useUIStore.getState()), this.inputTick, ackedTick);
+      const replayWindow = replayTo - ackedTick;
       const reconcileStartMs = this.clock.now();
       if (!teleported) this.reconciler.reconcile(
         serverState,
         snap.serverTick,
-        this.inputTick,
+        replayTo,
         ackedTick,
         (t) => {
           // Structure rig parts (restyle 2d) replay on the live loop's tick numbering.
@@ -2202,8 +2205,9 @@ export class ColyseusGameClient {
     const structures = this.mirror.structures;
     const swarm = this.mirror.swarm;
     const gen = ++this._predWallGen;
-    const localId = this.mirror.localPlayerId;
-    const me = localId ? this.mirror.ships.get(localId) : undefined;
+    // Same centre as structures / wrecks / the cut field: my ship, else my
+    // parked hull (Command view); neither ⇒ every wall.
+    const me = streamCentreShip(this.mirror);
     this._predWallShipX = me ? me.x : NaN;
     this._predWallShipY = me ? me.y : NaN;
     if (structures && swarm) visitDerivedWalls(structures, swarm, this._predWallVisitor);
@@ -2542,6 +2546,12 @@ export class ColyseusGameClient {
     const ticksSinceAnchor = Math.floor((this.gameClock.now() - this.clockAnchorPerfNow) / FIXED_MS);
     const targetTick = this.clockAnchorServerTick + ticksSinceAnchor + this.gameLeadTicks();
     const tickDeficitBefore = targetTick - this.inputTick;
+    // Over-prediction cap, measured from the last acked input, or from the
+    // latest server tick (the clock anchor: welcome, then every snapshot)
+    // until the first ack. It used to switch off with no ack (capital-fixes
+    // S1, 2026-11-22: a Command join never acks, so the cap never held).
+    const overPredictionCap = (this.stats.lastAckedTick > 0 ? this.stats.lastAckedTick : this.clockAnchorServerTick)
+      + MAX_OVER_PREDICTION_TICKS;
     // A stall (loading curtain, background tab) is skipped, not replayed at 4
     // ticks a frame, and only from a FRESH clock anchor: hold until a snapshot
     // re-syncs it (inputTickRecovery.stallResumeAction; lock: loading-catchup.spec.ts).
@@ -2558,10 +2568,7 @@ export class ColyseusGameClient {
       }
       this._stallHoldSinceMs = -1;
       if (resume === 'skip') {
-        this.inputTick = skipStalledBacklog(
-          this.inputTick, targetTick,
-          this.stats.lastAckedTick > 0 ? this.stats.lastAckedTick + MAX_OVER_PREDICTION_TICKS : Infinity,
-        );
+        this.inputTick = skipStalledBacklog(this.inputTick, targetTick, overPredictionCap);
       }
     }
     let stepsThisFrame = 0;
@@ -2581,11 +2588,17 @@ export class ColyseusGameClient {
     aimInput.setEnabled(useUIStore.getState().pilotMode !== 'spectator');
     this.updateHelmAvailability();
     this.syncHelmMark(); // the spectator flip doesn't pass through publishHelm
-    while (this.inputTick < targetTick && stepsThisFrame < MAX_CATCH_UP_TICKS) {
-      // Over-prediction cap. `lastAckedTick > 0` excludes the
-      // welcome-to-first-snapshot window (~50 ms; too short to spiral).
-      if (this.stats.lastAckedTick > 0
-          && this.inputTick >= this.stats.lastAckedTick + MAX_OVER_PREDICTION_TICKS) {
+    // No own body to predict (Command / spectating: no Reconciler) ⇒ no
+    // stepping. Remote ships and parked / AI-flown hulls are re-anchored each
+    // snapshot and drawn through their decaying lerp offsets; drones, scrap,
+    // rocks and structures draw off the wire. Stepping the whole-sector
+    // prediction world 4 ticks a frame here was the 14 fps Command join
+    // (capital-fixes S1). Same as Command after flying, where the frozen ack
+    // already held the cap shut. Piloting re-seeds the body, then the stall
+    // skip above jumps to the target.
+    const hasLocalBody = this.reconciler !== null;
+    while (hasLocalBody && this.inputTick < targetTick && stepsThisFrame < MAX_CATCH_UP_TICKS) {
+      if (this.inputTick >= overPredictionCap) {
         capEngaged = true;
         break;
       }
