@@ -6,7 +6,7 @@
 import type { RenderMirror, SwarmRenderState } from '@core/contracts/IRenderer';
 import type { FleetMode, FleetStance } from '@shared-types/messages/fleetStatusMessages';
 import { getShipKind } from '@shared-types/shipKinds';
-import { WRECK_ROCK_PARENT_KIND } from '@shared-types/messages/wreckDescriptor';
+import { wreckSourceKindOf } from '../net/wreckRootSource';
 import { SWARM_KIND_ASTEROID, SWARM_KIND_SCRAP, SWARM_KIND_STRUCTURE, SWARM_KIND_WRECK, isLootPod } from '@shared-types/swarmWireFormat';
 import type { FleetStatusRow } from './fleetStatus.js';
 
@@ -117,6 +117,13 @@ export function fleetTargetName(mirror: RenderMirror | null | undefined, id: str
   return e ? swarmEntityName(mirror, e) : undefined;
 }
 
+/** A wreck piece's name by its source (`wreckSourceKindOf` of its
+ *  descriptor's parent kind): a rock's piece is 'Rock'; a ship's or a
+ *  structure's (or an unknown one) 'Wreck'. */
+export function wreckPieceName(parentKind: string | undefined): string {
+  return parentKind !== undefined && wreckSourceKindOf(parentKind) === 'rock' ? 'Rock' : 'Wreck';
+}
+
 /**
  * A player-facing name for a swarm entity, by its swarm kind first: only a
  * drone is named after its ship kind. A scrap or wreck piece's `shipKind` is
@@ -131,7 +138,7 @@ export function swarmEntityName(mirror: RenderMirror, e: SwarmRenderState, drone
     case SWARM_KIND_SCRAP:
       return isLootPod(e) ? 'Cargo pod' : 'Scrap';
     case SWARM_KIND_WRECK:
-      return e.wreckId !== undefined && mirror.wrecks?.get(e.wreckId)?.parentKind === WRECK_ROCK_PARENT_KIND ? 'Rock' : 'Wreck';
+      return wreckPieceName(e.wreckId !== undefined ? mirror.wrecks?.get(e.wreckId)?.parentKind : undefined);
     default:
       return kindName(e.shipKind) ?? droneFallback;
   }
