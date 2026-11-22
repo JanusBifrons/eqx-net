@@ -20,12 +20,12 @@
  * subscribers do not exist on the main page at all.
  */
 import { useCallback, useMemo, type CSSProperties } from 'react';
-import { EQX_PANEL_SIZE, EqxPanel } from '../../ui/index.js';
+import { EQX_PANEL_SIZE, EqxListRow, EqxPanel, EqxSection } from '../../ui/index.js';
 import { useUIStore } from '../state/store';
 import { SettingsTab } from '../layout/Drawer/tabs/SettingsTab';
 import { ProfileTab } from '../layout/Drawer/tabs/ProfileTab';
 import { DebugTab } from '../layout/Drawer/tabs/DebugTab';
-import { CogHeading, CogRow, CogScreenSection, COG_SECTION_STYLE } from './cogRows';
+import { CogScreenSection, COG_SECTION_STYLE } from './cogRows';
 
 /** The cog's pages, keyed by their `drawerTab` id (the main page first). */
 export const COG_PAGES = ['settings', 'profile', 'debug'] as const;
@@ -47,12 +47,13 @@ function MainPage({ open }: { open: (page: CogPage) => void }): JSX.Element {
     <div style={PAGE_STYLE}>
       <SettingsTab />
       <CogScreenSection />
-      <section style={COG_SECTION_STYLE}>
-        <CogHeading>More</CogHeading>
-        <CogRow label="Profile" caption="Your name and account." onClick={() => open('profile')} testId="cog-row-profile" drill />
-        <CogRow label="Developer" caption="Debug overlay, server log, connection stats and diagnostic capture."
-          onClick={() => open('debug')} testId="cog-row-developer" drill />
-      </section>
+      <div style={COG_SECTION_STYLE}>
+        <EqxSection title="More">
+          <EqxListRow primary="Profile" secondary="Your name and account." onOpen={() => open('profile')} data-testid="cog-row-profile" />
+          <EqxListRow primary="Developer" secondary="Debug overlay, server log, connection stats and diagnostic capture."
+            onOpen={() => open('debug')} data-testid="cog-row-developer" />
+        </EqxSection>
+      </div>
     </div>
   );
 }
