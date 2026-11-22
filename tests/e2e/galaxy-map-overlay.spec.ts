@@ -59,7 +59,7 @@ test.describe('galaxy-map overlay (Map B)', () => {
     await bootGame(page);
 
     await page.locator('[data-testid="right-rail-galaxy"]').tap();
-    const showMap = page.locator('[data-testid="galaxy-tab-show-map"]');
+    const showMap = page.locator('[data-testid="galaxy-open-map"]');
     await expect(showMap).toBeVisible({ timeout: 5_000 });
     await showMap.tap();
     await expect(page.locator('[data-testid="galaxy-map-screen"]')).toBeVisible({ timeout: 5_000 });
@@ -76,9 +76,9 @@ test.describe('galaxy-map overlay (Map B)', () => {
     // surface to actually render before issuing the next click — clicking
     // on something whose ancestor is still mid-mount silently no-ops.
     await page.locator('[data-testid="right-rail-galaxy"]').click();
-    await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible({ timeout: 5_000 });
-    await expect(page.locator('[data-testid="drawer-panel-galaxy"]')).toBeVisible({ timeout: 5_000 });
-    await page.locator('[data-testid="galaxy-tab-show-map"]').click();
+    await expect(page.locator('[data-testid="galaxy-panel"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="galaxy-panel-body"]')).toBeVisible({ timeout: 5_000 });
+    await page.locator('[data-testid="galaxy-open-map"]').click();
 
     // Equinox Phase 8 (Bug 4): the drawer button now opens the REAL full-page
     // galaxy map (the warp-context GalaxyPickerChrome over the Pixi selector

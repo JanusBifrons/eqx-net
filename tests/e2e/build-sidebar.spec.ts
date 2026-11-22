@@ -54,8 +54,8 @@ test('the rail Galaxy item opens the Galaxy page with the map button', async ({ 
   const { ctx, page } = await joinClient(browser);
   try {
     await page.locator('[data-testid="right-rail-galaxy"]').click();
-    await expect(page.locator('[data-testid="advanced-drawer"]')).toBeVisible({ timeout: 5_000 });
-    await expect(page.locator('[data-testid="galaxy-tab-show-map"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="galaxy-panel"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="galaxy-open-map"]')).toBeVisible({ timeout: 5_000 });
   } finally {
     await ctx.close();
   }

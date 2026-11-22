@@ -14,7 +14,7 @@ import type { RadarInsets } from '../../shared-types/settings/radar.js';
  *  whole screen and must never become exclusions. */
 const EDGE_ANCHORS = [
   'top-left', 'top-center', 'top-right',
-  'middle-left', 'middle-right',
+  'middle-left', 'middle-left-over', 'middle-right',
   'bottom-left', 'bottom-center', 'bottom-right',
 ] as const;
 

@@ -18,7 +18,7 @@ const state = (over: Partial<BpMarketState> = {}): BpMarketState => ({
   type: 'bp_market_state', networkEntityId: 5, offers: [L('of-1')], mine: [L('bp-mine', { price: 120 })], ...over,
 });
 
-describe('BlueprintMarketSection (economy v2 W6)', () => {
+describe('BlueprintMarketSection (economy v2 W6, U2-6b rows)', () => {
   afterEach(() => {
     send.mockReset();
     act(() => useUIStore.getState().setBpMarket(null));
@@ -46,6 +46,15 @@ describe('BlueprintMarketSection (economy v2 W6)', () => {
     expect(screen.queryByTestId('bp-market')).toBeNull();
     rerender(<BlueprintMarketSection baseId={null} />);
     expect(document.body.textContent).toContain('Build a Capital or Cargo Bay');
+  });
+
+  it('U2-6b: catalogue sections and rows; a priceless listing has no button; empty lists say so', () => {
+    render(<BlueprintMarketSection baseId={5} />);
+    act(() => useUIStore.getState().setBpMarket(state({ offers: [], mine: [L('free', { price: 0 })] })));
+    expect(screen.getByRole('region', { name: 'Traders sell' })).toHaveTextContent('Nothing for sale right now.');
+    expect(screen.getByRole('region', { name: 'Your blueprints here' })).toContainElement(screen.getByTestId('bp-mine'));
+    expect(screen.queryByTestId('bp-mine-action')).toBeNull();
+    expect(screen.getByTestId('bp-mine').textContent).toContain('Copy · 3 runs');
   });
 
   it('labels originals and copies', () => {
