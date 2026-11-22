@@ -1,11 +1,12 @@
 /**
- * EqxTextField: the one text input. Wraps MUI `TextField` (outlined, small).
+ * EqxTextField: the one text input. Wraps MUI `TextField` (filled, no
+ * underline) drawn as the compact panel field (mock `.field`, `./fieldSx.ts`).
  * `label` is the visible label and the accessible name; `error` is a message:
  * when set, the field turns to the danger state and shows it underneath.
  * Colours and font from `hud/tokens.ts`; no sx / style / className pass-through.
  */
 import { TextField } from '@mui/material';
-import { HUD } from '../../client/hud/tokens.js';
+import { FIELD_SX } from './fieldSx.js';
 
 export interface EqxTextFieldProps {
   label: string;
@@ -44,18 +45,16 @@ export function EqxTextField({
       {...(placeholder === undefined ? {} : { placeholder })}
       disabled={disabled}
       {...(onBlur === undefined ? {} : { onBlur })}
-      {...(inputMode === undefined ? {} : { inputProps: { inputMode } })}
+      variant="filled"
+      slotProps={{
+        input: { disableUnderline: true },
+        ...(inputMode === undefined ? {} : { htmlInput: { inputMode } }),
+      }}
       size="small"
       fullWidth
       data-testid={testId}
       data-error={hasError ? 'true' : 'false'}
-      sx={{
-        '& .MuiInputBase-root': { fontFamily: HUD.font.label, color: HUD.color.ink },
-        '& .MuiInputLabel-root': { fontFamily: HUD.font.label, color: HUD.color.inkDim },
-        '& .MuiOutlinedInput-notchedOutline': { borderColor: HUD.color.edge2 },
-        '& .Mui-error .MuiOutlinedInput-notchedOutline': { borderColor: HUD.color.danger },
-        '& .MuiFormHelperText-root.Mui-error': { color: HUD.color.danger, fontFamily: HUD.font.label },
-      }}
+      sx={FIELD_SX}
     />
   );
 }

@@ -41,3 +41,13 @@ describe('EqxTextField', () => {
     expect(screen.getByRole('textbox')).toHaveProperty('disabled', true);
   });
 });
+
+describe('EqxTextField panel look (mock .field)', () => {
+  it('is the compact filled field: no underline, no outlined notch', () => {
+    render(<EqxTextField label="Amount" value="100" onChange={() => {}} data-testid="tf" />);
+    const root = screen.getByTestId('tf');
+    expect(root.querySelector('.MuiFilledInput-root')).not.toBeNull();
+    expect(root.querySelector('.MuiFilledInput-underline')).toBeNull();
+    expect(root.querySelector('.MuiOutlinedInput-notchedOutline')).toBeNull();
+  });
+});
