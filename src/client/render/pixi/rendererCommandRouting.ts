@@ -1,13 +1,13 @@
 import type { Camera } from '../worker/Camera';
 import type { FleetOverlayModel, FleetOverlayShip, FleetPickKindWire, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import type { GalaxyMapLayer } from '../galaxy/GalaxyMapLayer';
-import type { SelectionBracket } from '../SelectionBracket';
-import { onCraneBayPad, pickEntityAt, type PickedEntityKind } from '../pickEntity';
+import { resolveSelectable, type SelectableTarget, type SelectionBracket } from '../SelectionBracket';
+import { fingerSlopWorld, onCraneBayPad, pickEntityAt, TAP_SLOP, type PickedEntityKind } from '../pickEntity';
 import { CommandPointerRouter, type BoxRect, type HoldArmed, type RouterAction, type RouterPointerEvent } from '../input/commandPointerRouter.js';
-import { decideTapAction, type FleetOrderMode } from '../input/tapAction.js';
+import { decideTapAction } from '../input/tapAction.js';
 import { DoubleTapTracker } from '../input/doubleTap.js';
 import { createFleetPickState, decidePickTap, pickAddPoint, pickFinishPatrol, pickStart, type FleetPickResult } from '../input/fleetPick.js';
-import { applySelection, boxSelectOwn, collectFleetShips, focusSurvives, isOwnShipPresent, pickOwnShipAt, sameSelection, tapSelectOwn } from '../fleetSelection.js';
+import { applySelection, boxSelectOwn, collectFleetShips, focusSurvives, isMine, isOwnShipPresent, isOwnStructure, pickOwnShipAt, sameSelection, tapSelectOwn } from '../fleetSelection.js';
 import type { FleetOverlay, OrderFlash } from '../FleetOverlay.js';
 import { isParkedHull } from '../shipOwnership.js';
 
@@ -67,9 +67,10 @@ export abstract class RendererCommandRouting {
   private readonly _fleetBoxRect: BoxRect = { x0: 0, y0: 0, x1: 0, y1: 0 };
   private _fleetBoxActive = false;
   private readonly _orderFlash: OrderFlash = { x: 0, y: 0, attack: false, t0: -1 };
-  /** Touch tap-order mode (slice 12), pushed from the strip's Zustand toggle. */
-  private _fleetOrderMode: FleetOrderMode = 'move';
-  /** "Pick on the map" for patrol / escort / retreat (slice 14b). While a
+  /** The focus's pose for `attackFocus` (reused). */
+  private readonly _focusPose: SelectableTarget = { x: 0, y: 0, r: 0, hw: 0, hh: 0 };
+  /** "Pick on the map" for move / patrol / escort / retreat (slice 14b; move
+   *  is tap rule T3). While a
    *  kind is set, map taps go here and never change the selection. */
   private readonly _fleetPick = createFleetPickState();
   /** Own ships' squads + orders by id (slice 15a), replaced on each
@@ -177,7 +178,7 @@ export abstract class RendererCommandRouting {
           this.commitFleetPick();
           return;
         }
-        this.pickTap(a.x, a.y);
+        this.pickTap(a.x, a.y, a.kind === 'tapSelect' ? a.pointerType : 'mouse');
         return;
       case 'boxStart':
       case 'boxUpdate':
@@ -190,15 +191,23 @@ export abstract class RendererCommandRouting {
     }
   }
 
+  /** Pick slop for a tap: a mouse keeps the world-unit {@link TAP_SLOP}; a
+   *  finger (touch / pen) gets a fingertip's screen reach at this zoom. */
+  protected tapSlop(pointerType: string): number {
+    return pointerType === 'mouse' ? TAP_SLOP : fingerSlopWorld(this.camera.scale.x);
+  }
+
   /** A map tap during a fleet pick (`decidePickTap`). */
-  private pickTap(screenX: number, screenY: number): void {
+  private pickTap(screenX: number, screenY: number, pointerType: string): void {
     const m = this._lastMirror;
     if (m === null) return;
     const w = this.camera.screenToWorld(screenX, screenY);
     const gx = w.x;
     const gy = -w.y;
     const pick = this._fleetPick;
-    const own = pick.kind === 'escort' ? pickOwnShipAt(gx, gy, collectFleetShips(m), m.localPlayerId) : null;
+    const own = pick.kind === 'escort'
+      ? pickOwnShipAt(gx, gy, collectFleetShips(m), m.localPlayerId, this.tapSlop(pointerType))
+      : null;
     switch (decidePickTap(pick.kind, own, own !== null && this._selShips.has(own), pick.count)) {
       case 'addPoint':
         pickAddPoint(pick, gx, gy);
@@ -206,6 +215,13 @@ export abstract class RendererCommandRouting {
         return;
       case 'retreatHere':
         this.publishPickResult({ kind: 'retreat', x: gx, y: gy });
+        return;
+      case 'moveHere':
+        // Tap rule T3: a move order (the right-click path), never a pick
+        // result. The pick ends here; gameRafLoop ends the Zustand pick.
+        pickStart(pick, null);
+        this.feedback.fleetPickPoints = 0;
+        this.publishOrder(gx, gy, null);
         return;
       case 'escortShip':
         this.publishPickResult({ kind: 'escort', escortId: own! });
@@ -231,13 +247,15 @@ export abstract class RendererCommandRouting {
     const a = this.camera.screenToWorld(x0, y0);
     const b = this.camera.screenToWorld(x1, y1);
     const hits = boxSelectOwn(a.x, -a.y, b.x, -b.y, collectFleetShips(m), m.localPlayerId, this._squadOf);
-    // The focus stays only if it is still one of the selected ships.
+    // The focus stays if it is one of the selected ships or not mine.
     this.setSelection(applySelection(this._selShips, hits, additive), this._focusId, this._focusKind);
   }
 
-  /** Command-view tap (`decideTapAction`): an own ship selects it; a touch/pen
-   *  tap with a selection gives an order per `_fleetOrderMode`; otherwise it
-   *  falls through to the inspect select (a plain tap clears the selection). */
+  /** Command-view tap: an own ship selects it (whole squad, below); any other
+   *  tap goes to {@link handleGameplayTap} (`decideTapAction`: focus a
+   *  not-mine entity keeping the ships, deselect on free space). A tap is
+   *  never an order: orders stay on right-click. A finger gets a fingertip's
+   *  screen reach at this zoom (zoomed out, 24 world units is a pixel or two). */
   private commandTap(screenX: number, screenY: number, additive: boolean, pointerType: string): void {
     const m = this._lastMirror;
     if (m === null) return;
@@ -245,20 +263,8 @@ export abstract class RendererCommandRouting {
     const gx = w.x;
     const gy = -w.y;
     const fleet = collectFleetShips(m);
-    const own = pickOwnShipAt(gx, gy, fleet, m.localPlayerId);
-    const touchOrder = own === null && pointerType !== 'mouse' && this._selShips.size > 0;
-    // Pick only when an order needs to know what is under the finger.
-    const hit = touchOrder ? pickEntityAt(gx, gy, m) : null;
-    const attackable = hit !== null && this.isAttackable(hit.id, hit.kind, m);
-    const action = decideTapAction({
-      pointerType,
-      hitOwn: own !== null,
-      hitEntity: hit !== null,
-      hitAttackable: attackable,
-      hasSelection: this._selShips.size > 0,
-      orderMode: this._fleetOrderMode,
-      additive,
-    });
+    const slop = this.tapSlop(pointerType);
+    const own = pickOwnShipAt(gx, gy, fleet, m.localPlayerId, slop);
     // RTS slice 10: a second tap on the same own PARKED ship (not the active
     // one, which is flown already) takes its controls. Any other tap breaks
     // the pair.
@@ -269,41 +275,27 @@ export abstract class RendererCommandRouting {
       this.feedback.takeControlsSeq++;
       return;
     }
-    switch (action) {
-      case 'select': {
-        // Slice 15a: whole squad; a tap on an exactly-selected squad narrows.
-        // The tapped ship becomes the focus (its details panel); shift-tapping
-        // it off keeps the old focus if that is still selected.
-        const next = tapSelectOwn(this._selShips, own!, additive, fleet, m.localPlayerId, this._squadOf);
-        if (next.has(own!)) {
-          const entry = m.ships.get(own!);
-          this.setSelection(next, own, entry !== undefined && isParkedHull(m, own!, entry) ? 'lingering' : 'ship');
-        } else {
-          this.setSelection(next, this._focusId, this._focusKind);
-        }
-        return;
-      }
-      case 'orderMove':
-        this.publishOrder(gx, gy, null);
-        return;
-      case 'orderAttack':
-        this.publishOrder(gx, gy, hit!.id);
-        return;
-      case 'none':
-        return;
-      case 'deselect':
-        this.setSelection(new Set(), null, null);
-        this.handleGameplayTap(screenX, screenY);
-        return;
-      case 'inspect':
-        this.handleGameplayTap(screenX, screenY);
-        return;
+    if (own === null) {
+      this.handleGameplayTap(screenX, screenY, slop, additive, pointerType);
+      return;
+    }
+    // Slice 15a: whole squad; a tap on an exactly-selected squad narrows.
+    // The tapped ship becomes the focus (its details panel); shift-tapping
+    // it off keeps the old focus if that is still selected.
+    const next = tapSelectOwn(this._selShips, own, additive, fleet, m.localPlayerId, this._squadOf);
+    if (next.has(own)) {
+      const entry = m.ships.get(own);
+      this.setSelection(next, own, entry !== undefined && isParkedHull(m, own, entry) ? 'lingering' : 'ship');
+    } else {
+      this.setSelection(next, this._focusId, this._focusKind);
     }
   }
 
-  /** Not own, not an asteroid or a cargo pod (shots pass pods): something the
-   *  fleet can be told to attack. */
+  /** Not own (ship or structure), not an asteroid or a cargo pod (shots pass
+   *  pods): something the fleet can be told to attack. An own structure under
+   *  the finger / cursor falls back to a move order. */
   private isAttackable(id: string, kind: string, m: RenderMirror): boolean {
+    if (kind === 'structure') return !isOwnStructure(id, m);
     return kind !== 'asteroid' && kind !== 'pod' && !this._selShips.has(id) && !isOwnShipPresent(id, m);
   }
 
@@ -317,6 +309,18 @@ export abstract class RendererCommandRouting {
     const gy = -w.y;
     const hit = pickEntityAt(gx, gy, m);
     this.publishOrder(gx, gy, hit !== null && this.isAttackable(hit.id, hit.kind, m) ? hit.id : null);
+  }
+
+  /** See `IFleetView.attackFocus`: the strip Lock / T key. The same attack
+   *  order a right-click on the focus gives (flash on it); a no-op without
+   *  ships, without a focus, or for a focus that is mine or not attackable. */
+  attackFocus(): void {
+    const m = this._lastMirror;
+    const id = this._focusId;
+    const kind = this._focusKind;
+    if (m === null || id === null || kind === null || this._selShips.size === 0) return;
+    if (isMine(id, m) || !this.isAttackable(id, kind, m) || !resolveSelectable(m, id, this._focusPose)) return;
+    this.publishOrder(this._focusPose.x, this._focusPose.y, id);
   }
 
   /** Publish an order via feedback (`gameRafLoop` sends it once per seq):
@@ -340,12 +344,15 @@ export abstract class RendererCommandRouting {
    * THE selection (RTS Part A: one selection concept): the selected ships
    * (`_selShips`, each gets the same `SelectionBracket` marker) and the focus
    * (`_focusId/_focusKind`, the entity whose details panel shows: the one you
-   * clicked). Rule: with ships selected, the focus is one of them or null;
-   * with none it can be anything you tapped. Publishes the ship set only when
-   * it changed; the focus is published every frame in `update()`.
+   * clicked). Rule (`focusSurvives`): with ships selected, the focus is one of
+   * them, something that is NOT mine (an enemy you tapped: the ships stay
+   * selected, the left strip shows it), or null; with none it can be anything
+   * you tapped. Publishes the ship set only when it changed; the focus is
+   * published every frame in `update()`.
    */
   setSelection(nextShips: Set<string>, focusId: string | null, focusKind: PickedEntityKind | null): void {
-    const keepFocus = focusSurvives(nextShips, focusId);
+    const m = this._lastMirror;
+    const keepFocus = focusSurvives(nextShips, focusId, focusId !== null && m !== null && isMine(focusId, m));
     this._focusId = keepFocus ? focusId : null;
     this._focusKind = keepFocus ? focusKind : null;
     if (sameSelection(this._selShips, nextShips)) return;
@@ -353,11 +360,13 @@ export abstract class RendererCommandRouting {
     this.publishFleetSelection();
   }
 
-  /** Focus an entity (inspect tap). Focusing one that is not a selected ship
-   *  ends the ship selection (the rule in {@link setSelection}). */
+  /** Focus an entity (a tap). Focusing one of MY ships or structures that is
+   *  not a selected ship ends the ship selection; focusing something that is
+   *  not mine keeps the ships (the rule in {@link setSelection}). */
   private setFocus(id: string | null, kind: PickedEntityKind | null): void {
-    if (id !== null && this._selShips.size > 0 && !this._selShips.has(id)) this.setSelection(new Set(), id, kind);
-    else this.setSelection(this._selShips, id, kind);
+    const m = this._lastMirror;
+    const endsShips = id !== null && this._selShips.size > 0 && !this._selShips.has(id) && m !== null && isMine(id, m);
+    this.setSelection(endsShips ? new Set() : this._selShips, id, kind);
   }
 
   /**
@@ -421,12 +430,14 @@ export abstract class RendererCommandRouting {
   }
 
   /**
-   * Click-to-inspect (Item B2). A confirmed gameplay tap (NOT a drag) resolves
-   * to the nearest entity under the tap via the pure `pickEntityAt`. The
-   * renderer OWNS the selection:
-   *   - tap empty space        → clear selection
-   *   - tap a new entity       → select it
-   *   - re-tap the SAME entity → toggle it off (deselect)
+   * Click-to-inspect (Item B2) and THE tap rule (`decideTapAction`; Command,
+   * Fly and Build alike). A confirmed gameplay tap (NOT a drag) resolves to
+   * the nearest entity under the tap via the pure `pickEntityAt` (`slop`: a
+   * finger passes `fingerSlopWorld`). The renderer OWNS the selection:
+   *   - tap empty space        → clear the focus; with ships selected, clear
+   *                              them too (deselect; shift keeps them)
+   *   - tap a new entity       → focus it (a not-mine one keeps the ships)
+   *   - re-tap the SAME entity → toggle the focus off (ships kept)
    * The result is published each frame in `feedback.selectedPickId/Kind`.
    *
    * Gated by the callers on `!galaxyTapSuppressed() && !_placementActive` so it
@@ -434,20 +445,28 @@ export abstract class RendererCommandRouting {
    * `screenX/Y` are canvas-relative pixels; `screenToWorld` returns pixi-world
    * coords (y = -gameY), so the pick runs in GAME space.
    */
-  protected handleGameplayTap(screenX: number, screenY: number): void {
-    if (this._lastMirror === null) return;
+  protected handleGameplayTap(screenX: number, screenY: number, slop = TAP_SLOP, additive = false, pointerType = 'mouse'): void {
+    const m = this._lastMirror;
+    if (m === null) return;
     const w = this.camera.screenToWorld(screenX, screenY);
     const gameX = w.x;
     const gameY = -w.y;
     // A crane bay pad is open space to park on: a tap there is a course even
     // when a parked hull or the host's tap slop overlaps it (phone film, base
     // loop: pad taps went nowhere). The host's body still opens its card.
-    const hit = onCraneBayPad(gameX, gameY, this._lastMirror) ? null : pickEntityAt(gameX, gameY, this._lastMirror);
+    const hit = onCraneBayPad(gameX, gameY, m) ? null : pickEntityAt(gameX, gameY, m, slop);
+    const action = decideTapAction({
+      pointerType,
+      hitOwn: hit !== null && isOwnShipPresent(hit.id, m),
+      hitEntity: hit !== null,
+      hasSelection: this._selShips.size > 0,
+      additive,
+    });
     if (hit === null) {
-      this.setFocus(null, null);
+      if (action === 'deselect') this.setSelection(new Set(), null, null);
+      else this.setFocus(null, null);
       // Helm orders: the pilot's tap on empty space sets the course (every
       // hull: the autopilot, navigation slice 13).
-      const m = this._lastMirror;
       if (m.localPlayerId !== null && m.ships.has(m.localPlayerId)) {
         this.feedback.helmCourseX = gameX;
         this.feedback.helmCourseY = gameY;
@@ -522,11 +541,6 @@ export abstract class RendererCommandRouting {
   protected abstract placementTap(x: number, y: number, pointerType: string): void;
   protected abstract cameraPointer(type: string, pointerId: number, x: number, y: number, stamp: number, pointerType?: string): boolean;
 
-  /** See `IRenderer.setFleetOrderMode`. */
-  setFleetOrderMode(mode: 'move' | 'attack'): void {
-    this._fleetOrderMode = mode;
-  }
-
   /** See `IRenderer.setFleetPick`. */
   setFleetPick(kind: FleetPickKindWire | null): void {
     pickStart(this._fleetPick, kind);
@@ -557,6 +571,10 @@ export abstract class RendererCommandRouting {
     this.setSelection(next, null, null);
   }
 
+
+  /** Focus an entity by id, the same path as a map tap on it (Contacts row
+   *  tap). Never toggles off: tapping the focused contact keeps it. */
+  focusEntity(id: string, kind: PickedEntityKind): void { this.setFocus(id, kind); }
 
   /** Command view follows spectating (see `PixiRenderer.setSpectator`). */
   setCommandView(active: boolean): void {

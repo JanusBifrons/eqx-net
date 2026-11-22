@@ -37,13 +37,12 @@ import { commitPlacement } from '../structures/placementCancel.js';
 import { stepBuildModeView, takeBuildRestoreScale } from '../structures/buildModeView.js';
 import { sendSelectEntity, sendDeselectEntity } from '../net/selectionClient.js';
 import { resetSelectionStats } from '../net/selectionStats.js';
-import { sendFleetOrder } from '../ships/shipActionsClient.js';
+import { sendFleetPickResult, sendSelectionOrder } from './fleetOrderSends.js';
 import { pushFleetOverlayModelIfChanged } from '../fleet/fleetOverlayModel.js';
 import { fleetCommands } from '../fleet/fleetCommands.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
-import type { FleetPickResultWire, IRenderer } from '@core/contracts/IRenderer';
+import type { IRenderer } from '@core/contracts/IRenderer';
 import { HelmModeGate } from '../helm/helmModeGate.js';
-import { HELM_SPEED_FRACTION } from '@core/helm/helm';
 import { isParkedHull, shipOwner } from '../render/shipOwnership.js';
 import { arrivalNeedsGlide } from '../net/fleetWarpFollow.js';
 
@@ -73,19 +72,6 @@ const TAKE_CONTROLS_SELECTION_HOLD_MS = 1500;
 /** RTS slice 14b — last drained `fleetPickPoints` / `fleetPickSeq`. */
 let _lastPickPoints = 0;
 let _lastPickSeq = 0;
-
-/** Send a finished map pick as `set_mode` for the selection (slice 14b).
- *  One small object per pick; nothing is sent with an empty selection. */
-function sendFleetPickResult(result: FleetPickResultWire, ids: readonly string[]): void {
-  if (ids.length > 0) {
-    const c = fleetCommands();
-    if (result.kind === 'patrol') c.setMode(ids, 'patrol', { route: result.route });
-    else if (result.kind === 'escort') c.setMode(ids, 'escort', { escortId: result.escortId });
-    else if (result.x !== undefined && result.y !== undefined) c.setMode(ids, 'retreat', { x: result.x, y: result.y });
-    else c.setMode(ids, 'retreat');
-  }
-  logEvent('fleet_mode_pick', { kind: result.kind, ships: ids.length });
-}
 
 /** WS-10 (R2.5) — last drained `feedback.placementConfirmSeq`. The renderer bumps
  *  the seq on a DESKTOP mouse left-click during placement; when it changes we
@@ -407,24 +393,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     lastFleetOverlayVersion = pushFleetOverlayModelIfChanged(renderer, lastFleetOverlayVersion);
     if (selFb.orderSeq !== _lastOrderSeq) {
       _lastOrderSeq = selFb.orderSeq;
-      // Send the order for the current selection (one small object per
-      // order; nothing is allocated on frames where the seq is unchanged).
-      const ids = selFb.fleetSelIds;
-      if (ids.length > 0) {
-        if (selFb.orderKind === 'move') {
-          // At the Command speed the helm panel shows (Stop / ⅓ / ⅔ / Full).
-          const speed = HELM_SPEED_FRACTION[useUIStore.getState().commandSpeed] ?? 1;
-          sendFleetOrder(ids.slice(), { kind: 'move', x: selFb.orderX, y: selFb.orderY, speed });
-        } else if (selFb.orderKind === 'attack' && selFb.orderTargetId !== null) {
-          sendFleetOrder(ids.slice(), { kind: 'attack', targetId: selFb.orderTargetId });
-        }
-      }
-      logEvent('fleet_order', {
-        seq: selFb.orderSeq,
-        kind: selFb.orderKind,
-        targetId: selFb.orderTargetId,
-        ships: selFb.fleetSelIds.length,
-      });
+      sendSelectionOrder(selFb);
     }
     // Fleet map pick (slice 14b): mirror the picked-point count (discrete),
     // and send a finished pick once per seq as set_mode for the selection.
