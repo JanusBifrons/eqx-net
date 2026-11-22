@@ -43,7 +43,7 @@ export const AllIcons: Story = {
         display: 'grid',
         gridTemplateColumns: `repeat(auto-fill, minmax(${HUD.size.iconButton * 2}px, 1fr))`,
         gap: 1,
-        color: HUD.color.sidePanelInk,
+        color: HUD.color.ink,
       }}
     >
       {EQX_ICON_NAMES.map((name) => (
