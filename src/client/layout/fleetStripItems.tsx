@@ -8,7 +8,8 @@
  *   (`fleet/fleetCommands.ts` via `resolveFleetCommands`): Defend / Hunt send
  *   `setMode` at once; Patrol / Escort / Retreat start the map pick
  *   (`setFleetPick`), exactly like the panel's buttons; Stance → `setStance`;
- *   Stop → `stop`.
+ *   Stop → `stop`; Move (tap rule T3) arms a one-point `move` map pick:
+ *   the next map tap sends a move order there (the right-click path).
  * - The shown value comes from the selection's fleet status
  *   (`useFleetSelectionView`, the panel's source); a mixed or unreported
  *   selection shows the neutral `mixed` icon.
@@ -64,10 +65,13 @@ export function useFleetStripItems(): ReactElement[] {
   };
   const onStance = (s: FleetStance): void => resolveFleetCommands().setStance(ids, s);
   const onStop = (): void => resolveFleetCommands().stop(ids);
+  const onMove = (): void => setPick('move');
 
   return [
     <EqxStatusFlyout key="order" value={mode} emptyIcon={MIXED} options={MODE_OPTIONS} onChange={onMode}
       tooltip={`Order: ${mode === null ? 'mixed' : MODE_LABELS[mode]}`} data-testid="left-strip-order" />,
+    <EqxIconButton key="move" variant="strip" icon={<EqxIcon name="move" />} tooltip="Move: tap a point"
+      onClick={onMove} data-testid="left-strip-move" />,
     <EqxStatusFlyout key="stance" value={stance} emptyIcon={MIXED} options={STANCE_OPTIONS} onChange={onStance}
       tooltip={`Stance: ${stance === null ? 'mixed' : STANCE_LABELS[stance]}`} data-testid="left-strip-stance" />,
     <EqxIconButton key="stop" variant="strip" icon={<EqxIcon name="stop" />} tooltip="Stop"

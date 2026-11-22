@@ -228,13 +228,6 @@ export interface SetSpectatorMsg {
   active: boolean;
 }
 
-/** RTS slice 12 — the fleet strip's touch tap-order mode. See
- *  `IRenderer.setFleetOrderMode`. Posted on change only. */
-export interface SetFleetOrderModeMsg {
-  type: 'SET_FLEET_ORDER_MODE';
-  mode: 'move' | 'attack';
-}
-
 /** RTS slice 15a — own ships' squads + orders for selection expansion and
  *  order lines. See `IRenderer.setFleetOverlayModel`. Posted when the main
  *  thread's fleet status version moves. */
@@ -448,7 +441,6 @@ export type MainToWorkerMsg =
   | SetCameraCenterMsg
   | SetLoadCurtainMsg
   | SetSpectatorMsg
-  | SetFleetOrderModeMsg
   | SetFleetOverlayModelMsg
   | SetFleetPickMsg
   | CommitFleetPickMsg

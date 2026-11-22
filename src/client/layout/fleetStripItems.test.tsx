@@ -61,7 +61,7 @@ describe('left strip fleet section (U3-4)', () => {
   it('own ships in Command: Order, Stance and Stop, each with a tooltip, no text', () => {
     mount();
     select(['a', 'b']);
-    for (const t of ['order', 'stance', 'stop']) {
+    for (const t of ['order', 'move', 'stance', 'stop']) {
       const el = screen.getByTestId(`left-strip-${t}`);
       expect(el.getAttribute('aria-label'), t).toBeTruthy();
       expect(el.textContent, t).toBe('');
@@ -103,6 +103,16 @@ describe('left strip fleet section (U3-4)', () => {
     pick('order', 'patrol');
     expect(cmd.setMode).not.toHaveBeenCalled();
     expect(useUIStore.getState().fleetPick?.kind).toBe('patrol');
+  });
+
+  it('Move (tap rule T3) arms a one-point move pick, sends nothing yet', () => {
+    mount();
+    select(['a']);
+    const move = screen.getByTestId('left-strip-move');
+    expect(move.getAttribute('aria-label')).toBe('Move: tap a point');
+    fireEvent.click(move);
+    expect(cmd.setMode).not.toHaveBeenCalled();
+    expect(useUIStore.getState().fleetPick?.kind).toBe('move');
   });
 
   it('shows the shared value; a mixed selection is neutral (no option active)', () => {

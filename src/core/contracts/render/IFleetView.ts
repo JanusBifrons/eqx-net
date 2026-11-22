@@ -1,13 +1,5 @@
-/** RTS / fleet overlays: order mode, squad overlay, map picks, selection. Part of `IRenderer`. */
+/** RTS / fleet overlays: squad overlay, map picks, selection. Part of `IRenderer`. */
 export interface IFleetView {
-  /**
-   * RTS command view (slice 12): what a TOUCH tap with a fleet selection
-   * orders — 'move': attack an attackable entity under it, else move to the
-   * tap point; 'attack': attack the entity under it only. The
-   * fleet strip's discrete toggle, pushed on change (worker
-   * `SET_FLEET_ORDER_MODE`). Mouse orders stay on right-click.
-   */
-  setFleetOrderMode(mode: 'move' | 'attack'): void;
   /**
    * RTS command view (slice 15a): squads + order markers of the local
    * player's own ships, built on the main thread from `fleet/fleetStatus.ts`
@@ -18,7 +10,8 @@ export interface IFleetView {
   setFleetOverlayModel(model: FleetOverlayModel): void;
   /**
    * RTS slice 14b: start picking a mode's target on the map (patrol route,
-   * ship to escort, retreat point), or cancel with null. While picking, a
+   * ship to escort, retreat point; tap rule T3: a move point, sent as a move
+   * order like a right-click), or cancel with null. While picking, a
    * map tap goes to the pick instead of the selection (worker
    * `SET_FLEET_PICK`). Points are dropped on every call.
    */
@@ -59,8 +52,8 @@ export interface FleetOverlayShip {
   route?: [number, number][];
 }
 
-/** RTS slice 14b: what a map pick is for. */
-export type FleetPickKindWire = 'patrol' | 'escort' | 'retreat';
+/** RTS slice 14b: what a map pick is for (`move`: tap rule T3, one point). */
+export type FleetPickKindWire = 'move' | 'patrol' | 'escort' | 'retreat';
 
 /** RTS slice 14b: a finished map pick (game space). Plain data. */
 export type FleetPickResultWire =

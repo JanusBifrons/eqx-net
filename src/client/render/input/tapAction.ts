@@ -9,11 +9,10 @@
  *  - free space with ships selected: DESELECT, like an RTS (shift keeps the
  *    ships and only drops the focus);
  *  - otherwise inspect whatever is (or is not) under the tap.
- * A tap is never an order, on touch either: move and attack orders stay on the
- * mouse right-click (the router's `order` action).
+ * A tap is never an order, on touch either: orders are the mouse right-click
+ * (the router's `order` action), the strip's Lock, and the strip's Move (a
+ * one-point fleet pick, then a tap).
  */
-export type FleetOrderMode = 'move' | 'attack';
-
 export type TapAction = 'select' | 'focus' | 'inspect' | 'deselect';
 
 export interface TapContext {

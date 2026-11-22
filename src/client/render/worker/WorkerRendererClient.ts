@@ -559,11 +559,6 @@ export class WorkerRendererClient implements IRenderer {
     this.post({ type: 'SET_SPECTATOR', active });
   }
 
-  /** See `IRenderer.setFleetOrderMode`. Posts to the worker's renderer. */
-  setFleetOrderMode(mode: 'move' | 'attack'): void {
-    this.post({ type: 'SET_FLEET_ORDER_MODE', mode });
-  }
-
   /** See `IRenderer.setFleetOverlayModel`. Posts to the worker's renderer. */
   setFleetOverlayModel(model: FleetOverlayModel): void {
     this.post({ type: 'SET_FLEET_OVERLAY_MODEL', model });

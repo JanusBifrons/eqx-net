@@ -4,11 +4,12 @@
  */
 import { FLEET_ROUTE_MAX, FLEET_ROUTE_MIN } from '@shared-types/messages/fleetStatusMessages';
 
-export type FleetPickKind = 'patrol' | 'escort' | 'retreat';
+export type FleetPickKind = 'move' | 'patrol' | 'escort' | 'retreat';
 
-/** The modes whose button starts a map pick instead of sending at once. */
+/** The modes whose button starts a map pick instead of sending at once
+ *  (`move` is the left strip's Move, tap rule T3). */
 export function modeNeedsPick(mode: string): mode is FleetPickKind {
-  return mode === 'patrol' || mode === 'escort' || mode === 'retreat';
+  return mode === 'move' || mode === 'patrol' || mode === 'escort' || mode === 'retreat';
 }
 
 /** Done is allowed: a patrol route with at least 2 points. */
@@ -28,5 +29,7 @@ export function fleetPickHint(kind: FleetPickKind, points: number, touch: boolea
       return `${click} one of your other ships to escort`;
     case 'retreat':
       return `${click} where to retreat to`;
+    case 'move':
+      return `${click} where to move`;
   }
 }

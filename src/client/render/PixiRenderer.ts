@@ -456,8 +456,6 @@ export class PixiRenderer implements IRenderer {
   /** DEV/E2E: what the backdrop is showing. */
   backdropStats(): BackdropStats { return backdropStats(this._probes); }
 
-  /** See `IRenderer.setFleetOrderMode`. */
-  setFleetOrderMode(mode: 'move' | 'attack'): void { this._input.setFleetOrderMode(mode); }
   /** See `IRenderer.setFleetPick`. */
   setFleetPick(kind: FleetPickKindWire | null): void { this._input.setFleetPick(kind); }
   /** See `IRenderer.commitFleetPick`. */

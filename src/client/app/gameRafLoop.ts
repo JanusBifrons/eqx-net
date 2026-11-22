@@ -419,6 +419,8 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
           sendFleetOrder(ids.slice(), { kind: 'attack', targetId: selFb.orderTargetId });
         }
       }
+      // Tap rule T3: the strip's Move pick ends with its move order.
+      if (selFb.orderKind === 'move' && useUIStore.getState().fleetPick?.kind === 'move') useUIStore.getState().setFleetPick(null);
       logEvent('fleet_order', {
         seq: selFb.orderSeq,
         kind: selFb.orderKind,

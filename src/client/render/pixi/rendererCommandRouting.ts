@@ -4,7 +4,7 @@ import type { GalaxyMapLayer } from '../galaxy/GalaxyMapLayer';
 import { resolveSelectable, type SelectableTarget, type SelectionBracket } from '../SelectionBracket';
 import { fingerSlopWorld, onCraneBayPad, pickEntityAt, TAP_SLOP, type PickedEntityKind } from '../pickEntity';
 import { CommandPointerRouter, type BoxRect, type HoldArmed, type RouterAction, type RouterPointerEvent } from '../input/commandPointerRouter.js';
-import { decideTapAction, type FleetOrderMode } from '../input/tapAction.js';
+import { decideTapAction } from '../input/tapAction.js';
 import { DoubleTapTracker } from '../input/doubleTap.js';
 import { createFleetPickState, decidePickTap, pickAddPoint, pickFinishPatrol, pickStart, type FleetPickResult } from '../input/fleetPick.js';
 import { applySelection, boxSelectOwn, collectFleetShips, focusSurvives, isMine, isOwnShipPresent, isOwnStructure, pickOwnShipAt, sameSelection, tapSelectOwn } from '../fleetSelection.js';
@@ -69,11 +69,8 @@ export abstract class RendererCommandRouting {
   private readonly _orderFlash: OrderFlash = { x: 0, y: 0, attack: false, t0: -1 };
   /** The focus's pose for `attackFocus` (reused). */
   private readonly _focusPose: SelectableTarget = { x: 0, y: 0, r: 0, hw: 0, hh: 0 };
-  /** Touch tap-order mode (slice 12), pushed from the strip's Zustand toggle.
-   *  No longer read: a tap is never an order (the tap rule); a later slice
-   *  retires the toggle and its plumbing. */
-  private _fleetOrderMode: FleetOrderMode = 'move';
-  /** "Pick on the map" for patrol / escort / retreat (slice 14b). While a
+  /** "Pick on the map" for move / patrol / escort / retreat (slice 14b; move
+   *  is tap rule T3). While a
    *  kind is set, map taps go here and never change the selection. */
   private readonly _fleetPick = createFleetPickState();
   /** Own ships' squads + orders by id (slice 15a), replaced on each
@@ -218,6 +215,13 @@ export abstract class RendererCommandRouting {
         return;
       case 'retreatHere':
         this.publishPickResult({ kind: 'retreat', x: gx, y: gy });
+        return;
+      case 'moveHere':
+        // Tap rule T3: a move order (the right-click path), never a pick
+        // result. The pick ends here; gameRafLoop ends the Zustand pick.
+        pickStart(pick, null);
+        this.feedback.fleetPickPoints = 0;
+        this.publishOrder(gx, gy, null);
         return;
       case 'escortShip':
         this.publishPickResult({ kind: 'escort', escortId: own! });
@@ -536,11 +540,6 @@ export abstract class RendererCommandRouting {
   /** A build-mode tap on empty space: move the placement ghost there. */
   protected abstract placementTap(x: number, y: number, pointerType: string): void;
   protected abstract cameraPointer(type: string, pointerId: number, x: number, y: number, stamp: number, pointerType?: string): boolean;
-
-  /** See `IRenderer.setFleetOrderMode`. */
-  setFleetOrderMode(mode: 'move' | 'attack'): void {
-    this._fleetOrderMode = mode;
-  }
 
   /** See `IRenderer.setFleetPick`. */
   setFleetPick(kind: FleetPickKindWire | null): void {
