@@ -84,6 +84,7 @@ import type { WreckDescriptor } from '../../../shared-types/messages/wreckDescri
 import type { WreckSource } from '../../../core/destruction/wreckSource.js';
 import { wreckFrameScale, wreckProfileOf, wreckSourceKindOf } from '../../net/wreckRootSource.js';
 import { type DestructionFx, type DestructionProfileId, type WreckGlowStyle } from '../../../shared-types/shipScale/destruction.js';
+import { structureWreckRigArt } from './structureWreckRigArt.js';
 
 /** Container + meshes (≤ 6 tiles) + one glow mesh (the crack strokes). */
 export const WRECK_DISPLAY_OBJECTS_PER_PIECE_MAX = 8;
@@ -1194,6 +1195,9 @@ export class WreckPieceSprite extends Container {
     } else {
       this.artParts.push(this.addChild(buildWreckPieceGfx(piece.outline, parentKind)));
     }
+    // A structure's piece also wears the rig parts drawn over its bake (panels, crane, riser).
+    const rigArt = art !== null && source?.structure ? structureWreckRigArt(source.structure.k, piece) : null;
+    if (rigArt !== null) { rigArt.tint = info.fx.burntArt ? burntTint(piece, info) : 0xffffff; this.artParts.push(this.addChild(rigArt)); }
     // A profile dead tint, if any, from the first frame whatever path built
     // the piece. None today: a sub-cap piece keeps its ship's normal art
     // (owner 2026-11-13: "Why would it darken when destroyed? It should just
