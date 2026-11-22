@@ -148,5 +148,7 @@ describe('DESTRUCTION_PROFILES', () => {
     // Owner 2026-11-13: "Why would it darken when destroyed? It should just
     // be broken, same brightness?"
     expect([s.deadTint, s.burntArt]).toEqual([null, false]);
+    // A structure's pieces go dark like a dead hull (structure break-up T5).
+    expect([DESTRUCTION_PROFILES.structure.fx.deadTint, DESTRUCTION_PROFILES.structure.fx.burntArt]).toEqual([null, true]);
   });
 });

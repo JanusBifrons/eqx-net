@@ -291,8 +291,6 @@ export interface UIStore extends ShieldToggleUi, RightPanelUi {
    *  (purity-clean: it's a kind id, not a spatial field). Set by the
    *  Build actions (which enter Build mode); cleared on confirm / cancel. */
   placementKind: StructureKindId | null;
-  /** Phase 4 warp-to: the warp destination picker is open (discrete UI flag). */
-  warpPickerOpen: boolean;
   /** Where a held warp goes (the picker's label), shown by the warp chip; null when none. */
   warpHeldTo: string | null;
   /** THE selection (RTS Part A: one selection concept). See {@link UISelection}. */
@@ -533,7 +531,6 @@ export interface UIStore extends ShieldToggleUi, RightPanelUi {
   setTravelling: (on: boolean) => void;
   setActiveSlotId: (id: string) => void;
   setPlacementKind: (k: StructureKindId | null) => void;
-  setWarpPickerOpen: (open: boolean) => void;
   setWarpHeldTo: (label: string | null) => void;
   /** Phase 4 WS-B1 — set / clear the pending local level-up acknowledgement
    *  (the level just reached, or null to clear). WS-B2's upgrade modal reads it. */

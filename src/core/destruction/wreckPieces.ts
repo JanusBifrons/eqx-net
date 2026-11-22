@@ -23,7 +23,7 @@
  * Runs once per death (not hot-loop code); allocates freely.
  */
 import { projectToOutline, FRACTURE_SNAP_CHANCE } from './fractureHull.js';
-import { findSeams } from './wreckSeams.js';
+import { findSeams, type Seam } from './wreckSeams.js';
 export { findSeams, type Seam } from './wreckSeams.js';
 import { gapLine, partGap } from './wreckBurnedGap.js';
 import { hullCutAngleOf } from './burnLines.js';
@@ -106,7 +106,7 @@ const wreckBodyParamsCache = new Map<string, WreckBodyParams>();
  *  at spawn, never allocates after the first call), or of a rock's piece
  *  (its source: by its radius, computed per call at spawn). */
 export function wreckBodyParams(source: ShipKindId | WreckSource): WreckBodyParams {
-  if (typeof source !== 'string') return bodyParamsOf(source.profile, source.radius);
+  if (typeof source !== 'string') return bodyParamsOf(source.profile, source.radius * source.partScale);
   const kindId = source;
   let p = wreckBodyParamsCache.get(kindId);
   if (p === undefined) {
@@ -117,6 +117,8 @@ export function wreckBodyParams(source: ShipKindId | WreckSource): WreckBodyPara
   return p;
 }
 
+/** `radius`: the settle speed's radius (× the source's `partScale`, so a
+ *  structure that parts like a ship of its size settles at the same share). */
 function bodyParamsOf(prof: WreckSource['profile'], radius: number): WreckBodyParams {
   return {
     collisionGroups: prof.piecesCollide ? WRECK_COLLISION_GROUPS : SUBCAP_WRECK_COLLISION_GROUPS,
@@ -349,11 +351,19 @@ export function wreckBreakKicks(
   // turn long pieces into each other (owner review 2026-11-13: pieces "slide
   // over each other", a "V" hinge at a stern seam).
   const sep = tuning.wreckSeparate * prof.separateScale;
+  // Wedges from the kill point (`separateFromKill`): every piece leaves the
+  // kill point at sep / 2 (a sub-cap half's speed: two halves open their
+  // seam at sep), and each seam's guard is what that opens it at, so a
+  // narrow wedge is never flung to open it. Off: every seam's guard is
+  // `sep` (ships, rocks).
+  const seamSep = prof.separateFromKill === true ? killSeamGuards(geom, seams, kx, ky, sep, kvx, kvy) : null;
   // Fracture v13 burned gap: its banks part too, in the same passes.
   const gap = slice !== undefined && cutGap > 0 && prof.cutPartSpeed > 0 ? gapLine(geom, slice, cutGap, prof.cutPartSpeed) : null;
   for (let it = 0; it < SEPARATE_ITERATIONS; it++) {
     let worst = 0;
-    for (const sm of seams) {
+    for (let si = 0; si < seams.length; si++) {
+      const sm = seams[si]!;
+      const sepS = seamSep === null ? sep : seamSep[si]!;
       const gi = geom[sm.i]!;
       const gj = geom[sm.j]!;
       const at = (px: number, py: number): number => {
@@ -367,9 +377,9 @@ export function wreckBreakKicks(
       const wi = 1 / gi.mass;
       const wj = 1 / gj.mass;
       const open = Math.min(at(sm.ax, sm.ay), at(sm.bx, sm.by));
-      if (open < sep) {
-        worst = Math.max(worst, sep - open);
-        const imp = (SEPARATE_AIM * sep - open) / (wi + wj);
+      if (open < sepS) {
+        worst = Math.max(worst, sepS - open);
+        const imp = (SEPARATE_AIM * sepS - open) / (wi + wj);
         kvx[sm.i] = kvx[sm.i]! - sm.nx * imp * wi;
         kvy[sm.i] = kvy[sm.i]! - sm.ny * imp * wi;
         kvx[sm.j] = kvx[sm.j]! + sm.nx * imp * wj;
@@ -384,7 +394,7 @@ export function wreckBreakKicks(
       dx /= dl;
       dy /= dl;
       const apart = (kvx[sm.j]! - kvx[sm.i]!) * dx + (kvy[sm.j]! - kvy[sm.i]!) * dy;
-      const want = CENTRE_PART * sep;
+      const want = CENTRE_PART * sepS;
       if (apart >= want) continue;
       worst = Math.max(worst, want - apart);
       const imp = (SEPARATE_AIM * want - apart) / (wi + wj);
@@ -397,6 +407,34 @@ export function wreckBreakKicks(
     if (worst === 0) break;
   }
   return { kvx, kvy, kw };
+}
+
+/** `separateFromKill`: adds to each piece `sep` / 2 straight away from the
+ *  kill point, and returns each seam's guard: the speed that opens it at
+ *  (two halves either side of it: `sep`; a narrow wedge's seams less).
+ *  Never below 0. */
+function killSeamGuards(
+  geom: ReadonlyArray<WreckPieceGeometry>, seams: ReadonlyArray<Seam>, kx: number, ky: number, sep: number,
+  kvx: Float64Array, kvy: Float64Array,
+): Float64Array {
+  for (let i = 0; i < geom.length; i++) {
+    const g = geom[i]!;
+    const l = Math.hypot(g.cx - kx, g.cy - ky);
+    if (l < 1e-6) continue;
+    kvx[i] = kvx[i]! + ((g.cx - kx) / l) * 0.5 * sep;
+    kvy[i] = kvy[i]! + ((g.cy - ky) / l) * 0.5 * sep;
+  }
+  const out = new Float64Array(seams.length);
+  for (let si = 0; si < seams.length; si++) {
+    const sm = seams[si]!;
+    const a = geom[sm.i]!;
+    const b = geom[sm.j]!;
+    const la = Math.max(1e-6, Math.hypot(a.cx - kx, a.cy - ky));
+    const lb = Math.max(1e-6, Math.hypot(b.cx - kx, b.cy - ky));
+    const opens = ((b.cx - kx) / lb - (a.cx - kx) / la) * sm.nx + ((b.cy - ky) / lb - (a.cy - ky) / la) * sm.ny;
+    out[si] = Math.max(0, opens * 0.5 * sep);
+  }
+  return out;
 }
 
 export function buildWreckPieces(input: WreckBuildInput): WreckBuild {

@@ -59,7 +59,7 @@ import { logEvent } from './debug/ClientLogger';
 import { captureDeviceInfo } from './debug/deviceInfo';
 import { useMountLog } from './debug/useMountLog';
 import { useWarpOrchestration } from './useWarpOrchestration';
-import { WarpPicker, WarpStatusChip } from './components/WarpPicker';
+import { WarpStatusChip } from './components/WarpPicker';
 import { StructurePlacementBanner } from './components/StructurePlacementBanner';
 import { PlacementFenceHint } from './components/PlacementFenceHint';
 import { PlacementLinkHint } from './components/PlacementLinkHint';
@@ -546,7 +546,7 @@ function GameSurface({
     setGameClient(gameClient);
     // RTS fleet panel: plug the panel's command seam into the network senders.
     installFleetCommandSenders();
-    // Expose for the dev-only diagnostic capture (SettingsModal "Capture" button
+    // Expose for the dev-only diagnostic capture (cog Developer page "Capture" button
     // reads `__eqxClient.stats`). DEV-only assignment guarded by Vite's tree-shaking.
     if (import.meta.env.DEV) {
       (window as unknown as { __eqxClient?: ColyseusGameClient }).__eqxClient = gameClient;
@@ -957,8 +957,6 @@ function GameSurface({
        *  is removed. Death transitions INSTANTLY into spectator (free-roam
        *  construction camera); re-entry is via the galaxy map or (WS-A2) an
        *  owned ship's in-world Pilot action. */}
-      {/* Phase 4 warp-to destination picker (portalled; solar sectors only). */}
-      <WarpPicker />
       {/* Phase 4 WS-B2 — ship stat-upgrade modal. Opens on the local ship's
        *  level-up (the WS-B1 `pendingLevelUp` seam) to spend the earned point. */}
       <UpgradeModalHost />
@@ -1040,10 +1038,6 @@ export function App(): JSX.Element {
    *  on every legacy sector-click so the override only applies for the
    *  roster-card flow. */
   const [joinOptionsOverride, setJoinOptionsOverride] = useState<Record<string, unknown> | undefined>(initialJoinOpts);
-  const [profileOpen, setProfileOpen] = useState(false);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const openSettings = useCallback(() => { const s = useUIStore.getState(); if (s.phase === 'game') s.setDrawerTab('settings'); else setSettingsOpen(true); }, []);
-  const closeSettings = useCallback(() => setSettingsOpen(false), []);
 
   // Apply autoJoin once on mount — overrides the store's default 'galaxy-map'.
   // Subsequent phase changes are user-driven (drawer buttons, login flow).
@@ -1128,11 +1122,6 @@ export function App(): JSX.Element {
         <RotatePhoneOverlay />
         <PhaseRouter
           phase={phase}
-          profileOpen={profileOpen}
-          setProfileOpen={setProfileOpen}
-          settingsOpen={settingsOpen}
-          openSettings={openSettings}
-          closeSettings={closeSettings}
           setPhase={setPhase}
           gameSurface={
             <GameSurface

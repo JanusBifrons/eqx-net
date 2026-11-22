@@ -166,7 +166,6 @@ export const useUIStore = create<UIStore>((set, get) => ({
   travelling: false,
   activeSlotId: 'primary',
   placementKind: null,
-  warpPickerOpen: false,
   warpHeldTo: null,
   selection: EMPTY_SELECTION,
   fleetPick: null,
@@ -288,7 +287,6 @@ export const useUIStore = create<UIStore>((set, get) => ({
   // fires immediately (no carry-over cooldown across slots).
   setActiveSlotId: (id) => set({ activeSlotId: id, lastFireMs: null }),
   setPlacementKind: (k) => set(k === null ? { placementKind: null } : { placementKind: k, buildMode: true }),
-  setWarpPickerOpen: (open) => set({ warpPickerOpen: open }),
   setWarpHeldTo: (label) => set({ warpHeldTo: label }),
   // No ships left to command ⇒ nothing to pick a target for (slice 14b).
   setSelection: (ids, focusId, focusKind) => {

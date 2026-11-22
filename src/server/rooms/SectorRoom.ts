@@ -1467,7 +1467,7 @@ export class SectorRoom extends Room<SectorState> {
     // Damage routing. Three branches (lingering / active /
     // swarm), each composing ShieldHullRouter + evictSwarmEntity.
     // Extracted to DamageRouter.ts.
-    const droneScrapHost: DroneScrapHost = { sabF32: () => this.sabF32, scrapSpawner: () => this.scrapSpawner, hasCapitalWrecks: () => this.capitalWrecks !== null, wreckKindAllowed: (k) => this.wreckSpawns.wreckKindAllowed(k), spawnCapitalWreck: (...a) => this.wreckSpawns.spawnCapitalWreck(...a) };
+    const droneScrapHost: DroneScrapHost = { sabF32: () => this.sabF32, scrapSpawner: () => this.scrapSpawner, hasCapitalWrecks: () => this.capitalWrecks !== null, wreckKindAllowed: (k) => this.wreckSpawns.wreckKindAllowed(k), spawnCapitalWreck: (...a) => this.wreckSpawns.spawnCapitalWreck(...a), structureWrecksOn: () => this.wreckSpawns.structureWrecksOn, structureOf: (id) => this.structureRegistry.get(id), spawnStructureWreck: (r) => this.wreckSpawns.spawnStructureWreck(r) };
     this.damageRouter = new DamageRouter({
       serverTick: () => this.serverTick,
       shipsMap: this.state.ships,
@@ -2281,7 +2281,7 @@ export class SectorRoom extends Room<SectorState> {
     // `=0` forces it off (tests, the off arm of the debris soak), `=1` on.
     // Read before the streaming host: a wreck field follows the switches.
     this.capitalWrecksOn = wreckSwitchOn(process.env['EQX_CAPITAL_WRECKS'], roomOpts.capitalWrecks);
-    this.subcapWrecksOn = wreckSwitchOn(process.env['EQX_SUBCAP_WRECKS'], roomOpts.subcapWrecks);
+    this.subcapWrecksOn = wreckSwitchOn(process.env['EQX_SUBCAP_WRECKS'], roomOpts.subcapWrecks); this.wreckSpawns.readStructureSwitch(roomOpts.structureWrecks); // structure break-up (on by default since 2026-11-22)
     const fieldSeed = roomOpts.cutField?.seed ?? null, chunkSources: ChunkSource[] = [];
     if (roomOpts.wreckField !== undefined && (this.capitalWrecksOn || this.subcapWrecksOn)) chunkSources.push(this.wreckFieldSource = this.wreckSpawns.buildWreckFieldSource(roomOpts.wreckField, roomOpts.cutField));
     if ((this.capitalWrecksOn || this.subcapWrecksOn) && this.persistSector && this.sectorKey !== null) chunkSources.push(this.wreckSaves = new BattleWreckSaves(() => this.capitalWrecks?.lineageState() ?? null, battleWreckStore(this.sectorKey), { piecePoseInto: (id, out) => this.wreckSpawns.wreckPose(id, out) !== null, tractored: (id) => this.forceFields.isTractored(id), streaming: !this.testMode || roomOpts.battleWreckStreaming === true })); // wreck fields 0b: battle lineages stream on the one streamer
@@ -2387,7 +2387,7 @@ export class SectorRoom extends Room<SectorState> {
       this.setTimeScale(ENV_TIME_SCALE);
     }
     // (Wreck switches: read before the streaming host, above.)
-    if (this.capitalWrecksOn || this.subcapWrecksOn) this.capitalWrecks = buildCapitalWrecks({ serverTick: () => this.serverTick, swarmRegistry: this.swarmRegistry, wreckKindAllowed: (k) => this.wreckSpawns.wreckKindAllowed(k), getActiveShip: (pid) => this.getActiveShip(pid), state: () => this.state, patrols: this.patrols, shipPoseCache: this.shipPoseCache, lingeringPoseCache: this.lingeringPoseCache, sabF32: () => this.sabF32, sabU32: () => this.sabU32, swarmSpawner: () => this.swarmSpawner, physicsWorkerProxy: () => this.physicsWorkerProxy, evictSwarmEntity: (rec, o) => this.evictSwarmEntity(rec, o), wreckPose: (id, out) => this.wreckSpawns.wreckPose(id, out), wreckPoseScratch: this._wreckPose, postToWorker: (c) => this.postToWorker(c), wreckImpulseCmd: this._wreckImpulseCmd, wreckRigidImpulseCmd: this._wreckRigidImpulseCmd, playerToSlot: () => this.playerToSlot, lingeringSlots: this.lingeringSlots, loot: () => this.loot, locks: () => this.locks, wingmanLocks: () => this.wingmanLocks, wreckSaves: () => this.wreckSaves, wreckFieldSource: () => this.wreckFieldSource, cutField: () => this.cutField });
+    if (this.capitalWrecksOn || this.subcapWrecksOn) this.capitalWrecks = buildCapitalWrecks({ serverTick: () => this.serverTick, swarmRegistry: this.swarmRegistry, wreckKindAllowed: (k) => this.wreckSpawns.wreckKindAllowed(k), getActiveShip: (pid) => this.getActiveShip(pid), state: () => this.state, patrols: this.patrols, shipPoseCache: this.shipPoseCache, lingeringPoseCache: this.lingeringPoseCache, sabF32: () => this.sabF32, sabU32: () => this.sabU32, swarmSpawner: () => this.swarmSpawner, physicsWorkerProxy: () => this.physicsWorkerProxy, evictSwarmEntity: (rec, o) => this.evictSwarmEntity(rec, o), wreckPose: (id, out) => this.wreckSpawns.wreckPose(id, out), wreckPoseScratch: this._wreckPose, postToWorker: (c) => this.postToWorker(c), wreckImpulseCmd: this._wreckImpulseCmd, wreckRigidImpulseCmd: this._wreckRigidImpulseCmd, playerToSlot: () => this.playerToSlot, lingeringSlots: this.lingeringSlots, loot: () => this.loot, locks: () => this.locks, wingmanLocks: () => this.wingmanLocks, wreckSaves: () => this.wreckSaves, wreckFieldSource: () => this.wreckFieldSource, cutField: () => this.cutField, structures: this.wreckSpawns });
     if (this.wreckSaves !== null && this.wreckSaves.loadRows() >= 0) this.gameClock.every(WRECK_LINEAGE_FLUSH_MS, guarded('wreck-lineage-flush', () => this.wreckSaves?.flush(false)));
     // T1 (plan soft-leaping-truffle v3) — the sector's NPC base, after restore.
     if (roomOpts.galaxyBases === true && this.sectorKey !== null && getSector(this.sectorKey) && !isNpcBasesDisabled()) {
@@ -3056,7 +3056,7 @@ export class SectorRoom extends Room<SectorState> {
     logger, swarmRegistry: this.swarmRegistry, forceFields: this.forceFields, shipPoseCache: this.shipPoseCache,
     capitalWrecks: () => this.capitalWrecks, capitalWrecksOn: () => this.capitalWrecksOn, subcapWrecksOn: () => this.subcapWrecksOn,
     persistSector: () => this.persistSector, sectorKey: () => this.sectorKey, sabF32: () => this.sabF32, sabU32: () => this.sabU32,
-    playerToSlot: () => this.playerToSlot, getActiveShip: (pid) => this.getActiveShip(pid), postToWorker: (cmd) => this.postToWorker(cmd),
+    playerToSlot: () => this.playerToSlot, getActiveShip: (pid) => this.getActiveShip(pid), postToWorker: (cmd) => this.postToWorker(cmd), structureRegistry: this.structureRegistry,
   });
 
   /** LoadShedder: can ANY connected player see this drone? The same view the

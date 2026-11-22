@@ -8,26 +8,20 @@
  * transient 'connecting' beat that paints a black background while
  * the global WarpScreen overlay does the show.
  *
- * The Modals (Profile + Settings) appear in every phase shell so the
- * AppHeader's avatar / gear icon work uniformly.
+ * The cog panel (settings + Profile) is mounted in every phase shell so the
+ * AppHeader's avatar / gear icon open it uniformly (U2-8b).
  */
 
 import { Box } from '@mui/material';
 import { AppHeader } from '../components/AppHeader';
 import { LoginPage } from '../components/LoginPage';
-import { ProfileModal } from '../components/ProfileModal';
-import { SettingsModal } from '../components/SettingsModal';
 import { LocalSurface } from '../components/LocalSurface';
 import { MobileAvatarBadge } from '../layout/MobileAvatarBadge';
+import { CogPanel } from '../panels/CogPanel';
 import type { Phase } from '../state/storeTypes';
 
 export interface PhaseRouterProps {
   phase: Phase;
-  profileOpen: boolean;
-  setProfileOpen: (open: boolean) => void;
-  settingsOpen: boolean;
-  openSettings: () => void;
-  closeSettings: () => void;
   setPhase: (p: Phase) => void;
   /**
    * The shared gameplay/picker canvas. Rendered in BOTH the 'game'
@@ -46,30 +40,18 @@ export interface PhaseRouterProps {
 
 export function PhaseRouter(props: PhaseRouterProps): JSX.Element {
   const {
-    phase, profileOpen, setProfileOpen, settingsOpen, openSettings, closeSettings,
-    setPhase, gameSurface, onAuthSuccess, onContinueAsGuest,
+    phase, setPhase, gameSurface, onAuthSuccess, onContinueAsGuest,
   } = props;
 
-  const headerWithLogin = (
-    <AppHeader
-      onLoginClick={() => setPhase('auth')}
-      onProfileClick={() => setProfileOpen(true)}
-      onSettingsClick={openSettings}
-    />
-  );
-  const modals = (
-    <>
-      <ProfileModal open={profileOpen} onClose={() => setProfileOpen(false)} />
-      <SettingsModal open={settingsOpen} onClose={closeSettings} />
-    </>
-  );
+  const headerWithLogin = <AppHeader onLoginClick={() => setPhase('auth')} />;
+  const cog = <CogPanel />;
 
   if (phase === 'game') {
     return (
       <>
         {headerWithLogin}
         {gameSurface}
-        {modals}
+        {cog}
       </>
     );
   }
@@ -79,13 +61,9 @@ export function PhaseRouter(props: PhaseRouterProps): JSX.Element {
   if (phase === 'auth') {
     return (
       <>
-        <AppHeader
-          onLoginClick={() => {}}
-          onProfileClick={() => setProfileOpen(true)}
-          onSettingsClick={openSettings}
-        />
+        <AppHeader onLoginClick={() => {}} />
         <LoginPage onSuccess={onAuthSuccess} onSkip={onContinueAsGuest} />
-        {modals}
+        {cog}
       </>
     );
   }
@@ -114,9 +92,9 @@ export function PhaseRouter(props: PhaseRouterProps): JSX.Element {
         gameSurface
       )}
       {/* Touch has no AppBar: the avatar pip is the logged-in cue on the
-       *  homepage map (in game the drawer's Profile tab covers it). */}
-      {phase === 'galaxy-map' && <MobileAvatarBadge onProfileClick={() => setProfileOpen(true)} />}
-      {modals}
+       *  homepage map; a tap opens the cog's Profile page. */}
+      {phase === 'galaxy-map' && <MobileAvatarBadge />}
+      {cog}
     </>
   );
 }

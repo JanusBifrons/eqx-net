@@ -1,76 +1,52 @@
 /**
- * Warp destination picker (wrap-up plan W1a): picking a destination asks the
- * client to warp to that pocket's rim, in both prototypes, and a held warp
- * shows a chip with a Cancel.
+ * In-sector warp helpers: the held-warp chip shows where the warp goes and
+ * its Cancel stops it. The destination list itself is the Galaxy panel's
+ * (`panels/GalaxyPanel.test.tsx`).
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 
-const requestWarp = vi.fn();
 const cancelWarp = vi.fn();
 let warping = false;
 vi.mock('../net/clientSingleton', () => ({
   getGameClient: () => ({
     mirror: { localPlayerId: 'p1', ships: new Map([['p1', { x: 0, y: 0 }]]) },
-    requestWarp: (x: number, y: number) => { requestWarp(x, y); warping = true; },
     cancelWarp: () => { cancelWarp(); warping = false; },
     hasWarpRequest: () => warping,
   }),
 }));
 
-import { WarpPicker, WarpStatusChip, readWarpUi } from './WarpPicker';
+import { WarpStatusChip, destinationsFrom } from './WarpPicker';
 import { useUIStore } from '../state/store';
 import { warpDestinations } from './warpDestinations';
 
 beforeEach(() => {
-  requestWarp.mockClear(); cancelWarp.mockClear(); warping = false;
-  useUIStore.setState({ currentSectorKey: 'sol-prime', warpPickerOpen: true, warpHeldTo: null });
-  window.history.replaceState(null, '', '/?warpui=list');
+  cancelWarp.mockClear(); warping = false;
+  useUIStore.setState({ warpHeldTo: null });
 });
-afterEach(() => { useUIStore.setState({ warpPickerOpen: false }); });
+afterEach(() => { useUIStore.setState({ warpHeldTo: null }); });
 
-describe('WarpPicker', () => {
-  it('list: picking a pocket warps to its rim, closes, and shows a cancellable chip', () => {
-    render(<><WarpPicker /><WarpStatusChip /></>);
-    const target = warpDestinations('sol-prime', 0, 0).find((d) => !d.here)!;
-    fireEvent.click(screen.getByTestId(`warp-dest-${target.id}`));
-    expect(requestWarp).toHaveBeenCalledWith(target.dropX, target.dropY);
-    expect(useUIStore.getState().warpPickerOpen).toBe(false);
-    expect(screen.getByTestId('warp-status').textContent).toContain(target.label);
+describe('WarpStatusChip', () => {
+  it('shows nothing with no held warp', () => {
+    render(<WarpStatusChip />);
+    expect(screen.queryByTestId('warp-status')).toBeNull();
+  });
+
+  it('shows the held warp and Cancel stops it', () => {
+    useUIStore.setState({ warpHeldTo: 'Belt A' });
+    warping = true;
+    render(<WarpStatusChip />);
+    expect(screen.getByTestId('warp-status').textContent).toContain('Belt A');
     fireEvent.click(screen.getByTestId('warp-cancel'));
     expect(cancelWarp).toHaveBeenCalled();
+    expect(useUIStore.getState().warpHeldTo).toBeNull();
   });
+});
 
-  it("list: the pocket you're in can't be picked", () => {
-    render(<WarpPicker />);
-    const home = warpDestinations('sol-prime', 0, 0).find((d) => d.here)!;
-    expect((screen.getByTestId(`warp-dest-${home.id}`) as HTMLButtonElement).disabled).toBe(true);
-  });
-
-  it('map: tap a pocket, then Warp', () => {
-    window.history.replaceState(null, '', '/?warpui=map');
-    render(<WarpPicker />);
-    const target = warpDestinations('sol-prime', 0, 0).find((d) => !d.here)!;
-    expect((screen.getByTestId('warp-map-go') as HTMLButtonElement).disabled).toBe(true);
-    act(() => { fireEvent.click(screen.getByTestId(`warp-map-${target.id}`)); });
-    // A clear line: the route is drawn, with no landing ring (that is for a near side).
-    expect(screen.getByTestId('warp-map-line').getAttribute('data-warp-state')).toBe('clear');
-    expect(screen.queryByTestId('warp-map-landing')).toBeNull();
-    fireEvent.click(screen.getByTestId('warp-map-go'));
-    expect(requestWarp).toHaveBeenCalledWith(target.dropX, target.dropY);
-  });
-
-  it('list: a pocket with a transit pad says where it goes (instant)', () => {
-    render(<WarpPicker />);
-    const pad = warpDestinations('sol-prime', 0, 0).find((d) => d.padTo !== null)!;
-    expect(screen.getByTestId(`warp-pad-${pad.id}`).textContent).toContain('instant');
-  });
-
-  it('reads the prototype from the URL', () => {
-    expect(readWarpUi('?warpui=map', true)).toBe('map');
-    expect(readWarpUi('?warpui=list', false)).toBe('list');
-    // Both views stay (user 2026-11-08): the list on touch, the map on desktop.
-    expect(readWarpUi('', true)).toBe('list');
-    expect(readWarpUi('', false)).toBe('map');
+describe('destinationsFrom', () => {
+  it('with nothing in the way, matches the plain destination list', () => {
+    const out = destinationsFrom('sol-prime', { x: 0, y: 0, angle: 0 }, []);
+    const plain = warpDestinations('sol-prime', 0, 0);
+    expect(out.map((d) => [d.id, d.targetX, d.targetY])).toEqual(plain.map((d) => [d.id, d.targetX, d.targetY]));
   });
 });

@@ -4,11 +4,11 @@ import { useUIStore } from '../state/store.js';
 
 /**
  * The single logout ownership site (Invariant #12: one ownership site per
- * state surface). Every logout entry point — the avatar context menu
- * (`AvatarMenu`) and the drawer Profile tab (`ProfileTab`) — routes through
+ * state surface). Every logout entry point — today the cog panel's Profile
+ * page (`panels/CogProfilePage.tsx`, inline confirm) — routes through
  * this hook so the sequence can never drift between surfaces.
  *
- * The sequence, lifted from the original `ProfileTab.onConfirmLogout`:
+ * The sequence, lifted from the original drawer Profile tab's confirm:
  *   1. `clearAuth()`     — nulls token+user in Zustand AND clears the
  *                          `eqxAuthToken` localStorage key.
  *   2. `setPhase('galaxy-map')`— swaps `GameSurface` to idle (which disposes the Colyseus
