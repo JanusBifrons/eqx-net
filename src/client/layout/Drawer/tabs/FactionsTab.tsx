@@ -69,7 +69,7 @@ export const FactionsTab = memo(function FactionsTab(): JSX.Element {
   };
 
   return (
-    <Box sx={{ p: 1 }} data-testid="factions-tab">
+    <Box data-testid="factions-tab">
 
       <Typography sx={SECTION_SX}>Your policy</Typography>
       <Box sx={POLICY_ROW_SX}>
