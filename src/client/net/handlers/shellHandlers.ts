@@ -25,7 +25,7 @@ export interface ShellHandlerCtx {
 
 /** Queue a siege shell burst's explosion (the same visual as a missile's, at
  *  the size of its blast): on arrival, or when its held blast is released. */
-export function pushShellBlast(mirror: RenderMirror, x: number, y: number, radius: number): void {
+export function pushBlastExplosion(mirror: RenderMirror, x: number, y: number, radius: number): void {
   (mirror.pendingMissileExplosions ??= []).push({ x, y, splashRadius: radius, missileId: -1 });
 }
 
@@ -50,6 +50,6 @@ export function registerShellHandlers(room: Room, ctx: ShellHandlerCtx): void {
     const result = ShellBlastSchema.safeParse(raw);
     if (!result.success) return;
     const { x, y, radius } = result.data;
-    if (!holdBlast(x, y, radius)) pushShellBlast(mirror, x, y, radius);
+    if (!holdBlast(x, y, radius)) pushBlastExplosion(mirror, x, y, radius);
   });
 }

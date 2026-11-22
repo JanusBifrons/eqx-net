@@ -43,7 +43,7 @@ import { DrawnShellTiming } from './drawnShellTiming';
 import type { FleetArrival, FleetArrivalWatch } from './fleetWarpFollow';
 import { cargoChanged, cargoViewOf, type WireCargo } from './lootView';
 import { registerClientHandlers, type ClientHandlerCtx } from './handlers/index.js';
-import { pushShellBlast } from './handlers/shellHandlers.js';
+import { pushBlastExplosion } from './handlers/shellHandlers.js';
 import type { MirrorPassCtx } from './mirror/mirrorPassCtx.js';
 import type { PredictionStepCtx } from './prediction/predictionStepCtx.js';
 import { FIXED_MS, MAX_CATCH_UP_TICKS, MAX_OVER_PREDICTION_TICKS, stepInputTick, predictFrameEnergy, sendCapSentinel,
@@ -1105,6 +1105,7 @@ export class ColyseusGameClient {
     applyShellEnd: (msg: ShellEnd): void => this.applyShellEnd(msg),
     holdBlast: (x: number, y: number, r: number): boolean => this._shellEvents
       && this._navalHitHold.maybeHoldBlast(x, y, r, this._shellStore.map, this.gameClock.now()),
+    holdBlastWithHit: (x: number, y: number, r: number): boolean => this._navalHitHold.holdBlastWithHit(x, y, r),
     transitInstr: this.transitInstr,
     now: (): number => this.clock.now(),
     isDisposed: (): boolean => this.disposed,
@@ -1250,7 +1251,7 @@ export class ColyseusGameClient {
   /** The sink `_navalHitHold.release` calls (built once, #14). */
   private readonly _heldDamageSink = {
     applyHeldDamage: (h: HeldDamage): void => {
-      if (h.blastRadius > 0) pushShellBlast(this.mirror, h.evt.hitX!, h.evt.hitY!, h.blastRadius);
+      if (h.blastRadius > 0) pushBlastExplosion(this.mirror, h.evt.hitX!, h.evt.hitY!, h.blastRadius);
       else if (h.evt.damage > 0) this.applyDamageFx(h.evt, h.suppressNumber);
     },
   };

@@ -40,7 +40,11 @@
  * its `shell_end` at the same point, released the frame the burst is drawn).
  * Its entry has `blastRadius` > 0 and no target, so kill / beam / target
  * matching never picks it; `flush` drops it (a blast from before a welcome
- * is stale).
+ * is stale). A mine's `mine_detonated` (slice 4b) follows its damage event at
+ * the mine's point: `holdBlastWithHit` holds the blast exactly when that hit
+ * was held on a stamp (a drone-timeline target), with the hit's stamp and
+ * deadline, so blast and flash show together; a pilot hull's hit (the local
+ * ship included) is not held, and neither is its blast.
  *
  * Entries are pooled and mutated in place; no allocation once warm (#14).
  */
@@ -190,6 +194,29 @@ export class NavalHitHold {
     h.stampTick = stampTick;
     h.stampMs = stampMs;
     return true;
+  }
+
+  /**
+   * Hold a blast at (x, y) with the stamp of a STAMPED hit held at that exact
+   * point (a mine's damage event, sent just before its `mine_detonated`):
+   * released with it, at the drones' read point or the hit's deadline.
+   * Returns false (draw it now) when no such hit is held.
+   */
+  holdBlastWithHit(x: number, y: number, radius: number): boolean {
+    if (radius <= 0) return false;
+    for (let i = 0; i < this.count; i++) {
+      const hit = this.held[i]!;
+      if (hit.stampTick < 0 || hit.blastRadius > 0 || hit.evt.hitX !== x || hit.evt.hitY !== y) continue;
+      const { stampTick, stampMs, deadline } = hit;
+      BLAST_EVT.hitX = x;
+      BLAST_EVT.hitY = y;
+      const h = this.push(BLAST_EVT, true, deadline);
+      h.stampTick = stampTick;
+      h.stampMs = stampMs;
+      h.blastRadius = radius;
+      return true;
+    }
+    return false;
   }
 
   /** Copy `evt` into a pooled entry (unmatched, unstamped). */

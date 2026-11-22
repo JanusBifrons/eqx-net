@@ -57,6 +57,7 @@ import {
 } from '../net/displayDelayHold.js';
 // The stamped-hold deadline shared with held hits (off-pilot event timing).
 import { STAMPED_HOLD_MARGIN_MS, matchedHoldMs } from '../net/navalHitHold.js';
+import { clearWallHits, holdWallHit, pushWallHit, releaseWallHits } from './missileWallHits.js';
 
 /**
  * FALLBACK display delay (GAME ms; wall = 100 / time scale), used only before
@@ -350,25 +351,49 @@ export function holdMissileDetonation(
   mirror: RenderMirror, missileId: number, x: number, y: number, splashRadius: number, nowMs: number,
 ): void {
   const m = mirror.missiles?.get(missileId);
-  const stampMs = _missileStreamNewestTick < 0 ? Number.NaN : swarmTickToStampMs(_missileStreamNewestTick, nowMs);
+  const stampMs = missileEventStampMs(nowMs);
   if (m === undefined || Number.isNaN(stampMs)) {
     removeMissile(mirror, missileId);
     pushMissileExplosion(mirror, missileId, x, y, splashRadius);
     return;
   }
-  const speed = getSwarmDisplaySpeed();
-  const holdGameMs = Math.min(
-    _missileHold.delayMs * speed + STAMPED_HOLD_MARGIN_MS, matchedHoldMs(isSwarmDelayOffPilotActive()),
-  );
   m.detStampMs = stampMs;
-  m.detDeadlineMs = nowMs + holdGameMs / speed;
+  m.detDeadlineMs = missileEventDeadlineMs(nowMs);
   m.detX = x; m.detY = y; m.detSplash = splashRadius;
+}
+
+/** A missile event's stamp: the newest JSON snapshot tick on the drone tick
+ *  clock (NaN before either is known). */
+function missileEventStampMs(nowMs: number): number {
+  return _missileStreamNewestTick < 0 ? Number.NaN : swarmTickToStampMs(_missileStreamNewestTick, nowMs);
+}
+
+/** A held missile event's wall-ms deadline: the current delay + the
+ *  stamped-hold margin, capped by `matchedHoldMs` (game ms ÷ speed). */
+function missileEventDeadlineMs(nowMs: number): number {
+  const speed = getSwarmDisplaySpeed();
+  return nowMs + Math.min(
+    _missileHold.delayMs * speed + STAMPED_HOLD_MARGIN_MS, matchedHoldMs(isSwarmDelayOffPilotActive()),
+  ) / speed;
+}
+
+/** A fence stopped a missile (`wall_hit`, kind `missile`; slice 4b/6): its
+ *  flash waits with the missile's detonation (same stamp, same release,
+ *  `missileWallHits.ts`) while a missile is drawn; else it shows now. */
+export function holdMissileWallHit(mirror: RenderMirror, x: number, y: number, nowMs: number): void {
+  const stampMs = missileEventStampMs(nowMs);
+  if (mirror.missiles === undefined || mirror.missiles.size === 0 || Number.isNaN(stampMs)) {
+    pushWallHit(mirror, x, y);
+    return;
+  }
+  holdWallHit(x, y, stampMs, missileEventDeadlineMs(nowMs));
 }
 
 /** Release every held detonation whose stamp the missile read point
  *  `readPointMs` (NaN: none this frame) reached, or whose deadline passed:
  *  remove the missile and queue its explosion. Run by the per-frame step. */
 function releaseMissileDetonations(mirror: RenderMirror, nowMs: number, readPointMs: number): void {
+  releaseWallHits(mirror, nowMs, readPointMs);
   const map = mirror.missiles;
   if (map === undefined) return;
   for (const [id, m] of map) {
@@ -382,6 +407,7 @@ function releaseMissileDetonations(mirror: RenderMirror, nowMs: number, readPoin
 /** Drop every held detonation and its missile, with no explosion (welcome or
  *  sector change: those missiles belong to the old room). */
 export function clearMissileDetonations(mirror: RenderMirror): void {
+  clearWallHits();
   const map = mirror.missiles;
   if (map === undefined) return;
   for (const [id, m] of map) if (m.detStampMs !== undefined) map.delete(id);

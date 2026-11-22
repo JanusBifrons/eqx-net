@@ -393,17 +393,34 @@ it when its centre is on a live, unended shell's path (handler
 `handlers/shellHandlers.ts`, `holdBlast` in the handler ctx, shells as
 events only); the `shell_end` at the same point gives it the hit tick, and
 the per-frame `release` in `DrawnShellTiming.place` hands it to the sink
-(`pushShellBlast`) the frame the burst is drawn, with the hit's safety
+(`pushBlastExplosion`) the frame the burst is drawn, with the hit's safety
 deadlines. The entry has `blastRadius` > 0 and no target, so `holdsKill`,
 `releaseHitAt` and `flushTarget` never pick it; `flush` (welcome, shell
 events off) drops it rather than drawing a stale blast.
 
-Not held here: `wall_hit` for a bolt (bolts are drawn at the present from
-snapshots, like the fence) and the static-world side of `mine_detonated`.
-`wall_hit` for a missile and `mine_detonated` on a drone-timeline ship
-lead their drawn partner; they need the stamped release (`readPointMs`)
-wired into the per-frame release, which only `DrawnShellTiming.place`
-calls. Lock: `navalHitHold.blast.test.ts`.
+Lock: `navalHitHold.blast.test.ts`.
+
+**Slice 4b: mines and missile fence hits.** `wall_hit` for a bolt stays
+immediate (bolts are drawn at the present from snapshots, and the fence is
+static). `wall_hit` for a missile is sent in the tick its missile's
+`missile_detonated` is, and missiles are drawn on the missile delay, not the
+drone one, so it rides slice 3's detonation path, not `holdStamped`:
+`MissileMirror.holdMissileWallHit` gives it the detonation's stamp and
+deadline (`missileEventStampMs` / `missileEventDeadlineMs`) and
+`releaseMissileDetonations` frees it against the missile read point, the
+same frame the drawn missile explodes (pooled list in
+`combat/missileWallHits.ts`; the event names no missile; shown at once when
+no missile is drawn or there is no timeline yet; dropped by
+`clearMissileDetonations`). A mine's damage event (hit point = the mine)
+is sent just before its `mine_detonated`; `NavalHitHold.holdBlastWithHit`
+holds the blast exactly when that hit was stamped-held (a drone-timeline
+target, `DrawnShellTiming.holdDrawnHit`), with the hit's stamp and deadline,
+so blast and flash release together in `place` at the drones' read point.
+A pilot hull's hit is not held (the local ship's included), so its blast is
+immediate, as before. Left over: the mine sprite still leaves with the room
+state patch, ahead of a held blast (keeping it needs `MineSync` to keep a
+row while a blast is held at its point). Locks:
+`impactFxHandlers.mineHold.test.ts`, `combat/missileWallHits.test.ts`.
 
 ## Client rules in detail
 
