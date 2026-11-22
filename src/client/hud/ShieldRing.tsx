@@ -55,6 +55,9 @@ export function ShieldRing({ scale }: { scale: number }): JSX.Element {
         width: d,
         height: d,
         // A bigger tap target than the drawn ring, without moving the layout.
+        // content-box: the app-wide border-box would let the padding eat the
+        // ring width, so the credits beside it drew over the ring.
+        boxSizing: 'content-box',
         padding: 6,
         margin: -6,
         pointerEvents: 'auto',
@@ -86,9 +89,12 @@ export function ShieldRing({ scale }: { scale: number }): JSX.Element {
           data-testid="hud-shield-down"
           style={{
             position: 'absolute',
+            // Above the ring, not inside it: the word is wider than the ring's hole.
             left: '50%',
-            top: '50%',
-            transform: 'translate(-50%, -50%)',
+            bottom: '100%',
+            transform: 'translate(-50%, 2px)',
+            whiteSpace: 'nowrap',
+            lineHeight: 1,
             fontSize: Math.max(7, Math.round(7 * scale)),
             fontWeight: 700,
             letterSpacing: 0.3,
