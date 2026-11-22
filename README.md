@@ -14,6 +14,7 @@ Multiplayer space game built on a strict server-authoritative architecture (Coly
 - Approved phased plan: `C:\Users\alecv\.claude\plans\i-d-like-you-to-idempotent-oasis.md`
 - Zone contracts: [src/core/CLAUDE.md](src/core/CLAUDE.md), [src/server/CLAUDE.md](src/server/CLAUDE.md), [src/client/CLAUDE.md](src/client/CLAUDE.md)
 - Lessons learned: [docs/LESSONS.md](docs/LESSONS.md)
+- UI rules (read before any UI change): [docs/ui-style-guide.md](docs/ui-style-guide.md)
 
 ## Scripts
 

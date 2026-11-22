@@ -1,18 +1,12 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
-import { ThemeProvider, CssBaseline } from '@mui/material';
 import { registerSW } from 'virtual:pwa-register';
 import { App } from './App';
 import { applyHudMode, hudModeFromSearch } from './cinematic/hudMode';
 import { useAuthStore } from './auth/authStore';
 import { useUIStore } from './state/store';
 import { loadToken, saveToken } from './auth/tokenStorage';
-// HUD fonts (exp/hud-mobile-first) — self-hosted so they work offline / on LAN.
-import '@fontsource/chakra-petch/500.css';
-import '@fontsource/chakra-petch/700.css';
-import '@fontsource/jetbrains-mono/500.css';
-import '@fontsource/jetbrains-mono/700.css';
-import { eqxTheme } from '../ui/theme.js';
+import { EqxThemeProvider } from '../ui/index.js';
 import { apiGetMe, exchangeAuthCode } from './auth/authApi';
 import { lockLandscape } from './layout/useFullscreen';
 import { isStandaloneNow } from './layout/useStandalone';
@@ -108,10 +102,9 @@ if (!root) throw new Error('No #root element found');
 bootstrapAuth().finally(() => {
   createRoot(root).render(
     <StrictMode>
-      <ThemeProvider theme={eqxTheme}>
-        <CssBaseline />
+      <EqxThemeProvider>
         <App />
-      </ThemeProvider>
+      </EqxThemeProvider>
     </StrictMode>,
   );
 });
