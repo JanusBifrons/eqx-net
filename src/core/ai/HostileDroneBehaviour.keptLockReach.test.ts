@@ -17,7 +17,7 @@ function owned(): HostileDroneBehaviour {
   return new HostileDroneBehaviour(KIND, { side: 'players', ownerId: OWNER });
 }
 function body(): AiEntity {
-  return { id: 'o1', x: 0, y: 0, vx: 0, vy: 0, angle: 0 };
+  return { id: 'o1', x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
 }
 function ship(id: string, y: number, allegiance = 'robots'): AiSwarmView {
   return { id, x: 0, y, vx: 0, vy: 0, allegiance, health: 100, maxHealth: 100 };
