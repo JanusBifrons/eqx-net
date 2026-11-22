@@ -386,7 +386,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     }
     // An owned ship sights enemy bases on every stance (`TargetPick.seesStructures`).
     const canEngageOnSight = (this._tgt.engageOnSight && (this.onSightPlayers || (view.swarms !== undefined && view.swarms.length > 0))) || this._targets.seesStructures(view);
-    if (this._tgt.state === 'IDLE' && !canEngageOnSight) {
+    if (this._tgt.state === 'IDLE' && !canEngageOnSight && this._tgt.keptLockId === null) {
       if (this._decide.picker.current === MANOEUVRE_FLEE) return this.tickFleeClear(self, view.tick);
       return this.tickJob(self, view, JOB_ORDER_TICK);
     }
@@ -417,7 +417,7 @@ export class HostileDroneBehaviour implements IAiBehaviour {
     const engageR2 = engageR * engageR;
     const onSight = this._tgt.engageOnSight;
     const ordered = this._tgt.orderedTargetId;
-    const n = tp.build(self, view, engageR2, onSight, ordered);
+    const n = tp.build(self, view, engageR2, onSight, ordered, this._tgt.keptLockId);
     let anyHostile = tp.anyHostile;
     // Hold fire under an attack order: the ordered target is the only foe.
     if (holdOrder) {
