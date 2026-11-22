@@ -181,7 +181,7 @@ export abstract class RendererCommandRouting {
           this.commitFleetPick();
           return;
         }
-        this.pickTap(a.x, a.y);
+        this.pickTap(a.x, a.y, a.kind === 'tapSelect' ? a.pointerType : 'mouse');
         return;
       case 'boxStart':
       case 'boxUpdate':
@@ -194,15 +194,23 @@ export abstract class RendererCommandRouting {
     }
   }
 
+  /** Pick slop for a tap: a mouse keeps the world-unit {@link TAP_SLOP}; a
+   *  finger (touch / pen) gets a fingertip's screen reach at this zoom. */
+  private tapSlop(pointerType: string): number {
+    return pointerType === 'mouse' ? TAP_SLOP : fingerSlopWorld(this.camera.scale.x);
+  }
+
   /** A map tap during a fleet pick (`decidePickTap`). */
-  private pickTap(screenX: number, screenY: number): void {
+  private pickTap(screenX: number, screenY: number, pointerType: string): void {
     const m = this._lastMirror;
     if (m === null) return;
     const w = this.camera.screenToWorld(screenX, screenY);
     const gx = w.x;
     const gy = -w.y;
     const pick = this._fleetPick;
-    const own = pick.kind === 'escort' ? pickOwnShipAt(gx, gy, collectFleetShips(m), m.localPlayerId) : null;
+    const own = pick.kind === 'escort'
+      ? pickOwnShipAt(gx, gy, collectFleetShips(m), m.localPlayerId, this.tapSlop(pointerType))
+      : null;
     switch (decidePickTap(pick.kind, own, own !== null && this._selShips.has(own), pick.count)) {
       case 'addPoint':
         pickAddPoint(pick, gx, gy);
@@ -251,7 +259,8 @@ export abstract class RendererCommandRouting {
     const gx = w.x;
     const gy = -w.y;
     const fleet = collectFleetShips(m);
-    const own = pickOwnShipAt(gx, gy, fleet, m.localPlayerId);
+    const slop = this.tapSlop(pointerType);
+    const own = pickOwnShipAt(gx, gy, fleet, m.localPlayerId, slop);
     // RTS slice 10: a second tap on the same own PARKED ship (not the active
     // one, which is flown already) takes its controls. Any other tap breaks
     // the pair.
@@ -263,7 +272,6 @@ export abstract class RendererCommandRouting {
       return;
     }
     if (own === null) {
-      const slop = pointerType === 'mouse' ? TAP_SLOP : fingerSlopWorld(this.camera.scale.x);
       this.handleGameplayTap(screenX, screenY, slop, additive, pointerType);
       return;
     }

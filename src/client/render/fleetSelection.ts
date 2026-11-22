@@ -125,11 +125,13 @@ export function boxSelectOwn(
   return expandToSquads(hits, ships, localPlayerId, squadOf) as string[];
 }
 
-/** The nearest own ship under a tap (radius + TAP_SLOP), or null. */
+/** The nearest own ship under a tap (radius + slop), or null. A finger passes
+ *  `fingerSlopWorld` (pickEntity.ts) so its reach stays screen-sized. */
 export function pickOwnShipAt(
   x: number, y: number,
   ships: Iterable<FleetShip>,
   localPlayerId: string | null,
+  slop: number = TAP_SLOP,
 ): string | null {
   if (localPlayerId === null) return null;
   let best: string | null = null;
@@ -139,7 +141,7 @@ export function pickOwnShipAt(
     const dx = s.x - x;
     const dy = s.y - y;
     const d = dx * dx + dy * dy;
-    const reach = s.radius + TAP_SLOP;
+    const reach = s.radius + slop;
     if (d <= reach * reach && d < bestSq) {
       bestSq = d;
       best = s.id;

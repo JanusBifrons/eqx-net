@@ -13,6 +13,7 @@ import type { Camera } from '../worker/Camera';
 import type { RendererFeedback } from '@core/contracts/IRenderer';
 import type { RenderMirror } from '@core/contracts/render/RenderMirror';
 import { getStructureKind } from '@shared-types/structureKinds';
+import { getShipKind } from '@shared-types/shipKinds';
 import { TAP_SLOP } from '../pickEntity.js';
 
 /** `scale` = screen px per world unit; screen (x, y) = game (x/scale, -y/scale). */
@@ -108,5 +109,42 @@ describe('Command view zoomed out: finger slop is screen-sized', () => {
     expect(feedback.orderSeq).toBe(0);
     expect(ctl._focusId).toBe('swarm-8');
     expect([...ctl._selShips]).toEqual(['ship-2']);
+  });
+});
+
+describe('Command view zoomed out: own ships get the finger slop too (T1b)', () => {
+  // A parked hull of mine at game (2000, -100), far from both turrets. At
+  // scale 0.1 a tap 150 world units past its edge is 15 screen px: outside
+  // the 24-unit mouse slop, inside the 24 px finger.
+  function withOwnHull(): RenderMirror {
+    const m = mirror();
+    (m.ships as Map<string, unknown>).set('hull-5', {
+      x: 2000, y: -100, angle: 0, kind: 'fighter', ownerPlayerId: 'me-123', isActive: false,
+    });
+    return m;
+  }
+  const hullEdge = (): number => 2000 + getShipKind('fighter')!.radius;
+
+  it('a touch tap a few pixels off my own ship selects it', () => {
+    const { ctl, feedback } = setup(withOwnHull(), 0.1);
+    const tapWorld = hullEdge() + 150;
+    expect(tapWorld - hullEdge()).toBeGreaterThan(TAP_SLOP);
+    press(ctl, tapWorld * 0.1, 10, 'touch');
+    expect(feedback.orderSeq).toBe(0);
+    expect([...ctl._selShips]).toEqual(['hull-5']);
+    expect(ctl._focusId).toBe('hull-5');
+  });
+
+  it('a mouse click at the same spot keeps the world-unit slop (misses)', () => {
+    const { ctl } = setup(withOwnHull(), 0.1);
+    press(ctl, (hullEdge() + 150) * 0.1, 10, 'mouse');
+    expect(ctl._selShips.has('hull-5')).toBe(false);
+  });
+
+  it('an escort pick takes a touch a few pixels off my own ship', () => {
+    const { ctl, feedback } = setup(withOwnHull(), 0.1);
+    ctl.setFleetPick('escort');
+    press(ctl, (hullEdge() + 150) * 0.1, 10, 'touch');
+    expect(feedback.fleetPickResult).toEqual({ kind: 'escort', escortId: 'hull-5' });
   });
 });
