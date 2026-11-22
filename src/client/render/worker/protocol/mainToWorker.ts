@@ -248,6 +248,11 @@ export interface CommitFleetPickMsg {
   type: 'COMMIT_FLEET_PICK';
 }
 
+/** UI plan U3-3 — undo the last patrol point. See `IRenderer.undoFleetPickPoint`. */
+export interface UndoFleetPickPointMsg {
+  type: 'UNDO_FLEET_PICK_POINT';
+}
+
 /** Off-screen indicator radar (plan sparkling-wondering-rose) — the active
  *  preferences. Posted on change only (the live settings modal coalesces to
  *  ≤ one post per animation frame). */
@@ -454,6 +459,7 @@ export type MainToWorkerMsg =
   | SetFleetOverlayModelMsg
   | SetFleetPickMsg
   | CommitFleetPickMsg
+  | UndoFleetPickPointMsg
   | SetRadarPrefsMsg
   | SetRadarInsetsMsg
   | SetRadarSuppressedMsg

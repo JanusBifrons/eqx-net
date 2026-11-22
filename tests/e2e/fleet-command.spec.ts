@@ -161,13 +161,16 @@ test.describe('RTS fleet command loop @feature', () => {
     // ── Patrol from the strip: pick two points on the map, Done. ──────────
     await page.locator('[data-testid="left-strip-order"]').click();
     await page.locator('[data-testid="left-strip-order-option-patrol"]').click();
-    await expect(page.locator('[data-testid="fleet-pick"]')).toHaveAttribute('data-fleet-pick', 'patrol');
+    // The strip swaps to its route tools (UI plan U3-3): route icon, ✓, undo, ✕.
+    await expect(page.locator('[data-testid="left-strip-route"]')).toHaveAttribute('data-state', 'patrol');
+    const done = page.locator('[data-testid="left-strip-route-done"]');
+    await expect(done).toBeDisabled();
     const py = box.y + Math.max(120, box.height * 0.25);
     await page.mouse.click(box.x + box.width * 0.35, py);
     await page.mouse.click(box.x + box.width * 0.65, py);
-    await expect(page.locator('[data-testid="fleet-pick"]')).toHaveAttribute('data-fleet-pick-points', '2', { timeout: 2_000 });
-    await page.locator('[data-testid="fleet-pick-done"]').click();
-    await expect(page.locator('[data-testid="fleet-pick"]')).toHaveCount(0);
+    await expect(done, 'two points enable ✓').toBeEnabled({ timeout: 2_000 });
+    await done.click();
+    await expect(page.locator('[data-testid="left-strip-route"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="left-strip-order"]')).toHaveAttribute('aria-label', 'Order: Patrol', { timeout: 5_000 });
 
     // ── ⚙ → the rail Fleet panel: ship list, squad, Stop. ──────────────────

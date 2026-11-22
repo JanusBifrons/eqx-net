@@ -5,7 +5,7 @@
  *
  *  - Status capsule (shield/hull rings, energy, credits + mineral bank; in Build: base stored
  *    power + credits, no ship health): bottom-centre on
- *    desktop and landscape touch (above the fleet pick bar when it shows); top-centre on portrait touch, where the thumbs fill the bottom.
+ *    desktop and landscape touch; top-centre on portrait touch, where the thumbs fill the bottom.
  *  - Top: lock status band (top-centre), sector chip (top-left), weapon strip
  *    (right edge, one chip per weapon group). Map, Warp and the panels live on
  *    the right rail (layout/RightPanelHost.tsx).
@@ -22,7 +22,6 @@ import type { TouchInput } from '../input/TouchInput';
 import { Slot } from '../layout/Slot';
 import { RAIL_W_CSS } from '../layout/railWidth';
 import { BuildSidebarHost } from '../components/BuildSidebarHost';
-import { FleetPickHost } from '../components/FleetPickBar';
 import { getGameClient } from '../net/clientSingleton';
 import { FloatingStick } from './FloatingStick';
 import type { StickVec } from './floatingStickMath';
@@ -52,7 +51,6 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
   const building = useUIStore((s) => s.buildMode);
   // A panel docked over the right edge is glass: nothing under it shows or takes touches.
   const rightPanelOpen = useUIStore(selectRightPanelOpen);
-  const rightPanel = useUIStore((s) => s.rightPanel);
   const size = useHudSize();
   const scale = hudScale(size);
   const landscape = useIsLandscape();
@@ -83,22 +81,16 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
       <BuildSidebarHost />
 
       {/* ── Bottom ──────────────────────────────────────────────────────────── */}
-      {/* Status capsule: bottom-centre on desktop and landscape touch; order 3 stacks it
-          ABOVE the fleet pick bar (2) — bottom-* hosts are column-reverse — so
-          it never shifts them. Portrait touch keeps it top-centre: there the thumb sticks
+      {/* Status capsule: bottom-centre on desktop and landscape touch (order 3).
+          Portrait touch keeps it top-centre: there the thumb sticks
           fill the bottom edge. */}
       {touch && !landscape
         ? <Slot anchor="top-center" order={0} pointerEvents="none"><StatusCapsule scale={scale} /></Slot>
         : <Slot anchor="bottom-center" order={3} pointerEvents="none"><StatusCapsule scale={scale} /></Slot>}
 
       {/* ── Desktop ─────────────────────────────────────────────────────── */}
-      {/* RTS command view: fleet orders live on the left strip (fly-outs) and the
-          rail's Fleet panel (⚙). Only a running map pick (Patrol / Escort / Retreat)
-          shows its Done / Cancel bar here; the Fleet panel shows its own copy while
-          open. The slot stays mounted: the death flip must not mount UI. */}
-      <Slot anchor="bottom-center" order={2}>
-        {rightPanel !== 'fleet' && <FleetPickHost />}
-      </Slot>
+      {/* RTS command view: fleet orders, and a running map pick's tools, live on
+          the left strip (layout/LeftStripHost.tsx) and the rail's Fleet panel (⚙). */}
       {!touch && flying && (
         <Slot anchor="bottom-right" order={1}><DesktopFcHint scale={scale} /></Slot>
       )}

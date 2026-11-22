@@ -19,7 +19,6 @@
   "src/client/components/EntityStatsPanel.tsx",
   "src/client/components/ErrorOverlay.tsx",
   "src/client/components/FleetPanel.tsx",
-  "src/client/components/FleetPickBar.tsx",
   "src/client/components/FleetStrip.tsx",
   "src/client/components/GalaxyPickerChrome.tsx",
   "src/client/components/GalaxySectorTooltip.tsx",
