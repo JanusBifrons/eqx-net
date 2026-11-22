@@ -22,6 +22,25 @@ describe('EqxListRow', () => {
     expect(onOpen).toHaveBeenCalledTimes(1);
   });
 
+  it('onTap makes the row an action button named by primary, with no chevron', () => {
+    const onTap = vi.fn();
+    render(<EqxListRow primary="Fighter" side="400 m" onTap={onTap} data-testid="r" />);
+    const btn = screen.getByRole('button', { name: 'Fighter' });
+    expect(btn).toBe(screen.getByTestId('r'));
+    expect(btn).not.toHaveTextContent('›');
+    fireEvent.click(btn);
+    expect(onTap).toHaveBeenCalledTimes(1);
+  });
+
+  it('dataAttrs become data-* attributes; dim fades the row', () => {
+    render(<EqxListRow primary="Heavy" dim dataAttrs={{ key: 's:8', 'in-reach': 'none', 'locking-you': 0 }} data-testid="r" />);
+    const row = screen.getByTestId('r');
+    expect(row.getAttribute('data-key')).toBe('s:8');
+    expect(row.getAttribute('data-in-reach')).toBe('none');
+    expect(row.getAttribute('data-locking-you')).toBe('0');
+    expect(getComputedStyle(row).opacity).toBe('0.6');
+  });
+
   it('the icon is decorative (not part of the name)', () => {
     render(<EqxListRow primary="Deals" icon={<svg data-testid="ic" />} onOpen={() => {}} />);
     expect(screen.getByTestId('ic').parentElement?.getAttribute('aria-hidden')).toBe('true');

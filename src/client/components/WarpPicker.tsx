@@ -58,7 +58,7 @@ const CHIP_SX = {
   color: '#e8f4ff', backgroundColor: 'rgba(20,60,120,0.9)', border: '1px solid #5aa8ff', pointerEvents: 'auto' as const,
 };
 
-interface ShipPose { x: number; y: number; angle: number; kind?: string }
+export interface ShipPose { x: number; y: number; angle: number; kind?: string }
 
 /** The local ship's pose from the render mirror, or null. */
 function shipPose(): ShipPose | null {
@@ -68,24 +68,25 @@ function shipPose(): ShipPose | null {
   return s ? { x: s.x, y: s.y, angle: s.angle ?? 0, kind: s.kind } : null;
 }
 
-/** The picker's route check and its reused destination list (one picker). */
+/** The route check (shared: used synchronously per call) and the card's reused destination list. */
 const route = new WarpRouteClient();
 const routeIn: WarpRouteInputs = { field: null, structures: null, margin: 0 };
 const destList: WarpDestination[] = [];
 
-/** The destinations from `pose`, each with its warp target (field + structures). */
-function destinationsFrom(sectorKey: string, pose: ShipPose): WarpDestination[] {
+/** The destinations from `pose`, each with its warp target (field + structures),
+ *  written into `out` (each caller owns its list: the card, the Galaxy panel). */
+export function destinationsFrom(sectorKey: string, pose: ShipPose, out: WarpDestination[] = destList): WarpDestination[] {
   const c = getGameClient();
   routeIn.field = route.fieldMap(c?.cutFieldOpts ?? null);
   routeIn.structures = route.gather(c?.mirror as WarpRouteMirror | undefined);
   routeIn.margin = warpStopMargin(getShipKind(pose.kind));
-  return warpDestinations(sectorKey, pose.x, pose.y, routeIn, destList);
+  return warpDestinations(sectorKey, pose.x, pose.y, routeIn, out);
 }
 
 const SUB_SX = { display: 'block', fontSize: 11 };
 
-/** Poll the ship pose and warp state at 4 Hz while `on`. */
-function usePolledShip(on: boolean): { pose: ShipPose | null; warping: boolean } {
+/** Poll the ship pose and warp state at 4 Hz while `on` (the card, the chip, the Galaxy panel). */
+export function usePolledShip(on: boolean): { pose: ShipPose | null; warping: boolean } {
   const [state, setState] = useState(() => ({ pose: shipPose(), warping: getGameClient()?.hasWarpRequest() ?? false }));
   useEffect(() => {
     if (!on) return undefined;

@@ -81,6 +81,30 @@ describe('WarpScreen sector briefing', () => {
     expect(fact('threat')).toBe('ThreatQuiet');
   });
 
+  it('a commander following their fleet from a Sol Prime launch names the destination, before and after welcome (capital S5)', () => {
+    // Command view: no ship id, no local trip; the Hangar launch room was Sol Prime.
+    useUIStore.setState({
+      pilotMode: 'spectator', localShipInstanceId: null, travelling: false,
+      currentSectorKey: 'sol-prime', transitTargetSectorKey: 'vega-reach',
+    });
+    renderWarp('sol-prime');
+    expect(screen.getByTestId('warp-briefing-name').textContent).toBe('Vega Reach');
+    // The new sector's welcome: live key set, transit key cleared.
+    act(() => useUIStore.setState({ currentSectorKey: 'vega-reach', transitTargetSectorKey: null }));
+    expect(screen.getByTestId('warp-briefing-name').textContent).toBe('Vega Reach');
+  });
+
+  it('a stalled trip after the fallback timers still names the destination (capital S5)', () => {
+    // Fallback ran (DOCKED, ARRIVED timers done) but no welcome yet: the old
+    // sector is still current and the launch room was Sol Prime.
+    useUIStore.setState({
+      transitState: 'DOCKED', travelling: false, localShipInstanceId: null,
+      currentSectorKey: 'sol-prime', transitTargetSectorKey: 'vega-reach',
+    });
+    renderWarp('sol-prime');
+    expect(screen.getByTestId('warp-briefing-name').textContent).toBe('Vega Reach');
+  });
+
   it('never shows a player-held sector owner as a raw id', () => {
     useUIStore.setState({
       currentSectorKey: 'sol-prime',
