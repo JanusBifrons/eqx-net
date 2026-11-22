@@ -125,3 +125,36 @@ describe('a focused enemy that vanishes is dropped; the ships stay', () => {
     expect([...ctl._selShips]).toEqual(['ship-2']);
   });
 });
+
+/**
+ * Tap rule T2: the strip's Lock (and the T key) with ships selected and a
+ * not-mine focus calls `attackFocus`, which publishes the SAME attack order a
+ * right-click gives (`publishOrder`: feedback seq + order flash; gameRafLoop
+ * sends it as `sendFleetOrder(ids, { kind: 'attack', targetId })`).
+ */
+describe('attackFocus (the strip Lock)', () => {
+  it('orders the selected ships to attack the focused enemy, at its position', () => {
+    const { ctl, feedback } = setup();
+    tap(ctl, 100, 100);
+    ctl.attackFocus();
+    expect(feedback.orderSeq).toBe(1);
+    expect(feedback.orderKind).toBe('attack');
+    expect(feedback.orderTargetId).toBe('swarm-7');
+    expect(feedback.orderX).toBe(100);
+    expect(feedback.orderY).toBe(-100);
+    expect([...ctl._selShips]).toEqual(['ship-2']);
+  });
+
+  it('no order without ships, without a focus, or for a focus of mine', () => {
+    const { ctl, feedback, mirror } = setup();
+    ctl.attackFocus(); // no focus
+    tap(ctl, 100, 100);
+    (mirror.structures as Map<number, { owner: string }>).set(7, { owner: 'me-123' });
+    ctl.attackFocus(); // now my own structure
+    expect(feedback.orderSeq).toBe(0);
+    (mirror.structures as Map<number, { owner: string }>).set(7, { owner: 'enemy-9' });
+    ctl.selectFleetShips([]);
+    ctl.attackFocus(); // no ships
+    expect(feedback.orderSeq).toBe(0);
+  });
+});

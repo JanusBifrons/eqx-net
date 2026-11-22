@@ -520,6 +520,8 @@ export class PixiRenderer implements IRenderer {
 
   /** RTS fleet warp (S8) — see `RendererInputController.selectFleetShips`. */
   selectFleetShips(ids: readonly string[]): void { this._input.selectFleetShips(ids); }
+  /** Tap rule T2 — see `RendererCommandRouting.attackFocus`. */
+  attackFocus(): void { this._input.attackFocus(); }
 
   /** Cinematic camera — see `RendererCameraDirector.setCameraScript`. */
   setCameraScript(cues: readonly CameraCue[] | null): void { this._cameraDirector.setCameraScript(cues); }

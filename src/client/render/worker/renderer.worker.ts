@@ -292,6 +292,11 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
+      case 'ATTACK_FOCUS': {
+        renderer?.attackFocus();
+        break;
+      }
+
       case 'SELECT_FLEET_SHIPS': {
         if (!renderer) return;
         renderer.selectFleetShips(msg.ids);

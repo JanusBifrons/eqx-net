@@ -381,6 +381,17 @@ selected ships selected and FOCUSES it (the left strip shows it). A tap on free
 space deselects, like an RTS (shift keeps the ships). A touch tap is never a
 move or attack order; orders stay on the mouse right-click.
 
+**Lock with ships selected** (tap rule T2). With my ships selected and an
+attackable focus that is not mine (a ship, structure or drone;
+`fleetLockApplies` in `components/targetLock.ts`), the left strip shows the
+fleet section, a separator, the focus identity (ringed by the focus's hull) and
+ONE Lock in the personal Target's place. Lock orders the selected ships to
+attack the focus: `lockFocus` → `IFleetView.attackFocus` (worker `ATTACK_FOCUS`)
+→ the renderer re-checks its own focus and calls `publishOrder` at the focus's
+position, the same `orderSeq` path as a right-click attack (`gameRafLoop` →
+`sendFleetOrder`). The T key (`MouseLock`) makes the same choice. A rock or pod
+focus keeps the personal Target; with no ships selected nothing changes.
+
 ### Selection, overlay and feedback sequence numbers
 
 There is **one** selection (RTS Part A, owner decision 2026-11-14). The

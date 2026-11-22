@@ -308,6 +308,11 @@ export interface SelectFleetShipsMsg {
   ids: string[];
 }
 
+/** Tap rule T2: the strip Lock / T key. Drives `PixiRenderer.attackFocus`. */
+export interface AttackFocusMsg {
+  type: 'ATTACK_FOCUS';
+}
+
 /**
  * Cinematic camera — play a cue script (`null` = stop, hand back to gameplay).
  * Drives `PixiRenderer.setCameraScript` → `CameraDirector`. Posted once per
@@ -453,6 +458,7 @@ export type MainToWorkerMsg =
   | SetHudOverlaysMsg
   | GlideCameraMsg
   | SelectFleetShipsMsg
+  | AttackFocusMsg
   | SetCameraScriptMsg
   | PanCameraMsg
   | SetDiagMarkersMsg

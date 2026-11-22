@@ -502,7 +502,8 @@ function GameSurface({
     const keyboard = new Keyboard();
     // Fire control: desktop holds left mouse to draw the lock line (right =
     // boost) + the group keys; touch gets the keys (the lock line is a stick).
-    const disposeMouseLock = isTouchRef.current ? installFcKeys() : installMouseLock(el);
+    const fleetView = (): IRenderer | null => rendererRef.current; // T = the strip's Lock (fleet attack)
+    const disposeMouseLock = isTouchRef.current ? installFcKeys(fleetView) : installMouseLock(el, fleetView);
     keyboardRef.current = keyboard;
 
     // Renderer-path selection + profile-window opt-in. Extracted to

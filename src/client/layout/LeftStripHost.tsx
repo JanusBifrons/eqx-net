@@ -6,6 +6,12 @@
  *   section (Order and Stance fly-outs and Stop, `fleetStripItems.tsx`);
  *   the selection's quick actions (Target, cargo / pod, Pilot,
  *   `selectionStripItems.tsx`); then ⚙ and ✕. Doing-mode strips come with U3-7.
+ * - Tap rule T2: with my ships selected and a focus that is not one of them
+ *   (not mine, `focusSurvives`), a separator and the FOCUS identity follow the
+ *   fleet section (`stripFocusIdentity`), and its hull ring moves there (the
+ *   fleet identity rings ok). An attackable focus gets ONE Lock in Target's
+ *   place: the selected ships attack it (`lockFocus` -> the renderer's
+ *   `attackFocus`, the right-click order path); a rock / pod keeps Target.
  * - The identity ring is the focused thing's hull (the `hullColor` thresholds),
  *   from the same change-only ~6.7 Hz poll the Details panel reads
  *   (`useSelectionPanelData`): nothing per frame, nothing in Zustand.
@@ -26,6 +32,7 @@ import { selectControlMode, useShouldRenderHud, useUIStore } from '../state/stor
 import type { RightPanel } from '../state/rightPanel';
 import type { SelectionFocusKind, UISelection } from '../state/storeTypes';
 import { useSelectionPanelData, type PanelData } from '../components/selectionPanelData';
+import { fleetLockApplies, lockFocus } from '../components/targetLock';
 import { Slot } from './Slot';
 import { useFleetStripItems } from './fleetStripItems';
 import { useSelectionStripItems } from './selectionStripItems';
@@ -56,6 +63,13 @@ export function stripIdentity(sel: UISelection): StripIdentity | null {
   return { ...FOCUS_LOOK[sel.focusKind], count: 1, panel: 'details' };
 }
 
+/** The focus identity shown after the fleet section: my ships are selected
+ *  and the focus is not one of them (pure; unit-tested). */
+export function stripFocusIdentity(sel: UISelection): StripIdentity | null {
+  if (sel.ids.length === 0 || sel.focusId === null || sel.focusKind === null || sel.ids.includes(sel.focusId)) return null;
+  return { ...FOCUS_LOOK[sel.focusKind], count: 1, panel: 'details' };
+}
+
 /** The identity ring for the focused thing's hull: ok when unknown or hull-less (pure). */
 export function stripHealth(d: PanelData | null): 'ok' | 'warn' | 'crit' {
   if (d === null || d.pending === true || d.noHull === true) return 'ok';
@@ -64,7 +78,7 @@ export function stripHealth(d: PanelData | null): 'ok' | 'warn' | 'crit' {
 
 interface Props {
   /** The renderer (it owns the selection); ✕ clears it there. */
-  rendererRef: { readonly current: Pick<IFleetView, 'selectFleetShips'> | null };
+  rendererRef: { readonly current: Pick<IFleetView, 'selectFleetShips' | 'attackFocus'> | null };
 }
 
 export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
@@ -74,18 +88,28 @@ export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
   const setRightPanel = useUIStore((s) => s.setRightPanel);
   const fleetItems = useFleetStripItems();
   const data = useSelectionPanelData();
-  const { items: quickItems, loot } = useSelectionStripItems(data);
+  const fleetLock = fleetLockApplies(selection)
+    ? (): void => { lockFocus(useUIStore.getState().selection, rendererRef.current, () => false); }
+    : null;
+  const { items: quickItems, loot } = useSelectionStripItems(data, fleetLock);
   const id = stripIdentity(selection);
+  const focus = stripFocusIdentity(selection);
   useLeftStripFit(shown && id !== null);
   if (!shown || id === null) return null;
   const panel = id.panel;
   // A single focus names itself ("Fighter", the building's name); a ship group keeps its count.
-  const tooltip = selection.ids.length === 0 && data !== null && data.name !== '' ? data.name : id.tooltip;
+  const named = data !== null && data.name !== '' ? data.name : null;
+  const tooltip = selection.ids.length === 0 && named !== null ? named : id.tooltip;
   return (
     <Slot anchor="left-strip">
       <EqxStrip aria-label="Selection" open={!panelOpen} data-testid="left-strip">
-        <EqxStripIdentity icon={<EqxIcon name={id.icon} />} tooltip={tooltip} health={stripHealth(data)} count={id.count} data-testid="left-strip-identity" />
+        <EqxStripIdentity icon={<EqxIcon name={id.icon} />} tooltip={tooltip} health={focus === null ? stripHealth(data) : 'ok'} count={id.count} data-testid="left-strip-identity" />
         {fleetItems}
+        {focus !== null && <EqxStrip.Separator key="focus-sep" />}
+        {focus !== null && (
+          <EqxStripIdentity icon={<EqxIcon name={focus.icon} />} tooltip={named ?? focus.tooltip} health={stripHealth(data)}
+            count={1} data-testid="left-strip-focus" />
+        )}
         {quickItems}
         <EqxStrip.Separator />
         <EqxIconButton variant="strip" icon={<EqxIcon name="cog" />} tooltip={panel === 'fleet' ? 'All orders and details' : 'Details'}

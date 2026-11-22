@@ -33,6 +33,14 @@ export interface IFleetView {
    * they warped: the same shipInstanceIds, re-selected in the new sector.
    */
   selectFleetShips(ids: readonly string[]): void;
+  /**
+   * Tap rule T2: the left strip's Lock (and the T key) with ships selected —
+   * order the selected ships to attack the focus, through the same order path
+   * as a right-click (feedback `orderSeq` + order flash). A no-op unless ships
+   * are selected and the focus is attackable and not mine (worker
+   * `ATTACK_FOCUS`).
+   */
+  attackFocus(): void;
 }
 
 /** One own ship's squad + order, as the renderer needs it (RTS slice 15a). */

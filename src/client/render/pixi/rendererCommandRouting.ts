@@ -1,7 +1,7 @@
 import type { Camera } from '../worker/Camera';
 import type { FleetOverlayModel, FleetOverlayShip, FleetPickKindWire, RenderMirror, RendererFeedback } from '@core/contracts/IRenderer';
 import type { GalaxyMapLayer } from '../galaxy/GalaxyMapLayer';
-import type { SelectionBracket } from '../SelectionBracket';
+import { resolveSelectable, type SelectableTarget, type SelectionBracket } from '../SelectionBracket';
 import { fingerSlopWorld, onCraneBayPad, pickEntityAt, TAP_SLOP, type PickedEntityKind } from '../pickEntity';
 import { CommandPointerRouter, type BoxRect, type HoldArmed, type RouterAction, type RouterPointerEvent } from '../input/commandPointerRouter.js';
 import { decideTapAction, type FleetOrderMode } from '../input/tapAction.js';
@@ -67,6 +67,8 @@ export abstract class RendererCommandRouting {
   private readonly _fleetBoxRect: BoxRect = { x0: 0, y0: 0, x1: 0, y1: 0 };
   private _fleetBoxActive = false;
   private readonly _orderFlash: OrderFlash = { x: 0, y: 0, attack: false, t0: -1 };
+  /** The focus's pose for `attackFocus` (reused). */
+  private readonly _focusPose: SelectableTarget = { x: 0, y: 0, r: 0, hw: 0, hh: 0 };
   /** Touch tap-order mode (slice 12), pushed from the strip's Zustand toggle.
    *  No longer read: a tap is never an order (the tap rule); a later slice
    *  retires the toggle and its plumbing. */
@@ -295,6 +297,18 @@ export abstract class RendererCommandRouting {
     const gy = -w.y;
     const hit = pickEntityAt(gx, gy, m);
     this.publishOrder(gx, gy, hit !== null && this.isAttackable(hit.id, hit.kind, m) ? hit.id : null);
+  }
+
+  /** See `IFleetView.attackFocus`: the strip Lock / T key. The same attack
+   *  order a right-click on the focus gives (flash on it); a no-op without
+   *  ships, without a focus, or for a focus that is mine or not attackable. */
+  attackFocus(): void {
+    const m = this._lastMirror;
+    const id = this._focusId;
+    const kind = this._focusKind;
+    if (m === null || id === null || kind === null || this._selShips.size === 0) return;
+    if (isMine(id, m) || !this.isAttackable(id, kind, m) || !resolveSelectable(m, id, this._focusPose)) return;
+    this.publishOrder(this._focusPose.x, this._focusPose.y, id);
   }
 
   /** Publish an order via feedback (`gameRafLoop` sends it once per seq):
