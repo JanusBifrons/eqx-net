@@ -67,7 +67,7 @@ import {
   type RemotePredictionGuard,
 } from './remotePredictionGuard';
 import { shipMirrorKey, type ShipMirrorKeyLocal } from './shipMirrorKey.js';
-import { isParkedHull } from '../render/shipOwnership.js';
+import { isParkedHull, streamCentreShip } from '../render/shipOwnership.js';
 import { findRekeySource } from './shipRekey.js';
 import { copySchemaHealth } from './shipSchemaHealth.js';
 import {
@@ -691,7 +691,7 @@ export class ColyseusGameClient {
    *  into `mirror.helmCourse` (spatial ⇒ mirror, never Zustand, #2). */
   private _helmCourseSeq = 0;
   private readonly _helmMark: HelmCourseMark = makeHelmCourseMark();
-  /** A3 — the local ship's pose for distance-streaming walls (NaN ⇒ none). */
+  /** A3 — the stream centre's pose for distance-streaming walls (NaN ⇒ none). */
   private _predWallShipX = NaN;
   private _predWallShipY = NaN;
   private readonly _predWallVisitor: DerivedWallVisitor = {
@@ -2202,8 +2202,9 @@ export class ColyseusGameClient {
     const structures = this.mirror.structures;
     const swarm = this.mirror.swarm;
     const gen = ++this._predWallGen;
-    const localId = this.mirror.localPlayerId;
-    const me = localId ? this.mirror.ships.get(localId) : undefined;
+    // Same centre as structures / wrecks / the cut field: my ship, else my
+    // parked hull (Command view); neither ⇒ every wall.
+    const me = streamCentreShip(this.mirror);
     this._predWallShipX = me ? me.x : NaN;
     this._predWallShipY = me ? me.y : NaN;
     if (structures && swarm) visitDerivedWalls(structures, swarm, this._predWallVisitor);

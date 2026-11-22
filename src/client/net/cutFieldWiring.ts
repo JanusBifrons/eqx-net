@@ -7,6 +7,7 @@
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import type { PhysicsWorld } from '@core/physics/World';
 import { CutFieldClient, type ChunkCutter } from './CutFieldClient.js';
+import { streamCentreShip } from '../render/shipOwnership.js';
 export type { CutFieldSummary } from './CutFieldClient.js';
 
 export interface CutFieldHost {
@@ -32,14 +33,7 @@ export function createGameCutField(host: CutFieldHost): CutFieldClient {
     // stays loaded around it.
     // The camera centre is streamed too (`CutFieldClient.setView`, from the
     // renderer's feedback in the RAF loop).
-    localPose: () => {
-      const localId = mirror.localPlayerId;
-      if (!localId) return null;
-      const own = mirror.ships.get(localId);
-      if (own) return own;
-      for (const s of mirror.ships.values()) if (s.ownerPlayerId === localId) return s;
-      return null;
-    },
+    localPose: () => streamCentreShip(mirror),
     draw: {
       setFieldChunk: (cx, cy, outlines, ore = null, bodies = null, moved = null) => {
         (mirror.pendingFieldChunks ??= []).push({ cx, cy, outlines, ore, bodies, moved });
