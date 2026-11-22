@@ -5,12 +5,11 @@
  *
  *  - Status capsule (shield/hull rings, energy, credits + mineral bank; in Build: base stored
  *    power + credits, no ship health): bottom-centre on
- *    desktop and landscape touch (above the build palette / fleet panel when
- *    those show); top-centre on portrait touch, where the thumbs fill the bottom.
+ *    desktop and landscape touch (above the fleet panel when it shows); top-centre on portrait touch, where the thumbs fill the bottom.
  *  - Top: lock status band (top-centre), sector chip (top-left), speed dial
  *    (top-right), weapon strip (right edge, one chip per weapon group).
- *  - Desktop: hold LMB on a ship to lock it (MouseLock.ts), RMB boost, the
- *    build palette (BottomControlPanel) while spectating, and a key hint.
+ *  - Desktop: hold LMB on a ship to lock it (MouseLock.ts), RMB boost and a key
+ *    hint. Building goes through the Build sidebar (BuildSidebar.tsx, from the dial).
  *  - Touch: floating move stick (left thumb), lock-line stick + BOOST (right).
  *
  * Every weapon group fires only at a target it has a completed lock on.
@@ -20,7 +19,6 @@ import { selectControlMode, useShouldRenderHud, useUIStore } from '../state/stor
 import type { TouchInput } from '../input/TouchInput';
 import { Slot } from '../layout/Slot';
 import { SpeedDialMenu } from '../components/SpeedDialMenu';
-import { BottomControlPanel } from '../components/BottomControlPanel';
 import { FleetPanel } from '../components/FleetPanel';
 import { FleetStrip } from '../components/FleetStrip';
 import { getGameClient } from '../net/clientSingleton';
@@ -79,7 +77,7 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
 
       {/* ── Bottom ──────────────────────────────────────────────────────────── */}
       {/* Status capsule: bottom-centre on desktop and landscape touch; order 3 stacks it
-          ABOVE the palette (1) and fleet panel (2) — bottom-* hosts are column-reverse — so
+          ABOVE the fleet panel (2) — bottom-* hosts are column-reverse — so
           it never shifts them. Portrait touch keeps it top-centre: there the thumb sticks
           fill the bottom edge. */}
       {touch && !landscape
@@ -87,13 +85,10 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
         : <Slot anchor="bottom-center" order={3} pointerEvents="none"><StatusCapsule scale={scale} /></Slot>}
 
       {/* ── Desktop ─────────────────────────────────────────────────────── */}
-      {/* The build palette while spectating (the weapon strip replaces the old weapon-slot bar). */}
-      {!touch && <Slot anchor="bottom-center" order={1}><BottomControlPanel /></Slot>}
-      {/* RTS command view: the fleet panel (desktop) / strip (compact) replaces the
-          build palette while own ships are selected (each renders null otherwise;
-          the touch sticks are hidden while spectating, so the bottom edge is free). */}
-      {/* Always mounted (like the palette): the death flip must not mount UI. order 2
-          keeps the empty wrapper ABOVE the palette, so it never shifts the palette. */}
+      {/* RTS command view: the fleet panel (desktop) / strip (compact) while own ships
+          are selected (each renders null otherwise; the touch sticks are hidden while
+          spectating, so the bottom edge is free). Always mounted: the death flip must
+          not mount UI. */}
       <Slot anchor="bottom-center" order={2}>
         <FleetPanel />
         <FleetStrip />

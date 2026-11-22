@@ -15,6 +15,12 @@ describe('fcKeyAction', () => {
     expect(fcKeyAction('o', 'KeyO', false)).toEqual({ kind: 'overview' });
     expect(fcKeyAction('O', 'KeyO', true)).toEqual({ kind: 'overview' });
   });
+  it('stands down while the Build sidebar is open (its 1–9 pick tiles, not weapon groups)', () => {
+    expect(fcKeyAction('1', 'Digit1', false, true)).toBeNull();
+    expect(fcKeyAction('!', 'Digit1', true, true)).toBeNull();
+    expect(fcKeyAction('t', 'KeyT', false, true)).toBeNull();
+    expect(fcKeyAction('1', 'Digit1', false, false)).toEqual({ kind: 'select', index: 0 });
+  });
   it('ignores other keys (0, WASD, space)', () => {
     expect(fcKeyAction('0', 'Digit0', false)).toBeNull();
     expect(fcKeyAction('w', 'KeyW', false)).toBeNull();

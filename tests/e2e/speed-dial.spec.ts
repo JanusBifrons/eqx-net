@@ -194,7 +194,7 @@ test('Confirm keeps placing with the sidebar hidden; Cancel brings it back on th
 
     // Picking a kind raises the ghost and hides the sidebar, so it never
     // covers the ghost.
-    await page.locator('[data-testid="build-solar"]').click();
+    await page.locator('[data-testid="build-solar"] button').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('[data-testid="placement-banner"]')).toContainText('Solar');
     await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
@@ -222,7 +222,7 @@ test('a Capital places once: Confirm ends placement and brings the sidebar back'
     const before = await swarmCount(page);
     await openBuildSidebar(page);
     await page.locator('[data-testid="build-cat-core"]').click();
-    await page.locator('[data-testid="build-capital"]').click();
+    await page.locator('[data-testid="build-capital"] button').click();
     await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('[data-testid="build-capital"]')).toBeHidden();
 

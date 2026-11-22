@@ -2869,7 +2869,7 @@ Commit: perf/count-budgets (PR #356)
 - **Fix:** the palette is mounted for the whole desktop game and hidden (`display: none`, `data-panel-mode="hidden"`) while piloting; cells are a memoised `BuildCell` with hoisted per-state `sx`. Same session, 4 reps each: React task on the death frame 67–79 ms → 8–12 ms; death-frame LoAF 164–188 ms → 103–119 ms (this host's steady frames are ~95 ms under the CPU profiler); components mounted on death 864 → 21.
 - **Rules:**
   - Anything that appears on a gameplay event (death, lock, level-up) and holds more than a handful of MUI components is pre-mounted and toggled, like the drawer's `keepMounted`. A store flip inside a message handler renders inside that handler's task.
-  - Measure with `tests/perf/death-spectator-hitch.spec.ts`: it stubs `__REACT_DEVTOOLS_GLOBAL_HOOK__` to count components rendered and mounted per commit (skip subtrees whose `child` equals `alternate.child`, or untouched fibers read as mounts). The count lock is `BottomControlPanel.test.tsx` "the spectator flip inserts no DOM".
+  - Measure with `tests/perf/death-spectator-hitch.spec.ts`: it stubs `__REACT_DEVTOOLS_GLOBAL_HOOK__` to count components rendered and mounted per commit (skip subtrees whose `child` equals `alternate.child`, or untouched fibers read as mounts). The count lock was `BottomControlPanel.test.tsx` "the spectator flip inserts no DOM"; the hotbar and that test were later deleted when building moved into the Build sidebar, which the flip never opens.
 
 ## 2026-11-11 — A shell moved once per room update but aged by the worker tick
 
@@ -3409,6 +3409,10 @@ landed a correction, and the hysteresis guard turned remote prediction off
 (`remote-ship-held-thrust.spec.ts`: 13 u per snapshot). A cap on a window must be relative to the
 window: `remoteForwardTickCap(lead)`. When you resize a lead, grep for every constant that assumed
 its old size.
+
+## 2026-11-21 — a shared read-and-reset histogram reads empty for every reader after the first
+
+The first tick-health log (`TickHealthWindow`) let every sector room read one process-wide `monitorEventLoopDelay` histogram and the first room to close its window reset it. Rooms close their windows in the same timer phase, so every room after the first read an empty histogram: a playtest logged `eventLoopP99Ms 0` on all 415 lines. A read-and-reset source needs exactly ONE reader (`ProcessTickHealth` reads it once per bucket). Also: the histogram is in nanoseconds and each sample is the whole interval between its timer callbacks, so an idle loop reads ≈ the resolution (≈ 15.6 ms on Windows); subtract the resolution to get delay.
 
 ## 2026-11-21 — a button that acts on touchstart hands its release to whatever it opened
 

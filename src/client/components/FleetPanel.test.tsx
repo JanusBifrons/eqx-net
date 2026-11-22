@@ -1,6 +1,6 @@
 /**
  * RTS command layer slice 14 — the fleet panel (desktop) and strip (compact).
- * Locks: the show/hide swap with the build palette (palette stays mounted),
+ * Locks: shown with a selection, hidden without one,
  * shared vs mixed mode/stance, button enabled states, commands fire with the
  * selected ids, "+N more" capping, plain-language rows, the strip's order mode.
  */
@@ -9,7 +9,6 @@ import { render, screen, fireEvent, act } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
 import { FleetPanel, FLEET_PANEL_MAX_ROWS } from './FleetPanel.js';
 import { FleetStrip } from './FleetStrip.js';
-import { BottomControlPanel } from './BottomControlPanel.js';
 import { applyFleetStatus, resetFleetStatus, FLEET_STATUS_POLL_MS, type FleetStatusUpdate } from '../fleet/fleetStatus.js';
 import { resetFleetCommands, setFleetCommands, type FleetCommands } from '../fleet/fleetCommands.js';
 import { getGameClient, setGameClient } from '../net/clientSingleton.js';
@@ -71,20 +70,15 @@ afterEach(() => {
 });
 
 describe('FleetPanel (desktop)', () => {
-  it('swaps with the build palette: hidden with no selection, shown with one; palette stays mounted', () => {
-    render(<><BottomControlPanel /><FleetPanel /></>);
+  it('hidden with no selection, shown with one', () => {
+    render(<FleetPanel />);
     expect(screen.queryByTestId('fleet-panel')).toBeNull();
-    const palette = screen.getByTestId('bottom-control-panel');
-    expect(palette).toHaveAttribute('data-panel-mode', 'build');
 
     act(() => useUIStore.setState({ selection: { ids: ['a', 'b'], focusId: null, focusKind: null } }));
     expect(screen.getByTestId('fleet-panel')).toHaveTextContent('2 ships selected');
-    expect(screen.getByTestId('bottom-control-panel')).toBe(palette);
-    expect(palette).toHaveAttribute('data-panel-mode', 'hidden');
 
     act(() => useUIStore.setState({ selection: { ids: [], focusId: null, focusKind: null } }));
     expect(screen.queryByTestId('fleet-panel')).toBeNull();
-    expect(palette).toHaveAttribute('data-panel-mode', 'build');
   });
 
   it('hidden outside command view and on a compact screen', () => {

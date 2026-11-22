@@ -12,14 +12,43 @@ flash game *The Space Game*: place structures, link them through hubs, and a
 
 All discrete (tap) HUD actions now live in one **bottom-right SpeedDial** FAB —
 the galaxy **Map** toggle, the **Weapon**-slot selector, the **Panels** (drawer)
-entry, and **Build ▸**. Your held controls (joystick / FIRE / BOOST) stay as
-dedicated buttons; a tap-to-expand menu is the wrong place for an input you hold.
+entry, and **Build ▸**, which opens the Build sidebar. Your held controls
+(joystick / FIRE / BOOST) stay as dedicated buttons; a tap-to-expand menu is the
+wrong place for an input you hold.
+
+## The Build sidebar
+
+**Build ▸** on the speed dial (or switching to Build mode) opens the **Build
+sidebar** on the right of the screen. It is the one place you pick a building:
+
+- A **category rail** runs down its left edge (Core, Economy, Industry,
+  Defence, Gun Batteries, Habitation, Transport). Tap an icon to show that
+  category.
+- The category shows **picture tiles**, one per building. Under each picture
+  are its build cost (◆) and its power (⚡ +N generates, −N draws; none when it
+  uses no power). A ×N badge shows packed crates you hold; a building you
+  can't place yet is greyed with a lock.
+- A **details strip** under the tiles shows the building you hover (desktop)
+  or last tapped: its name, what it does, cost, power and, when locked, why.
+- Tap a tile to start placing that building. The sidebar hides so it never
+  covers the ghost.
+- **Keep placing until you cancel.** After each place you stay on the same
+  building, so you can put down a row of them. Cancel (the banner's ✕, Escape
+  or right-click on desktop) ends it, and the sidebar comes back on the same
+  category, ready for the next pick. A one-off building (the Capital, a
+  territory lock) or your last packed crate of a building ends it by itself.
+- **Desktop keys** while the sidebar is open: **1–9** pick the 1st to 9th tile
+  of the open category, **Q / E** step to the previous / next category. While
+  it is open these keys don't switch weapon groups.
+
+Close it with its ✕, Escape, or a swipe on its handle.
 
 ## Building (Phase 2 — shipped)
 
-1. Open the speed dial → **Build ▸** → pick a structure kind.
-2. A confirm banner appears: **Place \<Kind\> ahead?** — *Confirm* drops the
-   structure a short distance ahead of your ship; *Cancel* exits.
+1. Open the speed dial → **Build ▸** → pick a category on the rail → tap a
+   building's tile.
+2. A confirm banner appears over the ghost: *Confirm* places the structure
+   there; *Cancel* ends placing. On desktop a left-click places at the cursor.
 3. The structure appears in the world and is immediately **damageable**.
 
 While placing, **Rotate** (the turning-arrow button, or **R** on a keyboard)
