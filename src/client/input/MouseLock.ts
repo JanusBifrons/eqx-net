@@ -85,7 +85,7 @@ export function installFcKeys(): () => void {
     }
     if (a.kind === 'overview') {
       e.preventDefault();
-      st.setContactsOpen(!st.contactsOpen);
+      st.setRightPanel(st.rightPanel === 'contacts' ? null : 'contacts');
       return;
     }
     if (a.kind === 'target') {

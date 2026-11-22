@@ -23,7 +23,7 @@ left out. Each row:
 | Lock | `LOCK` or the acquiring percent (capped at 99 until the lock completes, like the lock band) in the colour of the group holding it; yellow while a failsafe runs |
 
 Rows out of every group's fire reach are dimmed (still lockable). The list sorts hostiles first, then
-by distance; the header button switches to nearest first. It shows at most 40
+by distance; the switch under the header picks nearest first. It shows at most 40
 rows.
 
 ## Locking from it
@@ -39,50 +39,49 @@ and the lock rules, and a weapon still fires only at a completed lock.
 
 ## Opening it
 
-- **Desktop:** press **O**, or click the CONTACTS tab.
-- **Touch:** tap the CONTACTS tab.
+Contacts is a right panel (UI language plan, job U2-3): the rail's **Contacts**
+item opens it in every control mode (Fly, Command and Build), like Galaxy, Jobs
+and Trade.
+
+- **Desktop:** press **O** (any mode), or click the rail's Contacts item
+  (Alt + its rail number works too).
+- **Touch:** tap the rail's Contacts item.
+- ✕, Esc, O again or a second rail tap close it; opening another panel
+  replaces it.
 
 ## Where it sits, and why
 
-The audit of fixed and slotted HUD positions: top-left holds the sector chip,
-the pilot/spectate toggle and the cargo chip; top-centre holds the status
-capsule, the lock band, prompts and warnings; top-right holds the speed dial;
-the weapon strip sits on the right edge near mid-height; on touch the move
-stick and lock-line stick own the left and right 44 % from 28 % of the height
-down, with their homes and BOOST in the bottom corners.
-
-The overview is a dock on the **left edge at 30 % of the height**, the mirror
-of the weapon strip on the right (guns right, targets left). The tab is always
-there; the list opens under it. Its height is capped at
-`min(360px, 70dvh − 154px)`, so on a phone it ends above the move stick's home
-(on an 844 × 390 landscape phone: about 10 px clear) and never reaches the
-right-hand controls. Top-centre, the one free zone on mobile, was not used: a
-list there would sit over your own ship. Like the weapon strip dock it sits
-above the floating-stick zones, so its rows take taps; while it is open, the
-part of the move-stick zone it covers starts no stick. Close it and that area
-is back.
+It is the one right panel (`EqxPanel`, docked left of the rail at the mock
+size `EQX_PANEL_SIZE`), so it never covers the thumb sticks or BOOST and
+needs no placement of its own. Until 2026-11-22 it was a dock on the LEFT edge
+with its own CONTACTS tab; the UI language plan moved every list into the right
+panel and keeps the left side for the selection strip.
 
 ## How it works
 
 - Pure row building in `src/client/components/contactRows.ts`
   (`buildContactRows`, `sortContacts`, `formatContactKm`, `contactTapAction`).
-- `ContactsOverview.tsx` polls the render mirror at 4 Hz while open and
-  re-renders only when what's shown changes. Closed, it polls nothing.
+- `src/client/panels/ContactsPanel.tsx` polls the render mirror at 4 Hz while
+  open and re-renders only when what's shown changes. Closed, it polls nothing.
+  Rows are catalogue `EqxListRow` action rows (`onTap`, `dim`, `selected`,
+  `dataAttrs`); the sort is an `EqxSegmented`.
 - Group reach comes from `ColyseusClient.fcGroupReach(groupId)`: the same
   per-slot `weaponAutoFireRange` max as the server's `groupGeometry`.
-- The only store field is the discrete `contactsOpen` flag (invariant #2).
+- The only store field is the one right-panel flag, `rightPanel === 'contacts'`
+  (invariant #2).
 
 ## Tests
 
 - Unit: `contactRows.test.ts` (lockable set, names not ids, reach with the
   slack, lock and locking-you state, sort, km format, tap action),
   `MouseLock.test.ts` (O).
-- Component: `ContactsOverview.test.tsx` (names not ids, a tap sends
-  `lock_request` for the active group, a tap on a locked row cancels, 4 Hz
-  refresh).
+- Component: `panels/ContactsPanel.test.tsx` (rail pick and O open it, ✕ and
+  Esc close it, names not ids, sort switch, a tap sends `lock_request` for the
+  active group, a tap on a locked row cancels, 4 Hz refresh);
+  `layout/RightPanelHost.test.tsx` (Contacts on the rail in every mode).
 - E2E: `tests/e2e/contacts-overview.spec.ts` (`fc-duel`, `instantLock`): desktop
-  O + click locks and cancels; touch landscape tab + tap locks, and the open
-  list stays clear of the move stick's home and BOOST.
+  O + click locks and cancels; touch landscape: the rail's Contacts item + tap
+  locks, ✕ closes.
 
 ## Next
 
@@ -93,4 +92,4 @@ is back.
 
 Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each rule and points here.
 
-- **Contacts overview (lock list, 2026-11-10).** `components/ContactsOverview.tsx` + pure `contactRows.ts`: the far-target picker (O / CONTACTS tab), a fixed dock on the LEFT edge at 30 % height (z 18, the weapon strip's mirror; above the floating-stick zones so rows take taps, height-capped to end above the move stick's home). Polls the mirror at 4 Hz only while open; only `contactsOpen` is in Zustand. Rows lock through `requestLock` / `cancelLock` for the active group, the same messages as the info box. Don't name a file `contactsOverview.ts` next to it: Windows is case-insensitive and tsc refuses the pair. See [docs/features/contacts-overview.md](contacts-overview.md).
+- **Contacts panel (lock list).** `panels/ContactsPanel.tsx` + pure `components/contactRows.ts`: the far-target picker, the `contacts` right panel (rail item in every mode, or O). Polls the mirror at 4 Hz only while open; only `rightPanel` is in Zustand. Rows lock through `requestLock` / `cancelLock` for the active group, the same messages as the info box. History: until 2026-11-22 a left-edge dock (`components/ContactsOverview.tsx`, CONTACTS tab, `contactsOpen` flag). See [docs/features/contacts-overview.md](contacts-overview.md).

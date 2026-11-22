@@ -200,7 +200,8 @@ export function registerTransitHandlers(room: Room, ctx: TransitHandlerCtx): voi
         const cur = useUIStore.getState();
         cur.setTransitState('DOCKED');
         cur.setTransitProgress(0);
-        cur.setTransitTargetSectorKey(null);
+        // The destination key stays until the new sector's welcome clears it
+        // (welcomeHandlers): the load curtain names it until then.
       }, 500);
     }
   });
@@ -210,6 +211,10 @@ export function registerTransitHandlers(room: Room, ctx: TransitHandlerCtx): voi
     // on a spectator seat. Same room change as every transit; only the
     // local ship's trip is skipped (there is none), so the load curtain
     // covers the switch, and the warped ships are re-selected on arrival.
+    // The trip's destination, for the load curtain (WarpScreen). A commander
+    // following a fleet warp gets no SPOOLING edge of their own, so this is
+    // where their destination is learned; cleared by the new sector's welcome.
+    if (typeof msg.targetSectorKey === 'string') useUIStore.getState().setTransitTargetSectorKey(msg.targetSectorKey);
     const fleetIds = parseTransitReadyShipIds(msg.shipIds);
     const commanderFollow = isCommanderFleetFollow(fleetIds, useUIStore.getState().pilotMode);
     ctx.setFleetArrival(commanderFollow && fleetIds !== undefined && fleetIds.length > 0
@@ -340,7 +345,8 @@ export function registerTransitHandlers(room: Room, ctx: TransitHandlerCtx): voi
             const c2 = useUIStore.getState();
             c2.setTransitState('DOCKED');
             c2.setTransitProgress(0);
-            c2.setTransitTargetSectorKey(null);
+            // Keep the destination key: a stalled trip's curtain still names
+            // it; the new sector's welcome clears it.
           }, 500);
         }
       }, 2000);

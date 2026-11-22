@@ -293,8 +293,6 @@ export interface UIStore extends ShieldToggleUi, RightPanelUi {
   placementKind: StructureKindId | null;
   /** Phase 4 warp-to: the warp destination picker is open (discrete UI flag). */
   warpPickerOpen: boolean;
-  /** The contacts overview (lock list) is open (discrete UI flag). */
-  contactsOpen: boolean;
   /** The building settings side panel is open (discrete UI flag; the HUD hides the right-edge weapon strip under it). */
   structureSettingsOpen: boolean;
   /** Where a held warp goes (the picker's label), shown by the warp chip; null when none. */
@@ -539,7 +537,6 @@ export interface UIStore extends ShieldToggleUi, RightPanelUi {
   setActiveSlotId: (id: string) => void;
   setPlacementKind: (k: StructureKindId | null) => void;
   setWarpPickerOpen: (open: boolean) => void;
-  setContactsOpen: (open: boolean) => void;
   setWarpHeldTo: (label: string | null) => void;
   /** Phase 4 WS-B1 — set / clear the pending local level-up acknowledgement
    *  (the level just reached, or null to clear). WS-B2's upgrade modal reads it. */

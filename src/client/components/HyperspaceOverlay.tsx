@@ -4,7 +4,16 @@ import RocketLaunchIcon from '@mui/icons-material/RocketLaunch';
 import StopIcon from '@mui/icons-material/Stop';
 import { useUIStore } from '../state/store';
 import { Slot } from '../layout/Slot';
+import type { AnchorName } from '../layout/anchors';
 import { useIsCompact } from '../layout/useIsCompact';
+
+/** The spool bar draws over the left strip (owner 2026-11-22). */
+export const SPOOL_BAR_ANCHOR: AnchorName = 'middle-left-over';
+
+/** Whole seconds left, rounded up: "3" until the last 2 s, "1" in the final second. */
+export function spoolSecondsLeft(remainingMs: number): number {
+  return Math.ceil(Math.max(0, remainingMs) / 1000);
+}
 
 interface HyperspaceOverlayProps {
   /** Cancel callback, fired when the player clicks the abort button. Wired
@@ -20,7 +29,7 @@ interface HyperspaceOverlayProps {
  * SPOOLING (the new design): a slim vertical bar pinned to the left edge,
  * volume-bar styled. From top to bottom:
  *   - rocket icon (running indicator)
- *   - countdown in `S.MMM` form, ms-precision
+ *   - countdown in whole seconds, rounded up
  *   - bottom-up green fill that tracks `transitProgress`
  *   - red abort button at the bottom
  * Smaller / more transparent on desktop (wide viewport), bolder on mobile.
@@ -36,7 +45,7 @@ export function HyperspaceOverlay({ onCancel }: HyperspaceOverlayProps): JSX.Ele
 
   if (transitState === 'SPOOLING') {
     return (
-      <Slot anchor="middle-left" order={100}>
+      <Slot anchor={SPOOL_BAR_ANCHOR} order={100}>
         <SpoolingBar onCancel={onCancel} progress={transitProgress} />
       </Slot>
     );
@@ -152,11 +161,12 @@ function SpoolingBar({ onCancel, progress }: SpoolingBarProps): JSX.Element {
 }
 
 /**
- * Live "S.MMM" countdown that updates at RAF rate, independent of Zustand
- * notification cadence. Reads `transitSpoolMs` and the wall-clock SPOOLING
- * start time (captured the first time we observe a non-null `transitSpoolMs`
- * within a SPOOLING state) to compute remaining ms with millisecond
- * precision — a humanising touch the bare 60 Hz progress ramp can't deliver.
+ * Whole-second countdown (rounded up), independent of Zustand notification
+ * cadence. Reads `transitSpoolMs` and the wall-clock SPOOLING start time
+ * (captured the first time we observe a non-null `transitSpoolMs` within a
+ * SPOOLING state). A RAF loop checks the time, but React state is set only
+ * when the whole-second number changes (owner 2026-11-22: no decimals, no
+ * per-frame re-render).
  */
 function useRemainingText(): string {
   const spoolMs = useUIStore((s) => s.transitSpoolMs);
@@ -175,13 +185,16 @@ function useRemainingText(): string {
     if (startRef.current === null) startRef.current = performance.now();
 
     let raf = 0;
+    let shown = -1;
     const tick = (): void => {
       const start = startRef.current;
       if (start === null || spoolMs === null) return;
       const remaining = Math.max(0, spoolMs - (performance.now() - start));
-      const seconds = Math.floor(remaining / 1000);
-      const millis = Math.floor(remaining % 1000);
-      setText(`${seconds}.${millis.toString().padStart(3, '0')}`);
+      const secs = spoolSecondsLeft(remaining);
+      if (secs !== shown) {
+        shown = secs;
+        setText(String(secs));
+      }
       if (remaining > 0) raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
