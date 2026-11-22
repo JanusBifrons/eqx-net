@@ -833,3 +833,35 @@ describe('drone gap-smoothing targets', () => {
     expect(maxRiseMs).toBeLessThanOrEqual(IDLE_RESUME_MAX_DELAY_RISE_MS);
   });
 });
+
+describe('drone gap-smoothing targets at 0.7x and 2x game speed', () => {
+  // At 2x the hold limit (400 game ms = 200 wall ms) re-syncs before a 400 ms
+  // stall ends, the glide (125 wall ms) runs out and the read point freezes,
+  // then the drone snaps on resume; the 28-tick pose ring (233 wall ms) also
+  // runs short of a longer hold. Target: hold through, no re-sync, no snap,
+  // no read pinned to the oldest pose.
+  for (const name of ['gap-400', 'gap-600', 'burst-600-both-streams'] as const) {
+    it.fails(`2x ${name}: zero snaps, no re-sync, no pin-to-oldest`, () => {
+      const result = runDroneFixture(GAP_PROFILES[name], { timeScale: 2 });
+      expect(result.straight.snaps + result.turning.snaps).toBe(0);
+      expect(result.resyncs).toBe(0);
+      expect(result.oldEndClamps).toBe(0);
+    });
+  }
+
+  // At 0.7x the swarm-only silence let the tick clock drift late once per
+  // packet of the backlog burst (several drifts in one frame), so the first
+  // on-time packet pulled it back: one back-step per drone.
+  it.fails('0.7x gap-swarm-only: zero back-steps and zero snaps', () => {
+    const result = runDroneFixture(GAP_PROFILES['gap-swarm-only'], { timeScale: 0.7 });
+    expect(result.straight.backwardSteps + result.turning.backwardSteps).toBe(0);
+    expect(result.straight.snaps + result.turning.snaps).toBe(0);
+  });
+
+  // At 2x 4G jitter a late-drifted tick clock reset on an early packet (a
+  // 40 ms jump): a 26.8 u snap.
+  it.fails('2x jitter-4g: zero snaps', () => {
+    const result = runDroneFixture(GAP_PROFILES['jitter-4g'], { timeScale: 2 });
+    expect(result.straight.snaps + result.turning.snaps).toBe(0);
+  });
+});
