@@ -18,7 +18,7 @@ import { CONNECTOR_IDLE_COLOR, cometSegment, mixColor, type CometSegment, type C
 import {
   W, along, bowSpan, cablePath, edgePath, frameAt, oneSegment, pt, rawPath, setCablePath, smoothAt, type CablePath,
 } from './connectorCablePath.js';
-import { MIN_CABLE_LENGTH } from '../../../core/structures/structureGridConstants.js';
+import { CABLE_BODY_WIDTH, CABLE_STATION_PITCH } from '../../../core/structures/structureGridConstants.js';
 
 export type { CablePath } from './connectorCablePath.js';
 
@@ -65,7 +65,7 @@ const CHANNEL_IDLE = mixColor(CONNECTOR_IDLE_COLOR, 0x0c1418, 0.35);
 
 /** Authored body width (world units) per look; floored on screen by `MIN_PX`
  *  so the line stays readable at phone zoom-out. */
-const BASE_W: Record<LineLook, number> = { pipe: 12, cable: 12, conduit: 18 };
+const BASE_W: Record<LineLook, number> = { pipe: 12, cable: CABLE_BODY_WIDTH, conduit: 18 };
 const MIN_PX: Record<LineLook, number> = { pipe: 3.5, cable: 5, conduit: 5 };
 
 /** A look's authored body width (world units at 1x, before any floor). */
@@ -217,12 +217,12 @@ const TRUSS = mixColor(CONNECTOR_IDLE_COLOR, 0x5c6264, 0.86);
 const CLAMP = mixColor(CONNECTOR_IDLE_COLOR, 0x7a7466, 0.88);
 const LASH = 0x14181a;
 /** Station pitch (world units at 1x): collar, lashing, cradle, lashing, ... */
-const CABLE_PITCH = 55;
+const CABLE_PITCH = CABLE_STATION_PITCH;
 /** Shortest span between the end collars that lays out stations (world units
- *  at 1x); shorter draws the collars only. The gameplay minimum
- *  (`MIN_CABLE_LENGTH`) less the two collar insets (half a body width each):
- *  56 - 12 = 44 = 0.8 pitches, so a link the grid allows always shows bundle. */
-const SHORT_RUN_SPAN = MIN_CABLE_LENGTH - BASE_W.cable;
+ *  at 1x); shorter draws the collars only: 0.8 pitches (44). The gameplay
+ *  minimum (`MIN_CABLE_LENGTH`, edge to edge) is two collar insets plus a
+ *  full pitch, so a link the grid allows always shows bundle. */
+const SHORT_RUN_SPAN = 0.8 * CABLE_PITCH;
 /** Light comes from the top-left of the screen (pixi y-down). */
 const LIGHT_X = -0.6;
 const LIGHT_Y = -0.8;

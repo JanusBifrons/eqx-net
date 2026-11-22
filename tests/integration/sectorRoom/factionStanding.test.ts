@@ -6,7 +6,7 @@
  *  - `set_faction_policy` sets the policy for the sending player only;
  *  - `claim_faction_look` claims a free colour + sigil pair; a taken one is refused.
  *
- * Layout (as npcOwnership.test.ts): Capital (0,0) → Connector (0,-350) →
+ * Layout (as npcOwnership.test.ts): Capital (0,0) → Connector (0,-380) →
  * Turret (0,-650); pilots spawn at (0,-1000), inside the turret's range.
  */
 import { describe, it, expect, afterEach } from 'vitest';
@@ -24,7 +24,7 @@ import { WelcomeSchema } from '../../../src/shared-types/messages/snapshotMessag
 const OWNER = '6a7e0000-0000-4000-8000-0000000000a1';
 const LAYOUT = [
   { kind: 'capital', x: 0, y: 0 },
-  { kind: 'connector', x: 0, y: -350 },
+  { kind: 'connector', x: 0, y: -380 },
   { kind: 'turret', x: 0, y: -650 },
 ];
 

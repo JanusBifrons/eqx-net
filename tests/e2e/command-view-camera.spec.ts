@@ -56,6 +56,44 @@ async function startRecording(page: Page): Promise<void> {
 const takeRecording = (page: Page): Promise<Frame[]> =>
   page.evaluate(() => (globalThis as unknown as { __camRec: Frame[] }).__camRec.slice());
 
+/**
+ * Infrastructure wait: CI renders in software GL, and right after a cold
+ * join with Machined art the main thread is busy for a while (multi-second
+ * frames). Every Playwright call then waits on the page, so the 6 s
+ * click-to-select poll got through at most one click although the camera
+ * was centred on the hull and the click landed on the canvas. Wait until
+ * frames run at a normal pace before any timed input step; the per-frame
+ * recordings below need it too.
+ */
+async function waitForSmoothFrames(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const w = globalThis as unknown as { __smoothRun?: number; __frameGaps?: number[]; __smoothOn?: boolean };
+    w.__smoothRun = 0;
+    w.__frameGaps = [];
+    if (w.__smoothOn) return;
+    w.__smoothOn = true;
+    let last = performance.now();
+    const step = (now: number): void => {
+      const gap = now - last;
+      last = now;
+      w.__smoothRun = gap < 100 ? (w.__smoothRun ?? 0) + 1 : 0;
+      w.__frameGaps!.push(Math.round(gap));
+      if (w.__frameGaps!.length > 20) w.__frameGaps!.shift();
+      requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  });
+  try {
+    await page.waitForFunction(
+      () => ((globalThis as unknown as { __smoothRun?: number }).__smoothRun ?? 0) >= 15,
+      undefined, { timeout: 45_000 }, // infrastructure: CI's software-GL warm-up after a cold join
+    );
+  } catch (err) {
+    const gaps = await page.evaluate(() => (globalThis as unknown as { __frameGaps?: number[] }).__frameGaps ?? []);
+    throw new Error(`frames never settled (last gaps ms: ${gaps.join(', ')}): ${(err as Error).message}`);
+  }
+}
+
 test.describe('Command view camera @feature', () => {
   test('pan and zoom move only by the player: no follow, no speed zoom, no back-jumps', async ({ browser }) => {
     // Infrastructure: cold galaxy join + the first-visit backdrop bake.
@@ -72,6 +110,7 @@ test.describe('Command view camera @feature', () => {
       () => (globalThis as { __eqxArtStats?: () => { backdrop?: { on: boolean } } }).__eqxArtStats?.().backdrop?.on === true,
       undefined, { timeout: 45_000 },
     );
+    await waitForSmoothFrames(page);
 
     // ── Own hull under the AI pilot, flying a move order. ────────────────
     const hullAt = async (): Promise<{ x: number; y: number } | null> => {

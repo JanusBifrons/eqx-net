@@ -61,9 +61,10 @@ describe('missile sprites resolve on the main-thread clock', () => {
     const g = ctx.missileSprites.get(MISSILE_ID)!;
     expect(g.x).toBeCloseTo(expected.x, 6);
     expect(g.y).toBeCloseTo(-expected.y, 6);
-    // The worker clock alone would resolve somewhere else entirely.
-    const atWorkerClock = resolveMissileDisplayPose(mirror, MISSILE_ID, mainNowMs - WORKER_CLOCK_OFFSET_MS)!;
-    expect(Math.abs(atWorkerClock.x - expected.x)).toBeGreaterThan(50);
+    // The worker clock alone would resolve somewhere else entirely: since the
+    // missile hold (S5-5) a read before the oldest sample has no pose at all.
+    const atWorkerClock = resolveMissileDisplayPose(mirror, MISSILE_ID, mainNowMs - WORKER_CLOCK_OFFSET_MS);
+    expect(atWorkerClock === null || Math.abs(atWorkerClock.x - expected.x) > 50).toBe(true);
   });
 
   it('falls back to the renderer clock when the mirror has no frame time', () => {

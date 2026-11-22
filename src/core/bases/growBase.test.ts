@@ -235,7 +235,7 @@ describe('growBase — coastal defences (plan coastal-defences)', () => {
 
 describe('growBase — minimum cable length (owner: keep buildings apart)', () => {
   it('every galaxy base links every building, and a fenced one keeps its reserve batteries', () => {
-    // A leaf stands LINK_GAP (= MIN_CABLE_LENGTH) off its connector; a row
+    // A leaf stands linkGap (>= MIN_CABLE_LENGTH, box edge to edge) off its connector; a row
     // whose spine relay lands on the row line moves out instead of failing
     // (it once dropped two batteries from three military bases).
     for (const s of GALAXY_SECTORS) {

@@ -225,20 +225,21 @@ describe('asteroidObstaclesFromSwarm', () => {
 });
 
 describe('the build preview re-seats a connector link as the server does (#15)', () => {
-  it('a turret just below a connector whose lower diagonal faces are held', () => {
-    // Capital (1) west of connector (2), solar (3) east, turret (4) 140 below.
-    // The links as the server first stores them: con face 2 to the capital,
-    // con face 0 to the solar (both lower diagonals).
+  it('a turret straight off a connector face the capital cable holds', () => {
+    // Capital (1) west of connector (2), solar (3) east, turret (4) 180 off
+    // con face 1. The links as stored: con face 1 to the capital, con face 0
+    // to the solar. The turret's cable needs face 1 (face 0 and 2 cables would
+    // run along the others), so the capital's cable moves to another face.
     const server = new Map<string, Connection[]>([
-      ['1', [new Connection(0, '2', '1', 1, 2, 1)]],
+      ['1', [new Connection(0, '2', '1', 1, 1, 1)]],
       ['3', [new Connection(1, '3', '2', 1, 4, 0)]],
     ]);
     server.set('2', [server.get('1')![0]!, server.get('3')![0]!]);
     const mirror: Array<[string, string, number, number, StructureRenderState]> = [
-      ['1', 'capital', 0, 0, structureState({ connTo: [2], connSockSelf: [1], connSockOther: [2] })],
-      ['2', 'connector', 400, 0, structureState({ connTo: [1, 3], connSockSelf: [2, 0], connSockOther: [1, 4] })],
+      ['1', 'capital', 0, 0, structureState({ connTo: [2], connSockSelf: [1], connSockOther: [1] })],
+      ['2', 'connector', 400, 0, structureState({ connTo: [1, 3], connSockSelf: [1, 0], connSockOther: [1, 4] })],
       ['3', 'solar', 900, 0, structureState({ connTo: [2], connSockSelf: [4], connSockOther: [0] })],
-      ['4', 'turret', 400, 140, structureState({})],
+      ['4', 'turret', 400, 180, structureState({})],
     ];
     const nodes = new Map<string, GridNode>();
     const preview = new Map<string, Connection[]>();

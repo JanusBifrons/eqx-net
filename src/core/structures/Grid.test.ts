@@ -227,7 +227,7 @@ describe('canConnect — shield-pylon dual-cap (Phase 5)', () => {
 
   it('a pylon links to a connector AND to other pylons (its two valid targets)', () => {
     const p = pylon('p', 0, 0);
-    const c = connector('c', 0, 40);
+    const c = connector('c', 0, 150);
     const p2 = pylon('p2', 40, 0);
     const nodes = nodeMap(p, c, p2);
     expect(canConnect(p, c, new Map(), nodes).ok).toBe(true);
@@ -253,7 +253,7 @@ describe('canConnect — shield-pylon dual-cap (Phase 5)', () => {
   it('DUAL budget — a pylon with 3 pylons can STILL add 1 connector (old single cap blocked this)', () => {
     const p = pylon('p', 0, 0);
     const a = pylon('a', 30, 0), b = pylon('b', 60, 0), c = pylon('c', 90, 0);
-    const conn = connector('conn', 0, 30);
+    const conn = connector('conn', 0, -150);
     const adj = new Map<string, Connection[]>([['p', [link('p', 'a'), link('p', 'b'), link('p', 'c')]]]);
     expect(canConnect(p, conn, adj, nodeMap(p, a, b, c, conn)).ok).toBe(true);
   });

@@ -16,7 +16,7 @@
  *     fighter (and a notice); resuming the OWNED gunship by its roster id
  *     spawns the gunship.
  *
- * Layout: Capital (0,0) → Connector (0,-350) → Shipyard (0,-760), a hub that
+ * Layout: Capital (0,0) → Connector (0,-380) → Shipyard (0,-790), a hub that
  * also links the fuelled Reactor (650,0) and the Cargo Bay (-550,0), which is
  * the base's storage. (A Capital links only through Connectors; a grid island
  * without a Capital is unpowered.)
@@ -46,14 +46,14 @@ describe('SectorRoom integration — Shipyard + hull gate (economy v2 W5b)', () 
       sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [],
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 },
-        { kind: 'connector', x: 0, y: -350 },
+        { kind: 'connector', x: 0, y: -380 },
         // Every link goes through a Connector: the reactor and cargo bay join
         // via their own relays, never straight onto the shipyard.
         { kind: 'connector', x: 450, y: -350 },
         { kind: 'connector', x: -450, y: -350 },
-        { kind: 'reactor', x: 650, y: 0 },
+        { kind: 'reactor', x: 650, y: 50 },
         { kind: 'cargo_bay', x: -550, y: 0 },
-        { kind: 'shipyard', x: 0, y: -760 },
+        { kind: 'shipyard', x: 0, y: -790 },
       ],
       prebuiltStructuresOwner: owner,
       defaultSpawnX: 0,
@@ -146,12 +146,12 @@ describe('SectorRoom integration — Shipyard + hull gate (economy v2 W5b)', () 
       sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [],
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 },
-        { kind: 'connector', x: 0, y: -350 },
+        { kind: 'connector', x: 0, y: -380 },
         { kind: 'connector', x: 450, y: -350 },
         { kind: 'connector', x: -450, y: -350 },
-        { kind: 'reactor', x: 650, y: 0 },
+        { kind: 'reactor', x: 650, y: 50 },
         { kind: 'cargo_bay', x: -550, y: 0 },
-        { kind: 'shipyard', x: 0, y: -760 },
+        { kind: 'shipyard', x: 0, y: -790 },
       ],
       prebuiltStructuresOwner: owner,
       defaultSpawnX: 0,

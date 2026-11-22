@@ -25,17 +25,25 @@ export const SCAFFOLDING_HP_FRACTION = 0.1;
  *  `min`-of-endpoints collapses to this for every pair. */
 export const CONNECTION_MAX_RANGE = 600;
 
-/** Shortest socket cable, stud to stud (straight-line distance between the
- *  two sockets `pickCableSocketPair` picks), world units. Closer than this a
- *  link is refused (`'too-short'`, owner rule "keep buildings apart"): every
- *  cable shows a stretch of bundle between its end collars. From the cable
- *  look at 1x (`connectorLineLooks.ts`): each end collar sits half a body
- *  width (12 / 2 = 6) in from its stud, and a run whose span between the
- *  collars is under 0.8 station pitches (0.8 × 55 = 44) draws the collars
- *  only. 6 + 44 + 6 = 56 is the shortest run that lays out collar, lashing,
- *  collar with bundle showing between them; the look reads its short-run span
- *  from this. Fence links (post to post) are exempt. */
-export const MIN_CABLE_LENGTH = 56;
+/** The cable art's body width at 1x, world units (the client cable look,
+ *  `connectorLineLooks.ts`, draws with this). Each end collar sits half of it
+ *  in from its stud. Also the clearance two cables keep from each other:
+ *  centrelines closer than one body width draw on top of each other. */
+export const CABLE_BODY_WIDTH = 12;
+
+/** The cable art's station pitch at 1x, world units: one section of bundle
+ *  between two stations (collar, lashing, cradle, lashing, ...). The client
+ *  cable look lays its stations out at this pitch. */
+export const CABLE_STATION_PITCH = 55;
+
+/** Shortest cable, as the gap between the two footprint boxes it joins, EDGE
+ *  to edge (`edgeDistance`), world units. Closer than this a link is refused
+ *  (`'too-short'`, owner rule "keep buildings apart"): the player always sees
+ *  at least one clear section of cable between the two buildings. From the
+ *  cable art: two end collars (half a body width each) plus one station
+ *  pitch of bundle, 6 + 55 + 6 = 67. Studs sit on the footprint, so the
+ *  cable itself is never shorter. Fence links (post to post) are exempt. */
+export const MIN_CABLE_LENGTH = CABLE_BODY_WIDTH + CABLE_STATION_PITCH;
 
 /** WS-5 (R2.17) — the global cap on how many hubs a single freshly-placed
  *  structure auto-connects to on placement. A structure's OWN `maxConnections`

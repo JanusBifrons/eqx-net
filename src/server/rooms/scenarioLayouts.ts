@@ -78,9 +78,9 @@ export const GATE_TEST = {
 
 export const GATE_TEST_PREBUILT = [
   { kind: 'capital', x: 0, y: 0, rot: 90 },
-  { kind: 'connector', x: 0, y: 350 },
+  { kind: 'connector', x: 0, y: 380 },
   { kind: 'solar', x: 450, y: 500 },
-  { kind: 'connector', x: 0, y: -350 },
+  { kind: 'connector', x: 0, y: -380 },
   { kind: 'shield_gate', ...GATE_TEST.openGate, gateAccess: 'open' },
   { kind: 'shield_gate', ...GATE_TEST.lockedGate, gateAccess: 'owner' },
 ] as const;
@@ -88,17 +88,17 @@ export const GATE_TEST_PREBUILT = [
 export const SCENARIO = {
   /** Turned 90°: its crane bay pad faces west, centre world (-410, 0). */
   capital: { x: 0, y: 0, rot: 90 },
-  connectorN: { x: 0, y: 350 },
-  connectorS: { x: 0, y: -350 },
+  connectorN: { x: 0, y: 380 },
+  connectorS: { x: 0, y: -380 },
   /** 700 u wide: each stands clear of the north Connector on its side. */
   solarNE: { x: 450, y: 500 },
   solarNW: { x: -450, y: 500 },
-  minerSW: { x: -200, y: -420 },
-  turretSE: { x: 150, y: -400 },
-  /** In the Miner's 800 u range (≈ 573 u away). */
+  minerSW: { x: -220, y: -420 },
+  turretSE: { x: 170, y: -400 },
+  /** In the Miner's 800 u range (≈ 556 u away). */
   asteroid: { x: -700, y: -700, radius: 30 },
   /** In the Turret's 600 u range (550 u below it). */
-  drone: { x: 150, y: -950 },
+  drone: { x: 170, y: -950 },
 } as const;
 
 /** The full powered scenario grid, in an order auto-connect wires correctly
@@ -170,9 +170,9 @@ export const RIG_SANDBOX = {
   padCorner: { x: -380, y: 640 },
   turret: { x: 720, y: 0 },
   /** Grid hub just south of the turret (its top edge in the turret close-up). */
-  connector: { x: 720, y: -160 },
+  connector: { x: 720, y: -200 },
   /** The power source, south-east of the connector, clear of the wide shot. */
-  capital: { x: 800, y: -560 },
+  capital: { x: 800, y: -600 },
   haulerEntry: { x: 0, y: 1700 },
 } as const;
 
@@ -556,13 +556,17 @@ export const BASE_FLOW_OPTS = {
     ...baseFlowArm(1),
     ...baseFlowArm(-1),
     { kind: 'connector', x: 470, y: 0 },
+    // The relay before its flanking Solars: their cables fan out from the
+    // first connector, and the spine must stay a cable width clear of them.
+    { kind: 'connector', x: 1000, y: 0 },
     { kind: 'solar', x: 800, y: -450, rot: 90 },
     { kind: 'solar', x: 800, y: 450, rot: 90 },
-    { kind: 'connector', x: 1000, y: 0 },
-    // The end Solar first: it needs an east face (one cable per connector socket).
-    { kind: 'solar', x: 1700, y: 0, rot: 90 },
-    { kind: 'solar', x: 1300, y: -450, rot: 90 },
+    // The end Solar first, a little below the axis so it takes the lower east
+    // face (one cable per connector socket); the upper flank's cable then has the
+    // upper east face, a cable width clear of it.
+    { kind: 'solar', x: 1700, y: -40, rot: 90 },
     { kind: 'solar', x: 1300, y: 450, rot: 90 },
+    { kind: 'solar', x: 1300, y: -450, rot: 90 },
   ],
   prebuiltStructuresOwner: 'perf-base',
   /** One rock beside each Miner (≈ 460 u, inside its 800 u range). */
@@ -581,7 +585,7 @@ const loop = (kind: string, x: number, y: number, more?: { rot?: number; recipe?
   ({ kind, x: BASE_LOOP_AT.x + x, y: BASE_LOOP_AT.y + y, ...more });
 export const BASE_LOOP_OPTS = {
   prebuiltStructures: [
-    loop('capital', 0, 0, { rot: 90 }), loop('connector', 0, 350), loop('connector', 0, -350), loop('connector', 420, 0),
+    loop('capital', 0, 0, { rot: 90 }), loop('connector', 0, 380), loop('connector', 0, -380), loop('connector', 420, 0),
     loop('solar', 450, 500), loop('solar', -450, 500), loop('solar', 450, -500),
     loop('shipyard', 1000, 0, { recipe: 'build_interceptor' }),
     loop('refinery', -450, -600), loop('connector', 0, -950), loop('cargo_bay', -400, -1100),

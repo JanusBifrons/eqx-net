@@ -86,7 +86,7 @@ describe('SectorRoom integration — break-ins (C2)', () => {
       sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [], breakInMs: 20_000,
       prebuiltStructures: [
         { kind: 'capital', x: 0, y: 0 }, { kind: 'connector', x: 400, y: 0 },
-        { kind: 'solar', x: 900, y: 0 }, { kind: 'turret', x: 400, y: 140 },
+        { kind: 'solar', x: 900, y: 0 }, { kind: 'turret', x: 400, y: 175 },
       ],
       prebuiltStructuresOwner: owner,
     });
