@@ -268,14 +268,8 @@ function GameSurface({
     rendererRef.current?.setSpectator(spectating);
   }, [spectating]);
 
-  // RTS command view (slice 12) — the fleet strip's touch tap-order toggle.
-  // A discrete choice; the renderer decides per tap what it orders.
-  const fleetOrderMode = useUIStore((s) => s.fleetOrderMode);
-  useEffect(() => {
-    rendererRef.current?.setFleetOrderMode(fleetOrderMode);
-  }, [fleetOrderMode]);
-
-  // RTS slice 14b — a mode waiting for a target on the map. The renderer
+  // RTS slice 14b — a mode waiting for a target on the map (tap rule T3:
+  // the left strip's Move is a one-point pick too). The renderer
   // keeps the picked points; Done (button / Enter) asks it to send the route.
   const fleetPickKind = useUIStore((s) => s.fleetPick?.kind ?? null);
   useEffect(() => {
@@ -502,7 +496,8 @@ function GameSurface({
     const keyboard = new Keyboard();
     // Fire control: desktop holds left mouse to draw the lock line (right =
     // boost) + the group keys; touch gets the keys (the lock line is a stick).
-    const disposeMouseLock = isTouchRef.current ? installFcKeys() : installMouseLock(el);
+    const fleetView = (): IRenderer | null => rendererRef.current; // T = the strip's Lock (fleet attack)
+    const disposeMouseLock = isTouchRef.current ? installFcKeys(fleetView) : installMouseLock(el, fleetView);
     keyboardRef.current = keyboard;
 
     // Renderer-path selection + profile-window opt-in. Extracted to
@@ -512,9 +507,7 @@ function GameSurface({
     // HUD mode (`?hud=` / `?cinematic=1`) → the world lock marks + edge radar.
     // `__eqxCinema.setHud` re-pushes it mid-take.
     applyHudOverlays(renderer, hudModeFromSearch(window.location.search), window.location.search);
-    // RTS touch tap-order mode: seed the new renderer (the effect below
-    // pushes later changes).
-    renderer.setFleetOrderMode(useUIStore.getState().fleetOrderMode);
+    // Seed the new renderer's fleet map pick (the effect pushes later changes).
     renderer.setFleetPick(useUIStore.getState().fleetPick?.kind ?? null);
     installLanePerfSummary(renderer, () => selectControlMode(useUIStore.getState())); // phone lane only: 10 s frame-time summaries + stall context
     // Perf scenes (`?perfprobe=1` only): frame times, long tasks, bytes.

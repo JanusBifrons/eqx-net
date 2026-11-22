@@ -238,12 +238,6 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
         break;
       }
 
-      case 'SET_FLEET_ORDER_MODE': {
-        if (!renderer) return;
-        renderer.setFleetOrderMode(msg.mode);
-        break;
-      }
-
       case 'SET_FLEET_OVERLAY_MODEL': {
         if (!renderer) return;
         renderer.setFleetOverlayModel(msg.model);
@@ -289,6 +283,11 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
       case 'GLIDE_CAMERA': {
         if (!renderer) return;
         renderer.glideCameraTo(msg.gameX, msg.gameY, msg.durationMs, msg.toScale ?? 0);
+        break;
+      }
+
+      case 'ATTACK_FOCUS': {
+        renderer?.attackFocus();
         break;
       }
 

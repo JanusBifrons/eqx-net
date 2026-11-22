@@ -28,11 +28,11 @@ describe('RendererInputController.focusEntity', () => {
     expect(ctl._focusId).toBe('swarm-8');
   });
 
-  it('like a map tap on another entity, it ends a ship selection (one selection)', () => {
+  it('like a map tap (tap rule T2), my selected ships stay selected', () => {
     const ctl = setup();
     ctl.selectFleetShips(['ship-2']); // no mirror yet: kept as-is
     ctl.focusEntity('pilot-1', 'ship');
-    expect(ctl._selShips.size).toBe(0);
+    expect([...ctl._selShips]).toEqual(['ship-2']);
     expect(ctl._focusId).toBe('pilot-1');
   });
 });

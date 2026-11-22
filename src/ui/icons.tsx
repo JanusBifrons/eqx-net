@@ -28,6 +28,7 @@ export const EQX_ICON_NAMES = [
   // a mixed selection
   'mixed',
   // Quick actions
+  'move',
   'stop',
   'trade',
   'target',
@@ -115,6 +116,13 @@ export const EQX_ICONS = {
       <circle cx="6" cy="12" r="1.2" />
       <circle cx="12" cy="12" r="1.2" />
       <circle cx="18" cy="12" r="1.2" />
+    </>
+  ),
+  // new: an arrow to a ringed point (move the selected ships to a point)
+  move: (
+    <>
+      <circle cx="18" cy="6" r="2.5" />
+      <path d="M4 20l11.5-11.5M9 8.5h6.5V15" />
     </>
   ),
   // mock

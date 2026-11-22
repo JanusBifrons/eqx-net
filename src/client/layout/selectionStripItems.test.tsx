@@ -18,8 +18,8 @@ vi.mock('../ships/shipActionsClient', () => ({ sendPilotShip: (id: string) => se
 
 import { useSelectionStripItems } from './selectionStripItems';
 
-function Harness({ data }: { data: PanelData | null }): JSX.Element {
-  const { items, loot } = useSelectionStripItems(data);
+function Harness({ data, fleetLock = null }: { data: PanelData | null; fleetLock?: (() => void) | null }): JSX.Element {
+  const { items, loot } = useSelectionStripItems(data, fleetLock);
   return <div data-testid="strip">{items}{loot}</div>;
 }
 
@@ -48,6 +48,16 @@ describe('selection strip quick actions (U3-1)', () => {
     expect(t.getAttribute('aria-label')).toBe('Lock · Primary');
     fireEvent.click(t);
     expect(lockSelected).toHaveBeenCalledOnce();
+  });
+
+  it('tap rule T2: with a fleet Lock, ONE Lock replaces the personal Target; a tap runs the fleet Lock', () => {
+    select('p2', 'ship');
+    const fleetLock = vi.fn();
+    render(<Harness data={{ name: 'Fighter', hpPct: 90, shieldPct: 50, cargoShip: 'p2' }} fleetLock={fleetLock} />);
+    expect(shown()).toEqual(['left-strip-lock', 'cargo-open-toggle']);
+    fireEvent.click(screen.getByTestId('left-strip-lock'));
+    expect(fleetLock).toHaveBeenCalledOnce();
+    expect(lockSelected).not.toHaveBeenCalled();
   });
 
   it('own parked hull: Pilot (no Target); a tap sends the existing pilot request', () => {

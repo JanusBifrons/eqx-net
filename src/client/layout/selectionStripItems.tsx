@@ -7,6 +7,9 @@
  * - Target (`fc-target`): lock / cancel / unlock with the active weapon group
  *   (`components/targetLock.ts`). Hidden for your own hull or a thing that
  *   can't be locked. `data-state` carries the stage for tests.
+ * - Lock (`left-strip-lock`, tap rule T2): in Target's place while my ships
+ *   are selected and the focus is attackable and not mine; the selected ships
+ *   attack it (the host passes the renderer's `attackFocus`). One Lock, never both.
  * - Cargo (`cargo-open-toggle`): opens the loot window for a storage
  *   structure, a drone or a ship (the server says why when it can't open).
  * - Pod (`pod-open`): opens a cargo pod's loot window; shown only while your
@@ -39,7 +42,10 @@ function lootTarget(d: PanelData | null): { kind: 'pod' | 'cargo'; entityId?: nu
   return null;
 }
 
-export function useSelectionStripItems(data: PanelData | null): SelectionStripItems {
+/** `fleetLock`: the fleet Lock (tap rule T2: my ships selected + an
+ *  attackable focus that is not mine); when set it is the ONE Lock and the
+ *  personal Target is not shown. */
+export function useSelectionStripItems(data: PanelData | null, fleetLock: (() => void) | null = null): SelectionStripItems {
   const own = data !== null && (data.isOwn === true || data.pilotShipId !== undefined);
   const lock = useTargetLock(own);
   const [lootOpen, setLootOpen] = useState(false);
@@ -49,7 +55,12 @@ export function useSelectionStripItems(data: PanelData | null): SelectionStripIt
   useEffect(() => setLootOpen(false), [lootKey]);
 
   const items: ReactElement[] = [];
-  if (lock !== null) {
+  if (fleetLock !== null) {
+    items.push(
+      <EqxIconButton key="target" variant="strip" icon={<EqxIcon name="target" />} tooltip="Lock: selected ships attack"
+        onClick={fleetLock} data-testid="left-strip-lock" />,
+    );
+  } else if (lock !== null) {
     items.push(
       <EqxIconButton key="target" variant="strip" icon={<EqxIcon name="target" />} tooltip={lock.tooltip}
         tone={lock.state === 'blocked' ? 'danger' : 'secondary'} active={lock.state === 'unlock' || lock.state === 'cancel'}

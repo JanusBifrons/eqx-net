@@ -456,8 +456,6 @@ export class PixiRenderer implements IRenderer {
   /** DEV/E2E: what the backdrop is showing. */
   backdropStats(): BackdropStats { return backdropStats(this._probes); }
 
-  /** See `IRenderer.setFleetOrderMode`. */
-  setFleetOrderMode(mode: 'move' | 'attack'): void { this._input.setFleetOrderMode(mode); }
   /** See `IRenderer.setFleetPick`. */
   setFleetPick(kind: FleetPickKindWire | null): void { this._input.setFleetPick(kind); }
   /** See `IRenderer.commitFleetPick`. */
@@ -522,6 +520,8 @@ export class PixiRenderer implements IRenderer {
   selectFleetShips(ids: readonly string[]): void { this._input.selectFleetShips(ids); }
   /** Contacts row tap — see `RendererInputController.focusEntity`. */
   focusEntity(id: string, kind: FocusEntityKind): void { this._input.focusEntity(id, kind); }
+  /** Tap rule T2 — see `RendererCommandRouting.attackFocus`. */
+  attackFocus(): void { this._input.attackFocus(); }
 
   /** Cinematic camera — see `RendererCameraDirector.setCameraScript`. */
   setCameraScript(cues: readonly CameraCue[] | null): void { this._cameraDirector.setCameraScript(cues); }

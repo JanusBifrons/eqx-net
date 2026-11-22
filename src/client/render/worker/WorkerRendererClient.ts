@@ -560,11 +560,6 @@ export class WorkerRendererClient implements IRenderer {
     this.post({ type: 'SET_SPECTATOR', active });
   }
 
-  /** See `IRenderer.setFleetOrderMode`. Posts to the worker's renderer. */
-  setFleetOrderMode(mode: 'move' | 'attack'): void {
-    this.post({ type: 'SET_FLEET_ORDER_MODE', mode });
-  }
-
   /** See `IRenderer.setFleetOverlayModel`. Posts to the worker's renderer. */
   setFleetOverlayModel(model: FleetOverlayModel): void {
     this.post({ type: 'SET_FLEET_OVERLAY_MODEL', model });
@@ -622,6 +617,8 @@ export class WorkerRendererClient implements IRenderer {
   focusEntity(id: string, kind: FocusEntityKind): void {
     this.post({ type: 'FOCUS_ENTITY', id, kind });
   }
+  /** Tap rule T2 — see `IRenderer.attackFocus`. */
+  attackFocus(): void { this.post({ type: 'ATTACK_FOCUS' }); }
 
   /**
    * Phase 5 — set the spectator WASD free-pan velocity (SCREEN px/sec). Posted
