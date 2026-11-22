@@ -19,13 +19,14 @@ describe('wreckSwitchOn (break-up switched on by default, owner 2026-11-14)', ()
   });
 });
 
-describe('structureWreckSwitchOn (structure break-up, OFF until the owner signs off the look)', () => {
-  it('is off in a room that says nothing', () => {
-    expect(structureWreckSwitchOn(undefined, undefined)).toBe(false);
-    expect(structureWreckSwitchOn('', false)).toBe(false);
+describe('structureWreckSwitchOn (structure break-up, ON since the owner look OK 2026-11-22)', () => {
+  it('is on in a room that says nothing', () => {
+    expect(structureWreckSwitchOn(undefined, undefined)).toBe(true);
+    expect(structureWreckSwitchOn('', true)).toBe(true);
   });
-  it('a room opts in with true', () => {
-    expect(structureWreckSwitchOn(undefined, true)).toBe(true);
+  it('a room opts out with false', () => {
+    expect(structureWreckSwitchOn(undefined, false)).toBe(false);
+    expect(structureWreckSwitchOn('', false)).toBe(false);
   });
   it('the env wins either way', () => {
     expect(structureWreckSwitchOn('0', true)).toBe(false);

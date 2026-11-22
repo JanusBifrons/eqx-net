@@ -2281,7 +2281,7 @@ export class SectorRoom extends Room<SectorState> {
     // `=0` forces it off (tests, the off arm of the debris soak), `=1` on.
     // Read before the streaming host: a wreck field follows the switches.
     this.capitalWrecksOn = wreckSwitchOn(process.env['EQX_CAPITAL_WRECKS'], roomOpts.capitalWrecks);
-    this.subcapWrecksOn = wreckSwitchOn(process.env['EQX_SUBCAP_WRECKS'], roomOpts.subcapWrecks); this.wreckSpawns.readStructureSwitch(roomOpts.structureWrecks); // structure break-up T6 (off by default)
+    this.subcapWrecksOn = wreckSwitchOn(process.env['EQX_SUBCAP_WRECKS'], roomOpts.subcapWrecks); this.wreckSpawns.readStructureSwitch(roomOpts.structureWrecks); // structure break-up (on by default since 2026-11-22)
     const fieldSeed = roomOpts.cutField?.seed ?? null, chunkSources: ChunkSource[] = [];
     if (roomOpts.wreckField !== undefined && (this.capitalWrecksOn || this.subcapWrecksOn)) chunkSources.push(this.wreckFieldSource = this.wreckSpawns.buildWreckFieldSource(roomOpts.wreckField, roomOpts.cutField));
     if ((this.capitalWrecksOn || this.subcapWrecksOn) && this.persistSector && this.sectorKey !== null) chunkSources.push(this.wreckSaves = new BattleWreckSaves(() => this.capitalWrecks?.lineageState() ?? null, battleWreckStore(this.sectorKey), { piecePoseInto: (id, out) => this.wreckSpawns.wreckPose(id, out) !== null, tractored: (id) => this.forceFields.isTractored(id), streaming: !this.testMode || roomOpts.battleWreckStreaming === true })); // wreck fields 0b: battle lineages stream on the one streamer

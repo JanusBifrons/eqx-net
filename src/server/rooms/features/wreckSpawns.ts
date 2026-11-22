@@ -63,7 +63,7 @@ export class RoomWreckSpawns {
   /** The playerId whose ACTIVE hull was just vaporised, for its pod's
    *  vaporised salvage; read and cleared by the `SHIP_DESTROYED` handler. */
   vaporisedActiveDeath: string | null = null;
-  /** Structure break-up switch (`structureWreckSwitchOn`); off by default. */
+  /** Structure break-up switch (`structureWreckSwitchOn`); on by default (owner OK 2026-11-22). */
   structureWrecksOn = false;
 
   constructor(private readonly h: RoomWreckSpawnsHost) {}

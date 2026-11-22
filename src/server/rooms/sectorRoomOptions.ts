@@ -244,8 +244,8 @@ export interface SectorRoomOptions {
    *  and sleep. ON by default (owner 2026-11-14); `false` opts this room
    *  out. `EQX_SUBCAP_WRECKS=0|1` forces it for every room. */
   /** Structure break-up: a destroyed built structure (not a gate) breaks
-   *  into wreck pieces. OFF by default (owner look sign-off pending); `true`
-   *  opts this room in. `EQX_STRUCTURE_WRECKS=0|1` forces it for every room
+   *  into wreck pieces. ON by default (owner look OK 2026-11-22); `false`
+   *  opts this room out. `EQX_STRUCTURE_WRECKS=0|1` forces it for every room
    *  (`structureWreckSwitchOn`). Needs `capitalWrecks` or `subcapWrecks` on. */
   structureWrecks?: boolean;
   subcapWrecks?: boolean; battleWreckStreaming?: boolean; // wreck fields 0b: a test room streams its saved battle wrecks (live rooms always do)

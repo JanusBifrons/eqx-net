@@ -3,7 +3,7 @@
  * "Structures"): a destroyed structure breaks into wreck pieces through the
  * ship death path (swarm death policy → `spawnScrapFromDrone`'s structure
  * branch → `RoomWreckSpawns.spawnStructureWreck` → `CapitalWreckSubsystem.onDeath`),
- * behind the `structureWrecks` room option (off by default).
+ * behind the `structureWrecks` room option (on by default; `false` opts out).
  */
 import { describe, it, expect, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
@@ -33,9 +33,9 @@ describe('SectorRoom integration — structure wrecks (structure break-up T6)', 
     return s!.id;
   }
 
-  it('switch on: a killed solar leaves kind-4 pieces under a structure descriptor with its owner, and the structure is gone', async () => {
+  it('switch on (the default): a killed solar leaves kind-4 pieces under a structure descriptor with its owner, and the structure is gone', async () => {
     const owner = randomUUID();
-    const internal = await boot(true, owner);
+    const internal = await boot(undefined, owner);
     const id = solarId(internal);
     await harness.advance(100);
     internal.applyDamage(id, 'shooter-x', 1e7, 900, 0);
@@ -54,8 +54,8 @@ describe('SectorRoom integration — structure wrecks (structure break-up T6)', 
     }
   }, 25_000);
 
-  it('switch off (the default): the structure just goes, no wreck', async () => {
-    const internal = await boot(undefined, randomUUID());
+  it('switch off (room opts out): the structure just goes, no wreck', async () => {
+    const internal = await boot(false, randomUUID());
     const id = solarId(internal);
     await harness.advance(100);
     internal.applyDamage(id, 'shooter-x', 1e7, 900, 0);
