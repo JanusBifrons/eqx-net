@@ -8,10 +8,17 @@ export type RailId = 'contacts' | 'hold' | 'fleet' | 'build' | 'galaxy' | 'jobs'
 /** Which right-side panel is open; `null` = none. */
 export type RightPanel = RailId | 'orders' | 'details' | null;
 
-/** The panel each of today's drawer tabs belongs to. */
+/** The panel each page (`drawerTab`) belongs to: today's drawer tabs, and the
+ *  Trade panel's drill-down (`trade` = its top list, `trade-<section>` a sub-page;
+ *  panels/TradePanel.tsx). */
 export const DRAWER_TAB_PANEL: Readonly<Record<string, RailId>> = {
   galaxy: 'galaxy',
   trade: 'trade',
+  'trade-offers': 'trade',
+  'trade-deals': 'trade',
+  'trade-history': 'trade',
+  'trade-gift': 'trade',
+  'trade-blueprints': 'trade',
   contracts: 'jobs',
   factions: 'faction',
   look: 'faction',
@@ -34,7 +41,7 @@ export interface RightPanelUi {
   rightPanel: RightPanel;
   /** The page inside the open panel: the drawer's sub-tab today (`galaxy` |
    *  `trade` | `contracts` | `factions` | `look` | `profile` | `settings` |
-   *  `debug`), a drill-down page later. */
+   *  `debug`), or a drill-down page (`trade` top list, `trade-<section>`). */
   drawerTab: string;
   setRightPanel: (panel: RightPanel) => void;
   /** Shows `tab` and opens the panel it belongs to. */

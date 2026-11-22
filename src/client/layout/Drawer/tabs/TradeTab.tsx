@@ -1,29 +1,29 @@
 /**
- * Living World P2b — the Trade tab (sidebar). Plan peppy-jumping-pinwheel.
+ * Living World P2b — the Trade pages. Plan peppy-jumping-pinwheel; laid out as
+ * a drill-down by `panels/TradePanel.tsx` (UI language U2-6a).
  *
- *   header   standing with traders / robots / drones + which base to trade from
+ *   header   credits, standing with traders / robots / drones, which base to
+ *            trade from (on the Trade panel's top list)
  *   Offers   the rotating board at your prices → Deal dialog (one-off or every
  *            10/30/60 min, number of visits, price band)
  *   Deals    your deals (state, next visit, cancel)
  *   History  what happened, newest first
  *   Gift     send goods or credits to a side for standing
  *
- * Truth = `GET /trade/economy` + `/trade/offers` (#16), polled only while the
- * tab is on screen (drawer-perf rule: gate on
- * `selectDrawerTabShown('trade')`) and refetched at once on every `trade_notice`. The base picker
- * reads the render mirror at that same low cadence (`getGameClient()`).
+ * Truth = `GET /trade/economy` + `/trade/offers` (#16), polled by `useTradeData`
+ * only while the Trade panel is on screen (drawer-perf rule) and refetched at
+ * once on every `trade_notice`. The base picker reads the render mirror at that
+ * same low cadence (`getGameClient()`).
  */
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, Select, Tab, Tabs, TextField, Typography,
+  Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, Select, TextField, Typography,
 } from '@mui/material';
 import { useUIStore } from '../../../state/store';
-import { selectDrawerTabShown } from '../../../state/rightPanel';
 import { getGameClient } from '../../../net/clientSingleton';
 import { loadStoredPlayerId } from '../../../identity/token';
 import { loadToken } from '../../../auth/tokenStorage';
 import { fetchEconomy, fetchOffers, saveTradeLastSeen } from '../../../net/tradeApi';
-import { BlueprintMarketSection } from './BlueprintMarketSection';
 import { formatPrice, formatStanding, goodName, itemName, ownStorages, repFill, repLabel, sectorName, type OwnStorage } from '../../../net/tradeView';
 import { sendAcceptOffer, sendCancelDeal, sendGift } from '../../../net/tradeClient';
 import {
@@ -37,7 +37,6 @@ import { GOOD_IDS, type GoodId } from '../../../../shared-types/goods';
 
 const POLL_MS = 5000;
 
-const ROOT_SX = { p: 1, display: 'flex', flexDirection: 'column', gap: 1, fontSize: 11 } as const;
 const MUTED_SX = { fontSize: 11, color: '#9aa0b4' } as const;
 const REP_ROW_SX = { display: 'flex', alignItems: 'center', gap: 0.75 } as const;
 const REP_NAME_SX = { width: 52, fontSize: 10, color: '#c8cde0', textTransform: 'capitalize' } as const;
@@ -45,7 +44,6 @@ const REP_TRACK_SX = { flex: 1, height: 5, borderRadius: '2px', bgcolor: 'rgba(2
 const REP_MID_SX = { position: 'absolute', left: '50%', top: 0, bottom: 0, width: '1px', bgcolor: 'rgba(255,255,255,0.3)' } as const;
 const REP_VALUE_SX = { width: 72, fontSize: 10, color: '#9aa0b4', textAlign: 'right' } as const;
 const SELECT_SX = { fontSize: 11, height: 26, color: '#dde', '& .MuiSelect-icon': { color: '#9aa0b4' } } as const;
-const TABS_SX = { minHeight: 26, '& .MuiTab-root': { minHeight: 26, minWidth: 0, px: 0.75, fontSize: 10, color: '#9aa0b4' }, '& .Mui-selected': { color: '#00ff88 !important' } } as const;
 const ROW_SX = { display: 'flex', alignItems: 'center', gap: 0.75, py: '3px', borderBottom: '1px solid rgba(255,255,255,0.06)' } as const;
 const ROW_MAIN_SX = { flex: 1, minWidth: 0 } as const;
 const SMALL_BTN_SX = { fontSize: 10, minWidth: 0, px: 1, py: 0 } as const;
@@ -55,24 +53,37 @@ const STATE_COLOR: Record<string, string> = {
   scheduled: '#9aa0b4', inbound: '#7fd6a8', docked: '#ffd479', departing: '#ffd479',
   settled: '#5fd6a0', failed: '#ff8a8a', cancelled: '#777',
 };
-
-type Section = 'offers' | 'deals' | 'history' | 'gift' | 'blueprints';
+const ACTIVE_DEAL_STATES: readonly string[] = ['scheduled', 'inbound', 'docked', 'departing'];
 
 function repColor(rep: number): string {
   return rep >= 15 ? '#5fd6a0' : rep > -15 ? '#c8cde0' : '#ff8a8a';
 }
 
-export function TradeTab(): JSX.Element {
-  const visible = useUIStore(selectDrawerTabShown('trade'));
+/** The Trade panel's data: the economy view, the offer board and your bases. */
+export interface TradeData {
+  signedIn: boolean;
+  wallet: number;
+  view: PlayerEconomyView | null;
+  offers: TradeOffer[];
+  storages: OwnStorage[];
+  baseId: number | null;
+  setBaseId: (id: number) => void;
+}
+
+/** Deals still running (the Deals row's count); null before the first reply. */
+export function activeDealCount(view: PlayerEconomyView | null): number | null {
+  return view === null ? null : view.deals.filter((d) => ACTIVE_DEAL_STATES.includes(d.state)).length;
+}
+
+/** Polls the trade endpoints while `visible`; refetches on every trade notice. */
+export function useTradeData(visible: boolean): TradeData {
   const noticeSeq = useUIStore((s) => s.tradeNoticeSeq);
   // Economy v2 W1 — buys and gifts are paid from the wallet (credits are virtual).
-  const wallet = useUIStore((s) => s.wallet);
-  const [section, setSection] = useState<Section>('offers');
+  const wallet = useUIStore((s) => s.wallet) ?? 0;
   const [view, setView] = useState<PlayerEconomyView | null>(null);
   const [offers, setOffers] = useState<TradeOffer[]>([]);
   const [storages, setStorages] = useState<OwnStorage[]>([]);
   const [baseId, setBaseId] = useState<number | null>(null);
-  const [dealOffer, setDealOffer] = useState<TradeOffer | null>(null);
   const playerId = loadStoredPlayerId();
   const signedIn = playerId !== null && loadToken() !== null;
 
@@ -104,22 +115,20 @@ export function TradeTab(): JSX.Element {
     if (baseId !== null && storages.length > 0 && !storages.some((s) => s.entityId === baseId)) setBaseId(storages[0]!.entityId);
   }, [storages, baseId]);
 
-  useEffect(() => {
-    if (visible && section === 'history') saveTradeLastSeen(Date.now());
-  }, [visible, section, view]);
+  return { signedIn, wallet, view, offers, storages, baseId, setBaseId };
+}
 
-  if (!signedIn) {
-    return (
-      <Box sx={ROOT_SX} data-testid="trade-tab">
-        <Typography sx={MUTED_SX} data-testid="trade-signin">Sign in to trade, build reputation and post deals.</Typography>
-      </Box>
-    );
-  }
+export function TradeSignIn(): JSX.Element {
+  return <Typography sx={MUTED_SX} data-testid="trade-signin">Sign in to trade, build reputation and post deals.</Typography>;
+}
 
+/** Credits, standing per side, and the base you trade from. */
+export function TradeHeader({ data }: { data: TradeData }): JSX.Element {
+  const { wallet, view, storages, baseId, setBaseId } = data;
   return (
-    <Box sx={ROOT_SX} data-testid="trade-tab">
-      <Typography sx={{ fontSize: 11, color: '#ffd060', mb: 0.5 }} data-testid="trade-wallet" data-wallet={wallet ?? 0}>
-        Credits: ¢ {(wallet ?? 0).toLocaleString('en-US')}
+    <>
+      <Typography sx={{ fontSize: 11, color: '#ffd060', mb: 0.5 }} data-testid="trade-wallet" data-wallet={wallet}>
+        Credits: ¢ {wallet.toLocaleString('en-US')}
       </Typography>
       <Box data-testid="trade-rep">
         {ECON_ALLEGIANCES.map((a) => {
@@ -136,7 +145,6 @@ export function TradeTab(): JSX.Element {
           );
         })}
       </Box>
-
       <Box sx={REP_ROW_SX}>
         <Typography sx={MUTED_SX}>Trade from</Typography>
         {storages.length === 0 ? (
@@ -155,88 +163,87 @@ export function TradeTab(): JSX.Element {
           </Select>
         )}
       </Box>
+    </>
+  );
+}
 
-      <Tabs value={section} onChange={(_e, v: Section) => setSection(v)} sx={TABS_SX} variant="scrollable" scrollButtons={false}>
-        <Tab value="offers" label="Offers" data-testid="trade-section-offers" />
-        <Tab value="deals" label={`Deals${view ? ` (${view.deals.filter((d) => ['scheduled', 'inbound', 'docked', 'departing'].includes(d.state)).length})` : ''}`} data-testid="trade-section-deals" />
-        <Tab value="history" label="History" data-testid="trade-section-history" />
-        <Tab value="gift" label="Gift" data-testid="trade-section-gift" />
-        <Tab value="blueprints" label="Blueprints" data-testid="trade-section-blueprints" />
-      </Tabs>
-
-      {section === 'offers' && (
-        <Box data-testid="trade-offers">
-          {offers.length === 0 && <Typography sx={MUTED_SX}>No offers right now.</Typography>}
-          {offers.map((o) => (
-            <Box key={o.offerId} sx={ROW_SX} data-testid="trade-offer" data-offer-kind={o.kind} data-offer-good={o.good ?? undefined} data-offer-product={o.product}>
-              <Box sx={ROW_MAIN_SX}>
-                <Typography sx={{ fontSize: 11 }}>
-                  {o.kind === 'sell' ? 'Sell' : 'Buy'} {itemName(o)}
-                </Typography>
-                <Typography sx={MUTED_SX}>{formatPrice(o.unitPrice)} cr each · up to {o.maxQty}</Typography>
-              </Box>
-              <Button
-                size="small"
-                sx={SMALL_BTN_SX}
-                disabled={baseId === null}
-                onClick={() => setDealOffer(o)}
-                data-testid="trade-offer-deal"
-              >
-                Deal
-              </Button>
-            </Box>
-          ))}
+/** Offers: the board at your prices; Deal opens the deal dialog. */
+export function TradeOffersPage({ offers, baseId }: Pick<TradeData, 'offers' | 'baseId'>): JSX.Element {
+  const [dealOffer, setDealOffer] = useState<TradeOffer | null>(null);
+  return (
+    <Box data-testid="trade-offers">
+      {offers.length === 0 && <Typography sx={MUTED_SX}>No offers right now.</Typography>}
+      {offers.map((o) => (
+        <Box key={o.offerId} sx={ROW_SX} data-testid="trade-offer" data-offer-kind={o.kind} data-offer-good={o.good ?? undefined} data-offer-product={o.product}>
+          <Box sx={ROW_MAIN_SX}>
+            <Typography sx={{ fontSize: 11 }}>
+              {o.kind === 'sell' ? 'Sell' : 'Buy'} {itemName(o)}
+            </Typography>
+            <Typography sx={MUTED_SX}>{formatPrice(o.unitPrice)} cr each · up to {o.maxQty}</Typography>
+          </Box>
+          <Button
+            size="small"
+            sx={SMALL_BTN_SX}
+            disabled={baseId === null}
+            onClick={() => setDealOffer(o)}
+            data-testid="trade-offer-deal"
+          >
+            Deal
+          </Button>
         </Box>
-      )}
-
-      {section === 'deals' && (
-        <Box data-testid="trade-deals">
-          {(view?.deals.length ?? 0) === 0 && <Typography sx={MUTED_SX}>No deals yet. Pick an offer to start one.</Typography>}
-          {view?.deals.map((d) => {
-            const active = ['scheduled', 'inbound', 'docked', 'departing'].includes(d.state);
-            return (
-              <Box key={d.dealId} sx={ROW_SX} data-testid="trade-deal" data-deal-state={d.state}>
-                <Box sx={ROW_MAIN_SX}>
-                  <Typography sx={{ fontSize: 11 }}>
-                    {d.kind === 'gift' ? `Gift to ${d.allegiance}` : `${d.kind === 'sell' ? 'Sell' : 'Buy'} ${d.qty} ${itemName(d)}`}
-                    {d.recurrenceMin ? ` · every ${d.recurrenceMin} min` : ''}
-                  </Typography>
-                  <Typography sx={{ ...MUTED_SX, color: STATE_COLOR[d.state] ?? '#9aa0b4' }}>
-                    {d.state}
-                    {d.state === 'scheduled' && d.nextVisitAtMs ? ` · next visit ${new Date(d.nextVisitAtMs).toLocaleTimeString()}` : ''}
-                    {d.visitsLeft !== null && d.recurrenceMin ? ` · ${d.visitsLeft} left` : ''}
-                    {` · ${sectorName(d.sectorKey)}`}
-                  </Typography>
-                </Box>
-                {active && (
-                  <Button size="small" sx={SMALL_BTN_SX} onClick={() => sendCancelDeal(d.dealId)} data-testid="trade-deal-cancel">
-                    Cancel
-                  </Button>
-                )}
-              </Box>
-            );
-          })}
-        </Box>
-      )}
-
-      {section === 'history' && (
-        <Box data-testid="trade-history">
-          {(view?.history.length ?? 0) === 0 && <Typography sx={MUTED_SX}>Nothing yet.</Typography>}
-          {view?.history.map((h) => (
-            <Box key={`${h.dealId}-${h.atMs}`} sx={ROW_SX} data-testid="trade-history-row" data-outcome={h.outcome}>
-              <Typography sx={{ fontSize: 11, color: h.outcome === 'raided' ? '#ff8a8a' : '#dde', flex: 1 }}>{h.note}</Typography>
-              <Typography sx={MUTED_SX}>{new Date(h.atMs).toLocaleTimeString()}</Typography>
-            </Box>
-          ))}
-        </Box>
-      )}
-
-      {section === 'gift' && <GiftForm baseId={baseId} />}
-      {section === 'blueprints' && <BlueprintMarketSection baseId={baseId} />}
-
+      ))}
       {dealOffer !== null && baseId !== null && (
         <DealDialog offer={dealOffer} baseId={baseId} onClose={() => setDealOffer(null)} />
       )}
+    </Box>
+  );
+}
+
+/** Deals: your deals with state, next visit and Cancel. */
+export function TradeDealsPage({ view }: Pick<TradeData, 'view'>): JSX.Element {
+  return (
+    <Box data-testid="trade-deals">
+      {(view?.deals.length ?? 0) === 0 && <Typography sx={MUTED_SX}>No deals yet. Pick an offer to start one.</Typography>}
+      {view?.deals.map((d) => {
+        const active = ACTIVE_DEAL_STATES.includes(d.state);
+        return (
+          <Box key={d.dealId} sx={ROW_SX} data-testid="trade-deal" data-deal-state={d.state}>
+            <Box sx={ROW_MAIN_SX}>
+              <Typography sx={{ fontSize: 11 }}>
+                {d.kind === 'gift' ? `Gift to ${d.allegiance}` : `${d.kind === 'sell' ? 'Sell' : 'Buy'} ${d.qty} ${itemName(d)}`}
+                {d.recurrenceMin ? ` · every ${d.recurrenceMin} min` : ''}
+              </Typography>
+              <Typography sx={{ ...MUTED_SX, color: STATE_COLOR[d.state] ?? '#9aa0b4' }}>
+                {d.state}
+                {d.state === 'scheduled' && d.nextVisitAtMs ? ` · next visit ${new Date(d.nextVisitAtMs).toLocaleTimeString()}` : ''}
+                {d.visitsLeft !== null && d.recurrenceMin ? ` · ${d.visitsLeft} left` : ''}
+                {` · ${sectorName(d.sectorKey)}`}
+              </Typography>
+            </Box>
+            {active && (
+              <Button size="small" sx={SMALL_BTN_SX} onClick={() => sendCancelDeal(d.dealId)} data-testid="trade-deal-cancel">
+                Cancel
+              </Button>
+            )}
+          </Box>
+        );
+      })}
+    </Box>
+  );
+}
+
+/** History: what happened, newest first. Marks it seen while shown. */
+export function TradeHistoryPage({ view, shown }: Pick<TradeData, 'view'> & { shown: boolean }): JSX.Element {
+  useEffect(() => { if (shown) saveTradeLastSeen(Date.now()); }, [shown, view]);
+  return (
+    <Box data-testid="trade-history">
+      {(view?.history.length ?? 0) === 0 && <Typography sx={MUTED_SX}>Nothing yet.</Typography>}
+      {view?.history.map((h) => (
+        <Box key={`${h.dealId}-${h.atMs}`} sx={ROW_SX} data-testid="trade-history-row" data-outcome={h.outcome}>
+          <Typography sx={{ fontSize: 11, color: h.outcome === 'raided' ? '#ff8a8a' : '#dde', flex: 1 }}>{h.note}</Typography>
+          <Typography sx={MUTED_SX}>{new Date(h.atMs).toLocaleTimeString()}</Typography>
+        </Box>
+      ))}
     </Box>
   );
 }
@@ -303,7 +310,7 @@ function DealDialog({ offer, baseId, onClose }: { offer: TradeOffer; baseId: num
   );
 }
 
-function GiftForm({ baseId }: { baseId: number | null }): JSX.Element {
+export function GiftForm({ baseId }: { baseId: number | null }): JSX.Element {
   const [to, setTo] = useState<EconAllegiance>('traders');
   const [good, setGood] = useState<GoodId | 'credits'>('credits');
   const [amount, setAmount] = useState(100);

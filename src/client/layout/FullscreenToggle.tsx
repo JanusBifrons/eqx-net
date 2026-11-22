@@ -112,7 +112,8 @@ interface InstallDialogProps {
   onClose: () => void;
 }
 
-function InstallDialog({ open, onClose }: InstallDialogProps): JSX.Element {
+/** The install hint (Add to Home Screen): the chip and the cog panel's Install row. */
+export function InstallDialog({ open, onClose }: InstallDialogProps): JSX.Element {
   return (
     <Dialog open={open} onClose={onClose} maxWidth="xs" data-testid="install-dialog">
       <DialogTitle sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
