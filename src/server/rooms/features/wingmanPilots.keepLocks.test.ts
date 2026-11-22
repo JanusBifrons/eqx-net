@@ -28,7 +28,12 @@ function fakeLocks() {
 function setup() {
   const locks = fakeLocks();
   const orders = { mode: 'defend', stance: 'defensive', order: null as null | { kind: 'attack'; targetId: string } };
-  const brain = { target: null as string | null, getTargetId(): string | null { return this.target; } };
+  const brain = {
+    target: null as string | null,
+    kept: null as string | null,
+    getTargetId(): string | null { return this.target; },
+    setKeptLockTarget(id: string | null): void { this.kept = id; },
+  };
   const alive = new Map<string, boolean>([[HULL, true], ['tA', true], ['tB', true], ['tC', true]]);
   const slots = new Map<string, number>([[HULL, 0], ['tA', 1], ['tB', 2], ['tC', 3]]);
   const host = {
@@ -77,24 +82,33 @@ describe('tickWingmanTargets keeps held locks (capital S2)', () => {
     expect(t.keys()).toEqual([['p:tA'], ['p:tB']]);
   });
 
-  it('a kept lock never stops the ship engaging: with every group held, the first yields to the AI target', () => {
+  it('a one-group ship with a kept lock on A keeps it while the AI would pick B, and the AI is fed A', () => {
     const t = setup();
-    t.handOver('p:tA', 'p:tC');
+    t.locks.groups.set(HULL, [{ id: 'A', m: 1, l: [{ t: 'p:tA', s: 2, p: 1 }] }]);
     t.brain.target = 'tB';
     t.pilots.tickWingmanTargets();
-    t.pilots.tickWingmanTargets();
-    expect(t.keys()).toEqual([['p:tB'], ['p:tC']]);
-  });
-
-  it('a one-group fighter whose AI target moves on locks the new target (CI: last cube survived)', () => {
-    const t = setup();
-    t.locks.groups.set(HULL, [{ id: 'A', m: 1, l: [] }]);
-    t.brain.target = 'tA';
     t.pilots.tickWingmanTargets();
     expect(t.keys()).toEqual([['p:tA']]);
-    t.brain.target = 'tB';
+    expect(t.brain.kept).toBe('tA');
+  });
+
+  it('the kept lock is fed only without an order or Hold fire, and clears with the lock', () => {
+    const t = setup();
+    t.handOver('p:tA', null);
     t.pilots.tickWingmanTargets();
-    expect(t.keys()).toEqual([['p:tB']]);
+    expect(t.brain.kept).toBe('tA');
+    t.orders.order = { kind: 'attack', targetId: 'tC' };
+    t.pilots.tickWingmanTargets();
+    expect(t.brain.kept).toBeNull();
+    t.orders.order = null;
+    t.orders.stance = 'holdFire';
+    t.handOver('p:tA', null);
+    t.pilots.tickWingmanTargets();
+    expect(t.brain.kept).toBeNull();
+    t.orders.stance = 'defensive';
+    t.locks.groups.get(HULL)!.forEach((g) => { g.l.length = 0; });
+    t.pilots.tickWingmanTargets();
+    expect(t.brain.kept).toBeNull();
   });
 
   it('an attack order retargets every group', () => {

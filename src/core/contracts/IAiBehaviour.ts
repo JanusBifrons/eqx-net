@@ -436,6 +436,9 @@ export interface IAiBehaviour {
    *  the guard leash; null lifts it (the ship goes back to its job). */
   setOrderedTarget?(id: string | null, atTick: number): void;
   getOrderedTarget?(): string | null;
+  /** RTS kept lock (SERVER-ONLY): the target the hull's live weapon lock
+   *  holds; while it is a hostile candidate (and no order) it wins the pick. */
+  setKeptLockTarget?(id: string | null): void;
   /** RTS Hunt (SERVER-ONLY): no guard leash; with nothing to fight the ship
    *  searches the sector, then engages what it finds. A guard post ends it. */
   setHunt?(on: boolean): void;
