@@ -1,5 +1,6 @@
 /**
- * Factions F3 (plan soft-leaping-truffle v4) — the Factions tab. Every
+ * Factions F3 (plan soft-leaping-truffle v4) — the Factions page, the main
+ * page of the Faction panel (`panels/FactionPanel.tsx`). Every
  * faction's view of you and yours of them (−100..100), plus your own
  * faction's policy: below what your turrets fire, above what someone counts
  * as an ally.

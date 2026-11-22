@@ -6,7 +6,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 
-vi.mock('./Drawer/AdvancedDrawer', () => ({ AdvancedDrawer: () => null }));
 vi.mock('../panels/HoldPanel', () => ({ HoldPanel: () => null }));
 vi.mock('../components/FleetPanel', () => ({ FleetPanel: () => <div data-testid="fleet-orders" /> }));
 vi.mock('../components/FleetStrip', () => ({ FleetStrip: () => null }));

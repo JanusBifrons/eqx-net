@@ -7,9 +7,10 @@
  *   hidden), so the right-edge HUD, the panels docked left of the rail and the
  *   camera focus insets (`railWidthPx`) all make room for it.
  * - Driven by the store's `rightPanel` flag: a rail pick sets it, a second pick
- *   of the open item, ✕ or Esc clears it. Renders the panels the flag opens,
- *   including today's advanced drawer (moved here from App.tsx), the Trade
- *   drill-down (`panels/TradePanel.tsx`), the cog panel (`panels/CogPanel.tsx`) and the
+ *   of the open item, ✕ or Esc clears it. Renders the panels the flag opens:
+ *   Galaxy (`panels/GalaxyPanel.tsx`), the Trade drill-down (`panels/TradePanel.tsx`),
+ *   Jobs (`panels/JobsPanel.tsx`), Faction (`panels/FactionPanel.tsx`), the cog
+ *   panel (`panels/CogPanel.tsx`) and the
  *   selection's Details panel (opened from the left strip's ⚙, not a rail item).
  *   The Build panel (`build`) is mounted by GameHud (BuildSidebarHost) and opens
  *   on the same flag.
@@ -19,12 +20,14 @@ import { EqxIcon, EqxRail, railWidthFor, useRailCompact, type EqxRailItem } from
 import { selectControlMode, useShouldRenderHud, useUIStore } from '../state/store';
 import { panelForDrawerTab } from '../state/rightPanel';
 import type { UIStore } from '../state/storeTypes';
-import { AdvancedDrawer } from './Drawer/AdvancedDrawer';
 import { HoldPanel } from '../panels/HoldPanel';
 import { TradePanel } from '../panels/TradePanel';
+import { JobsPanel } from '../panels/JobsPanel';
+import { GalaxyPanel } from '../panels/GalaxyPanel';
 import { FleetRailPanel } from '../panels/FleetPanel';
 import { DetailsPanel } from '../panels/DetailsPanel';
 import { CogPanel } from '../panels/CogPanel';
+import { FactionPanel } from '../panels/FactionPanel';
 import { Slot } from './Slot';
 import { RAIL_COG, railItemById, railTools, RAIL_COMMON, type RailItemSpec } from './railItems';
 
@@ -75,12 +78,14 @@ export function RightPanelHost(): JSX.Element {
             onPick={(id) => pickRailItem(id, useUIStore.getState())} data-testid="right-rail" />
         </Slot>
       )}
-      <AdvancedDrawer />
+      <GalaxyPanel />
       <TradePanel />
+      <JobsPanel />
       <HoldPanel />
       <FleetRailPanel />
       <DetailsPanel />
       <CogPanel />
+      <FactionPanel />
     </>
   );
 }
