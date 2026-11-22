@@ -120,12 +120,13 @@ export const EQX_ICONS = {
     </>
   ),
   // new: the in-world move-order mark (render/FleetOverlay.ts): the ring that
-  // flashes at the point, its destination dot, and the order line from the ship
+  // flashes outward at the tapped point around its destination dot. No order
+  // line: a line touching the ring read as a magnifying glass.
   move: (
     <>
-      <circle cx="15" cy="9" r="5" />
-      <circle cx="15" cy="9" r="1.2" />
-      <path d="M4 20l7.5-7.5" />
+      <circle cx="12" cy="12" r="8.5" opacity="0.45" />
+      <circle cx="12" cy="12" r="5" />
+      <circle cx="12" cy="12" r="1.6" fill="currentColor" />
     </>
   ),
   // mock
