@@ -115,6 +115,18 @@ describe('left strip fleet section (U3-4)', () => {
     expect(useUIStore.getState().fleetPick?.kind).toBe('move');
   });
 
+  it('Move shows it is armed (pressed) and a second tap disarms it', () => {
+    mount();
+    select(['a']);
+    const move = (): HTMLElement => screen.getByTestId('left-strip-move');
+    expect(move().getAttribute('aria-pressed')).toBe('false');
+    fireEvent.click(move());
+    expect(move().getAttribute('aria-pressed')).toBe('true');
+    fireEvent.click(move());
+    expect(useUIStore.getState().fleetPick).toBeNull();
+    expect(move().getAttribute('aria-pressed')).toBe('false');
+  });
+
   it('shows the shared value; a mixed selection is neutral (no option active)', () => {
     applyFleetStatus([row('a', { stance: 'holdFire' }), row('b', { mode: 'hunt', stance: 'holdFire' })]);
     mount();

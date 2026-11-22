@@ -54,6 +54,7 @@ export function useFleetStripItems(): ReactElement[] {
   const view = useFleetSelectionView();
   const command = useUIStore(helmOrdersAllowed);
   const setPick = useUIStore((s) => s.setFleetPick);
+  const moveArmed = useUIStore((s) => s.fleetPick?.kind === 'move');
   if (!view.active || !command) return [];
   const { ids } = view;
   const mode = known(view.mode);
@@ -65,13 +66,14 @@ export function useFleetStripItems(): ReactElement[] {
   };
   const onStance = (s: FleetStance): void => resolveFleetCommands().setStance(ids, s);
   const onStop = (): void => resolveFleetCommands().stop(ids);
-  const onMove = (): void => setPick('move');
+  // A second tap disarms: the pressed state is the player's only cue a pick is waiting.
+  const onMove = (): void => setPick(moveArmed ? null : 'move');
 
   return [
     <EqxStatusFlyout key="order" value={mode} emptyIcon={MIXED} options={MODE_OPTIONS} onChange={onMode}
       tooltip={`Order: ${mode === null ? 'mixed' : MODE_LABELS[mode]}`} data-testid="left-strip-order" />,
     <EqxIconButton key="move" variant="strip" icon={<EqxIcon name="move" />} tooltip="Move: tap a point"
-      onClick={onMove} data-testid="left-strip-move" />,
+      active={moveArmed} onClick={onMove} data-testid="left-strip-move" />,
     <EqxStatusFlyout key="stance" value={stance} emptyIcon={MIXED} options={STANCE_OPTIONS} onChange={onStance}
       tooltip={`Stance: ${stance === null ? 'mixed' : STANCE_LABELS[stance]}`} data-testid="left-strip-stance" />,
     <EqxIconButton key="stop" variant="strip" icon={<EqxIcon name="stop" />} tooltip="Stop"
