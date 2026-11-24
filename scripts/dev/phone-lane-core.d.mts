@@ -8,6 +8,7 @@ export function gateDecision(req: { url?: string; cookie?: string | string[] }, 
 export function parseTunnelUrl(log: string): string | undefined;
 export interface NamedTunnel { hostname: string; tunnelId: string; credentialsFile: string }
 export function parseNamedTunnel(text: string | undefined): NamedTunnel | undefined;
+export function laneGoogleEnv(dotenv: Record<string, string>, hostname: string): Record<string, string>;
 export function tunnelArgs(named: { tunnelId: string; credentialsFile: string } | undefined): string[];
 export function resolvePhoneDir(cwd?: string, env?: NodeJS.ProcessEnv): string;
 export function laneServerEnv(runDir: string): { EQX_ENABLE_TEST_ROOMS: string; EQX_TEST_SIGNIN: string; EQX_DIAG_DIR: string };

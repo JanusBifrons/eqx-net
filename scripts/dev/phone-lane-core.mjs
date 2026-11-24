@@ -110,6 +110,21 @@ export function laneServerEnv(runDir) {
   return { EQX_ENABLE_TEST_ROOMS: '0', EQX_TEST_SIGNIN: '1', EQX_DIAG_DIR: path.join(runDir, 'captures') };
 }
 
+/**
+ * Google sign-in env for a named-tunnel lane: the OAuth client from the main
+ * checkout's `.env` (the served checkout is usually a worktree with none) and
+ * the redirect on the fixed address. Empty when the client is not configured,
+ * so the lane still starts (the test sign-in button keeps working).
+ * @param {Record<string, string>} dotenv parsed main-checkout .env
+ * @param {string} hostname
+ */
+export function laneGoogleEnv(dotenv, hostname) {
+  const id = dotenv.GOOGLE_API_CLIENT_ID;
+  const secret = dotenv.GOOGLE_API_CLIENT_SECRET;
+  if (!id || !secret) return {};
+  return { GOOGLE_API_CLIENT_ID: id, GOOGLE_API_CLIENT_SECRET: secret, GOOGLE_REDIRECT_URI: `https://${hostname}/auth/google/callback` };
+}
+
 /** `<main checkout>/.claude/phone-lane`, shared by every worktree.
  *  `EQX_PHONE_DIR` overrides. */
 export function resolvePhoneDir(cwd = process.cwd(), env = process.env) {

@@ -17,9 +17,10 @@
 import { spawn, spawnSync } from 'node:child_process';
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
+import { parse as parseDotenv } from 'dotenv';
 import { CaptureServers } from '../../showcase/servers.js';
 import { imageOf, reapStale, sleep } from '../../showcase/tools.js';
-import { PHONE_COOKIE, PHONE_PORTS, TUNNEL_METRICS, laneServerEnv, newKey, parseNamedTunnel, parseTunnelUrl, resolvePhoneDir, tunnelArgs } from './phone-lane-core.mjs';
+import { PHONE_COOKIE, PHONE_PORTS, TUNNEL_METRICS, laneGoogleEnv, laneServerEnv, newKey, parseNamedTunnel, parseTunnelUrl, resolvePhoneDir, tunnelArgs } from './phone-lane-core.mjs';
 
 const CLOUDFLARED_URL = 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe';
 
@@ -33,6 +34,11 @@ const CLOUDFLARED = path.join(DIR, process.platform === 'win32' ? 'cloudflared.e
 mkdirSync(RUN, { recursive: true });
 const NAMED_FILE = path.join(DIR, 'named-tunnel.json');
 const NAMED = parseNamedTunnel(existsSync(NAMED_FILE) ? readFileSync(NAMED_FILE, 'utf8') : undefined);
+/** The main checkout's `.env` (DIR is `<main>/.claude/phone-lane`), or {}. */
+function mainDotenv(): Record<string, string> {
+  const f = path.resolve(DIR, '..', '..', '.env');
+  return existsSync(f) ? parseDotenv(readFileSync(f)) : {};
+}
 /** A named tunnel keeps one key for good (`named-key`), so the installed app
  *  survives `down`, reboots and tunnel restarts; delete the file to revoke. */
 function namedKey(): string {
@@ -158,7 +164,7 @@ async function up(appDir: string): Promise<void> {
     appDir,
     RUN,
     { ...PHONE_PORTS },
-    laneServerEnv(RUN),
+    { ...laneServerEnv(RUN), ...(NAMED ? laneGoogleEnv(mainDotenv(), NAMED.hostname) : {}) },
     {
       vite: { mode: 'preview', outDir: path.join(DIR, 'dist'), env: { EQX_PHONE_KEY: tunnel.key, VITE_PHONE_LANE: '1', ...(NAMED ? { EQX_PHONE_HOST: NAMED.hostname } : {}) } },
       outlive: true,

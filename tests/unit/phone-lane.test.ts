@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { gateDecision, keyCookie, laneServerEnv, newKey, parseNamedTunnel, parseTunnelUrl, tunnelArgs, readCookie, PHONE_COOKIE } from '../../scripts/dev/phone-lane-core.mjs';
+import { gateDecision, keyCookie, laneGoogleEnv, laneServerEnv, newKey, parseNamedTunnel, parseTunnelUrl, tunnelArgs, readCookie, PHONE_COOKIE } from '../../scripts/dev/phone-lane-core.mjs';
 
 const KEY = 'k3y_abc-DEF123';
 
@@ -88,6 +88,16 @@ describe('named tunnel (fixed address on the owner domain)', () => {
     expect(() => parseNamedTunnel(JSON.stringify({ ...cfg, tunnelId: '' }))).toThrow(/tunnelId/);
     expect(() => parseNamedTunnel(JSON.stringify({ ...cfg, hostname: 'evil.com/x' }))).toThrow(/hostname/);
     expect(() => parseNamedTunnel('{')).toThrow();
+  });
+});
+
+describe('named-tunnel Google sign-in env', () => {
+  it('uses the main .env client and a redirect on the fixed address', () => {
+    expect(laneGoogleEnv({ GOOGLE_API_CLIENT_ID: 'id', GOOGLE_API_CLIENT_SECRET: 's', GOOGLE_REDIRECT_URI: 'http://localhost:5173/x' }, 'play.example.com'))
+      .toEqual({ GOOGLE_API_CLIENT_ID: 'id', GOOGLE_API_CLIENT_SECRET: 's', GOOGLE_REDIRECT_URI: 'https://play.example.com/auth/google/callback' });
+  });
+  it('adds nothing when the client is not configured', () => {
+    expect(laneGoogleEnv({ GOOGLE_API_CLIENT_ID: 'id' }, 'play.example.com')).toEqual({});
   });
 });
 

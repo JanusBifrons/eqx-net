@@ -203,6 +203,11 @@ a quick tunnel: the address never changes, so the app is installed once.
 - **No file → quick tunnel**, as before. A file that is present but
   incomplete fails `up` loudly rather than falling back to a random address
   (`parseNamedTunnel`, unit-locked).
+- **Google sign-in** works on the named address: the lane passes the OAuth
+  client from the main checkout's `.env` and
+  `GOOGLE_REDIRECT_URI=https://<hostname>/auth/google/callback`
+  (`laneGoogleEnv`). That redirect must also be listed on the OAuth client in
+  the Google Cloud console.
 - **Set-up, done once (2026-11-24):** `cloudflared tunnel login` (the owner
   clicks Authorize on the domain; writes `~/.cloudflared/cert.pem`), then
   `cloudflared tunnel create eqx-phone` (writes the credentials file) and
@@ -213,5 +218,4 @@ a quick tunnel: the address never changes, so the app is installed once.
 
 **Cloudflare Access** (sign-in as the owner) in front of the named address,
 instead of the secret link, needs an API token with Access permissions.
-Google sign-in on the fixed address needs the address added as a redirect URI
-in the Google console plus `GOOGLE_REDIRECT_URI` in the lane's server env.
+
