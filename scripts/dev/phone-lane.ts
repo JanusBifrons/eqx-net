@@ -160,7 +160,7 @@ async function up(appDir: string): Promise<void> {
     { ...PHONE_PORTS },
     laneServerEnv(RUN),
     {
-      vite: { mode: 'preview', outDir: path.join(DIR, 'dist'), env: { EQX_PHONE_KEY: tunnel.key, VITE_PHONE_LANE: '1' } },
+      vite: { mode: 'preview', outDir: path.join(DIR, 'dist'), env: { EQX_PHONE_KEY: tunnel.key, VITE_PHONE_LANE: '1', ...(NAMED ? { EQX_PHONE_HOST: NAMED.hostname } : {}) } },
       outlive: true,
     },
   );
