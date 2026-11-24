@@ -68,6 +68,37 @@ export function parseTunnelUrl(log) {
 }
 
 /**
+ * The owner's named tunnel (`<phone dir>/named-tunnel.json`, written once when
+ * the tunnel was created with `cloudflared tunnel create` + `route dns`), or
+ * undefined when the file is absent: the lane then uses a quick tunnel.
+ * Throws on a file that is present but incomplete, so a typo never silently
+ * falls back to a random address.
+ * @param {string | undefined} text the file's contents
+ */
+export function parseNamedTunnel(text) {
+  if (text === undefined) return undefined;
+  const cfg = JSON.parse(text);
+  for (const k of ['hostname', 'tunnelId', 'credentialsFile']) {
+    if (typeof cfg?.[k] !== 'string' || !cfg[k]) throw new Error(`named-tunnel.json: missing "${k}"`);
+  }
+  if (!/^[a-z0-9.-]+$/i.test(cfg.hostname)) throw new Error(`named-tunnel.json: bad hostname "${cfg.hostname}"`);
+  return { hostname: cfg.hostname, tunnelId: cfg.tunnelId, credentialsFile: cfg.credentialsFile };
+}
+
+/**
+ * cloudflared arguments: a named tunnel (fixed address) when `named` is given,
+ * else a quick tunnel (random trycloudflare.com address). Both point at the
+ * lane's preview port and expose `/ready` on the metrics address.
+ * @param {{ tunnelId: string; credentialsFile: string } | undefined} named
+ */
+export function tunnelArgs(named) {
+  const common = ['tunnel', '--no-autoupdate', '--metrics', TUNNEL_METRICS];
+  const origin = `http://localhost:${PHONE_PORTS.vite}`;
+  if (!named) return [...common, '--url', origin];
+  return [...common, 'run', '--credentials-file', named.credentialsFile, '--url', origin, named.tunnelId];
+}
+
+/**
  * Server env for a lane build. `EQX_DIAG_DIR` sends the diagnostic captures
  * (every lane session streams one, with its frame-time `perf_summary` lines)
  * to `<run>/captures/` instead of the served checkout's `diag/captures/`, so a

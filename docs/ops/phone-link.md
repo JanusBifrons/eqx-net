@@ -1,7 +1,7 @@
 # Phone link (play a build on your phone from anywhere)
 
 The phone lane serves a **production build** of any checkout through a
-**Cloudflare quick tunnel**, behind a **secret-link gate**, so the owner can
+**Cloudflare tunnel**, behind a **secret-link gate**, so the owner can
 install the game as a home-screen app (PWA) and play it from anywhere.
 
 ## Use
@@ -186,8 +186,32 @@ A quick tunnel is a public address: anyone who guesses it reaches the gate.
 - iPhone Safari has no fullscreen API; installed from the home screen the app
   runs fullscreen.
 
+## Named tunnel (fixed address)
+
+When `<phone dir>/named-tunnel.json` exists, `up` runs that tunnel instead of
+a quick tunnel: the address never changes, so the app is installed once.
+
+```json
+{ "hostname": "equinox.alecvickers.co.uk",
+  "tunnelId": "<id from cloudflared tunnel create>",
+  "credentialsFile": "C:\Users\<you>\.cloudflared\<id>.json" }
+```
+
+- **Key:** a named tunnel keeps one key for good in `<phone dir>/named-key`
+  (made on first use), so `down`, reboots and tunnel restarts keep the same
+  link. Delete `named-key` and run `up` to revoke the old link.
+- **No file → quick tunnel**, as before. A file that is present but
+  incomplete fails `up` loudly rather than falling back to a random address
+  (`parseNamedTunnel`, unit-locked).
+- **Set-up, done once (2026-11-24):** `cloudflared tunnel login` (the owner
+  clicks Authorize on the domain; writes `~/.cloudflared/cert.pem`), then
+  `cloudflared tunnel create eqx-phone` (writes the credentials file) and
+  `cloudflared tunnel route dns eqx-phone <hostname>` (adds the CNAME). Run
+  them with the lane's `cloudflared.exe`.
+
 ## Future
 
-A **named tunnel** on an owned domain gives a fixed address (install once) and
-**Cloudflare Access** (sign-in as the owner) instead of the secret link. It
-needs a domain on a Cloudflare account; `cloudflared` and the gate stay.
+**Cloudflare Access** (sign-in as the owner) in front of the named address,
+instead of the secret link, needs an API token with Access permissions.
+Google sign-in on the fixed address needs the address added as a redirect URI
+in the Google console plus `GOOGLE_REDIRECT_URI` in the lane's server env.

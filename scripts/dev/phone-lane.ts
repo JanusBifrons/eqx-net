@@ -1,6 +1,8 @@
 /**
  * Phone lane CLI: play a production build on the owner's phone through a
- * Cloudflare quick tunnel. Guide: docs/ops/phone-link.md.
+ * Cloudflare tunnel: the owner's named tunnel (fixed address) when
+ * `<phone dir>/named-tunnel.json` exists, else a quick tunnel. Guide:
+ * docs/ops/phone-link.md.
  *
  *   pnpm phone up [--dir <checkout>]   (re)start the game behind the tunnel; prints today's link
  *   pnpm phone down                    stop the game AND the tunnel
@@ -17,7 +19,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, write
 import path from 'node:path';
 import { CaptureServers } from '../../showcase/servers.js';
 import { imageOf, reapStale, sleep } from '../../showcase/tools.js';
-import { PHONE_COOKIE, PHONE_PORTS, TUNNEL_METRICS, laneServerEnv, newKey, parseTunnelUrl, resolvePhoneDir } from './phone-lane-core.mjs';
+import { PHONE_COOKIE, PHONE_PORTS, TUNNEL_METRICS, laneServerEnv, newKey, parseNamedTunnel, parseTunnelUrl, resolvePhoneDir, tunnelArgs } from './phone-lane-core.mjs';
 
 const CLOUDFLARED_URL = 'https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe';
 
@@ -29,6 +31,17 @@ const RUN = path.join(DIR, 'run');
 const STATE = path.join(DIR, 'state.json');
 const CLOUDFLARED = path.join(DIR, process.platform === 'win32' ? 'cloudflared.exe' : 'cloudflared');
 mkdirSync(RUN, { recursive: true });
+const NAMED_FILE = path.join(DIR, 'named-tunnel.json');
+const NAMED = parseNamedTunnel(existsSync(NAMED_FILE) ? readFileSync(NAMED_FILE, 'utf8') : undefined);
+/** A named tunnel keeps one key for good (`named-key`), so the installed app
+ *  survives `down`, reboots and tunnel restarts; delete the file to revoke. */
+function namedKey(): string {
+  const f = path.join(DIR, 'named-key');
+  if (existsSync(f)) return readFileSync(f, 'utf8').trim();
+  const key = newKey();
+  writeFileSync(f, key);
+  return key;
+}
 // The lane's own pid file: showcase runs never reap the lane, and vice versa.
 process.env['EQX_SHOWCASE_PID_FILE'] = path.join(DIR, 'game-pids.json');
 
@@ -61,20 +74,20 @@ async function startTunnel(): Promise<Tunnel> {
   const logFile = path.join(RUN, 'tunnel.log');
   rmSync(logFile, { force: true });
   const fd = openSync(logFile, 'a');
-  const child = spawn(CLOUDFLARED, ['tunnel', '--no-autoupdate', '--metrics', TUNNEL_METRICS, '--url', `http://localhost:${PHONE_PORTS.vite}`], {
+  const child = spawn(CLOUDFLARED, tunnelArgs(NAMED), {
     detached: true, windowsHide: true, stdio: ['ignore', fd, fd],
   });
   closeSync(fd);
   child.unref();
   if (!child.pid) throw new Error('cloudflared did not start');
   const end = Date.now() + 60_000;
-  let url: string | undefined;
+  let url: string | undefined = NAMED ? `https://${NAMED.hostname}` : undefined;
   while (!url) {
     if (Date.now() > end) throw new Error(`no tunnel address within 60 s; see ${logFile}`);
     await sleep(500);
     url = parseTunnelUrl(readFileSync(logFile, 'utf8'));
   }
-  const tunnel = { pid: child.pid, url, key: newKey(), startedAt: new Date().toISOString() };
+  const tunnel = { pid: child.pid, url, key: NAMED ? namedKey() : newKey(), startedAt: new Date().toISOString() };
   while (!(await tunnelAlive(tunnel))) {
     if (Date.now() > end) throw new Error(`tunnel never connected; see ${logFile}`);
     await sleep(500);
@@ -132,7 +145,7 @@ async function up(appDir: string): Promise<void> {
     if (old && imageOf(old.pid) === path.basename(CLOUDFLARED).toLowerCase()) {
       spawnSync('taskkill', ['/PID', String(old.pid), '/T', '/F'], { stdio: 'ignore' });
     }
-    log('starting a new tunnel (new address + key) ...');
+    log(NAMED ? `starting the named tunnel (${NAMED.hostname}) ...` : 'starting a new tunnel (new address + key) ...');
     tunnel = await startTunnel();
     log(`tunnel up: ${tunnel.url}`);
   }
