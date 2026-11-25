@@ -28,7 +28,8 @@ import {
   GATE_POSTS,
   GATE_W,
 } from '../../shared-types/structureKinds/gatePosts.js';
-import { PAD_SPECS, TELEPORTER_KINDS, isTeleporterKind, padPostCenters } from '../../shared-types/teleport.js';
+import { PAD_SPECS, TELEPORTER_KINDS, isPadChamberKind, isTeleporterKind, padPostCenters } from '../../shared-types/teleport.js';
+import { padChamberWalls } from './padChamber.js';
 import { STRUCTURE_KINDS } from '../../shared-types/structureKinds/lookup.js';
 import { structureLocalToWorld } from '../../shared-types/structureKinds/geometry.js';
 import { SHIPYARD_SLIP_HALF_W, SHIPYARD_SLIP_X0 } from '../articulation/rigs/heavyIndustry.js';
@@ -109,13 +110,15 @@ const AIRLOCK_BOXES: readonly LocalBox[] = Object.freeze([
   { cx: AIRLOCK_W / 2 - AIRLOCK_WALL / 2, cy: 0, hw: AIRLOCK_WALL / 2, hh: AL_END_Y },
 ]);
 
-/** Teleporter pads (v4 T1): only the posts are solid; the pad is open. */
+/** Teleporter pads: the posts (towers) are solid. The Ancients' gate's pad is
+ *  open between them; a chamber (`isPadChamberKind`, `padChamberWalls`)
+ *  also has solid walls, all but the two doorways. */
 const PAD_BOXES: Readonly<Record<string, readonly LocalBox[]>> = Object.freeze(
   Object.fromEntries(
-    TELEPORTER_KINDS.map((k) => [
-      k,
-      Object.freeze(padPostCenters(k).map(([cx, cy]) => ({ cx, cy, hw: PAD_SPECS[k].post / 2, hh: PAD_SPECS[k].post / 2 }))),
-    ]),
+    TELEPORTER_KINDS.map((k) => {
+      const towers = padPostCenters(k).map(([cx, cy]) => ({ cx, cy, hw: PAD_SPECS[k].post / 2, hh: PAD_SPECS[k].post / 2 }));
+      return [k, Object.freeze(isPadChamberKind(k) ? [...towers, ...padChamberWalls(k)] : towers)];
+    }),
   ),
 );
 

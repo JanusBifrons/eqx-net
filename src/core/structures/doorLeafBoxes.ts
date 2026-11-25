@@ -19,7 +19,7 @@ import { rigForStructureKind } from '../articulation/rigCatalogue.js';
 import { createRigPose, evaluateRig, type RigPose } from '../articulation/evaluate.js';
 import type { Rig } from '../articulation/rig.js';
 import { doorClipTime } from './doorMotion.js';
-import { gateWorldAxisBoxes } from './gateGeometry.js';
+import { DOOR_POS_MAX, DOOR_POWER_LEVELS, gateWorldAxisBoxes } from './gateGeometry.js';
 
 /** One kind's leaf layout, built once per kind. */
 interface LeafLayout {
@@ -90,8 +90,20 @@ export function doorLeafCount(kind: string | null | undefined): number {
 }
 
 /**
+ * The door position (0 shut .. DOOR_POS_MAX open) a kind's leaves stand at
+ * with no clip record: the end of its rig's `idleClip` (a teleporter
+ * chamber's doors rest OPEN), else 0 (a gate's doors rest shut).
+ */
+export function doorRestPos(kind: string | null | undefined): number {
+  const l = kind ? layoutFor(kind) : null;
+  if (l === null || l.rig.idleClip < 0) return 0;
+  return Math.min(DOOR_POS_MAX, Math.round(l.rig.clips[l.rig.idleClip]!.endTick * DOOR_POWER_LEVELS));
+}
+
+/**
  * A gate's hit boxes for its swarm record (spawn time, allocates once): the
- * static `gateWorldAxisBoxes` followed by one box per door leaf, posed shut.
+ * static `gateWorldAxisBoxes` followed by one box per door leaf, posed at
+ * rest (`doorRestPos`: shut on a gate, open on a teleporter chamber).
  * null ⇒ not a gate.
  */
 export function gateHitBoxes(kind: string | null | undefined, angle: number, mirror?: boolean): Float32Array | null {
@@ -101,7 +113,8 @@ export function gateHitBoxes(kind: string | null | undefined, angle: number, mir
   if (leaves === 0) return fixed;
   const out = new Float32Array(fixed.length + leaves * 4);
   out.set(fixed);
-  writeDoorLeafBoxes(kind!, angle, 0, 0, out);
+  const rest = doorRestPos(kind);
+  writeDoorLeafBoxes(kind!, angle, rest, rest, out);
   return out;
 }
 

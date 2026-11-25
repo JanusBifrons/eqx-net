@@ -15,8 +15,8 @@
  *      `emitterAnchor` uses), normal pointing from the centre through the post.
  *      Fence links stay straight post to post, so these are post centres, not
  *      outline points.
- *   2b. Teleporter pads (`TELEPORTER_KINDS`): the pad is open and its POSTS
- *      are the only solid parts (`padPostCenters`), so one socket per post,
+ *   2b. Teleporter pads (`TELEPORTER_KINDS`): one socket per POST (a
+ *      chamber's tower; `padPostCenters`), never on a doorway or wall run,
  *      on the post's outer face (the footprint edge), normal straight out.
  *   3. Connector: the six faces of its hex, one socket per face midpoint. A
  *      connector takes cables from ANY side, so its socket count is not a link
@@ -43,7 +43,7 @@
  */
 import { GATE_POSTS, AIRLOCK_POSTS } from './gatePosts.js';
 import { DEFAULT_STRUCTURE_KIND, getStructureKind, isStructureKindId } from './lookup.js';
-import { PAD_SPECS, TELEPORTER_KINDS, padPostCenters, type TeleporterKind } from '../teleport.js';
+import { PAD_SPECS, TELEPORTER_KINDS, padPostCenters, padPostSides, type TeleporterKind } from '../teleport.js';
 import { STRUCTURE_OUTLINE_FAMILY, structureOutline } from './outline.js';
 import { structureLocalToWorld } from './geometry.js';
 import type { StructureKindId } from './types.js';
@@ -170,14 +170,14 @@ function postSockets(posts: readonly (readonly [number, number])[]): readonly St
 
 const SIDE_NORMALS = [[0, -1], [1, 0], [0, 1], [-1, 0]] as const;
 
-/** A teleporter pad: one socket per post, on its outer face. `padPostCenters`
- *  lists `posts / 4` posts per side, sides in order bottom, right, top, left. */
+/** A teleporter pad: one socket per post (a chamber's tower), on its outer
+ *  face; `padPostSides` names the face (bottom, right, top, left). */
 function padSockets(kind: TeleporterKind): readonly StructureSocket[] {
   const posts = padPostCenters(kind);
-  const perSide = Math.max(1, Math.round(posts.length / 4));
+  const sides = padPostSides(kind);
   const half = PAD_SPECS[kind].post / 2;
   return Object.freeze(posts.map(([x, y], i) => {
-    const [nx, ny] = SIDE_NORMALS[Math.floor(i / perSide) % 4]!;
+    const [nx, ny] = SIDE_NORMALS[sides[i]!]!;
     return freezeSocket(x + nx * half, y + ny * half, nx, ny);
   }));
 }

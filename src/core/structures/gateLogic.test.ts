@@ -43,6 +43,7 @@ import { RECIPES } from '../../shared-types/recipes.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { tuningFor } from '../../shared-types/shipScale/lookup.js';
 import { SHIPYARD_KEEL_X } from '../articulation/rigs/heavyIndustry.js';
+import { PAD_SPECS, padDoorwayHalf, padHalfExtent, padPostCenters } from '../../shared-types/teleport.js';
 
 const TICK = 100;
 const R = 14; // a fighter-sized ship
@@ -354,5 +355,54 @@ describe('Shipyard collider (loop 3M): the slipway is open from the keel out of 
         expect(clearance(x, 0), `${kind} at x=${x}`).toBeGreaterThan(r);
       }
     }
+  });
+});
+
+describe('teleporter chamber colliders (redesign T1)', () => {
+  const CHAMBERS = ['teleporter', 'teleporter_large', 'pocket_pad'] as const;
+  /** Is world-offset point (x, y) inside one of the flat world-axis boxes? */
+  const hit = (boxes: Float32Array, x: number, y: number): boolean => {
+    for (let i = 0; i < boxes.length; i += 4) {
+      if (Math.abs(x - boxes[i]!) <= boxes[i + 2]! && Math.abs(y - boxes[i + 1]!) <= boxes[i + 3]!) return true;
+    }
+    return false;
+  };
+
+  for (const kind of CHAMBERS) {
+    const half = padHalfExtent(kind), r = PAD_SPECS[kind].padRadius, door = padDoorwayHalf(kind);
+    const band = (r + half) / 2; // mid-thickness of the wall ring
+
+    it(`${kind}: every part inside the footprint, none on the pad floor`, () => {
+      for (const b of gateColliderBoxes(kind)!) {
+        expect(Math.abs(b.cx) + b.hw).toBeLessThanOrEqual(half + 1e-9);
+        expect(Math.abs(b.cy) + b.hh).toBeLessThanOrEqual(half + 1e-9);
+        expect(Math.max(Math.abs(b.cx) - b.hw, Math.abs(b.cy) - b.hh)).toBeGreaterThanOrEqual(r - 1e-9);
+      }
+    });
+
+    for (const [deg, angle] of [[0, 0], [90, Math.PI / 2], [180, Math.PI]] as const) {
+      it(`${kind} at ${deg}°: walls are solid all round; both doorways are open`, () => {
+        const boxes = gateWorldAxisBoxes(kind, angle)!;
+        const c = Math.cos(angle), s = Math.sin(angle);
+        const w = (lx: number, ly: number): [number, number] => [lx * c - ly * s, lx * s + ly * c];
+        for (let t = -half + 1; t <= half - 1; t += 7) {
+          // Side walls (local ±x): solid the whole way.
+          expect(hit(boxes, ...w(band, t)), `+x wall at ${t}`).toBe(true);
+          expect(hit(boxes, ...w(-band, t)), `-x wall at ${t}`).toBe(true);
+          // Doorway ends (local ±y): open across the doorway, solid outside it.
+          if (Math.abs(Math.abs(t) - door) < 0.5) continue; // exactly on the jamb
+          const inDoor = Math.abs(t) < door;
+          expect(hit(boxes, ...w(t, band)), `+y end at ${t}`).toBe(!inDoor);
+          expect(hit(boxes, ...w(t, -band)), `-y end at ${t}`).toBe(!inDoor);
+        }
+        // A ship flies straight through along local y: nothing on the centre line.
+        for (let t = -half - 50; t <= half + 50; t += 5) expect(hit(boxes, ...w(0, t))).toBe(false);
+      });
+    }
+  }
+
+  it("the Ancients' gate keeps only its 12 post boxes (open pad, no walls)", () => {
+    const boxes = gateColliderBoxes('alien_gate')!;
+    expect(boxes.map((b) => [b.cx, b.cy, b.hw, b.hh])).toEqual(padPostCenters('alien_gate').map(([x, y]) => [x, y, 50, 50]));
   });
 });

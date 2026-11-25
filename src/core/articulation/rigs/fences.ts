@@ -100,7 +100,7 @@ export const AIRLOCK_DOOR_OPEN_TRAVEL = doorOpenTravel('shield_airlock', [AIRLOC
 
 /** One leaf on side `side` (-1 left, +1 right) of the gap centre, at local y
  *  `y`: `len` long, sliding outward `travel` to open. */
-function leaf(id: string, side: -1 | 1, y: number, len: number, travel: number): PartDef {
+export function leaf(id: string, side: -1 | 1, y: number, len: number, travel: number): PartDef {
   return {
     id, parent: null, anchorX: (side * len) / 2, anchorY: y,
     joint: { type: 'slide', axisX: side, axisY: 0, min: 0, max: travel },
@@ -110,7 +110,7 @@ function leaf(id: string, side: -1 | 1, y: number, len: number, travel: number):
 }
 
 /** A door clip: `parts` slide linearly from shut (tick 0) to open (`travel`). */
-function doorClip(id: string, parts: readonly string[], travel: number): ClipDef {
+export function doorClip(id: string, parts: readonly string[], travel: number): ClipDef {
   return {
     id,
     tracks: parts.map((part) => ({

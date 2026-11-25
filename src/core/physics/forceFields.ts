@@ -28,6 +28,10 @@ export interface PadForceField {
   cy: number;
   half: number;
   active: boolean;
+  /** A chamber pad (`isPadChamberKind`): its rotation (rad). The push then runs
+   *  only along the doorway axis, never into a wall (`padPushDir`). Absent:
+   *  the open square pad (the Ancients' gate). */
+  doorAngle?: number;
 }
 
 /** Most beam-line bodies one tractor carries (fixed capacity, #14). */
@@ -199,7 +203,7 @@ function applyPad(f: PadForceField, bodies: ReadonlyMap<string, ForceFieldBody>,
     // TODO: alloc-debt — Rapier's translation() returns a fresh vector; this
     // runs only during a pad's ~4 s closing phase.
     const t = b.translation();
-    if (!padPushDir(f.cx, f.cy, f.half, t.x, t.y, rec.kind.radius, _padDir)) continue;
+    if (!padPushDir(f.cx, f.cy, f.half, t.x, t.y, rec.kind.radius, _padDir, f.doorAngle)) continue;
     // massScaled: mass × accel × dt; else force × dt (heavy bodies barely move).
     const j = massScaled ? b.mass() * PAD_PUSH_ACCEL * dt : PAD_PUSH_ACCEL * dt;
     _impulse.x = _padDir.x * j;
