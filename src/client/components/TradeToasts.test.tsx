@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen } from '@testing-library/react';
 import { TradeToasts } from './TradeToasts';
 import { useUIStore } from '../state/store';
 import { selectDrawerOpen } from '../state/rightPanel';
+import { markWindowOpen } from '../../ui/EqxWindow/windowOpen.js';
 
 describe('TradeToasts', () => {
   beforeEach(() => {
@@ -35,5 +36,14 @@ describe('TradeToasts', () => {
       for (let i = 0; i < 5; i++) useUIStore.getState().pushTradeToast(`n${i}`, 'info', false);
     });
     expect(screen.getAllByTestId('trade-toast')).toHaveLength(3);
+  });
+
+  it('hides while a Window is open and shows again when it closes', () => {
+    render(<TradeToasts />);
+    act(() => { useUIStore.getState().pushTradeToast('Deal agreed', 'good', false); });
+    act(() => { markWindowOpen(1); });
+    expect(screen.queryByTestId('trade-toast')).toBeNull();
+    act(() => { markWindowOpen(-1); });
+    expect(screen.getByTestId('trade-toast')).toBeTruthy();
   });
 });

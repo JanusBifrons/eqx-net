@@ -19,6 +19,7 @@ vi.mock('../net/clientSingleton', () => ({
 import { WarpStatusChip, destinationsFrom } from './WarpPicker';
 import { useUIStore } from '../state/store';
 import { warpDestinations } from './warpDestinations';
+import { markWindowOpen } from '../../ui/EqxWindow/windowOpen.js';
 
 beforeEach(() => {
   cancelWarp.mockClear(); warping = false;
@@ -40,6 +41,16 @@ describe('WarpStatusChip', () => {
     fireEvent.click(screen.getByTestId('warp-cancel'));
     expect(cancelWarp).toHaveBeenCalled();
     expect(useUIStore.getState().warpHeldTo).toBeNull();
+  });
+
+  it('stays on top of an open Window (it has a Cancel)', () => {
+    useUIStore.setState({ warpHeldTo: 'Belt A' });
+    warping = true;
+    markWindowOpen(1);
+    try {
+      render(<WarpStatusChip />);
+      expect(screen.getByTestId('warp-cancel')).toBeTruthy();
+    } finally { markWindowOpen(-1); }
   });
 });
 

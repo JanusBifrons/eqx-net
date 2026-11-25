@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { render, screen, cleanup } from '@testing-library/react';
+import { act, render, screen, cleanup } from '@testing-library/react';
 import { WarpInWarningBanner, toneForRelation } from './WarpInWarningBanner';
 import { useUIStore } from '../state/store';
+import { markWindowOpen } from '../../ui/EqxWindow/windowOpen.js';
 
 describe('WarpInWarningBanner (wave-system Phase 5 + WS-11 R2.21)', () => {
   beforeEach(() => {
@@ -116,5 +117,17 @@ describe('WarpInWarningBanner (wave-system Phase 5 + WS-11 R2.21)', () => {
     render(<WarpInWarningBanner />);
     const el = screen.getByTestId('warp-warning');
     expect(el.getAttribute('data-warning-secs')).toBe('0');
+  });
+
+  it('hides the idle chip and warnings while a Window is open (container stays)', () => {
+    const { unmount } = render(<WarpInWarningBanner />);
+    act(() => { markWindowOpen(1); });
+    expect(screen.getByTestId('warp-warning-banner')).not.toBeNull();
+    expect(screen.queryByTestId('warp-warning-idle')).toBeNull();
+    act(() => { useUIStore.getState().addWarpWarning({ id: 'w1', label: 'Ace', count: 1, countdownMs: 60_000 }); });
+    expect(screen.queryByTestId('warp-warning')).toBeNull();
+    act(() => { markWindowOpen(-1); });
+    expect(screen.getByTestId('warp-warning')).not.toBeNull();
+    unmount();
   });
 });

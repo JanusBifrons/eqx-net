@@ -7,7 +7,7 @@
  * toast is a galaxy-wide world notice (P4 — an elite sighted / destroyed).
  */
 import { memo } from 'react';
-import { EqxPrompt, EqxPromptStack, type EqxPromptTone } from '../../ui/index.js';
+import { EqxPrompt, EqxPromptStack, useAnyWindowOpen, type EqxPromptTone } from '../../ui/index.js';
 import { useUIStore } from '../state/store';
 import type { TradeToastTone } from '../state/storeTypes';
 
@@ -25,7 +25,10 @@ const openTrade = (): void => {
 
 export const TradeToasts = memo(function TradeToasts(): JSX.Element | null {
   const toasts = useUIStore((s) => s.tradeToasts);
-  if (toasts.length === 0) return null;
+  // Toasts are notices, not answers: hidden while a Window is open (they stay
+  // queued and show again when it closes, unless they expired).
+  const windowOpen = useAnyWindowOpen();
+  if (toasts.length === 0 || windowOpen) return null;
   return (
     <EqxPromptStack data-testid="trade-toasts">
       {toasts.map((t) => (

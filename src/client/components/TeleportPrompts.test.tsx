@@ -9,6 +9,7 @@ vi.mock('../structures/structureActionsClient', () => ({
 
 import { TeleportPrompts } from './TeleportPrompts';
 import { useUIStore } from '../state/store';
+import { markWindowOpen } from '../../ui/EqxWindow/windowOpen.js';
 
 const toll = (credits: number) => ({ type: 'teleport_toll' as const, padId: 7, credits, ownerName: 'Kestrel' });
 
@@ -52,5 +53,18 @@ describe('TeleportPrompts (EqxPrompt)', () => {
     fireEvent.click(screen.getByTestId('pair-request-decline'));
     expect(sent.pair).toEqual([['r1', false]]);
     expect(screen.queryByTestId('pair-request')).toBeNull();
+  });
+
+  it('toll and pair prompts stay visible over an open Window', () => {
+    act(() => {
+      useUIStore.getState().setTollPrompt(toll(5));
+      useUIStore.getState().addPairRequest({ type: 'teleport_pair_request', requestId: 'r2', fromName: 'Vega', label: 'Gate 2' });
+    });
+    markWindowOpen(1);
+    try {
+      render(<TeleportPrompts />);
+      expect(screen.getByTestId('toll-prompt')).toBeTruthy();
+      expect(screen.getByTestId('pair-request')).toBeTruthy();
+    } finally { markWindowOpen(-1); }
   });
 });

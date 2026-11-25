@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { EqxPrompt, EqxPromptStack, type EqxPromptTone } from '../../ui/index.js';
+import { EqxPrompt, EqxPromptStack, useAnyWindowOpen, type EqxPromptTone } from '../../ui/index.js';
 import { useUIStore, useIsLoadingActive } from '../state/store';
 import type { WarpRelation } from '../state/storeTypes';
 
@@ -55,6 +55,9 @@ export function WarpInWarningBanner(): JSX.Element {
   // curtain drops. (Supersedes the P3.9 "stays visible during transit" stance for
   // the curtain phase specifically.)
   const isLoadingActive = useIsLoadingActive();
+  // A passive readout never draws over an open Window (the prompt anchor sits
+  // above Windows for answer-me prompts only).
+  const windowOpen = useAnyWindowOpen();
   // A monotonic tick to re-render the countdown ~5 Hz without per-warning RAF.
   const [, setTick] = useState(0);
 
@@ -64,9 +67,9 @@ export function WarpInWarningBanner(): JSX.Element {
     return () => window.clearInterval(id);
   }, [warpWarnings.length]);
 
-  // Render nothing visible while the curtain is up (the testid stays for the
+  // Render nothing visible while the curtain is up or a Window is open (the testid stays for the
   // always-mounted contract; no content ⇒ nothing over the curtain).
-  if (isLoadingActive) {
+  if (isLoadingActive || windowOpen) {
     return <EqxPromptStack data-testid="warp-warning-banner" dataAttrs={{ 'warning-active': '0' }} />;
   }
 
