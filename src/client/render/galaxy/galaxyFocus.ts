@@ -32,7 +32,7 @@ export function focusPanelDock(portrait: boolean): FocusPanelDock {
 export const PANEL_RIGHT_W = 296;
 export const PANEL_TOUCH_FRAC = 0.3;
 export const PANEL_TOUCH_MIN_W = 200;
-/** On a phone the panel starts below the top-right toolbar (full-screen chip). */
+/** On a phone the panel starts below the top-right corner (the homepage avatar badge). */
 export const PANEL_TOUCH_TOP = 56;
 /** Bottom sheet (portrait): share of the visible height, and its cap. */
 export const SHEET_FRAC_PORTRAIT = 0.4;

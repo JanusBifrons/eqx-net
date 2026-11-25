@@ -10,8 +10,6 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 const BOOT_URL = `${BASE_URL}/?room=test-sector`;
 
-const APP_BAR_HEIGHT = 48;
-
 async function bootGame(page: import('@playwright/test').Page): Promise<void> {
   await page.goto(BOOT_URL);
   // INFRASTRUCTURAL cost, not game-time (so a budget bump is the sanctioned fix —
@@ -38,18 +36,22 @@ test.describe('layout-slots', () => {
   // Phase 1 regressions
   // ───────────────────────────────────────────────────────────
 
-  test('top-left sector panel clears the AppBar (safe-area-top regression)', async ({ browser }) => {
+  test('top-left sector panel clears the reserved top band (safe-area-top regression)', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     await bootGame(page);
 
-    // Phase 5 — the top-right ShipStatsCard was removed; the always-present
-    // top-left SectorInfoPanel is now the canonical top-anchored element that
-    // must sit BELOW the AppBar (the safe-area-top regression this guards).
+    // The always-present top-left SectorInfoPanel must sit below whatever top
+    // band the page reserves (`--app-bar-h`). UI plan U5-3 removed the in-game
+    // top bar, so the band is 0 in game; the guard still catches a panel drawn
+    // above the band or off the top of the screen.
+    const band = await page.evaluate(() =>
+      parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--app-bar-h')) || 0,
+    );
     const card = page.locator('[data-testid="hud-sector"]');
     const box = await card.boundingBox();
     expect(box).not.toBeNull();
-    expect(box!.y).toBeGreaterThanOrEqual(APP_BAR_HEIGHT);
+    expect(box!.y).toBeGreaterThanOrEqual(band);
 
     await ctx.close();
   });
@@ -98,11 +100,11 @@ test.describe('layout-slots', () => {
     await ctx.close();
   });
 
-  test('upright phone shows the turn-sideways screen; sideways shows the game and the full-screen label', async ({ browser }) => {
+  test('upright phone shows the turn-sideways screen; sideways shows the game', async ({ browser }) => {
     // Phones play sideways. Upright, a full-screen picture asks the player to
     // turn the phone and covers (and blocks) the controls; turned sideways it
-    // goes away and the full-screen chip briefly reads 'Tap for full screen'
-    // without entering full screen. Guide: docs/features/mobile-layout.md
+    // goes away. Full screen waits for the first tap (UI plan U5-3; unit lock:
+    // useFirstTapFullscreen.test.tsx). Guide: docs/features/mobile-layout.md
     // "Orientation policy".
     const iPhone = devices['iPhone SE'];
     const ctx = await browser.newContext({
@@ -118,10 +120,8 @@ test.describe('layout-slots', () => {
     await page.setViewportSize({ width: 667, height: 375 });
     await expect(page.locator('[data-testid="rotate-phone-overlay"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="hud-move-home"]')).toBeVisible();
-    const chip = page.locator('[data-testid="fullscreen-toggle"]');
-    await expect(chip).toHaveAttribute('data-hint', '1');
-    await expect(chip).toContainText('Tap for full screen');
-    await expect(chip).toHaveAttribute('data-fullscreen', '0');
+    // Never full screen by itself: no tap yet.
+    expect(await page.evaluate(() => document.fullscreenElement === null)).toBe(true);
 
     await ctx.close();
   });
@@ -138,20 +138,21 @@ test.describe('layout-slots', () => {
   // Phase 2 — drawer-driven layout, meta landing, mobile-hide AppBar
   // ───────────────────────────────────────────────────────────
 
-  test('AppHeader is hidden on mobile, visible on desktop', async ({ browser }) => {
-    // Mobile: AppHeader is `display: none` via MUI sx breakpoint.
+  test('the game has no top bar on mobile or desktop', async ({ browser }) => {
+    // UI plan U5-3: the in-game AppHeader went (the rail's cog holds settings and account).
     const iPhone = devices['iPhone SE'];
     const mobileCtx = await browser.newContext({ ...iPhone, viewport: { width: 667, height: 375 } });
     const mobilePage = await mobileCtx.newPage();
     await bootGame(mobilePage);
-    await expect(mobilePage.locator('[data-testid="app-header"]')).toBeHidden();
+    await expect(mobilePage.locator('[data-testid="app-header"]')).toHaveCount(0);
     await mobileCtx.close();
 
-    // Desktop: visible at the top.
+    // Desktop: none either; the rail's cog is there instead.
     const desktopCtx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const desktopPage = await desktopCtx.newPage();
     await bootGame(desktopPage);
-    await expect(desktopPage.locator('[data-testid="app-header"]')).toBeVisible();
+    await expect(desktopPage.locator('[data-testid="app-header"]')).toHaveCount(0);
+    await expect(desktopPage.locator('[data-testid="right-rail-cog"]')).toBeVisible();
     await desktopCtx.close();
   });
 
