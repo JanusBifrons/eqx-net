@@ -27,6 +27,7 @@ import {
 } from '../../core/structures/structureGridConstants.js';
 import { linkReachBoxAdd, linkReachBoxStart, makeCableSocketPick } from '../../core/structures/cableCurve.js';
 import { makeCableReseat } from '../../core/structures/socketReseat.js';
+import { DECK_LINK_NONE, deckLinkKind } from '../../core/structures/deckLinks.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 
 /** Scratch socket pick for every link made here: `canConnect` writes the
@@ -206,7 +207,7 @@ export function autoConnectStructure(
     if (other.id === newId) continue;
     if (!gridLinkAllowed(other.owner, newRec.owner)) continue; // per-owner grid (+ ownerless capture)
     const otherNode = nodes.get(other.id)!;
-    const verdict = canConnect(newNode, otherNode, adjacency, nodes, obstacles, undefined, linkReseat);
+    const verdict = canConnect(newNode, otherNode, adjacency, nodes, obstacles, undefined, linkReseat, registry.deck);
     if (!verdict.ok) {
       if (why) noteRefusal(why, verdict.reason);
       continue;
@@ -221,11 +222,13 @@ export function autoConnectStructure(
   let firstConnected: string | null = null;
   let made = 0;
   for (const cand of candidates) {
-    if (made >= PLACEMENT_MAX_CONNECTIONS) break;
     const otherNode = nodes.get(cand.id)!;
+    // A deck link (base platforms) never counts toward the placement cap.
+    const deckLink = registry.deck && deckLinkKind(newNode, otherNode) !== DECK_LINK_NONE;
+    if (made >= PLACEMENT_MAX_CONNECTIONS && !deckLink) continue;
     // Re-check against the live adjacency: an earlier addition may have filled
     // this hub or the new node's own slots.
-    const verdict = canConnect(newNode, otherNode, adjacency, nodes, obstacles, linkPick, linkReseat);
+    const verdict = canConnect(newNode, otherNode, adjacency, nodes, obstacles, linkPick, linkReseat, registry.deck);
     if (!verdict.ok) {
       if (why) noteRefusal(why, verdict.reason);
       continue;
@@ -233,7 +236,7 @@ export function autoConnectStructure(
     if (linkReseat.conn) registry.reseatConnection(linkReseat.conn, linkReseat.a, linkReseat.b);
     // canConnect(newNode, other) ⇒ pick.a is newId's socket, pick.b cand's.
     registry.addConnection(newId, cand.id, CONNECTION_THROUGHPUT, linkPick.a, linkPick.b);
-    made++;
+    if (!deckLink) made++;
     if (firstConnected === null) firstConnected = cand.id;
   }
   if (why && firstConnected !== null) why.reason = null;
@@ -260,7 +263,9 @@ export function linkReachBox(registry: StructureRegistry, id: string, out: Obsta
   let found = false;
   for (const o of registry.all()) {
     if (o.id === id || !gridLinkAllowed(o.owner, rec.owner)) continue;
-    if (linkReachBoxAdd(rec, o, CONNECTION_MAX_RANGE, out)) found = true;
+    // A deck link (base platforms) reaches past the range: its partner is in reach.
+    const range = registry.deck && deckLinkKind(rec, o) !== DECK_LINK_NONE ? Infinity : CONNECTION_MAX_RANGE;
+    if (linkReachBoxAdd(rec, o, range, out)) found = true;
   }
   return found;
 }
@@ -287,7 +292,7 @@ export function connectExplicit(
   const na = nodes.get(aId);
   const nb = nodes.get(bId);
   if (!na || !nb) return false;
-  if (!canConnect(na, nb, registry.adjacencyMap(), nodes, obstacles, linkPick).ok) return false;
+  if (!canConnect(na, nb, registry.adjacencyMap(), nodes, obstacles, linkPick, undefined, registry.deck).ok) return false;
   registry.addConnection(aId, bId, CONNECTION_THROUGHPUT, linkPick.a, linkPick.b);
   return true;
 }
