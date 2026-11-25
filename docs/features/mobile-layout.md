@@ -16,7 +16,7 @@ The slot system replaces that with twelve named anchors and a single z-index tab
 |---|---|---|
 | `top-left` | Column, growing down. Below AppBar + safe-area-top. | HUD chips (sector, hull, ammo, connection, clock) |
 | `top-center` | Column, centered. | MAP button (touch) |
-| `top-right` | Column, growing down, right-aligned. | FullscreenToggle, ShipStatsCard |
+| `top-right` | Column, growing down, right-aligned. | MobileAvatarBadge (homepage), ShipStatsCard |
 | `middle-center` / `middle-right` | Available; unused today. | reserved |
 | `bottom-left` | Column-reverse, growing up. Above safe-area-bottom + `--mobile-edge-inset`. | Joystick zone (touch) |
 | `bottom-center` | Column-reverse, centered. | WeaponSelector (order=5), GalaxyMapToggleButton (order=10) |
@@ -26,7 +26,7 @@ The slot system replaces that with twelve named anchors and a single z-index tab
 | `fullscreen` | Inset 0, overlay tier. | DeathOverlay, in-game GalaxyOverviewScreen (warp-mode) |
 | `transit` | Inset 0, transit tier (above overlay). | HyperspaceOverlay warp-streak |
 
-Anchor host CSS bakes in safe-area insets and the AppBar height (`var(--app-bar-h, 48px)`, set on `:root` in [src/client/index.html](../../src/client/index.html)). The `bottom-left` and `bottom-right` anchors additionally read `--mobile-edge-inset` (default `16px`, bumped to `40px` by a `(orientation: landscape) and (pointer: coarse)` media query) so joystick / fire / boost sit further from the bezel when a phone is held sideways. Widgets never compute these.
+Anchor host CSS bakes in safe-area insets (the game has no top bar, so no app-bar height). The `bottom-left` and `bottom-right` anchors additionally read `--mobile-edge-inset` (default `16px`, bumped to `40px` by a `(orientation: landscape) and (pointer: coarse)` media query) so joystick / fire / boost sit further from the bezel when a phone is held sideways. Widgets never compute these.
 
 `pointer-events: none` is the default on every anchor host so empty regions pass clicks through to the Pixi canvas underneath. The `<Slot>` wrapper re-enables `pointer-events: auto` on each child so buttons stay clickable.
 
@@ -51,7 +51,7 @@ Anchor hosts pick a tier from this enum once. Widgets do not set `zIndex` props.
 
 [src/client/layout/Drawer/AdvancedDrawer.tsx](../../src/client/layout/Drawer/AdvancedDrawer.tsx) holds the rail's page panels (Galaxy, Jobs, Faction). It renders through the one right panel, `EqxPanel` (a `persistent` MUI Drawer, so no Modal and no global touch listeners), and shows only the open rail item's pages: there is no tab column. A panel with several pages (Faction: Factions / Ship look) gets an `EqxSegmented` page switch (`drawer-tab-<id>`); which panel a page belongs to is `DRAWER_TAB_PANEL` (`state/rightPanel.ts`). Trade is its own panel, a drill-down ([panels/TradePanel.tsx](../../src/client/panels/TradePanel.tsx)): the top page shows credits, standing and the base you trade from, then one row per section (Offers, Deals, History, Gift, Blueprints); a row opens that page and the header gets ← back. The page is `drawerTab` (`trade` = the list, `trade-<section>`). The Trade unread badge sits on the rail's Trade item.
 
-The cog is its own panel, [src/client/panels/CogPanel.tsx](../../src/client/panels/CogPanel.tsx) (`rightPanel = 'cog'`, title Settings): one scrolling page with small headings: Return to menu, Graphics, Notifications (`PushNotificationToggle`), Screen (a **Full screen** switch over `useFullscreen`, and an **Install** row that opens the FullscreenToggle install hint; both hidden inside an installed app), then two drill-down rows with ← back: **Profile** (`ProfileTab`) and **Developer** (`DebugTab`: capture, the debug overlay / server log / server ghost switches, `ConnectionDiagnostics`, `DevOverlay`, `LogPanel`). Its pages reuse `drawerTab` (`settings`, `profile`, `debug`), so `selectDrawerTabShown('debug')` is true only while Developer is on screen. In the game, the desktop AppHeader's settings cog opens this panel too.
+The cog is its own panel, [src/client/panels/CogPanel.tsx](../../src/client/panels/CogPanel.tsx) (`rightPanel = 'cog'`, title Settings): one scrolling page with small headings: Return to menu, Graphics, Notifications (`PushNotificationToggle`), Screen (a **Full screen** switch over `useFullscreen`, and an **Install** row that opens the install hint (an `EqxWindow` in `panels/cogRows.tsx`); both hidden inside an installed app), then two drill-down rows with ← back: **Profile** (`ProfileTab`) and **Developer** (`DebugTab`: capture, the debug overlay / server log / server ghost switches, `ConnectionDiagnostics`, `DevOverlay`, `LogPanel`). Its pages reuse `drawerTab` (`settings`, `profile`, `debug`), so `selectDrawerTabShown('debug')` is true only while Developer is on screen. In the game the right rail's cog opens it; on the homepage the desktop AppHeader's gear does too.
 
 > **Performance contract — DO NOT change without re-measuring.**
 > 1. **Plain `Drawer`, NOT `SwipeableDrawer`.** SwipeableDrawer attaches global touch listeners (touchstart/touchmove on `document`) that fire on every joystick movement during play. Measured cost: prediction RTT shot from ~50 ms to ~2.4 s on Android. Diagnostic captures are checked in at `diag/captures/2026-05-09T16-35-19-910Z-ozqfzu/summary.json` (good baseline, RTT 43 ms) vs `diag/captures/2026-05-10T08-38-25-767Z-xtjhgx/summary.json` (broken, RTT 2359 ms).
@@ -97,10 +97,10 @@ The vertical rail uses `IconButton`s inside a flex column — no MUI `Tabs` comp
 
 ## Mobile vs desktop split
 
-Settings and Profile live in ONE place, the cog panel, on every screen; the desktop AppHeader only adds two shortcuts into it.
+Settings and Profile live in ONE place, the cog panel, on every screen; in game the right rail's cog opens it. The game has no top bar; on the homepage and sign-in the desktop AppHeader adds two shortcuts into it.
 
-- **Mobile (viewport `< sm`, 600 px)**: `AppHeader` is hidden via `display: { xs: 'none', sm: 'flex' }`. The `--app-bar-h` CSS var is `0px`. The drawer is the only entry point to settings / profile / galaxy / debug.
-- **Desktop (`≥ sm`)**: `AppHeader` is visible with logo + settings gear (opens the cog panel's Settings page) + avatar (opens the cog's Profile page). The cog panel is mounted by `PhaseRouter` in every phase shell, so both work on the galaxy map too. The drawer is still accessible via the toggle, so power users can use either path. `--app-bar-h` is `48px`.
+- **Touch (`pointer: coarse`)**: `AppHeader` is hidden. The homepage avatar badge opens the cog's Profile page.
+- **Desktop, homepage and sign-in**: `AppHeader` shows logo + settings gear (opens the cog panel's Settings page) + avatar (opens the cog's Profile page). While it is mounted it sets `html.eqx-app-bar`, which makes `--app-bar-h` `48px` (index.html); otherwise the var is `0px`, so a right panel starts at the top in game.
 
 The old desktop-only `ProfileModal`, `SettingsModal`, `AvatarMenu` and `LogoutConfirmDialog` were folded into the cog panel (UI plan U2-8b) and deleted.
 
@@ -122,18 +122,18 @@ Drawer Profile-tab Logout = `clearAuth() + setPhase('galaxy-map')`. Drawer Setti
 
 **Phones play sideways.** On a phone (`useHudSize() === 'phone'`: coarse pointer and a short side under 500 px) held upright, [RotatePhoneOverlay](../../src/client/layout/RotatePhoneOverlay.tsx) covers the whole screen with a turning-phone picture and "Turn your phone sideways". It renders through the `rotate` anchor (`Z.rotatePrompt`: above the galaxy map chrome, below the lost-connection and error overlays) in every phase. While it shows, `GameSurface` turns keyboard, touch and aim input off (held input is zeroed; the same gate as the loading curtain). Audio keeps playing. Tablets and desktops never see it.
 
-Turned sideways, the game shows. The `<FullscreenToggle>` chip in the `top-right` slot grows a "Tap for full screen" label for `FULLSCREEN_HINT_MS` (8 s) each time the phone turns sideways outside full screen, then shrinks back to its icon. It never enters full screen by itself: a tap calls `requestFullscreen()` plus a best-effort `screen.orientation.lock('landscape')`; `exitFullscreen()` releases the lock first. The toggle hides in an installed app and on non-touch devices.
+Turned sideways, the game shows. In game the first tap on a touch browser asks for full screen ([layout/useFirstTapFullscreen.ts](../../src/client/layout/useFirstTapFullscreen.ts), through `useFullscreen`: `requestFullscreen()` plus a best-effort `screen.orientation.lock('landscape')`). It asks once per game; after the player leaves full screen, the cog's Full screen switch brings it back (`exitFullscreen()` releases the lock first). It never starts by itself (browsers need a gesture), and does nothing on desktop or in an installed app.
 
-**Installed app.** The manifest (the `VitePWA` options in `vite.config.ts`) declares `orientation: 'landscape'`, and `main.tsx` also calls `lockLandscape()` at launch whenever the page runs as an installed app (`isStandaloneNow()`), so the installed Android app opens sideways and stays there; it never shows the picture or the chip. The runtime lock matters because Chrome refreshes an installed app's manifest lazily (it can take days), so an existing install would otherwise keep its old orientation. Lock: `src/client/layout/landscapeLock.test.ts`. iOS ignores the manifest orientation, so the installed iPhone app shows the same turn-sideways picture when held upright (no chip: it is already full screen).
+**Installed app.** The manifest (the `VitePWA` options in `vite.config.ts`) declares `orientation: 'landscape'`, and `main.tsx` also calls `lockLandscape()` at launch whenever the page runs as an installed app (`isStandaloneNow()`), so the installed Android app opens sideways and stays there; it never shows the picture. The runtime lock matters because Chrome refreshes an installed app's manifest lazily (it can take days), so an existing install would otherwise keep its old orientation. Lock: `src/client/layout/landscapeLock.test.ts`. iOS ignores the manifest orientation, so the installed iPhone app shows the same turn-sideways picture when held upright.
 
 What this is NOT:
 
-- **Not** a reflexive lock on first touch. Full screen only ever starts from a tap on the chip.
+- **Not** full screen without a tap. Full screen starts only from the first tap in game or the cog's switch.
 - **Not** an upright phone layout. The upright-phone HUD layouts still exist in the code but sit behind the picture on phones.
 
 **Phone perf runs** (`perf/run-phone.ts`) drive a real phone, which should stand sideways; upright, the picture sits over the scene (a cheap DOM layer; the run needs no input).
 
-iOS Safari has no JS API to remove its address bar in a regular tab — `enterFullscreen()` returns `false` there, and the toggle opens an "Add to Home Screen" install dialog so the player can launch as a standalone PWA (which IS chromeless).
+iOS Safari has no JS API to remove its address bar in a regular tab — `enterFullscreen()` returns `false` there, and the first tap does nothing; the cog's Full screen switch and Install row open an "Add to Home Screen" install hint so the player can launch as a standalone PWA (which IS chromeless).
 
 ## Adding a HUD widget
 
@@ -150,11 +150,10 @@ iOS Safari has no JS API to remove its address bar in a regular tab — `enterFu
 
 [tests/e2e/layout-slots.spec.ts](../../tests/e2e/layout-slots.spec.ts) covers:
 
-- HUD chip clears the AppBar (regression for the missing-safe-area-top bug).
 - HUD does not collide with the joystick zone on mobile landscape.
 - Dev panels are inside the drawer, not the always-visible HUD.
 - The right rail opens the drawer on both desktop and mobile.
-- An upright phone shows the turn-sideways screen; sideways shows the game and the "Tap for full screen" label; desktop never shows it.
+- An upright phone shows the turn-sideways screen; sideways shows the game; desktop never shows it; the game has no top bar.
 
 If you change anchor positions, drawer wiring, or the orientation policy, run this spec before merging.
 
@@ -172,7 +171,7 @@ In-game React overlays are positioned via **named slot anchors**, never hand-pla
 
 - **Z-index tokens are in [layout/zIndex.ts](../../src/client/layout/zIndex.ts)** (`Z.canvas` < `Z.hud` < `Z.mobileControls` < `Z.drawer` < `Z.appBar` < `Z.overlay` < `Z.transit`). Anchor hosts pick a tier from this table once; widgets never reference `zIndex` directly.
 
-- **Safe-area insets are baked into the anchor host CSS.** `env(safe-area-inset-*)` and the AppBar height (`var(--app-bar-h, 48px)` set on `:root` in [index.html](../../src/client/index.html)) are applied uniformly. Per-component safe-area maths are obsolete.
+- **Safe-area insets are baked into the anchor host CSS.** `env(safe-area-inset-*)` is applied uniformly; the game has no top bar to clear. Per-component safe-area maths are obsolete.
 
 - **The `top-*` anchors clear the AppBar automatically.** This used to be a per-widget bug — the original HUD chip cluster paint into the notch on iOS — fixed structurally by the anchor host's `padding-top` calc.
 
@@ -180,11 +179,11 @@ In-game React overlays are positioned via **named slot anchors**, never hand-pla
 
 - **`HudTestAttributes`** ([components/HudTestAttributes.tsx](../../src/client/components/HudTestAttributes.tsx)) keeps the `data-testid="ship-count"` / `swarm-count` / `clock-rate` / `server-tick-hz` text mirrors in the always-mounted DOM at `display: none`. The real diagnostics now only mount when the cog's Developer page is open; the existing E2E suite reads these via `textContent`, so the hidden mirrors are a perf-safe contract surface. Do NOT delete them without auditing every spec that polls those testids.
 
-- **Mobile vs desktop split**: `AppHeader` is hidden via MUI `display: { xs: 'none', sm: 'flex' }` below the `sm` breakpoint (600 px). The `--app-bar-h` CSS var is responsive to match (`0px` below 600 px, `48px` at and above). Mobile users only have the drawer for settings/profile/galaxy/debug; desktop users keep the existing `ProfileModal` + `SettingsModal` paths as well as the drawer. **Do not delete `ProfileModal.tsx`, `SettingsModal.tsx`, or `AvatarMenu.tsx`** — they are the desktop access path.
+- **Mobile vs desktop split**: the game has no top bar; outside it the desktop `AppHeader` is hidden on touch (`pointer: coarse`) and sets `--app-bar-h` to 48px only while mounted (`html.eqx-app-bar`). Settings and Profile live only in the cog panel (rail cog in game).
 
 - **Profile + logout (one ownership site).** The cog panel's Profile page ([panels/CogProfilePage.tsx](../../src/client/panels/CogProfilePage.tsx)) shows the avatar, name, email, the display-name editor and **Log out**; the desktop header avatar (`header-avatar`) and the touch galaxy-map badge (`mobile-avatar-badge`, `MobileAvatarBadge.tsx`) both open it via `openCogProfile()`. Log out confirms INLINE: the button turns into **Confirm log out** + Cancel in place (`cog-profile-logout` → `cog-profile-logout-confirm`), never a dialog. **Logout has exactly ONE definition: the `useLogout()` hook** ([auth/useLogout.ts](../../src/client/auth/useLogout.ts)) = `clearAuth(); setPhase('galaxy-map'); setRightPanel(null);` — do NOT re-inline `clearAuth()` without the `setPhase('galaxy-map')` (the pre-fix bug: token cleared but you stayed in-game). Regression lock: [tests/e2e/avatar-menu-logout.spec.ts](../../tests/e2e/avatar-menu-logout.spec.ts) + `CogProfilePage.test.tsx` + `AppHeader.test.tsx` + `useLogout.test.tsx`.
 
-- **Phones play sideways.** An upright phone shows `RotatePhoneOverlay` (`rotate` anchor) with input off underneath; the installed Android app is locked sideways by the manifest and a runtime lock at launch. Full screen starts only from a tap on `<FullscreenToggle>` ([layout/FullscreenToggle.tsx](../../src/client/layout/FullscreenToggle.tsx)), which labels itself "Tap for full screen" briefly after the phone turns. iOS Safari has no JS API to remove its address bar, so on iOS the toggle opens an "Add to Home Screen" install dialog instead. See "Orientation policy".
+- **Phones play sideways.** An upright phone shows `RotatePhoneOverlay` (`rotate` anchor) with input off underneath; the installed Android app is locked sideways by the manifest and a runtime lock at launch. In game the first tap asks for full screen (`useFirstTapFullscreen`, through `useFullscreen`; lock: `useFirstTapFullscreen.test.tsx`); the cog has a Full screen switch. iOS Safari has no JS API to remove its address bar, so there the cog's switch and Install row open an "Add to Home Screen" hint instead. See "Orientation policy".
 
 - **Discrete (tap) HUD actions live on the right rail** ([layout/RightPanelHost.tsx](../../src/client/layout/RightPanelHost.tsx), UI language plan A3/A7). The speed dial (`SpeedDialMenu.tsx`) and the ☰ drawer toggle were retired once the rail landed: Map and Warp moved to the Galaxy page (`galaxy-tab-show-map`, `galaxy-tab-warp`; M still toggles the map), Panels became the rail itself, weapon choice is the HUD weapon strip (one chip per group), and the Build sidebar mount moved to `components/BuildSidebarHost.tsx`. The Build panel itself is `panels/BuildPanel.tsx` (U2-1): it is open while `rightPanel === 'build'` (the rail's Build item toggles it; entering Build opens nothing), so the rail highlight, Esc, its 1–9 / Q / E keys and the fire-control stand-down all read that one flag; leaving Build clears it (store `setBuildMode`). **Held/continuous controls (joystick, FIRE, BOOST) stay dedicated.** A HUD button a second simultaneous touch must reach binds `onTouchStart` through `useTouchClickActivate` (mobile browsers only synthesize a click for the primary touch) and drops the trailing synthesized click.
 
@@ -217,6 +216,7 @@ Concretely:
 ## History
 
 - **Building-panels A2b:** the selection card stopped floating over the selected object. It had been world-anchored since WS-9: `gameRafLoop` moved it every frame with `app/inspectorPlacement.ts` (whole panel on screen, clear of the HUD bands and the selection box, via `RendererFeedback.selectionScreenX/Y/Half`) and `app/inspectorHold.ts` (held still under a pointer so taps landed). All of that was retired when the card docked in the top-centre Slot.
+- **UI language U5-3:** the in-game top bar went: no AppHeader, no top-right toolbar and no full-screen chip in game. Settings and account are on the rail's cog; full screen comes from the first tap in game (the chip's "Tap for full screen" label went with it). `--app-bar-h` is 0 unless the homepage AppHeader is mounted.
 - **UI language U3-1 / U3-2:** the top-centre card was retired. Its quick actions moved to the left strip as icons; its readout and the remaining actions moved to the Details right panel (opened by ⚙). The pod's "Fly closer to open" hint went with it: Open shows only in reach.
 
 The bias: it's easier to hear "this is too small, bump it 10 %" than to undo the visual heaviness of a default-sized MUI component cluster. The 2026-05-12 ship-picker rebuild is the canonical example — `maxWidth="sm"` + full kind descriptions + 64 px silhouettes + 22 px stat chips read as "absolutely huge" in playtest; the rebuild dropped to `xs`, 36 px silhouettes, a one-line stat readout, and 11 px buttons.
