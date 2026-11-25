@@ -6,6 +6,7 @@ import { clipPolyAtX } from './galaxyMapMotion';
 import { arcSubpath } from '../arcSubpath';
 import { NEUTRAL_OWNER } from './sectorOwnership';
 import { GALAXY_SECTORS, axialToPixel, getSector, type SectorFeature } from '@core/galaxy/galaxy';
+import { hexVertices } from '@core/hex/hex';
 import { galaxyNebula, NEBULA_SECTOR_SPACING } from '@core/galaxy/nebulaField';
 import type { SectorControl } from '../../../shared-types/galaxySnapshot.js';
 import {
@@ -32,16 +33,8 @@ import {
  * {@link drawGalaxyStarfield} (per frame, allocation-free).
  */
 
-/** Pointy-top hex corners at angles 30°, 90°, …, 330° (vertex `i` → edge `i`
- *  runs to vertex `i+1`; locked against `HEX_EDGE_NEIGHBOUR_DIRS`). */
-export function hexVertices(size: number): Array<{ x: number; y: number }> {
-  const out: Array<{ x: number; y: number }> = [];
-  for (let i = 0; i < 6; i++) {
-    const angle = Math.PI / 6 + (i * Math.PI) / 3;
-    out.push({ x: size * Math.cos(angle), y: size * Math.sin(angle) });
-  }
-  return out;
-}
+/** Pointy-top hex corners (pure maths lifted to `@core/hex/hex`; re-exported). */
+export { hexVertices };
 
 type Verts = ReadonlyArray<{ x: number; y: number }>;
 
