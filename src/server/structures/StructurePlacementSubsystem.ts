@@ -140,6 +140,7 @@ export class StructurePlacementSubsystem {
     const pos = this.hooks.clamp(x, y);
     const rot = normaliseStructureRotation(opts?.rot);
     const mirror = opts?.mirror === true;
+    // TODO(bp-16): oriented box — axis-aligned at an odd-30° turn.
     const { hw, hh } = structureHalfExtents(kindId, rot);
 
     // No-overlap: reject if the new footprint would intersect an existing

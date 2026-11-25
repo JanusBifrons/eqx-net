@@ -83,7 +83,11 @@ export type { StructureSocket, MutStructureSocket } from './structureKinds/struc
 export {
   structureHullPoints,
   STRUCTURE_ROTATIONS,
+  STRUCTURE_ROTATION_STEP_DEG,
   normaliseStructureRotation,
+  normaliseStructureQuarterTurn,
+  playerStructureRotationStep,
+  snapPlayerStructureRotation,
   structureHalfExtents,
   structureHalfExtentsInto,
   structureLocalToWorld,

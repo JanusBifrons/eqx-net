@@ -13,11 +13,15 @@
  * The pure `computePlacementPose` is split out so the geometry is testable
  * without a live room.
  */
-import { getStructureKind, normaliseStructureRotation, type StructureKindId } from '../../shared-types/structureKinds.js';
+import {
+  getStructureKind, normaliseStructureRotation, playerStructureRotationStep, snapPlayerStructureRotation, type StructureKindId,
+} from '../../shared-types/structureKinds.js';
+import { useUIStore } from '../state/store.js';
 
-/** Phase V — the placement ghost's rotation in degrees (0/90/180/270), cycled
- *  with R. Module state (a discrete selection; renderer reads it through the
- *  placement preview's `angle`). */
+/** Phase V — the placement ghost's rotation in degrees, cycled with R: quarter
+ *  turns, or 30° steps on a `deck` room (base platforms). Module state (a
+ *  discrete selection; renderer reads it through the placement preview's
+ *  `angle`). */
 let placementRotationDeg = 0;
 export function getPlacementRotationDeg(): number {
   return placementRotationDeg;
@@ -25,9 +29,11 @@ export function getPlacementRotationDeg(): number {
 export function setPlacementRotationDeg(deg: number): void {
   placementRotationDeg = normaliseStructureRotation(deg);
 }
-/** Rotate the ghost a quarter turn (R). Returns the new rotation. */
-export function cyclePlacementRotation(): number {
-  placementRotationDeg = normaliseStructureRotation(placementRotationDeg + 90);
+/** Rotate the ghost one step (R / the strip's Rotate): a quarter turn, or 30°
+ *  when the room's `deck` flag is on (the server snaps by the same rule,
+ *  `snapPlayerStructureRotation`). Returns the new rotation. */
+export function cyclePlacementRotation(deck: boolean = useUIStore.getState().deck): number {
+  placementRotationDeg = snapPlayerStructureRotation(placementRotationDeg + playerStructureRotationStep(deck), deck);
   return placementRotationDeg;
 }
 /** Build mirror (base loop 4B): place the next building left-right flipped.
@@ -46,7 +52,7 @@ export function togglePlacementMirror(): boolean {
   return placementMirror;
 }
 /** Desktop placement keys (main-thread `App.tsx` keydown, only while placing):
- *  R rotates a quarter turn, F mirrors. True when the key was handled. */
+ *  R rotates one step (a quarter turn; 30° on a deck room), F mirrors. True when the key was handled. */
 export function handlePlacementKey(key: string): boolean {
   const k = key.toLowerCase();
   if (k === 'r') cyclePlacementRotation();

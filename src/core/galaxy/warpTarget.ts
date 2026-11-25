@@ -115,6 +115,7 @@ export function fillWarpStructureFootprint(
   gateBoxes: Float32Array | null | undefined,
   out: WarpStructureFootprint,
 ): WarpStructureFootprint {
+  // TODO(bp-16): oriented box — axis-aligned at an odd-30° turn.
   structureHalfExtentsInto(kind, rotationDeg, ext);
   out.x = x; out.y = y;
   out.halfW = ext.hw; out.halfH = ext.hh;

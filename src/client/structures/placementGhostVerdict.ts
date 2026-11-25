@@ -58,6 +58,7 @@ export class PlacementGhostVerdict {
         const e = swarm.get(id);
         if (e === undefined || e.shipKind === undefined || !isStructureKindId(e.shipKind)) continue;
         const rot = normaliseStructureRotation(e.angle * RAD_TO_DEG);
+        // TODO(bp-16): oriented box — axis-aligned at an odd-30° turn.
         const ext = structureHalfExtents(e.shipKind, rot);
         let fp = fps[n];
         if (fp === undefined) {

@@ -162,6 +162,16 @@ describe('SectorPersistence — structures survive a server restart', () => {
     expect('mirror' in restored[1]!, 'an unmirrored row writes no key').toBe(false);
   });
 
+  it('base platforms: a 30° turn survives persist → hydrate (degrees, no migration)', () => {
+    let restored: readonly SectorSnapshotStructure[] = [];
+    const { deps } = makeDeps([makeStructure({ kind: 'solar', rot: 30 }), makeStructure({ id: 'p2', kind: 'solar', rot: 270 })], (rows) => { restored = rows; });
+    const persistence = new SectorPersistence(deps);
+    persistence.persist();
+    persistence.hydrate();
+    expect(restored[0]!.rot).toBe(30);
+    expect(restored[1]!.rot, 'an old quarter turn keeps its value').toBe(270);
+  });
+
   it('a refinery breaking down a rock chunk keeps the chunk and its ore left through persist → hydrate', () => {
     const chunk = { product: 'chunk:rock', quality: 0, uid: 'rc-1', weight: 250, ore: { minerals: 7000 } };
     const struct = makeStructure({ kind: 'refinery', recipe: 'refine_rock_chunk', prodLoaded: true, prodProgress: 3, prodChunk: chunk });

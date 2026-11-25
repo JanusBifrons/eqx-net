@@ -265,6 +265,7 @@ export class SwarmSpawner {
       const rec = this.registry.get(s.id);
       if (rec) {
         rec.shipKind = s.shipKind;
+        // TODO(bp-16): oriented box — axis-aligned at an odd-30° turn.
         const ext = structureHalfExtents(s.shipKind, ((s.angle ?? 0) * 180) / Math.PI);
         rec.halfW = ext.hw;
         rec.halfH = ext.hh;

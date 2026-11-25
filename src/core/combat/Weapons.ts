@@ -130,6 +130,7 @@ export function segmentNearCircle(
  * is an axis-aligned box in world space). Slab clip. Returns the distance to
  * the entry point (0 when the ray starts inside), or null on a miss.
  * Allocation-free.
+ * TODO(bp-16): oriented box — a 30° deck turn is still hit as this axis box.
  */
 export function rayHitsBox(
   fromX: number, fromY: number,
