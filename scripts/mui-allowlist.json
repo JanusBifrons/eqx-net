@@ -49,7 +49,6 @@
   "src/client/components/WarpInWarningBanner.tsx",
   "src/client/components/WarpPicker.tsx",
   "src/client/components/WarpScreen.tsx",
-  "src/client/components/WhileAwayDialog.tsx",
   "src/client/components/buildCategories.tsx",
   "src/client/components/hangar/HangarWindow.tsx",
   "src/client/components/sectorPanelParts.tsx",

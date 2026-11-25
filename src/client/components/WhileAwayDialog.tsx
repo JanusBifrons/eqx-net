@@ -3,10 +3,12 @@
  * signed-in player comes back into the game, this summarises what happened to
  * their trade since they last looked (settled / raided / skipped, net credits)
  * from `GET /trade/economy` — the truth, not the notices they missed (#16).
- * A localStorage watermark marks what has been seen.
+ * A localStorage watermark marks what has been seen. Drawn in the one Window
+ * (`EqxWindow`): full screen on a phone, centred on desktop.
  */
-import { memo, useEffect, useState } from 'react';
-import { Box, Button, Dialog, DialogActions, DialogContent, DialogTitle, Typography } from '@mui/material';
+import { memo, useEffect, useState, type CSSProperties } from 'react';
+import { EqxButton, EqxWindow } from '../../ui/index.js';
+import { HUD } from '../hud/tokens';
 import { loadStoredPlayerId } from '../identity/token';
 import { loadToken } from '../auth/tokenStorage';
 import { fetchEconomy, loadTradeLastSeen, saveTradeLastSeen } from '../net/tradeApi';
@@ -14,12 +16,12 @@ import { summarizeHistory, unseenHistory } from '../net/tradeView';
 import type { TradeHistoryEntry } from '../../shared-types/economy';
 import { useUIStore } from '../state/store';
 
-const PAPER_PROPS = { sx: { bgcolor: '#0d1117', color: '#dde', border: '1px solid rgba(0,255,136,0.25)' } } as const;
-const TITLE_SX = { fontSize: 14, color: '#00ff88', pb: 0.5 } as const;
-const SUMMARY_SX = { fontSize: 12, mb: 1 } as const;
-const ROW_SX = { fontSize: 11, color: '#9aa0b4', py: '1px' } as const;
-const RAIDED_ROW_SX = { ...ROW_SX, color: '#ff8a8a' } as const;
-const BTN_SX = { fontSize: 11 } as const;
+const W = HUD.window;
+const BODY_STYLE: CSSProperties = { padding: `${W.padY}px ${W.padX}px`, fontSize: W.font, color: HUD.color.ink };
+const SUMMARY_STYLE: CSSProperties = { margin: `0 0 ${W.padY}px` };
+const ROW_STYLE: CSSProperties = { margin: 0, padding: '1px 0', fontSize: W.smallFont, color: HUD.color.inkDim };
+const RAIDED_ROW_STYLE: CSSProperties = { ...ROW_STYLE, color: HUD.color.danger };
+const GROW_STYLE: CSSProperties = { flex: 1 };
 
 export const WhileAwayDialog = memo(function WhileAwayDialog(): JSX.Element | null {
   const [entries, setEntries] = useState<TradeHistoryEntry[]>([]);
@@ -49,22 +51,22 @@ export const WhileAwayDialog = memo(function WhileAwayDialog(): JSX.Element | nu
     st.setDrawerTab('trade'); // opens the Trade panel too
   };
   return (
-    <Dialog open onClose={close} maxWidth="xs" fullWidth PaperProps={PAPER_PROPS} data-testid="while-away-dialog">
-      <DialogTitle sx={TITLE_SX}>While you were away</DialogTitle>
-      <DialogContent>
-        <Typography sx={SUMMARY_SX} data-testid="while-away-summary">{summarizeHistory(entries)}</Typography>
-        <Box>
-          {entries.slice(0, 6).map((e) => (
-            <Typography key={`${e.dealId}-${e.atMs}`} sx={e.outcome === 'raided' ? RAIDED_ROW_SX : ROW_SX}>
-              {e.note}
-            </Typography>
-          ))}
-        </Box>
-      </DialogContent>
-      <DialogActions>
-        <Button size="small" sx={BTN_SX} onClick={openTrade} data-testid="while-away-open-trade">Open Trade</Button>
-        <Button size="small" sx={BTN_SX} onClick={close} data-testid="while-away-close">OK</Button>
-      </DialogActions>
-    </Dialog>
+    <EqxWindow
+      open onClose={close} testId="while-away-dialog" closeTestId="while-away-x" title="While you were away"
+      footer={(
+        <>
+          <span style={GROW_STYLE} />
+          <EqxButton onClick={openTrade} data-testid="while-away-open-trade">Open Trade</EqxButton>
+          <EqxButton tone="primary" onClick={close} data-testid="while-away-close">OK</EqxButton>
+        </>
+      )}
+    >
+      <div style={BODY_STYLE}>
+        <p style={SUMMARY_STYLE} data-testid="while-away-summary">{summarizeHistory(entries)}</p>
+        {entries.slice(0, 6).map((e) => (
+          <p key={`${e.dealId}-${e.atMs}`} style={e.outcome === 'raided' ? RAIDED_ROW_STYLE : ROW_STYLE}>{e.note}</p>
+        ))}
+      </div>
+    </EqxWindow>
   );
 });
