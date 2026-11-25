@@ -7,7 +7,7 @@ import { RIG_DEFS, RIG_FAMILIES, rigById, rigForStructureKind } from './rigCatal
 /** Kind -> rig id before the split (the one map in rigCatalogue.ts), plus the
  *  rigs added since (Family 1: the solar tracker, the reactor fans;
  *  F2: the territory lock beacon; solid doors: the gate and airlock doors;
- *  F3J: the shipyard build frame). */
+ *  F3J: the shipyard build frame; Astrolabe A1: the alien gate rings). */
 const BEFORE_SPLIT: Readonly<Record<string, string>> = {
   freight_dock: 'dock-crane',
   capital: 'capital-crane',
@@ -18,6 +18,7 @@ const BEFORE_SPLIT: Readonly<Record<string, string>> = {
   shield_gate: 'gate-doors',
   shield_airlock: 'airlock-doors',
   shipyard: 'shipyard-frame',
+  alien_gate: 'alien-astrolabe',
 };
 
 describe('rig family files', () => {
@@ -39,6 +40,7 @@ describe('rig family files', () => {
     expect(Object.fromEntries(owner)).toEqual({
       'capital-crane': 'core', 'sandbox-door-turret': 'turrets', 'dock-crane': 'transport', 'solar-tracker': 'power', 'reactor-fans': 'power',
       'lock-beacon': 'fences', 'gate-doors': 'fences', 'airlock-doors': 'fences', 'shipyard-frame': 'heavyIndustry',
+      'alien-astrolabe': 'transport',
     });
   });
 
