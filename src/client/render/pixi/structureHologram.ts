@@ -29,6 +29,7 @@ import { buildStructureVisual } from './structureVisuals.js';
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import { interpBuildPct } from './buildBarInterp.js';
 import { CONNECTOR_CONSTRUCTION_COLOR, PREVIEW_BLOCKED_COLOR } from './connectorVisual.js';
+import { deckSlotOutline, type DeckSlot } from '../../../core/hex/deckSnap.js';
 
 /** The hologram's cyan: the construction-flow cyan (connectors, build bar). */
 export const HOLOGRAM_COLOR = CONNECTOR_CONSTRUCTION_COLOR;
@@ -96,6 +97,26 @@ function holoArtFor(kindId: string | undefined, radius: number, style: string | 
   return a;
 }
 
+/** Base platforms: the deck slot outline drawn under the placement ghost
+ *  (white, tinted with the ghost). One shared context per slot shape, built
+ *  once; Pixi space (game y flipped). */
+const SLOT_OUTLINE_W = 8;
+const slotArt = new Map<string, GraphicsContext>();
+const SMALL_KEYS = ['small0', 'small1', 'small2'] as const;
+function slotArtFor(slot: DeckSlot, rhombus: number): GraphicsContext {
+  const key = slot === 'small' ? SMALL_KEYS[rhombus] ?? 'small0' : slot;
+  let c = slotArt.get(key);
+  if (c) return c;
+  c = new GraphicsContext();
+  for (const poly of deckSlotOutline(slot, rhombus)) {
+    const pts: number[] = [];
+    for (let i = 0; i < poly.length; i += 2) pts.push(poly[i]!, -poly[i + 1]!);
+    c.poly(pts, true).fill({ color: 0xffffff, alpha: 0.06 }).stroke({ color: 0xffffff, alpha: 0.7, width: SLOT_OUTLINE_W });
+  }
+  slotArt.set(key, c);
+  return c;
+}
+
 /** Local x of the print line for build fraction `pct` across a footprint of
  *  half-width `halfW`: 0 → the left edge, 0.5 → the middle, 1 → the right. */
 export function printLineX(halfW: number, pct: number): number {
@@ -145,6 +166,24 @@ export class StructureHologram extends Container {
     this.line.visible = true;
     this.line.x = printLineX(this.halfW, (t % GHOST_SWEEP_MS) / GHOST_SWEEP_MS);
     this.alpha = 0.88 + 0.12 * Math.sin((t / GHOST_PULSE_MS) * 2 * Math.PI);
+  }
+
+  /** The deck slot outline (placement ghost on a deck room); made on first use. */
+  private slot: Graphics | null = null;
+
+  /** Per frame, the placement ghost only: show the deck slot it snapped to
+   *  (null = no deck: hidden). The outline stays square to the deck, so it
+   *  undoes this container's turn and build mirror. Call after setting them.
+   *  No allocation after the first use of each slot shape. */
+  setDeckSlot(slot: DeckSlot | null, rhombus: number): void {
+    if (slot === null) { if (this.slot) this.slot.visible = false; return; }
+    if (!this.slot) { this.slot = new Graphics(); this.addChildAt(this.slot, 0); }
+    this.slot.context = slotArtFor(slot, rhombus);
+    this.slot.visible = true;
+    // Parent = R(rot)·S(m): the child R(-rot·m)·S(m) cancels it.
+    const m = this.scale.x < 0 ? -1 : 1;
+    this.slot.scale.x = m;
+    this.slot.rotation = -this.rotation * m;
   }
 
   /** Per frame: place the print line and the mask for `buildPct`. No allocation. */

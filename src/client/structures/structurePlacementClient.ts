@@ -102,6 +102,8 @@ export interface PlacementPreview {
    *  (`isHeldOnSent`). Drawn dim with no verdict; never sets `pending`, so
    *  pointer capture stays on. */
   held?: boolean;
+  /** Room flag `deck` (base platforms): the live ghost snaps to its deck slot. */
+  deck?: boolean;
 }
 
 /**

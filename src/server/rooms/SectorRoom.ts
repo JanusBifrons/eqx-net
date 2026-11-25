@@ -2527,6 +2527,7 @@ export class SectorRoom extends Room<SectorState> {
       structureGrid: () => this.structureGrid,
       sectorPersistence: () => this.sectorPersistence,
       testSeedStorageHold: () => this.testSeedStorageHold,
+      deck: () => this.state.deck,
       findPacked: (owner, product) => this.findPacked(owner, product),
       logger,
       fleetMsgAllowed: (sid) => this.fleetHooks.fleetMsgAllowed(sid),
