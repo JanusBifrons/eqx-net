@@ -48,6 +48,8 @@ import { structureLinksBoundBySockets } from '../leveling/structureLevel.js';
 import { CABLE_BODY_WIDTH, MIN_CABLE_LENGTH } from './structureGridConstants.js';
 import { polylinesWithin } from './cableClearance.js';
 import { keepClearBox } from './placementRules.js';
+import { DECK_LINK_NONE, deckLinkKind } from './deckLinks.js';
+import { flattenDeckSeamCable } from './deckCablePath.js';
 
 /** Facing-test tolerance (world units of dot product): a socket at right
  *  angles to its partner counts as facing it, whatever the float noise. */
@@ -380,6 +382,7 @@ export function pickCableSocketPair(
   usedB = 0,
   adjacency?: ReadonlyMap<string, readonly Connection[]>,
   skip?: Connection,
+  deck = false,
 ): CanConnectReason | null {
   const la = structureSockets(a.kind);
   const lb = structureSockets(b.kind);
@@ -437,7 +440,7 @@ export function pickCableSocketPair(
     endB.x = bx[j]!; endB.y = by[j]!; endB.nx = bNx[j]!; endB.ny = bNy[j]!;
     flattenCableCurve(endA, aAny, endB, bAny, pickPoly, pickBox);
     if (isCablePolylineBlocked(a, b, pickPoly, pickBox, nodes, obstacles)) continue;
-    if (adjacency !== undefined && cableCrossesExisting(a, b, pickPoly, pickBox, adjacency, nodes, skip)) {
+    if (adjacency !== undefined && cableCrossesExisting(a, b, pickPoly, pickBox, adjacency, nodes, skip, deck)) {
       if (crossI === CABLE_NO_SOCKET) { crossI = i; crossJ = j; }
       continue;
     }
@@ -462,6 +465,8 @@ export function pickCableSocketPair(
  * curve `pickCableSocketPair` tested: any-side ends short-tailed. A fence
  * link (either end `CABLE_NO_SOCKET`) is the straight centre-to-centre line,
  * written as the same fixed-length polyline so callers treat both alike.
+ * With `deck` (the room flag) a deck link (`deckLinkKind`) is its seam path
+ * (`flattenDeckSeamCable`, centre to centre; base platforms slice 12).
  * Allocation-free.
  */
 export function flattenLinkCable(
@@ -469,7 +474,9 @@ export function flattenLinkCable(
   b: GridNode, socketB: number,
   out: Float64Array,
   box: CableBox,
+  deck = false,
 ): void {
+  if (deck && deckLinkKind(a, b) !== DECK_LINK_NONE && flattenDeckSeamCable(a.x, a.y, b.x, b.y, out, box, CABLE_CURVE_SEGMENTS)) return;
   const la = structureSockets(a.kind), lb = structureSockets(b.kind);
   const sa = socketA === CABLE_NO_SOCKET ? undefined : la[socketA];
   const sb = socketB === CABLE_NO_SOCKET ? undefined : lb[socketB];
@@ -528,7 +535,8 @@ function linkMayReach(n: GridNode, o: GridNode, box: CableBox, pad: number): boo
  * and a connector's faces sit more than a body width apart, so only a cable
  * leaving along the same path (the same connector face) clashes. Fence links,
  * links with an end missing from `nodes`, a link joining `a` and `b` itself
- * (its cable being re-picked) and `skip` (a link being moved) are skipped. Each link is
+ * (its cable being re-picked), `skip` (a link being moved) and, with `deck`, a deck
+ * link (its seam cable shares seams by design) are skipped. Each link is
  * visited once (from its lower-id end; `adjacency` lists a link under both
  * ends), box-tested before it is flattened. Allocation-free.
  */
@@ -540,6 +548,7 @@ export function cableCrossesExisting(
   adjacency: ReadonlyMap<string, readonly Connection[]>,
   nodes: ReadonlyMap<string, GridNode>,
   skip?: Connection,
+  deck = false,
 ): boolean {
   const pad = CABLE_BODY_WIDTH;
   for (const id of adjacency.keys()) {
@@ -553,6 +562,7 @@ export function cableCrossesExisting(
       if (skip !== undefined && ((id === skip.aId && other === skip.bId) || (id === skip.bId && other === skip.aId))) continue;
       const n = nodes.get(id), o = nodes.get(other);
       if (n === undefined || o === undefined || isFenceLink(n, o) || !linkMayReach(n, o, box, pad)) continue;
+      if (deck && deckLinkKind(n, o) !== DECK_LINK_NONE) continue;
       CABLE_CROSS_STATS.links++;
       flattenLinkCable(n, link.socketAt(id), o, link.socketAt(other), crossPoly, crossBox);
       if (crossBox.x1 + pad < box.x0 || crossBox.x0 - pad > box.x1 || crossBox.y1 + pad < box.y0 || crossBox.y0 - pad > box.y1) continue;

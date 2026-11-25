@@ -32,7 +32,7 @@ import {
 } from './connectorVisual.js';
 import { drawLineLookFlow, type LineLook } from './connectorLineLooks.js';
 import {
-  LinkCableCache, drawPreviewCable, drawSocketCableFlow, fillLinkCable, fillStraight, makeLinkCable, noteCableFlow,
+  LinkCableCache, drawPreviewCable, drawSocketCableFlow, fillPreviewCable, makeLinkCable, noteCableFlow,
 } from './connectorCables.js';
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import {
@@ -353,6 +353,7 @@ export class ConnectorRenderer {
   update(mirror: RenderMirror, scale: number, nowMs: number): void {
     const g = this.gfx;
     g.clear();
+    this.cables.deck = mirror.deckPlates?.deck === true; // base platforms: deck links draw their seam path
     const structures = mirror.structures;
     const swarm = mirror.swarm;
     // The preview can run even with zero PLACED structures (the ghost still
@@ -381,7 +382,7 @@ export class ConnectorRenderer {
     // The new fences take over the walls once ready (and cables replace the
     // thin lines): fold both into the signature so the static layer redraws.
     const vb = this.viewBounds;
-    this.staticLayer.refresh(structures, swarm, scale, vb, (this._fxWallsOn ? 0.5 : 0) + (this.socketCables ? 0.25 : 0));
+    this.staticLayer.refresh(structures, swarm, scale, vb, (this._fxWallsOn ? 0.5 : 0) + (this.socketCables ? 0.25 : 0) + (this.cables.deck ? 0.125 : 0));
     this.builtTurretRangeCount = this.staticLayer.ringCount;
     this.lastBuiltTurretRangeRadius = this.staticLayer.ringRadius;
     this.lastBuiltTurretRangeWidth = this.staticLayer.ringWidth;
@@ -777,8 +778,7 @@ export class ConnectorRenderer {
     lineKind: PreviewLineKind, scale: number,
   ): void {
     const c = this._previewCable;
-    if (this.socketCables && sockA !== CABLE_NO_SOCKET && sockB !== CABLE_NO_SOCKET) fillLinkCable(c, ghost, sockA, node, sockB);
-    else fillStraight(c, ax, ay, node.x, -node.y); // Pixi screen space is Y-down; world is Y-up.
+    fillPreviewCable(c, this.socketCables, this.cables.deck, ghost, sockA, node, sockB, ax, ay);
     drawPreviewCable(this.gfx, c, previewLineVisualParams(lineKind, scale));
   }
 
