@@ -23,6 +23,7 @@ import type { GridObstacle } from '@core/structures/Grid';
 import type { PlacementRejection } from '@core/structures/placementRules';
 import { PlacementGhostVerdict, type GhostPose } from '../../structures/placementGhostVerdict.js';
 import { StructureHologram } from './structureHologram.js';
+import { snapGhostToDeck } from './placementDeckSnap.js';
 
 export interface PlacementGhostCtx {
   /** Structure placement ghost (Issue 5) — the plan as a bright hologram
@@ -120,14 +121,24 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
     }
     // Live ghost: draw at the pointer-chosen world point once positioned,
     // else the ahead-of-ship preview pose. Pending ghost: the SENT point.
-    const gx = pendingGhost ? preview.x : (ctx.input._placementChosenX ?? preview.x);
-    const gy = pendingGhost ? preview.y : (ctx.input._placementChosenY ?? preview.y);
+    let gx = pendingGhost ? preview.x : (ctx.input._placementChosenX ?? preview.x);
+    let gy = pendingGhost ? preview.y : (ctx.input._placementChosenY ?? preview.y);
+    // Base platforms: on a deck room the live ghost sits on its kind's deck
+    // slot (the server snaps the same way); a chosen point snaps in place too,
+    // so the centre seed and the ahead-of-ship pose land on a slot.
+    const snap = snapGhostToDeck(preview, gx, gy);
+    if (snap) {
+      gx = snap.x; gy = snap.y;
+      if (ctx.input._placementChosenX !== null) { ctx.input._placementChosenX = gx; ctx.input._placementChosenY = gy; }
+    }
     ctx.placementGhost.visible = true;
     ctx.placementGhost.x = gx;
     ctx.placementGhost.y = -gy; // Y-flip
     ctx.placementGhost.rotation = -preview.angle;
     // Build mirror (4B): flip in the local frame, then rotate (structureLocalToWorld).
     ctx.placementGhost.scale.x = preview.mirror === true ? -1 : 1;
+    // The slot outline under the ghost (after the turn + mirror it undoes).
+    ctx.placementGhost.setDeckSlot(snap ? getStructureKind(preview.kind).deckSlot : null, snap ? snap.rhombus : -1);
     // Red / green before the click: the server's own overlap rule at the drawn
     // pose (structures, landing pads, rocks). The pending ghost is already sent.
     let rejection: PlacementRejection | null = null;

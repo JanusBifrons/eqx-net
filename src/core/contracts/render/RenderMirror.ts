@@ -240,8 +240,10 @@ export interface RenderMirror {
    * discrete `placementKind` id stays in Zustand. `null`/absent ⇒ no preview.
    * `kind` is a StructureKindId; `x`/`y` are GAME-space (Y-up); `angle` rad.
    * Structured-cloneable (plain object) so it crosses the worker boundary.
+   * `deck` = the room's base-platforms flag: the live ghost snaps to its
+   * kind's deck slot (`snapPlacementToDeck`, same as the server).
    */
-  pendingPlacementPreview?: { kind: string; x: number; y: number; angle: number; mirror?: boolean; pending?: boolean; held?: boolean } | null;
+  pendingPlacementPreview?: { kind: string; x: number; y: number; angle: number; mirror?: boolean; pending?: boolean; held?: boolean; deck?: boolean } | null;
   /**
    * Helm move marker (owner 2026-11-12): the local pilot's active helm course
    * point, GAME-space, while they fly a capital under a helm order (never for

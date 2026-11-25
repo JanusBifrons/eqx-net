@@ -185,6 +185,8 @@ export function updateLocalShipMirror(ctx: MirrorPassCtx, frameNowMs: number | u
         placementChosen.worldY,
       );
       // The next ghost right after Place: dim, no verdict, Place refused (held).
+      // Base platforms: the live ghost snaps to its deck slot on a deck room.
+      ctx.placementPreviewScratch.deck = useUIStore.getState().deck;
       setPlacementHeld(placementStatus === 'active' && ctx.placementPreviewScratch.held === true);
       if (placementStatus === 'active' || placementStatus === 'pending') {
         ctx.mirror.pendingPlacementPreview = ctx.placementPreviewScratch;
