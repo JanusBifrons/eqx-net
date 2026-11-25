@@ -88,7 +88,9 @@ export function createShipBody(world: RAPIER.World, kind: ShipKind, x: number, y
  * Obstacles do not have a `ShipKind` and never go through `applyInput`. Their
  * physics is governed entirely by Rapier's solver plus any AI-driven
  * `applyImpulse` calls from drone behaviours. With `parts` it is a multi-part
- * body (gates).
+ * body (gates). An EMPTY `parts` list (the Ancients' gate, which has no
+ * solid part at all; teleporter redesign A3) is a body with no collider:
+ * nothing at it blocks. Omit `parts` for the vertices / ball collider.
  */
 export function createObstacleBody(
   world: RAPIER.World,
@@ -121,6 +123,7 @@ export function createObstacleBody(
   // Gates (phase V): a body made of SEVERAL convex parts (two posts, or an
   // airlock's posts + side walls) so ships can pass through the gap between
   // them. Density spreads the requested mass over the total part area.
+  if (parts && parts.length === 0) return body; // no solid part (see above)
   if (parts && parts.length > 0) {
     let totalArea = 0;
     for (const p of parts) totalArea += polygonArea(p);

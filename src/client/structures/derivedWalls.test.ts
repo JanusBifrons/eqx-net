@@ -9,7 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { visitDerivedWalls, type DerivedWallVisitor } from './derivedWalls.js';
 import type { StructureRenderState, SwarmRenderState } from '../../core/contracts/IRenderer.js';
 import { GATE_POSTS } from '../../shared-types/structureKinds/gatePosts.js';
-import { PAD_SPECS, TP_PHASE } from '../../shared-types/teleport.js';
+import { TP_PHASE, padIrisSpanCount } from '../../shared-types/teleport.js';
 
 function st(connTo: number[], extra: Partial<StructureRenderState> = {}): StructureRenderState {
   return {
@@ -67,7 +67,7 @@ describe('visitDerivedWalls', () => {
     }
     const sealed = st([], { teleport: { phase: TP_PHASE.SEALED } as StructureRenderState['teleport'] });
     const gate = collect(new Map([[7, sealed]]), new Map([[7, sw(0, 0, 'alien_gate')]]));
-    expect(gate).toHaveLength(PAD_SPECS.alien_gate.posts);
+    expect(gate).toHaveLength(padIrisSpanCount('alien_gate'));
     expect(gate.every((w) => w.key < 0 && w.blocking && !w.open)).toBe(true);
     const idle = st([], { teleport: { phase: TP_PHASE.IDLE } as StructureRenderState['teleport'] });
     expect(collect(new Map([[7, idle]]), new Map([[7, sw(0, 0, 'alien_gate')]])).every((w) => !w.blocking && w.open)).toBe(true);

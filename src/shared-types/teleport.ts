@@ -10,6 +10,7 @@
  */
 import { z } from 'zod';
 import { GOOD_IDS } from './goods.js';
+import { ALIEN_GATE_SEAL_APOTHEM, ALIEN_GATE_SEAL_SPANS, alienGateSealSpan } from './alienGateSeal.js';
 
 export const TELEPORTER_KINDS = ['teleporter', 'teleporter_large', 'alien_gate', 'pocket_pad'] as const;
 export type TeleporterKind = (typeof TELEPORTER_KINDS)[number];
@@ -37,9 +38,10 @@ export interface PadSpec {
   readonly padRadius: number;
   /** Weight the pad's own hold carries. */
   readonly padCapacity: number;
-  /** Side of each corner post (the solid parts; ships enter between them). */
+  /** Side of each corner post (the solid parts; ships enter between them).
+   *  The Ancients' gate has none; its value only pads `padHalfExtent`. */
   readonly post: number;
-  /** Number of posts round the pad. */
+  /** Number of posts round the pad (0: the Ancients' gate, redesign A3). */
   readonly posts: number;
 }
 
@@ -51,7 +53,8 @@ export const PAD_SPECS: Readonly<Record<TeleporterKind, PadSpec>> = Object.freez
   teleporter: { padRadius: 320, padCapacity: 400, post: 80, posts: 4 },
   teleporter_large: { padRadius: 900, padCapacity: 4000, post: 160, posts: 8 },
   // v4 A — bigger than a small pad; no hold (alien gates carry ships only).
-  alien_gate: { padRadius: 640, padCapacity: 0, post: 100, posts: 12 },
+  // Redesign A3 — no posts: its outer ring seals it (`alienGateSeal.ts`).
+  alien_gate: { padRadius: 640, padCapacity: 0, post: 100, posts: 0 },
   // W1b — a small pad's size; ships only.
   pocket_pad: { padRadius: 320, padCapacity: 0, post: 80, posts: 4 },
 });
@@ -210,7 +213,8 @@ export function padHalfExtent(kind: TeleporterKind): number {
  * Teleporter redesign T1: the pad kinds whose pad is a walled CHAMBER. Corner
  * towers, solid walls, and a doorway at each local ±y end closed by a pair of
  * blast-door leaves (rig `tp-doors`); ships enter and leave only through the
- * doorways, along local y. The Ancients' gate keeps its open ring of posts.
+ * doorways, along local y. The Ancients' gate has no posts (redesign A3): its
+ * outer ring closes into a solid circle while SEALED (`alienGateSeal.ts`).
  */
 export function isPadChamberKind(kind: string | null | undefined): kind is 'teleporter' | 'teleporter_large' | 'pocket_pad' {
   return kind === 'teleporter' || kind === 'teleporter_large' || kind === 'pocket_pad';
@@ -241,19 +245,8 @@ interface PostLayout {
   readonly sides: readonly PadSide[];
 }
 
-/** Posts round the perimeter, `posts / 4` per side starting at each corner
- *  (the Ancients' gate ring). */
-function ringLayout(k: TeleporterKind, h: number): PostLayout {
-  const perSide = Math.max(1, Math.round(PAD_SPECS[k].posts / 4));
-  const step = (2 * h) / perSide;
-  const pts: Array<readonly [number, number]> = [];
-  const sides: PadSide[] = [];
-  for (let i = 0; i < perSide; i++) { pts.push([-h + i * step, -h]); sides.push(0); }
-  for (let i = 0; i < perSide; i++) { pts.push([h, -h + i * step]); sides.push(1); }
-  for (let i = 0; i < perSide; i++) { pts.push([h - i * step, h]); sides.push(2); }
-  for (let i = 0; i < perSide; i++) { pts.push([-h, h - i * step]); sides.push(3); }
-  return { pts, sides };
-}
+/** The Ancients' gate has no posts (redesign A3). */
+const NO_POSTS: PostLayout = Object.freeze({ pts: Object.freeze([]), sides: Object.freeze([]) });
 
 /** A chamber's towers: the four corners, and any more spread evenly along the
  *  two side walls (local ±x), never on the doorway ends (±y). Each corner
@@ -274,9 +267,8 @@ const POST_LAYOUT: Readonly<Record<TeleporterKind, PostLayout>> = (() => {
   const out = {} as Record<TeleporterKind, PostLayout>;
   for (const k of TELEPORTER_KINDS) {
     const h = padHalfExtent(k) - PAD_SPECS[k].post / 2;
-    // Perimeter order (each post's neighbour is the next one), so the iris
-    // spans run post to post.
-    out[k] = isPadChamberKind(k) ? chamberLayout(k, h) : ringLayout(k, h);
+    // Perimeter order (each tower's neighbour is the next one).
+    out[k] = isPadChamberKind(k) ? chamberLayout(k, h) : NO_POSTS;
   }
   return out;
 })();
@@ -294,10 +286,12 @@ export function padPostCenters(kind: TeleporterKind): ReadonlyArray<readonly [nu
 
 /** The pad is the square |dx|, |dy| ≤ padRadius inside the posts, in the
  *  pad's local frame: a chamber turned by `angle` (rad) turns its floor too.
- *  The Ancients' gate ignores `angle` (its open ring is symmetric). */
+ *  The Ancients' gate (redesign A3) rides everyone inside its seal: the disc
+ *  of radius `ALIEN_GATE_SEAL_APOTHEM`, so `angle` does not matter. */
 export function onPad(kind: TeleporterKind, cx: number, cy: number, x: number, y: number, angle = 0): boolean {
-  const r = PAD_SPECS[kind].padRadius;
   let dx = x - cx, dy = y - cy;
+  if (isRoundPadKind(kind)) return dx * dx + dy * dy <= ALIEN_GATE_SEAL_APOTHEM * ALIEN_GATE_SEAL_APOTHEM;
+  const r = PAD_SPECS[kind].padRadius;
   if (angle !== 0 && isPadChamberKind(kind)) {
     const c = Math.cos(angle), s = Math.sin(angle);
     const lx = dx * c + dy * s;
@@ -307,20 +301,32 @@ export function onPad(kind: TeleporterKind, cx: number, cy: number, x: number, y
   return Math.abs(dx) <= r && Math.abs(dy) <= r;
 }
 
-/** One iris span (local frame): the gap between post `i` and post `i + 1`,
- *  from one post's edge to the next's. Spans close the pad at SEALED. */
+/** Redesign A3 — a pad whose ride area and seal are round (the Ancients'
+ *  gate): the disc inside its sealed outer ring, not a square. */
+export function isRoundPadKind(kind: string | null | undefined): kind is 'alien_gate' {
+  return kind === 'alien_gate';
+}
+
+/** The closing push's `half` for a pad (`PadForceField.half`): the seal's
+ *  apothem on a round pad, else the square pad's half side. */
+export function padPushHalf(kind: TeleporterKind): number {
+  return isRoundPadKind(kind) ? ALIEN_GATE_SEAL_APOTHEM : PAD_SPECS[kind].padRadius;
+}
+
+/** How many iris spans a pad has. Only the Ancients' gate has an iris: its
+ *  outer ring, sealed as `ALIEN_GATE_SEAL_SPANS` chords. A chamber pad is
+ *  sealed by its blast doors (redesign T2). */
+export function padIrisSpanCount(kind: TeleporterKind): number {
+  return isRoundPadKind(kind) ? ALIEN_GATE_SEAL_SPANS : 0;
+}
+
+/** Iris span `i` (local frame), `0 ≤ i < padIrisSpanCount(kind)`: one chord of
+ *  the Ancients' gate's seal round its outer ring (`alienGateSealSpan`); the
+ *  spans close a loop. Solid only while SEALED. The ONE source for the
+ *  server's iris walls and the client's derived walls (#15). */
 export function padIrisSpanLocal(kind: TeleporterKind, i: number, out: { ax: number; ay: number; bx: number; by: number }): void {
-  const pts = POST_LAYOUT[kind].pts;
-  const a = pts[i % pts.length]!;
-  const b = pts[(i + 1) % pts.length]!;
-  const half = PAD_SPECS[kind].post / 2;
-  const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-  const ux = (b[0] - a[0]) / len;
-  const uy = (b[1] - a[1]) / len;
-  out.ax = a[0] + ux * half;
-  out.ay = a[1] + uy * half;
-  out.bx = b[0] - ux * half;
-  out.by = b[1] - uy * half;
+  if (!isRoundPadKind(kind)) throw new Error(`padIrisSpanLocal: ${kind} has no iris`);
+  alienGateSealSpan(i, out);
 }
 
 // ── The doors push (T2; applied by the physics world on BOTH sides, #15) ─────
@@ -343,15 +349,28 @@ export const PAD_PUSH_MARGIN = 20;
  * the walls are solid, so a ship can only straddle a doorway. The push runs
  * along the doorway axis (local y) only, never sideways into a wall, and
  * only for a ship whose centre is within the pad's width across that axis.
- * Absent: the open square pad (the Ancients' gate), unchanged.
+ * Absent: the open square pad.
+ *
+ * `round` (the Ancients' gate, `isRoundPadKind`; redesign A3): the edge is
+ * the circle of radius `half` (its seal, `padPushHalf`), and the push runs
+ * along the radius, in or out.
  */
 export function padPushDir(
   cx: number, cy: number, half: number, x: number, y: number, shipRadius: number, out: { x: number; y: number },
-  doorAngle?: number,
+  doorAngle?: number, round = false,
 ): boolean {
   const dx = x - cx;
   const dy = y - cy;
   if (doorAngle !== undefined) return doorwayPushDir(dx, dy, half, shipRadius, doorAngle, out);
+  if (round) {
+    const d = Math.sqrt(dx * dx + dy * dy);
+    const depth = half - d; // > 0 inside
+    if (Math.abs(depth) > shipRadius + PAD_PUSH_MARGIN || d < 1e-6) return false;
+    const sign = depth >= 0 ? -1 : 1; // inside → toward the centre
+    out.x = (dx / d) * sign;
+    out.y = (dy / d) * sign;
+    return true;
+  }
   const ax = Math.abs(dx);
   const ay = Math.abs(dy);
   const depth = half - Math.max(ax, ay); // > 0 on the pad
