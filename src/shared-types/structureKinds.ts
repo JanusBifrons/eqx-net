@@ -90,6 +90,11 @@ export {
   snapPlayerStructureRotation,
   structureHalfExtents,
   structureHalfExtentsInto,
+  structureRotationCosSinInto,
+  isStructureQuarterTurn,
+  orientedBoxBoundsInto,
+  orientedBoxesOverlap,
+  orientedBoxOverlapsCircle,
   structureLocalToWorld,
   structureWorldToLocal,
 } from './structureKinds/geometry.js';

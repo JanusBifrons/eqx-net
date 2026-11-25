@@ -23,7 +23,10 @@ import {
   structureKindToIndex,
   type StructureKindId,
   normaliseStructureRotation,
+  orientedBoxBoundsInto,
   structureHalfExtents,
+  structureHalfExtentsInto,
+  structureRotationCosSinInto,
 } from '../../shared-types/structureKinds.js';
 import {
   SCAFFOLDING_HP_FRACTION,
@@ -109,6 +112,9 @@ export interface StructurePlacementHooks {
 export class StructurePlacementSubsystem {
   /** Scratch for `linkReachBox` (auto-connect's `near` box). */
   private readonly linkBox: ObstacleBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  /** Scratch for the turned footprint's bounds (`near`). */
+  private readonly localExt = { hw: 0, hh: 0 };
+  private readonly turn = { cos: 1, sin: 0 };
   /** Scratch deck context for a player's placement on a deck room (#14). */
   private readonly deckScratch: PlacementDeck = { plates: { plateAtWorld: () => false }, owner: '' };
   /** Why the last `place` was refused (an overlap, or a kind rule via
@@ -148,7 +154,7 @@ export class StructurePlacementSubsystem {
     const pos = this.hooks.clamp(x, y);
     const rot = normaliseStructureRotation(opts?.rot);
     const mirror = opts?.mirror === true;
-    // TODO(bp-16): oriented box — axis-aligned at an odd-30° turn.
+    // The record's box (nearest quarter turn; colliders/hit tests: slice 17).
     const { hw, hh } = structureHalfExtents(kindId, rot);
 
     // No-overlap: reject if the new footprint would intersect an existing
@@ -156,7 +162,12 @@ export class StructurePlacementSubsystem {
     // pass is the fix for "places on an asteroid"; the same `getObstacles` hook
     // the auto-connect LOS check already uses). Shared pure predicate so the
     // client ghost can validate identically.
-    const near = { x0: pos.x - hw, y0: pos.y - hh, x1: pos.x + hw, y1: pos.y + hh };
+    // `near`: the axis-aligned box that BOUNDS the turned footprint, so the
+    // obstacle query covers the oriented test (equal to the box at a quarter turn).
+    structureHalfExtentsInto(kindId, 0, this.localExt);
+    structureRotationCosSinInto(rot, this.turn);
+    const b = orientedBoxBoundsInto(this.localExt.hw, this.localExt.hh, this.turn.cos, this.turn.sin, this.localExt);
+    const near = { x0: pos.x - b.hw, y0: pos.y - b.hh, x1: pos.x + b.hw, y1: pos.y + b.hh };
     let deck: PlacementDeck | null = null;
     if (opts?.deck === true) {
       deck = this.deckScratch;

@@ -149,3 +149,81 @@ export function structureWorldToLocal(
   out.x = mirror === true ? -ux : ux;
   return out;
 }
+
+// ── Oriented boxes (base platforms 16) ─────────────────────────────────────
+/** A turn's (cos, sin): exact 0 / ±1 at a quarter turn (so quarter-turn
+ *  rules stay byte-identical to the axis-aligned ones), the real angle at a
+ *  30° step. `rotDeg` is normalised to the twelve allowed rotations.
+ *  Alloc-free: writes `out`. */
+export function structureRotationCosSinInto<T extends { cos: number; sin: number }>(
+  rotDeg: number | null | undefined,
+  out: T,
+): T {
+  const r = normaliseStructureRotation(rotDeg);
+  if (r % 90 === 0) {
+    out.cos = r === 0 ? 1 : r === 180 ? -1 : 0;
+    out.sin = r === 90 ? 1 : r === 270 ? -1 : 0;
+  } else {
+    out.cos = Math.cos((r * Math.PI) / 180);
+    out.sin = Math.sin((r * Math.PI) / 180);
+  }
+  return out;
+}
+
+/** Is `rotDeg` (normalised to the twelve rotations) a quarter turn? */
+export function isStructureQuarterTurn(rotDeg: number | null | undefined): boolean {
+  return normaliseStructureRotation(rotDeg) % 90 === 0;
+}
+
+/** Half extents of the axis-aligned box that BOUNDS a box of local half
+ *  extents (`hw`, `hh`) turned by (`cos`, `sin`). Alloc-free: writes `out`. */
+export function orientedBoxBoundsInto<T extends { hw: number; hh: number }>(
+  hw: number, hh: number, cos: number, sin: number, out: T,
+): T {
+  const c = Math.abs(cos), s = Math.abs(sin);
+  const bw = c * hw + s * hh;
+  out.hh = s * hw + c * hh;
+  out.hw = bw;
+  return out;
+}
+
+/** Projected half length of a box (local half extents `hw`, `hh`, turned by
+ *  `cos`, `sin`) onto the axis (`ax`, `ay`). */
+function boxRadiusOnAxis(hw: number, hh: number, cos: number, sin: number, ax: number, ay: number): number {
+  // Box axes in world: u = (cos, sin), v = (-sin, cos).
+  return hw * Math.abs(cos * ax + sin * ay) + hh * Math.abs(-sin * ax + cos * ay);
+}
+
+/**
+ * Do two oriented boxes overlap? Each is a centre, LOCAL half extents and a
+ * turn (`cos`, `sin`, CCW in game space). Separating-axis test on the four
+ * box axes; touching edges are legal (strict, like the axis-aligned rule).
+ * An axis-aligned box is `cos = 1, sin = 0`. Allocation-free.
+ */
+export function orientedBoxesOverlap(
+  ax: number, ay: number, ahw: number, ahh: number, acos: number, asin: number,
+  bx: number, by: number, bhw: number, bhh: number, bcos: number, bsin: number,
+): boolean {
+  const dx = bx - ax, dy = by - ay;
+  // A's axes.
+  if (Math.abs(dx * acos + dy * asin) >= ahw + boxRadiusOnAxis(bhw, bhh, bcos, bsin, acos, asin)) return false;
+  if (Math.abs(-dx * asin + dy * acos) >= ahh + boxRadiusOnAxis(bhw, bhh, bcos, bsin, -asin, acos)) return false;
+  // B's axes.
+  if (Math.abs(dx * bcos + dy * bsin) >= bhw + boxRadiusOnAxis(ahw, ahh, acos, asin, bcos, bsin)) return false;
+  if (Math.abs(-dx * bsin + dy * bcos) >= bhh + boxRadiusOnAxis(ahw, ahh, acos, asin, -bsin, bcos)) return false;
+  return true;
+}
+
+/** Does an oriented box (centre, local half extents, turn) overlap the circle
+ *  (`cx`, `cy`, `r`)? The circle's centre is taken into the box's frame, then
+ *  it is the axis-aligned box-vs-circle rule (strict). Allocation-free. */
+export function orientedBoxOverlapsCircle(
+  bx: number, by: number, hw: number, hh: number, cos: number, sin: number,
+  cx: number, cy: number, r: number,
+): boolean {
+  const ox = cx - bx, oy = cy - by;
+  const lx = ox * cos + oy * sin, ly = -ox * sin + oy * cos;
+  const dx = Math.max(Math.abs(lx) - hw, 0);
+  const dy = Math.max(Math.abs(ly) - hh, 0);
+  return dx * dx + dy * dy < r * r;
+}
