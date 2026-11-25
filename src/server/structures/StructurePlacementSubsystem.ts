@@ -121,13 +121,18 @@ export class StructurePlacementSubsystem {
    * `skipAutoConnect` — a generated base (or a scale lattice) supplies its own
    * intended connection graph via `connectExplicit`; greedy auto-connect would
    * link e.g. gate pylons and close a gate. Players never pass it.
+   *
+   * `ignoreObstacles` — skip the rock / wreck overlap pass (structures still
+   * block). Only the base-platforms plate rebuild passes it: a destroyed plate
+   * connector's blueprint goes back where it stood, over its own wreck pieces
+   * (a blueprint is a non-colliding hologram).
    */
   place(
     owner: string,
     kindId: string,
     x: number,
     y: number,
-    opts?: { skipAutoConnect?: boolean; rot?: number; mirror?: boolean; requirePacked?: boolean },
+    opts?: { skipAutoConnect?: boolean; rot?: number; mirror?: boolean; requirePacked?: boolean; ignoreObstacles?: boolean },
   ): string | null {
     this.lastRefusal = null;
     if (!isStructureKindId(kindId)) return null;
@@ -143,7 +148,7 @@ export class StructurePlacementSubsystem {
     // the auto-connect LOS check already uses). Shared pure predicate so the
     // client ghost can validate identically.
     const near = { x0: pos.x - hw, y0: pos.y - hh, x1: pos.x + hw, y1: pos.y + hh };
-    const rejection = placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), this.hooks.getObstacles?.(near, true), rot, mirror);
+    const rejection = placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), opts?.ignoreObstacles === true ? undefined : this.hooks.getObstacles?.(near, true), rot, mirror);
     if (rejection !== null) {
       this.lastRefusal = placementRejectionNotice(rejection);
       return null;

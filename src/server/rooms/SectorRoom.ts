@@ -68,6 +68,7 @@ import { FactionLedger, type BaseReadinessHost } from '../faction/FactionLedger.
 import type { FactionBaseReadiness, SectorLiveCounts } from '../livingworld/LivingWorldRoom.js';
 import { RecentCombatLog } from './RecentCombatLog.js';
 import type { RecentCombat } from '../../shared-types/galaxySnapshot.js';
+import { leavePlateBlueprint } from '../structures/plateAnchorRebuild.js';
 import { StructurePlacementSubsystem, packedGateForBuild, repackItem, type PackedGateHost } from '../structures/StructurePlacementSubsystem.js';
 import { StructureGridSubsystem } from '../structures/StructureGridSubsystem.js';
 import { canTakeFullDraw } from '../structures/structurePowerSwitch.js';
@@ -3177,6 +3178,7 @@ export class SectorRoom extends Room<SectorState> {
         if (labSpill !== null) this.loot.drop(labSpill, at.x, at.y, 0, 0, { cause: opts.emitDestroyed ? 'razed' : 'removed' });
       }
       this.structureRegistry.remove(rec.id);
+      if (opts.emitDestroyed && srec) leavePlateBlueprint(this.state.deck, srec, this.structurePlacement); // a destroyed plate anchor leaves a blueprint (base platforms 9)
       this.structureAttackAuditAtMs.delete(rec.id);
       this.structureAttackPushAtMs.delete(rec.id);
       this.rebuildStructuresSlice();
