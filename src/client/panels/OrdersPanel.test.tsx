@@ -270,21 +270,17 @@ describe('Command speed (was HelmPanel): a Command control, never Fly or Build',
     expect(screen.queryByTestId('helm-speed')).toBeNull();
   });
 
-  it('Apply sets the Command speed and re-paces the selection', () => {
+  it('a Speed tap applies at once: sets the Command speed and re-paces the selection', () => {
     const sent: { ids: readonly string[]; fraction: number }[] = [];
     setFleetCommands({ setSpeed: (ids, fraction) => { sent.push({ ids: [...ids], fraction }); } });
     select(['a', 'b']);
     render(<OrdersPanel />);
     fireEvent.click(screen.getByTestId('helm-speed-1'));
-    expect(screen.getByTestId('helm-speed')).toHaveAttribute('data-changed', 'true');
-    expect(sent).toEqual([]);
-    fireEvent.click(screen.getByTestId('eqx-panel-apply'));
     expect(useUIStore.getState().commandSpeed).toBe(1);
     expect(sent).toEqual([{ ids: ['a', 'b'], fraction: HELM_SPEED_FRACTION[1] }]);
-
-    act(() => { useUIStore.setState({ rightPanel: 'orders' }); });
+    expect(screen.getByTestId('helm-speed')).not.toHaveAttribute('data-changed');
+    expect(screen.getByTestId('eqx-panel-apply')).toBeDisabled();
     fireEvent.click(screen.getByTestId('helm-speed-0'));
-    fireEvent.click(screen.getByTestId('eqx-panel-apply'));
     expect(sent[1]).toEqual({ ids: ['a', 'b'], fraction: 0 });
   });
 });

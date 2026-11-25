@@ -4,12 +4,13 @@
  * rail's Fleet item in Command (`rightPanel = 'orders'`). It replaces the old
  * FleetPanel (desktop), FleetStrip (phone) and HelmPanel (speed telegraph).
  *
- * - Order, Stance and Speed are EqxSegmented controls. A pick is a draft until
+ * - Order and Stance are EqxSegmented controls. A pick is a draft until
  *   Apply: the changed segment shows amber (`appliedValue`), Apply sends only
  *   what changed (`ordersDraft.ts`) and folds the panel away. Patrol / Escort /
  *   Retreat start the map pick instead of sending (the left strip shows its tools).
  * - A mixed selection selects nothing and says "mixed" in the heading.
- * - Speed shows only in Command (`helmOrdersAllowed`), never Fly or Build.
+ * - Speed applies on tap (owner 2026-11-25), as the old telegraph did; it
+ *   shows only in Command (`helmOrdersAllowed`), never Fly or Build.
  * - Stop (footer) halts the selection at once. Form / disband squad and Take
  *   controls send at once, as before. The ship list caps at
  *   {@link ORDERS_MAX_ROWS} rows, then "+N more". Names only, never ids.
@@ -128,7 +129,7 @@ function OrdersBody({ view, draft, applied, speedShown, setDraft, commands }: Bo
         <EqxSection title="Speed">
           <EqxSegmented label="Speed" options={SPEED_OPTIONS} data-testid="helm-speed"
             value={String(speed)} appliedValue={String(applied.speed)}
-            onChange={(v) => setDraft({ ...draft, speed: Number(v) as SpeedStep })} />
+            onChange={(v) => chooseSpeed(Number(v) as SpeedStep)} />
         </EqxSection>
       )}
       <EqxSection title="Squad">
