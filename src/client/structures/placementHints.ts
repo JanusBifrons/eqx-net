@@ -13,8 +13,7 @@
  *    the server's `placementRejection` on the ghost and tints it red
  *    (`RendererFeedback.placementPreviewRejection`); the text is the server's
  *    own refusal notice. That reason wins over "too close".
- * Desktop and touch; a hint docked in the touch banner (`data-docked`) is
- * shown/hidden only, never moved. Allocation-free.
+ * Desktop and touch, always under the ghost. Allocation-free.
  */
 import type { RenderMirror } from '../../core/contracts/IRenderer.js';
 import type { RendererFeedback } from '../../core/contracts/render/RendererFeedback.js';
@@ -49,7 +48,7 @@ export function belowGhostPx(kind: string | null, viewHalf: number, winW: number
 function toggleHint(el: HTMLElement | null, show: boolean, psx: unknown, psy: unknown, dy = 0): void {
   if (!el) return;
   if (el.hidden === show) el.hidden = !show;
-  if (show && el.dataset.docked !== '1' && typeof psx === 'number' && typeof psy === 'number') {
+  if (show && typeof psx === 'number' && typeof psy === 'number') {
     el.style.left = `${Math.max(8, Math.min(window.innerWidth - 8, psx))}px`;
     el.style.top = `${Math.max(48, Math.min(window.innerHeight - 40, psy + dy))}px`;
   }

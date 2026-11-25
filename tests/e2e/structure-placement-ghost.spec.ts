@@ -6,7 +6,7 @@
  *   - pick a kind → translucent blueprint GHOST follows the pointer on HOVER
  *   - LEFT-CLICK places the structure at the cursor immediately (RTS-style)
  *   - RIGHT-CLICK or ESCAPE cancels placement
- * Touch keeps the two-step tap-to-position → Confirm-banner flow (case B) — a
+ * Touch keeps the two-step tap-to-position → ✓ Place flow (case B; the left strip's placing tools) — a
  * mouse pointerup commits, a touch pointerup only parks the ghost.
  *
  * Tests read the REAL artifacts (the projected ghost `data-placement-screen-x/y`,
@@ -67,9 +67,8 @@ function swarmCount(page: Page): Promise<number> {
 const surfaceAttr = (page: Page, name: string): Promise<string | null> =>
   page.locator('[data-testid="game-surface"]').getAttribute(name);
 
-// P3.6 / WS-C4b — the Confirm/Cancel banner is now TOUCH-ONLY, so DESKTOP tests
-// can no longer use `placement-banner` visibility as the "placement active"
-// signal. `data-placement-screen-x` is the render-path-independent signal
+// The placing tools live on the left strip (U3-7, desktop and touch); the
+// ghost-path tests read the render signal rather than UI visibility. `data-placement-screen-x` is the render-path-independent signal
 // gameRafLoop publishes while the blueprint ghost is up (set during placement,
 // deleted on commit/cancel). These wait on it instead.
 const waitPlacementActive = (page: Page): Promise<unknown> =>
@@ -129,7 +128,7 @@ test('(B) TOUCH: tap-to-position parks the ghost, then confirm is clickable at a
 
     // Tap-to-position (touch keeps the two-step flow): a touch tap on the world
     // canvas positions + PARKS the blueprint (it does NOT one-click place — only
-    // a mouse pointerup commits). The Confirm banner is HIDDEN until parked.
+    // a mouse pointerup commits). ✓ Place is on the left strip.
     await page.touchscreen.tap(195, 220); // clear of the centred ship
     await page.waitForFunction(
       () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-stuck') === '1',
@@ -177,11 +176,8 @@ test('(C) DESKTOP: the blueprint ghost FOLLOWS the pointer on hover (no button)'
     expect(Number.isFinite(right)).toBe(true);
     // Hovering further right tracks the ghost further right (it FOLLOWS, no click).
     expect(right).toBeGreaterThan(left + 200);
-    // Nothing was placed — placement is still active. On DESKTOP the banner is
-    // gone (P3.6), so read the render-path-independent placement-active signal;
-    // and assert the touch-only banner is NOT present here.
+    // Nothing was placed — placement is still active (render-path signal).
     await waitPlacementActive(page);
-    await expect(page.locator('[data-testid="placement-banner"]')).toHaveCount(0);
   } finally {
     await ctx.close();
   }
@@ -371,7 +367,7 @@ test('(H) WORKER path: placement ghost tracks a drag that leaves the canvas', as
 /**
  * (I)/(J) Desktop cancel (WS-10 / R2.5). Right-click and Escape both exit
  * placement WITHOUT placing — main-thread window listeners that work on either
- * render path. The banner detaches (placementKind cleared) and no structure
+ * render path. The placing tools go (placementKind cleared) and no structure
  * lands.
  */
 async function cancelExitsPlacement(browser: Browser, how: 'right-click' | 'escape'): Promise<void> {
@@ -380,7 +376,7 @@ async function cancelExitsPlacement(browser: Browser, how: 'right-click' | 'esca
     const before = await swarmCount(page);
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 6_000 });
     await page.locator('[data-testid="build-capital"] button').click();
-    // Placement active (desktop has NO banner — P3.6); read the signal instead.
+    // Placement active — read the render-path signal.
     await waitPlacementActive(page);
 
     // Hover so the ghost is positioned, then cancel.
@@ -412,14 +408,11 @@ test('(J) DESKTOP: Escape cancels placement (no structure placed)', async ({ bro
 });
 
 /**
- * (K) P3.6 / WS-C4b — on DESKTOP the mobile Confirm/Cancel banner must NOT
- * appear during placement (the one-click model needs no banner; the leaked
- * mobile banner was the bug: "the desktop placement still shows the
- * Confirm/Cancel from mobile"). Placement is genuinely ACTIVE (the ghost is
- * projected) yet the touch-only banner + its buttons stay unmounted. The
- * mobile counterpart — banner DOES appear on touch — is locked by case (B).
+ * (K) U3-7 — on DESKTOP the placing tools sit on the left strip (building icon,
+ * ✓ Place, Rotate, Mirror, ✕), the same as touch; there is no floating
+ * bottom-middle bar (the old `placement-banner` leaked onto desktop, P3.6).
  */
-test('(K) DESKTOP: placement shows NO mobile Confirm/Cancel banner (P3.6)', async ({ browser }) => {
+test('(K) DESKTOP: placement shows the left-strip tools, no floating bar (U3-7)', async ({ browser }) => {
   test.setTimeout(60_000);
   const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false });
   try {
@@ -432,10 +425,12 @@ test('(K) DESKTOP: placement shows NO mobile Confirm/Cancel banner (P3.6)', asyn
     await page.waitForTimeout(120);
     await waitPlacementActive(page);
 
-    // ... but NO touch-only Confirm/Cancel banner mounts on a pointer device.
+    // ... the left strip shows the placing tools, and no floating bar mounts.
+    const strip = page.locator('[data-testid="left-strip"]');
+    await expect(strip.locator('[data-testid="placement-kind"]')).toBeVisible();
+    await expect(strip.locator('[data-testid="placement-confirm"]')).toBeVisible();
+    await expect(strip.locator('[data-testid="placement-cancel"]')).toBeVisible();
     await expect(page.locator('[data-testid="placement-banner"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="placement-confirm"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="placement-cancel"]')).toHaveCount(0);
   } finally {
     await ctx.close();
   }

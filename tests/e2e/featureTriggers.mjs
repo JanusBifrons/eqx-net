@@ -27,9 +27,9 @@ export const FEATURE_TRIGGERS = [
   {
     area: 'structures',
     paths: ['src/server/structures/', 'src/core/structures/', 'src/client/structures/', 'src/shared-types/structureKinds', 'src/shared-types/packedStock',
-      'src/client/components/StructurePlacementBanner', 'src/client/components/BuildSidebarHost', 'src/client/components/buildCategories',
+      'src/client/layout/placingStripItems', 'src/client/layout/LeftStripHost', 'src/client/components/BuildSidebarHost', 'src/client/components/buildCategories',
       'src/client/components/BuildSidebar', 'src/client/panels/BuildPanel', 'src/client/components/BuildKindTile', 'src/client/components/SidePanel', 'src/ui/EqxPanel/', 'src/client/input/buildMenuKeys',
-      'src/client/components/BuildPlacingStrip', 'src/client/components/PlacementLinkHint', 'src/client/components/PlacementFenceHint', 'src/client/components/HullTile',
+      'src/client/components/PlacementLinkHint', 'src/client/components/PlacementFenceHint', 'src/client/components/HullTile',
       'src/client/render/pixi/ConnectorRenderer', 'src/core/articulation/', 'src/server/rooms/scene/'],
     specs: ['structure-build-placement', 'structure-grid-web', 'structure-placement-ghost', 'structure-scenario', 'structure-mining-beam',
       'structure-ram-blocked', 'structure-turret-range', 'structure-visible-damageable', 'build-sidebar', 'gate-fly-through',

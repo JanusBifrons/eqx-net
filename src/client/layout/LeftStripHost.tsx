@@ -8,8 +8,10 @@
  *   the selection's quick actions (Target, cargo / pod, Pilot,
  *   `selectionStripItems.tsx`); then ⚙ and ✕.
  * - Doing mode: while a route / target pick is under way (Patrol, Escort,
- *   Retreat), the route tools replace it (`routeStripItems.tsx`, U3-3). The
- *   placing tools come with U3-7.
+ *   Retreat), the route tools replace it (`routeStripItems.tsx`, U3-3).
+ * - Doing-mode strip (U3-7): while a building is being placed (`placementKind`)
+ *   the strip shows the placing tools instead, whatever is selected
+ *   (`placingStripItems.tsx`: the building, ✓ Place, Rotate, Mirror, ✕).
  * - Tap rule T2: with my ships selected and a focus that is not one of them
  *   (not mine, `focusSurvives`), a separator and the FOCUS identity follow the
  *   fleet section (`stripFocusIdentity`), and its hull ring moves there (the
@@ -41,6 +43,7 @@ import { Slot } from './Slot';
 import { useFleetStripItems } from './fleetStripItems';
 import { useBuildingStripItems } from './buildingStripItems';
 import { useSelectionStripItems } from './selectionStripItems';
+import { usePlacingStripItems } from './placingStripItems';
 import { useRouteStripItems } from './routeStripItems';
 import { useLeftStripFit } from './leftStripFit';
 import { STANCE_COLOUR } from '../components/contactRows';
@@ -100,16 +103,25 @@ export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
     ? (): void => { lockFocus(useUIStore.getState().selection, rendererRef.current, () => false); }
     : null;
   const { items: quickItems, loot } = useSelectionStripItems(data, fleetLock);
+  const placingItems = usePlacingStripItems();
   const routeItems = useRouteStripItems();
   const id = stripIdentity(selection);
   const focus = stripFocusIdentity(selection);
-  useLeftStripFit(shown && (id !== null || routeItems !== null));
+  const placing = placingItems.length > 0;
+  useLeftStripFit(shown && (placing || routeItems !== null || id !== null));
   if (!shown) return null;
-  if (routeItems !== null) {
-    // Doing mode: a route / target pick replaces the selection strip until it ends.
+  if (placing || routeItems !== null) {
+    // Doing mode: placing a building (U3-7) or a route / target pick (U3-3) replaces
+    // the selection strip until it ends.
     return (
       <Slot anchor="left-strip">
-        <EqxStrip aria-label="Picking on the map" open={!panelOpen} data-testid="left-strip">{routeItems}</EqxStrip>
+        <EqxStrip
+          aria-label={placing ? "Placing" : "Picking on the map"}
+          open={!panelOpen}
+          data-testid="left-strip"
+        >
+          {placing ? placingItems : routeItems}
+        </EqxStrip>
       </Slot>
     );
   }
