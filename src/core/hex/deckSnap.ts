@@ -14,6 +14,8 @@
  *   buildings of a hex are one another turned 120° about the hex centre.
  * - `'plate'`: the centre of the plate's middle hex (`plates.ts`).
  * - `'corner'`: the nearest hex corner (`deckCorners.ts`; a fence post, slice 19).
+ * - `'edge'`: the nearest hex edge midpoint, turned to lie along that seam
+ *   (`rot` = the seam's direction, 30° / 90° / 150°; a fence gate, slice 21).
  *
  * Angles are measured with `atan2(y, x)` in whatever frame the caller passes;
  * the player path passes game coordinates on both sides (client ghost and
@@ -24,10 +26,10 @@
  */
 import { hexCornerInto, pixelToAxialInto, type AxialHex, type HexPoint } from './hex.js';
 import { DECK_HEX_SIZE, deckHexCentreInto, plateOfHexInto, type PlateIndex } from './plates.js';
-import { nearestDeckCornerInto } from './deckCorners.js';
+import { nearestDeckCornerInto, nearestDeckEdgeInto } from './deckCorners.js';
 
 /** A kind's deck slot size (mirrors `StructureKind['deckSlot']`). */
-export type DeckSlot = 'small' | 'hex' | 'plate' | 'corner';
+export type DeckSlot = 'small' | 'hex' | 'plate' | 'corner' | 'edge';
 
 /** A snapped deck slot: the building's centre, its hex, and (small slots
  *  only) which third of the hex. */
@@ -43,7 +45,7 @@ export interface DeckSnap {
   slot: DeckSlot;
   /** Building turn, DEGREES (CCW, game frame). From {@link snapToDeckSlot}:
    *  `'small'` = the rhombus's long-diagonal facing ({@link rhombusFacingDeg}),
-   *  otherwise -1 (the slot has no facing). `snapPlacementToDeck` resolves
+   *  `'edge'` = the seam's direction (`nearestDeckEdgeInto`), otherwise -1 (the slot has no facing). `snapPlacementToDeck` resolves
    *  it to the kind's final turn. */
   rot: number;
 }
@@ -97,6 +99,12 @@ export function snapToDeckSlot(slot: DeckSlot, x: number, y: number, out: DeckSn
     out.r = hexScratch.r;
     out.rhombus = -1;
     out.rot = -1;
+  } else if (slot === 'edge') {
+    // Fence gate (slice 21): the nearest edge midpoint, along its seam.
+    out.rot = nearestDeckEdgeInto(x, y, pointScratch);
+    out.q = hexScratch.q;
+    out.r = hexScratch.r;
+    out.rhombus = -1;
   } else if (slot === 'plate') {
     plateOfHexInto(hexScratch.q, hexScratch.r, plateScratch, centreScratch);
     deckHexCentreInto(centreScratch.q, centreScratch.r, pointScratch);
@@ -150,7 +158,7 @@ export function deckSlotOutline(slot: DeckSlot, rhombus = 0): number[][] {
     return out;
   };
   if (slot === 'hex') return [hexAt(0, 0)];
-  if (slot === 'corner') return [cornerMark()];
+  if (slot === 'corner' || slot === 'edge') return [cornerMark()];
   if (slot === 'plate') {
     const polys = [hexAt(0, 0)];
     // The 6 ring hexes, as offsets from the middle hex's centre.

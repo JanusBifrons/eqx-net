@@ -428,6 +428,19 @@ export class StructureRegistry {
     this.topologyDirty = true;
   }
 
+  /** Sever the one link `c` (base platforms slice 21: a deck gate replaces
+   *  its seam's post-to-post link). No-op when it is not registered. */
+  removeConnection(c: Connection): void {
+    if (this.connById.get(c.id) !== c) return;
+    this.connById.delete(c.id);
+    for (const end of [c.aId, c.bId]) {
+      const list = this.adjacency.get(end);
+      const i = list ? list.indexOf(c) : -1;
+      if (i >= 0) list!.splice(i, 1);
+    }
+    this.topologyDirty = true;
+  }
+
   /** Sever every connection touching `id`. Returns the severed connection ids. */
   disconnect(id: string): number[] {
     const conns = this.adjacency.get(id);

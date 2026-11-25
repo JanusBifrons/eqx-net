@@ -39,6 +39,43 @@ export function isOnDeckCorner(x: number, y: number): boolean {
   return Math.abs(CORNER.x - x) <= DECK_CORNER_TOLERANCE && Math.abs(CORNER.y - y) <= DECK_CORNER_TOLERANCE;
 }
 
+/** Deck hex inradius (centre to edge midpoint): `DECK_HEX_SIZE · √3 / 2`. */
+export const DECK_HEX_INRADIUS = (DECK_HEX_SIZE * Math.sqrt(3)) / 2;
+
+/**
+ * Slice 21 (gate): allocation-free, the deck hex EDGE midpoint nearest (x, y),
+ * written into `out` (an edge of the hex holding the point; idempotent on a
+ * midpoint). Returns the seam's direction in DEGREES, 0 ≤ d < 180: the
+ * pointy-top deck's seams run at 30°, 90° and 150° (both hexes of a seam give
+ * the same answer).
+ */
+export function nearestDeckEdgeInto(x: number, y: number, out: HexPoint): number {
+  pixelToAxialInto(x, y, DECK_HEX_SIZE, HEX);
+  deckHexCentreInto(HEX.q, HEX.r, CENTRE);
+  // Edge midpoints sit at 60°·i, between corners i − 1 and i (`hex.ts` order).
+  const a = Math.atan2(y - CENTRE.y, x - CENTRE.x) * (180 / Math.PI);
+  const i = ((Math.round(a / 60) % 6) + 6) % 6;
+  const rad = (i * Math.PI) / 3;
+  out.x = CENTRE.x + DECK_HEX_INRADIUS * Math.cos(rad);
+  out.y = CENTRE.y + DECK_HEX_INRADIUS * Math.sin(rad);
+  return (i * 60 + 90) % 180;
+}
+
+/** Is (x, y) on a deck hex edge midpoint (within {@link DECK_CORNER_TOLERANCE})? */
+export function isOnDeckEdgeMid(x: number, y: number): boolean {
+  nearestDeckEdgeInto(x, y, CORNER);
+  return Math.abs(CORNER.x - x) <= DECK_CORNER_TOLERANCE && Math.abs(CORNER.y - y) <= DECK_CORNER_TOLERANCE;
+}
+
+/** Slice 21: is corner post P an END of the seam whose midpoint is M (a gate
+ *  on that seam)? Both on the lattice, half an edge apart (the only corners
+ *  that close to a midpoint are its seam's two ends). */
+export function isDeckSeamEnd(px: number, py: number, mx: number, my: number): boolean {
+  const d = Math.hypot(px - mx, py - my);
+  if (Math.abs(d - DECK_HEX_SIZE / 2) > DECK_CORNER_TOLERANCE) return false;
+  return isOnDeckCorner(px, py) && isOnDeckEdgeMid(mx, my);
+}
+
 /** Are A and B the two ends of one deck hex edge (a seam)? Order-free. */
 export function isDeckSeam(ax: number, ay: number, bx: number, by: number): boolean {
   const d = Math.hypot(bx - ax, by - ay);

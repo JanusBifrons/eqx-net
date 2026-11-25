@@ -19,7 +19,7 @@ import { rigForStructureKind } from '../articulation/rigCatalogue.js';
 import { createRigPose, evaluateRig, type RigPose } from '../articulation/evaluate.js';
 import type { Rig } from '../articulation/rig.js';
 import { doorClipTime } from './doorMotion.js';
-import { DOOR_POS_MAX, DOOR_POWER_LEVELS, gateWorldAxisBoxes } from './gateGeometry.js';
+import { DOOR_POS_MAX, DOOR_POWER_LEVELS, gateTurnCosSinInto, gateWorldAxisBoxes } from './gateGeometry.js';
 
 /** One kind's leaf layout, built once per kind. */
 interface LeafLayout {
@@ -38,6 +38,7 @@ interface LeafLayout {
 }
 
 const layouts = new Map<string, LeafLayout | null>();
+const TURN = { cos: 1, sin: 0 };
 
 function layoutFor(kind: string): LeafLayout | null {
   const hit = layouts.get(kind);
@@ -121,7 +122,8 @@ export function gateHitBoxes(kind: string | null | undefined, angle: number, mir
 /**
  * Re-pose the leaf boxes at the tail of `out` (from `gateHitBoxes`) for door
  * positions `posA` / `posB` (0..DOOR_POS_MAX; a gate uses `posA` only).
- * `angle` is the structure's rotation (rad, a quarter turn). Allocation-free.
+ * `angle` is the structure's rotation (rad; a quarter turn is exact, a deck
+ * fence gate's 30° seam turn gives each leaf's world-axis bound). Allocation-free.
  */
 export function writeDoorLeafBoxes(kind: string, angle: number, posA: number, posB: number, out: Float32Array): void {
   const l = layoutFor(kind);
@@ -129,12 +131,8 @@ export function writeDoorLeafBoxes(kind: string, angle: number, posA: number, po
   const n = l.part.length;
   const base = out.length - n * 4;
   if (base < 0) return;
-  // Gates turn only in quarters (`isStructureQuarterTurnOnly`; the 30° deck
-  // step is refused for them by `snapPlayerStructureRotation`), so the
-  // nearest quarter IS the turn.
-  const q = (((Math.round(angle / (Math.PI / 2)) % 4) + 4) % 4);
-  const qc = q === 0 ? 1 : q === 2 ? -1 : 0;
-  const qs = q === 1 ? 1 : q === 3 ? -1 : 0;
+  gateTurnCosSinInto(angle, TURN);
+  const qc = TURN.cos, qs = TURN.sin;
   const clips = l.rig.clips;
   for (let c = 0; c < clips.length; c++) {
     l.playing.clipId = clips[c]!.id;
@@ -142,13 +140,13 @@ export function writeDoorLeafBoxes(kind: string, angle: number, posA: number, po
     evaluateRig(l.rig, l.playing, 0, l.pose);
     for (let j = 0; j < n; j++) {
       if (l.clipOf[j] !== c) continue;
-      writeLeaf(l, j, out, base + j * 4, qc, qs, q % 2 === 1);
+      writeLeaf(l, j, out, base + j * 4, qc, qs);
     }
   }
 }
 
 /** The AABB of leaf `j`'s outline in its posed frame, turned to world axes. */
-function writeLeaf(l: LeafLayout, j: number, out: Float32Array, at: number, qc: number, qs: number, swap: boolean): void {
+function writeLeaf(l: LeafLayout, j: number, out: Float32Array, at: number, qc: number, qs: number): void {
   const i = l.part[j]!;
   const { x, y, cos, sin } = l.pose;
   const c = cos[i]!, s = sin[i]!;
@@ -163,6 +161,6 @@ function writeLeaf(l: LeafLayout, j: number, out: Float32Array, at: number, qc: 
   const hh = Math.abs(ex * s) + Math.abs(ey * c);
   out[at] = cx * qc - cy * qs;
   out[at + 1] = cx * qs + cy * qc;
-  out[at + 2] = swap ? hh : hw;
-  out[at + 3] = swap ? hw : hh;
+  out[at + 2] = Math.abs(hw * qc) + Math.abs(hh * qs);
+  out[at + 3] = Math.abs(hw * qs) + Math.abs(hh * qc);
 }
