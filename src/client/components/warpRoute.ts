@@ -21,7 +21,7 @@
 import { CoarseFieldMap } from '../../core/nav/coarseField.js';
 import type { WarpStructureFootprint, WarpStructureSource } from '../../core/nav/warpLineStop.js';
 import { fillWarpStructureFootprint } from '../../core/galaxy/warpTarget.js';
-import { gateHitBoxes, writeDoorLeafBoxes } from '../../core/structures/doorLeafBoxes.js';
+import { doorRestPos, gateHitBoxes, writeDoorLeafBoxes } from '../../core/structures/doorLeafBoxes.js';
 import { doorPosAt, type DoorSegment } from '../../core/structures/doorMotion.js';
 import type { ChunkOpts } from '../../core/terrain/fieldLayout.js';
 
@@ -102,8 +102,9 @@ export class WarpRouteClient implements WarpStructureSource {
     if (this.rows === null || !this.rows.has(id)) m.delete(id);
   };
 
-  /** The gate's part boxes, its door leaves posed live (shut when the row
-   *  carries no door). Rebuilt only when the kind/pose/mirror changes. */
+  /** The gate's part boxes, its door leaves posed live (at rest when the row
+   *  carries no door: `doorRestPos`, a chamber open, a gate shut). Rebuilt
+   *  only when the kind/pose/mirror changes. */
   private boxesFor(id: number, e: WarpRouteSwarmEntry, row: WarpRouteRow): Float32Array | null {
     const kind = e.shipKind ?? '';
     const mirror = row.mirror === true;
@@ -113,8 +114,9 @@ export class WarpRouteClient implements WarpStructureSource {
       this.gateBoxes.set(id, g);
     }
     if (g.boxes !== null) {
-      const posA = row.doorA !== undefined ? doorPosAt(row.doorA, this.tick) : 0;
-      const posB = row.doorB !== undefined ? doorPosAt(row.doorB, this.tick) : 0;
+      const rest = doorRestPos(kind);
+      const posA = row.doorA !== undefined ? doorPosAt(row.doorA, this.tick) : rest;
+      const posB = row.doorB !== undefined ? doorPosAt(row.doorB, this.tick) : rest;
       writeDoorLeafBoxes(kind, e.angle, posA, posB, g.boxes);
     }
     return g.boxes;

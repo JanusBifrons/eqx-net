@@ -1,6 +1,7 @@
 /**
  * Solid doors (docs/plans/door-power.md, slice 9) — the client side of the
- * door row. A Shield Gate's / Airlock's room-state row carries one door
+ * door row. A Shield Gate's / Airlock's / teleporter chamber's (redesign T3,
+ * `hasDoorRig`; written by `writePadDoorRow`) room-state row carries one door
  * segment (`encodeDoorMotion`, shared-types/structureStateWire.ts; written by
  * the server's `writeDoorMotionRow`). This decodes it IN PLACE into
  *   - `doorA` / `doorB`: each door's segment (position = `doorPosAt`, the one
@@ -12,12 +13,16 @@
  * `doorA` / `doorB` are the truth (the deck lights read them too). The old
  * GATE_OPEN_* mask on `gateOpen` fed the gate shield spans, which are gone
  * (slice 11): it is no longer decoded.
+ * A row with every door field still at its default (nothing written yet)
+ * decodes to the kind's REST pose (`doorRestPos`: a chamber stands open and
+ * still, a gate shut), scrubbed like any other segment.
  * Allocation-free once a row's door objects exist (#14). A late joiner gets
  * the whole door from one row (#16).
  */
 import type { StructureRenderState } from '../../core/contracts/IRenderer.js';
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
 import { gateTypeOf } from '../../core/structures/gateGeometry.js';
+import { doorRestPos, hasDoorRig } from '../../core/structures/doorLeafBoxes.js';
 import { GATE_OPEN_A, GATE_OPEN_B } from '../../core/structures/gateLogic.js';
 import { doorClipTime } from '../../core/structures/doorMotion.js';
 import {
@@ -32,9 +37,10 @@ import {
 /** The airlock's end-B clip id (every other door clip is end A / the gate). */
 const DOOR_B_CLIP = 'door-b';
 
-/** The kind's door is carried on its row (shield gate / airlock). */
+/** The kind's door is carried on its row: a door rig (`hasDoorRig`: shield
+ *  gate, airlock, teleporter chamber). */
 export function isDoorKind(kind: string | undefined): boolean {
-  return gateTypeOf(kind) !== null;
+  return hasDoorRig(kind);
 }
 
 function shut(s: DoorMotionSeg): void {
@@ -58,7 +64,15 @@ export function decodeDoorRow(v: StructureStateView, out: StructureRenderState, 
   } else {
     out.doorB = undefined;
   }
-  decodeDoorMotion(v.gateOpen ?? D.gateOpen, v.rigStart ?? D.rigStart, v.rigHold ?? D.rigHold, seg);
+  const gateOpen = v.gateOpen ?? D.gateOpen;
+  const rigStart = v.rigStart ?? D.rigStart;
+  const rigHold = v.rigHold ?? D.rigHold;
+  decodeDoorMotion(gateOpen, rigStart, rigHold, seg);
+  // Nothing written yet: the rig's rest pose, still (a chamber rests open).
+  if (gateOpen === D.gateOpen && rigStart === D.rigStart && rigHold === D.rigHold) {
+    const rest = doorRestPos(kind);
+    if (rest > 0) { seg.p0 = rest; seg.t0 = 0; seg.dir = 1; seg.level = 0; }
+  }
   if (clip === undefined) {
     out.rigClip = undefined;
     return;

@@ -9,6 +9,7 @@ import { describe, expect, it } from 'vitest';
 import { visitDerivedWalls, type DerivedWallVisitor } from './derivedWalls.js';
 import type { StructureRenderState, SwarmRenderState } from '../../core/contracts/IRenderer.js';
 import { GATE_POSTS } from '../../shared-types/structureKinds/gatePosts.js';
+import { PAD_SPECS, TP_PHASE } from '../../shared-types/teleport.js';
 
 function st(connTo: number[], extra: Partial<StructureRenderState> = {}): StructureRenderState {
   return {
@@ -55,5 +56,20 @@ describe('visitDerivedWalls', () => {
     expect(down.find((w) => w.key > 0)!.blocking).toBe(false);
     const blueprint = collect(new Map([[1, st([2])], [2, st([1], { built: false })]]), swarm);
     expect(blueprint.filter((w) => w.key > 0)).toHaveLength(0);
+  });
+
+  it('redesign T3: a chamber pad has no iris spans, sealed or not; the Ancients gate keeps its own', () => {
+    for (const kind of ['teleporter', 'teleporter_large', 'pocket_pad']) {
+      for (const phase of [TP_PHASE.IDLE, TP_PHASE.SEALED]) {
+        const tp = st([], { teleport: { phase } as StructureRenderState['teleport'] });
+        expect(collect(new Map([[7, tp]]), new Map([[7, sw(0, 0, kind)]]))).toHaveLength(0);
+      }
+    }
+    const sealed = st([], { teleport: { phase: TP_PHASE.SEALED } as StructureRenderState['teleport'] });
+    const gate = collect(new Map([[7, sealed]]), new Map([[7, sw(0, 0, 'alien_gate')]]));
+    expect(gate).toHaveLength(PAD_SPECS.alien_gate.posts);
+    expect(gate.every((w) => w.key < 0 && w.blocking && !w.open)).toBe(true);
+    const idle = st([], { teleport: { phase: TP_PHASE.IDLE } as StructureRenderState['teleport'] });
+    expect(collect(new Map([[7, idle]]), new Map([[7, sw(0, 0, 'alien_gate')]])).every((w) => !w.blocking && w.open)).toBe(true);
   });
 });
