@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup } from '@testing-library/react';
-import { WarpInWarningBanner, severityForRelation } from './WarpInWarningBanner';
+import { WarpInWarningBanner, toneForRelation } from './WarpInWarningBanner';
 import { useUIStore } from '../state/store';
 
 describe('WarpInWarningBanner (wave-system Phase 5 + WS-11 R2.21)', () => {
@@ -42,7 +42,7 @@ describe('WarpInWarningBanner (wave-system Phase 5 + WS-11 R2.21)', () => {
   });
 
   // R2.21 — a hostile drone wave (the default relation) reads RED (error).
-  it('colours a hostile warning RED (default relation, MuiAlert error)', () => {
+  it('colours a hostile warning RED (default relation, danger tone)', () => {
     useUIStore.getState().addWarpWarning({
       id: 'squad-0',
       label: 'Legionnaire',
@@ -52,12 +52,12 @@ describe('WarpInWarningBanner (wave-system Phase 5 + WS-11 R2.21)', () => {
     render(<WarpInWarningBanner />);
     const el = screen.getByTestId('warp-warning');
     expect(el.getAttribute('data-warning-relation')).toBe('hostile');
-    // The MUI Alert reflects severity="error" via its standardError class.
-    expect(el.className).toContain('MuiAlert-standardError');
+    // The prompt carries its colour tone on data-tone.
+    expect(el.getAttribute('data-tone')).toBe('danger');
     expect(screen.getByTestId('warp-warning-banner').getAttribute('data-warning-active')).toBe('1');
   });
 
-  // R2.21 — relation maps to colour: neutral→amber(warning), friendly→green(success).
+  // R2.21 — relation maps to colour: neutral→amber (warn), friendly→green (good).
   it('colours neutral amber and friendly green', () => {
     const now = (globalThis.performance ?? Date).now();
     useUIStore.setState({
@@ -69,14 +69,14 @@ describe('WarpInWarningBanner (wave-system Phase 5 + WS-11 R2.21)', () => {
     render(<WarpInWarningBanner />);
     const els = screen.getAllByTestId('warp-warning');
     const byId = new Map(els.map((e) => [e.getAttribute('data-warning-id'), e]));
-    expect(byId.get('n1')!.className).toContain('MuiAlert-standardWarning');
-    expect(byId.get('f1')!.className).toContain('MuiAlert-standardSuccess');
+    expect(byId.get('n1')!.getAttribute('data-tone')).toBe('warn');
+    expect(byId.get('f1')!.getAttribute('data-tone')).toBe('good');
   });
 
-  it('severityForRelation maps the enum to MUI colours', () => {
-    expect(severityForRelation('hostile')).toBe('error');
-    expect(severityForRelation('neutral')).toBe('warning');
-    expect(severityForRelation('friendly')).toBe('success');
+  it('toneForRelation maps the enum to prompt tones', () => {
+    expect(toneForRelation('hostile')).toBe('danger');
+    expect(toneForRelation('neutral')).toBe('warn');
+    expect(toneForRelation('friendly')).toBe('good');
   });
 
   it('renders a squad warning as "8 × Legionnaires"', () => {

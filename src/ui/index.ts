@@ -33,3 +33,4 @@ export { EqxTable, tableGridTemplate, type EqxTableProps, type EqxTableColumn, t
 export { TABLE_PAGER_SLOTS, tablePageList, tablePageWindow, type EqxTablePageSlot, type EqxTablePageWindow } from './EqxTable/tablePaging.js';
 export { EqxWindow, type EqxWindowProps } from './EqxWindow/EqxWindow.js';
 export { onGameWindowOpen, notifyGameWindowOpen, isAnyWindowOpen, useAnyWindowOpen } from './EqxWindow/windowOpen.js';
+export { EqxPrompt, EqxPromptStack, PROMPT_TONE_COLOR, type EqxPromptProps, type EqxPromptStackProps, type EqxPromptAction, type EqxPromptTone } from './EqxPrompt/EqxPrompt.js';

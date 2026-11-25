@@ -6,26 +6,21 @@
  *    (`requestWarp`): its rim point when the line is clear, else the near
  *    side of the asteroid field or structure in the way (warp route check, S3);
  *  - `usePolledShip`: the ship pose + warp state at 4 Hz while on;
- *  - `WarpStatusChip` (top-centre slot, under the energy bar): where a held
- *    warp goes, with a Cancel.
+ *  - `WarpStatusChip` (top-centre prompt, a cyan EqxPrompt): where a held
+ *    warp goes, with a red Cancel.
  *
  * The ship's pose is read from the render mirror a few times a second (the
  * sanctioned low-cadence mirror read, not Zustand: invariant #2). Only
  * discrete flags live in the store.
  */
 import { memo, useEffect, useState } from 'react';
-import { Box, Button } from '@mui/material';
+import { EqxPrompt } from '../../ui/index.js';
 import { useUIStore } from '../state/store';
 import { getGameClient } from '../net/clientSingleton';
 import { warpDestinations, type WarpDestination, type WarpRouteInputs } from './warpDestinations';
 import { WarpRouteClient, type WarpRouteMirror } from './warpRoute';
 import { warpStopMargin } from '../../core/galaxy/warpTarget';
 import { getShipKind } from '../../shared-types/shipKinds';
-
-const CHIP_SX = {
-  display: 'flex', alignItems: 'center', gap: 0.75, px: 1, py: 0.25, borderRadius: '4px', fontSize: 11, fontWeight: 700,
-  color: '#e8f4ff', backgroundColor: 'rgba(20,60,120,0.9)', border: '1px solid #5aa8ff', pointerEvents: 'auto' as const,
-};
 
 export interface ShipPose { x: number; y: number; angle: number; kind?: string }
 
@@ -66,9 +61,9 @@ export function usePolledShip(on: boolean): { pose: ShipPose | null; warping: bo
 }
 
 /**
- * Where a held warp goes, with a Cancel (top-centre slot, under the energy
- * bar). Stays until the warp is seen to start and then end (arrival or
- * cancel): the first poll after asking may not show it yet.
+ * Where a held warp goes, with a Cancel (top-centre prompt). Stays until
+ * the warp is seen to start and then end (arrival or cancel): the first
+ * poll after asking may not show it yet.
  */
 export const WarpStatusChip = memo(function WarpStatusChip(): JSX.Element | null {
   const heldTo = useUIStore((s) => s.warpHeldTo);
@@ -82,9 +77,12 @@ export const WarpStatusChip = memo(function WarpStatusChip(): JSX.Element | null
   if (heldTo === null) return null;
   const cancel = (): void => { getGameClient()?.cancelWarp(); setHeldTo(null); setSawWarp(false); };
   return (
-    <Box sx={CHIP_SX} data-testid="warp-status">
-      <span>{`Warping to ${heldTo}`}</span>
-      <Button size="small" variant="outlined" sx={{ fontSize: 10, py: 0, minWidth: 0 }} onClick={cancel} data-testid="warp-cancel">Cancel</Button>
-    </Box>
+    <EqxPrompt
+      tone="info"
+      inline
+      message={`Warping to ${heldTo}`}
+      data-testid="warp-status"
+      actions={[{ label: 'Cancel', tone: 'danger', onPick: cancel, 'data-testid': 'warp-cancel' }]}
+    />
   );
 });
