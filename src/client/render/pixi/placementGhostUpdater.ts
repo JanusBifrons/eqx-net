@@ -23,7 +23,8 @@ import type { GridObstacle } from '@core/structures/Grid';
 import type { PlacementRejection } from '@core/structures/placementRules';
 import { PlacementGhostVerdict, type GhostPose } from '../../structures/placementGhostVerdict.js';
 import { StructureHologram } from './structureHologram.js';
-import { ghostDeckContext, snapGhostToDeck } from './placementDeckSnap.js';
+import { ghostDeckAngle, ghostDeckContext, snapGhostToDeck } from './placementDeckSnap.js';
+const DEG_TO_RAD = Math.PI / 180;
 
 export interface PlacementGhostCtx {
   /** Structure placement ghost (Issue 5) — the plan as a bright hologram
@@ -126,15 +127,17 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
     // Base platforms: on a deck room the live ghost sits on its kind's deck
     // slot (the server snaps the same way); a chosen point snaps in place too,
     // so the centre seed and the ahead-of-ship pose land on a slot.
+    // The snap's turn too (a small building faces its rhombus, slice 18).
     const snap = snapGhostToDeck(preview, gx, gy);
+    let angle = pendingGhost ? ghostDeckAngle(preview) : preview.angle;
     if (snap) {
-      gx = snap.x; gy = snap.y;
+      gx = snap.x; gy = snap.y; angle = snap.rot * DEG_TO_RAD;
       if (ctx.input._placementChosenX !== null) { ctx.input._placementChosenX = gx; ctx.input._placementChosenY = gy; }
     }
     ctx.placementGhost.visible = true;
     ctx.placementGhost.x = gx;
     ctx.placementGhost.y = -gy; // Y-flip
-    ctx.placementGhost.rotation = -preview.angle;
+    ctx.placementGhost.rotation = -angle;
     // Build mirror (4B): flip in the local frame, then rotate (structureLocalToWorld).
     ctx.placementGhost.scale.x = preview.mirror === true ? -1 : 1;
     // The slot outline under the ghost (after the turn + mirror it undoes).
@@ -145,7 +148,7 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
     let rejection: PlacementRejection | null = null;
     if (!pendingGhost && !heldGhost && mirror.swarm) {
       const pose = ctx.pose;
-      pose.kind = preview.kind; pose.x = gx; pose.y = gy; pose.angle = preview.angle; pose.mirror = preview.mirror === true;
+      pose.kind = preview.kind; pose.x = gx; pose.y = gy; pose.angle = angle; pose.mirror = preview.mirror === true;
       rejection = ctx.verdict.check(pose, mirror.structures, mirror.swarm, ctx.obstacles, ghostDeckContext(preview));
     }
     ctx.feedback.placementPreviewRejection = rejection;

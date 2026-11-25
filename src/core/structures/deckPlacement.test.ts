@@ -9,7 +9,7 @@ import { snapToDeckSlot, type DeckSnap } from '../hex/deckSnap.js';
 import { deckHexCentreInto, plateCentreWorldInto, plateHexes, DECK_HEX_SIZE } from '../hex/plates.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 
-const out = (): DeckSnap => ({ x: 0, y: 0, q: 0, r: 0, rhombus: -1, slot: 'small' });
+const out = (): DeckSnap => ({ x: 0, y: 0, q: 0, r: 0, rhombus: -1, slot: 'small', rot: -1 });
 const centre = (i: number, j: number): { x: number; y: number } => plateCentreWorldInto(i, j, { x: 0, y: 0 });
 const ringHex = (i: number, j: number, k: number): { x: number; y: number } => {
   const h = plateHexes(i, j)[k]!;
@@ -49,7 +49,8 @@ describe('snapPlacementToDeck — laying a plate', () => {
       const slot = getStructureKind(kind).deckSlot;
       const s = snapPlacementToDeck(kind, c.x + 200, c.y + 100, out());
       expect(s.slot).toBe(slot);
-      expect(s).toEqual(snapToDeckSlot(slot, c.x + 200, c.y + 100, out()));
+      // Same slot; the turn is resolved per kind (slice 18, deckFacing.test).
+      expect({ ...s, rot: 0 }).toEqual({ ...snapToDeckSlot(slot, c.x + 200, c.y + 100, out()), rot: 0 });
     }
   });
 

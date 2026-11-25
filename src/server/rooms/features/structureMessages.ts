@@ -48,7 +48,7 @@ export interface StructureMessageHost extends ParsedMessageHost {
 }
 
 /** Deck-snap scratch for `place_structure` (invariant 14). */
-const deckSnap: DeckSnap = { x: 0, y: 0, q: 0, r: 0, rhombus: -1, slot: 'small' };
+const deckSnap: DeckSnap = { x: 0, y: 0, q: 0, r: 0, rhombus: -1, slot: 'small', rot: -1 };
 
 export function registerStructureMessages(h: StructureMessageHost): RoomFeature {
   // ── Structures plan, Phase 2 — placement / removal ──────────────────
@@ -60,15 +60,16 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
     // Base platforms: on a deck room the PLAYER's point snaps to its kind's
     // deck slot (the client ghost runs the same core snap) and must stand on
     // the owner's deck (`off-deck`, same core rule). place() never snaps.
+    // The turn snaps by the same rule as the ghost: on a deck room the snap
+    // decides it (a small building faces its third of the hex; otherwise 30°
+    // steps, quarter turns for a quarter-turn-only kind); quarter turns off
+    // deck. place() itself keeps any 30° step.
     let px = msg.x, py = msg.y;
+    let rot: number = snapPlayerStructureRotation(msg.rot, false, msg.kind);
     if (h.deck()) {
-      snapPlacementToDeck(msg.kind, px, py, deckSnap);
-      px = deckSnap.x; py = deckSnap.y;
+      snapPlacementToDeck(msg.kind, px, py, deckSnap, msg.rot);
+      px = deckSnap.x; py = deckSnap.y; rot = deckSnap.rot;
     }
-    // The turn snaps by the same room rule as the ghost: 30° steps on a deck
-    // room, quarter turns elsewhere and for a quarter-turn-only kind (gates,
-    // teleporters). place() itself keeps any 30° step.
-    const rot = snapPlayerStructureRotation(msg.rot, h.deck(), msg.kind);
     const id = h.structurePlacement().place(
       owner,
       msg.kind,

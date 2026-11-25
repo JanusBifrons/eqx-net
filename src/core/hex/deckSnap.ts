@@ -7,6 +7,11 @@
  *   (30°, 150°, 270° in `hex.ts`'s corner order) splits the hex into three
  *   rhombi; rhombus `k` spans corners `2k`, `2k+1`, `2k+2`, so its centroid is
  *   half-way to corner `2k+1` (90°, 210°, 330°).
+ *   Facing (slice 18): the rhombus's LONG diagonal (corner `2k` → corner
+ *   `2k+2`, 1300 u) runs ACROSS the line from the hex centre (its short
+ *   diagonal, centre → corner `2k+1`, is only 750 u), at 120°·k. A small
+ *   building's long side lies along it ({@link rhombusFacingDeg}), so the three
+ *   buildings of a hex are one another turned 120° about the hex centre.
  * - `'plate'`: the centre of the plate's middle hex (`plates.ts`).
  *
  * Angles are measured with `atan2(y, x)` in whatever frame the caller passes;
@@ -34,6 +39,11 @@ export interface DeckSnap {
   rhombus: number;
   /** The slot size actually snapped to (a connector may snap to `'plate'`). */
   slot: DeckSlot;
+  /** Building turn, DEGREES (CCW, game frame). From {@link snapToDeckSlot}:
+   *  `'small'` = the rhombus's long-diagonal facing ({@link rhombusFacingDeg}),
+   *  otherwise -1 (the slot has no facing). `snapPlacementToDeck` resolves
+   *  it to the kind's final turn. */
+  rot: number;
 }
 
 const hexScratch: AxialHex = { q: 0, r: 0 };
@@ -52,6 +62,13 @@ export function rhombusOf(dx: number, dy: number): number {
   a = ((a % 360) + 360) % 360;
   const k = Math.floor(a / 120);
   return k > 2 ? 2 : k;
+}
+
+/** The facing (degrees, CCW in the game frame: 0 / 120 / 240) of rhombus
+ *  `k`'s long diagonal, corner `2k` → corner `2k + 2`. A box with its long
+ *  side along local x, turned by this, lies along the rhombus. */
+export function rhombusFacingDeg(k: number): number {
+  return 120 * (((k % 3) + 3) % 3);
 }
 
 /** Allocation-free: the centroid of rhombus `k` of the hex centred at
@@ -77,6 +94,7 @@ export function snapToDeckSlot(slot: DeckSlot, x: number, y: number, out: DeckSn
     out.q = centreScratch.q;
     out.r = centreScratch.r;
     out.rhombus = -1;
+    out.rot = -1;
   } else {
     deckHexCentreInto(hexScratch.q, hexScratch.r, pointScratch);
     out.q = hexScratch.q;
@@ -85,8 +103,10 @@ export function snapToDeckSlot(slot: DeckSlot, x: number, y: number, out: DeckSn
       const k = rhombusOf(x - pointScratch.x, y - pointScratch.y);
       rhombusCentroidInto(pointScratch.x, pointScratch.y, k, pointScratch);
       out.rhombus = k;
+      out.rot = rhombusFacingDeg(k);
     } else {
       out.rhombus = -1;
+      out.rot = -1;
     }
   }
   out.x = pointScratch.x;

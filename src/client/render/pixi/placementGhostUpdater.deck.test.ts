@@ -30,7 +30,7 @@ function harness(chosen: [number, number] | null) {
   return { ctx, feedback, input, mirror };
 }
 
-const snapOf = (kind: string, x: number, y: number): DeckSnap => snapPlacementToDeck(kind, x, y, { x: 0, y: 0, q: 0, r: 0, rhombus: -1, slot: 'small' });
+const snapOf = (kind: string, x: number, y: number): DeckSnap => snapPlacementToDeck(kind, x, y, { x: 0, y: 0, q: 0, r: 0, rhombus: -1, slot: 'small', rot: -1 });
 
 describe('placement ghost on a deck room', () => {
   for (const [kind, x, y] of [['connector', 137, -412], ['reactor', -905, 333], ['teleporter_large', 2210, 1777]] as const) {
@@ -45,6 +45,21 @@ describe('placement ghost on a deck room', () => {
       expect(ctx.placementGhost!.y).toBeCloseTo(-s.y, 9);
     });
   }
+
+  it('a small building ghost is drawn at the snap facing, live and pending (slice 18)', () => {
+    const { ctx, mirror } = harness([137, -412]);
+    // The player holds a 90° turn; the small slot overrides it.
+    updatePlacementGhost(mirror('cargo_bay', 0, 0, true, Math.PI / 2), ctx);
+    const s = snapPlacementToDeck('cargo_bay', 137, -412, { x: 0, y: 0, q: 0, r: 0, rhombus: -1, slot: 'small', rot: -1 }, 90);
+    expect(s.slot).toBe('small');
+    expect(s.rot).not.toBe(90);
+    expect(ctx.placementGhost!.rotation).toBeCloseTo(-(s.rot * Math.PI) / 180, 9);
+    // The sent (pending) ghost at the snapped point keeps the same facing.
+    const m = mirror('cargo_bay', s.x, s.y, true, Math.PI / 2);
+    m.pendingPlacementPreview!.pending = true;
+    updatePlacementGhost(m, ctx);
+    expect(ctx.placementGhost!.rotation).toBeCloseTo(-(s.rot * Math.PI) / 180, 9);
+  });
 
   it('the ahead-of-ship pose (no chosen point) snaps too', () => {
     const { ctx, feedback, mirror } = harness(null);

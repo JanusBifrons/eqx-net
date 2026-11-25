@@ -5,6 +5,8 @@
  * `place_structure` handler both run the core `snapPlacementToDeck`; the
  * structure must land exactly where the ghost was drawn. With the flag off,
  * neither side snaps. `place()` itself never snaps.
+ * Slice 18: the snap also decides the turn (a small building faces its third
+ * of the hex), so the placed `rot` must equal the ghost's drawn turn.
  */
 import { describe, it, expect } from 'vitest';
 import type { Client } from 'colyseus';
@@ -12,8 +14,10 @@ import { registerStructureMessages, type StructureMessageHost } from '../../src/
 import { StructurePlacementSubsystem } from '../../src/server/structures/StructurePlacementSubsystem.js';
 import { StructureRegistry } from '../../src/server/structures/StructureRegistry.js';
 import { snapGhostToDeck } from '../../src/client/render/pixi/placementDeckSnap.js';
-import { getStructureKind } from '../../src/shared-types/structureKinds.js';
-import { plateCentreWorldInto } from '../../src/core/hex/plates.js';
+import { getStructureKind, isBuildableStructureKind } from '../../src/shared-types/structureKinds.js';
+import { STRUCTURE_KINDS_LIST } from '../../src/shared-types/structureKinds/catalogueOrder.js';
+import { deckHexCentreInto, isPlateCentreHex, plateCentreWorldInto } from '../../src/core/hex/plates.js';
+import { rhombusCentroidInto } from '../../src/core/hex/deckSnap.js';
 
 function rig(deck: boolean) {
   const registry = new StructureRegistry();
@@ -49,13 +53,13 @@ function rig(deck: boolean) {
     }
   }
   const client = { sessionId: 's1' } as Client;
-  /** Send place_structure; returns the placed record's centre (or null). */
-  const place = (kind: string, x: number, y: number): { x: number; y: number } | null => {
+  /** Send place_structure; returns the placed record's centre + turn (or null). */
+  const place = (kind: string, x: number, y: number, rot?: number): { x: number; y: number; rot: number } | null => {
     const before = registry.size;
-    handlers.get('place_structure')!(client, { type: 'place_structure', kind, x, y });
+    handlers.get('place_structure')!(client, { type: 'place_structure', kind, x, y, rot });
     if (registry.size === before) return null;
     const rec = registry.get(`pstruct-${n - 1}`)!;
-    return { x: rec.x, y: rec.y };
+    return { x: rec.x, y: rec.y, rot: rec.rot ?? 0 };
   };
   return { place, placement, registry };
 }
@@ -86,10 +90,38 @@ describe('deck placement snap parity (client ghost == server placed point)', () 
     });
   }
 
+  it('small slot: the placed turn is the ghost rhombus facing, in all 3 rhombi, whatever the player turned', () => {
+    let q = 2;
+    while (isPlateCentreHex(q, 1)) q++; // a connector there lays a plate
+    const hexC = deckHexCentreInto(q, 1, { x: 0, y: 0 });
+    const p = { x: 0, y: 0 };
+    const small = STRUCTURE_KINDS_LIST.filter((k) => k.deckSlot === 'small' && isBuildableStructureKind(k.id)).map((k) => k.id);
+    expect(small).toContain('shield_gate'); // quarter-turn only: nearest quarter of the facing
+    for (const kind of small) {
+      expect(getStructureKind(kind).deckSlot).toBe('small');
+      const seen = new Set<number>();
+      for (let k = 0; k < 3; k++) {
+        rhombusCentroidInto(hexC.x, hexC.y, k, p);
+        for (const playerRot of [0, 90, 150]) {
+          const r = rig(true);
+          const ghost = snapGhostToDeck({ kind, x: 0, y: 0, angle: (playerRot * Math.PI) / 180, deck: true }, p.x + 9, p.y - 4);
+          expect(ghost!.rhombus).toBe(k);
+          const gx = ghost!.x, gy = ghost!.y, grot = ghost!.rot;
+          const placed = r.place(kind, p.x + 9, p.y - 4, playerRot);
+          expect(placed, `${kind} rhombus ${k}`).not.toBeNull();
+          expect([placed!.x, placed!.y, placed!.rot]).toEqual([gx, gy, grot]);
+          seen.add(grot);
+        }
+      }
+      // Each rhombus has its own facing (the player's turn changes nothing).
+      expect(seen.size, kind).toBe(3);
+    }
+  });
+
   it('deck OFF: neither side snaps', () => {
     const r = rig(false);
     expect(snapGhostToDeck({ kind: 'connector', x: 0, y: 0, angle: 0, deck: false }, 137, -412)).toBeNull();
-    expect(r.place('connector', 137, -412)).toEqual({ x: 137, y: -412 });
+    expect(r.place('connector', 137, -412)).toEqual({ x: 137, y: -412, rot: 0 });
   });
 
   it('the pending (sent) ghost is never re-snapped', () => {
