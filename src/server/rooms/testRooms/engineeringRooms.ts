@@ -7,7 +7,7 @@ import type { Server } from 'colyseus';
 import { SectorRoom } from '../SectorRoom.js';
 import { BASE_BUILD_PREBUILT, GATE_TEST_PREBUILT, PREBUILT_ADOPT_OWNER, RIG_SANDBOX_E2E_SCENE, RIG_SANDBOX_PREBUILT, RIG_HOME, RIG_UNLOAD, rigSandboxScene, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../scenarioLayouts.js';
 import { SHOWCASE_PILOT_ID } from '../showcaseRooms.js';
-import { deckHexCentreInto } from '../../../core/hex/plates.js';
+import { deckHexCentreInto, plateCentreWorldInto } from '../../../core/hex/plates.js';
 
 /**
  * `?room=base-build-test` (Sunday base loop): stills and films of building.
@@ -63,6 +63,26 @@ export const DECK_TEST_OPTS = {
   scenarioAsteroids: [],
   defaultSpawnX: -1000,
   defaultSpawnY: 150 - SCENARIO.connectorN.y,
+};
+
+/** Base-platforms stills: the deck room plus a fuller staged plate (buildings on
+ *  outer hexes, one at 30°) and a neighbouring plate, to show seam cables. */
+const hexAt = (q: number, r: number, ox = 0, oy = 0): { x: number; y: number } => {
+  const p = deckHexCentreInto(q, r, { x: 0, y: 0 });
+  return { x: p.x + ox, y: p.y + oy };
+};
+const DECK_SHOW_P2 = plateCentreWorldInto(1, 0, { x: 0, y: 0 });
+export const DECK_SHOW_OPTS = {
+  ...DECK_TEST_OPTS,
+  prebuiltStructures: [
+    ...DECK_TEST_OPTS.prebuiltStructures,
+    { kind: 'solar' as const, ...hexAt(-1, 0) },
+    { kind: 'solar' as const, ...hexAt(0, 1) },
+    { kind: 'smelter' as const, ...hexAt(-1, 1), rot: 30 },
+    { kind: 'refinery' as const, ...hexAt(0, -1) },
+    { kind: 'connector' as const, x: DECK_SHOW_P2.x, y: DECK_SHOW_P2.y },
+    { kind: 'solar' as const, ...hexAt(0, 1, DECK_SHOW_P2.x, DECK_SHOW_P2.y) },
+  ],
 };
 
 /** Registers this group's rooms. Called from `index.ts` inside the
@@ -475,4 +495,5 @@ export function defineEngineeringRooms(gameServer: Server): void {
     .filterBy(['testId']);
   gameServer.define('base-build-test', SectorRoom, { ...BASE_BUILD_TEST_OPTS }).filterBy(['testId']);
   gameServer.define('deck', SectorRoom, { ...DECK_TEST_OPTS }).filterBy(['testId']);
+  gameServer.define('deck-show', SectorRoom, { ...DECK_SHOW_OPTS }).filterBy(['testId']);
 }
