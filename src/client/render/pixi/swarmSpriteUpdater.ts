@@ -122,6 +122,8 @@ export function scrapHeatTint(ageMs: number): number | undefined {
 // wiped it every frame.
 
 export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): void {
+  // Base platforms: the deck floor follows the plate set (one version compare per frame).
+  ctx.deckPlates?.sync(mirror.deckPlates);
   if (!mirror.swarm) return;
   const now = performance.now();
   // Pose-ring arrivals are main-thread stamps: interpolate on that clock.

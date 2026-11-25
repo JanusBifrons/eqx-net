@@ -70,6 +70,10 @@ export function plateCentreAtWorldInto(x: number, y: number, out: PlateIndex): b
 }
 
 export class PlateSet<K = string> {
+  /** Bumped whenever any owner gains or loses a plate (not on a second
+   *  anchor of a plate already held): readers cache against it. Read it;
+   *  never write it. */
+  version = 0;
   private readonly anchors = new Map<K, Anchor>();
   private readonly owners = new Map<string, OwnerPlates>();
 
@@ -104,6 +108,7 @@ export class PlateSet<K = string> {
 
   /** Forget everything (a room-state reset). */
   clear(): void {
+    if (this.owners.size > 0) this.version++;
     this.anchors.clear();
     this.owners.clear();
   }
@@ -144,6 +149,14 @@ export class PlateSet<K = string> {
     for (let n = 0; n < list.length; n++) visit(unpackI(list[n]!), unpackJ(list[n]!));
   }
 
+  /** Visit every owner's plates (order unspecified). Read on a {@link version} change, not per frame. */
+  forEachOwnerPlate(visit: (owner: string, i: number, j: number) => void): void {
+    for (const [owner, op] of this.owners) {
+      const list = op.list;
+      for (let n = 0; n < list.length; n++) visit(owner, unpackI(list[n]!), unpackJ(list[n]!));
+    }
+  }
+
   private retain(owner: string, key: number): void {
     let op = this.owners.get(owner);
     if (!op) {
@@ -153,6 +166,7 @@ export class PlateSet<K = string> {
     const c = op.count.get(key);
     if (c !== undefined) { op.count.set(key, c + 1); return; }
     op.count.set(key, 1);
+    this.version++;
     op.at.set(key, op.list.length);
     op.list.push(key);
   }
@@ -163,6 +177,7 @@ export class PlateSet<K = string> {
     if (!op || c === undefined) return;
     if (c > 1) { op.count.set(key, c - 1); return; }
     op.count.delete(key);
+    this.version++;
     const idx = op.at.get(key)!;
     const last = op.list.pop()!;
     op.at.delete(key);

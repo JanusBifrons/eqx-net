@@ -113,3 +113,25 @@ describe('PlateSet — the derived plate set', () => {
     expect(out).toEqual({ i: 4, j: -2 });
   });
 });
+
+describe('PlateSet.version — readers cache against it', () => {
+  it('moves when a plate appears or goes, not on a second anchor of a held plate', () => {
+    const ps = new PlateSet<string>();
+    const c = at(0, 0);
+    const v0 = ps.version;
+    ps.upsert('a', 'alice', 'connector', c.x, c.y);
+    const v1 = ps.version;
+    expect(v1).toBeGreaterThan(v0);
+    ps.upsert('b', 'alice', 'connector', c.x, c.y); // same plate, second anchor
+    ps.upsert('a', 'alice', 'connector', c.x, c.y); // idempotent re-state
+    expect(ps.version).toBe(v1);
+    ps.remove('a');
+    expect(ps.version).toBe(v1); // 'b' still holds it
+    ps.remove('b');
+    expect(ps.version).toBeGreaterThan(v1);
+    const seen: string[] = [];
+    ps.upsert('c', 'bob', 'connector', c.x, c.y);
+    ps.forEachOwnerPlate((o, i, j) => seen.push(`${o}:${i},${j}`));
+    expect(seen).toEqual(['bob:0,0']);
+  });
+});

@@ -12,6 +12,7 @@ import type { Container } from 'pixi.js';
 import type { ArtOptions } from '../../art/artMode.js';
 import { DEFAULT_LINE_LOOK, readLineLook, type LineLook } from '../connectorLineLooks.js';
 import { readRigsFlag, StructureRigs } from '../structureRigs.js';
+import { StructureDeckPlates } from '../structureDeckPlates.js';
 
 export interface RestyleLook {
   /** Grid line look; null = the pre-restyle thin line. */
@@ -35,10 +36,10 @@ export function resolveRestyleLook(art: ArtOptions, search: string | null): Rest
 }
 
 /** Init step (`initSceneAndOverlays`): set the connector line look and build the
- *  one `StructureRigs` the swarm updater poses, on either renderer path. */
+ *  one `StructureRigs` the swarm updater poses (and the deck floor), on either renderer path. */
 export function applyRestyleLook(
   connectorRenderer: { lineLook: LineLook | null; socketCables?: boolean },
-  swarmUpdaterCtx: { structureRigs?: StructureRigs; socketNubs?: boolean },
+  swarmUpdaterCtx: { structureRigs?: StructureRigs; deckPlates?: StructureDeckPlates; socketNubs?: boolean },
   shipContainer: Container,
   art: ArtOptions,
   search: string | null,
@@ -50,5 +51,7 @@ export function applyRestyleLook(
   // 0d slice 10: socket nubs on the structures, same flag.
   swarmUpdaterCtx.socketNubs = art.fx === true;
   if (look.rigs) swarmUpdaterCtx.structureRigs = new StructureRigs(shipContainer);
+  // Base platforms: the deck floor (drawn only while the room's deck flag is on).
+  swarmUpdaterCtx.deckPlates = new StructureDeckPlates(shipContainer);
   return look;
 }

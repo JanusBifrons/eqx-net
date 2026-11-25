@@ -13,7 +13,7 @@
  * decoded every sync, as before. Every row is still walked each sync, so the
  * mirror converges from room state alone (#16).
  */
-import type { RenderMirror, StructureRenderState } from '@core/contracts/IRenderer';
+import type { DeckPlatesMirror, RenderMirror, StructureRenderState } from '@core/contracts/IRenderer';
 import type { StructureStateView } from '../../../shared-types/structureStateWire.js';
 import { SWARM_KIND_STRUCTURE } from '../../../shared-types/swarmWireFormat.js';
 import { decodeStructureState, emptyStructureRow } from '../structureStateDecode.js';
@@ -26,6 +26,8 @@ export interface StructureRoomState {
   structures?: { size: number; forEach(cb: (v: StructureStateView, k: string) => void): void };
   structureOwners?: StrMap;
   structureOwnerNames?: StrMap;
+  /** Base platforms: the room floors its plates. */
+  deck?: boolean;
 }
 
 /** The schema decoder's change hook (`@colyseus/schema` `Decoder`). */
@@ -55,6 +57,23 @@ export class StructureRowSync {
   private decoder: DecoderHook | null = null;
   private hook: ChangeFeed | null = null;
   private lastMap: Map<number, StructureRenderState> | null = null;
+  /** The plate-set version / deck flag last written to `mirror.deckPlates`. */
+  private deckPlatesVersion = -1;
+  private deckOn = false;
+  /** Writes one plate into `mirror.deckPlates` (bound once, #14). */
+  private readonly writePlate = (_owner: string, i: number, j: number): void => {
+    const dp = this.mirror.deckPlates!;
+    const n = dp.count;
+    if (2 * n + 2 > dp.ij.length) {
+      // Grows on a plate-set change only (never per frame): double capacity.
+      const grown = new Int32Array(dp.ij.length * 2);
+      grown.set(dp.ij);
+      dp.ij = grown;
+    }
+    dp.ij[2 * n] = i;
+    dp.ij[2 * n + 1] = j;
+    dp.count = n + 1;
+  };
 
   constructor(
     private readonly mirror: RenderMirror,
@@ -126,6 +145,27 @@ export class StructureRowSync {
    *  state is gone (with its pose entry: room state owns a structure's
    *  lifetime, the binary full refresh never sweeps structures). */
   sync(room: StructureRoom | null | undefined): void {
+    this.syncRows(room);
+    this.syncDeckPlates((room?.state as StructureRoomState | undefined)?.deck === true);
+  }
+
+  /**
+   * Base platforms: copy the plate set into `mirror.deckPlates` (the same
+   * mirror channel as the rows) when it or the room's deck flag changed.
+   * Off ⇒ count 0. An unchanged sync writes nothing.
+   */
+  private syncDeckPlates(deck: boolean): void {
+    if (deck === this.deckOn && this.plates.version === this.deckPlatesVersion) return;
+    this.deckOn = deck;
+    this.deckPlatesVersion = this.plates.version;
+    let dp: DeckPlatesMirror | undefined = this.mirror.deckPlates;
+    if (!dp) { dp = { version: 0, count: 0, ij: new Int32Array(32) }; this.mirror.deckPlates = dp; }
+    dp.version++;
+    dp.count = 0;
+    if (deck) this.plates.forEachOwnerPlate(this.writePlate);
+  }
+
+  private syncRows(room: StructureRoom | null | undefined): void {
     const state = room?.state as StructureRoomState | undefined;
     const rows = state?.structures;
     if (!room || !this.watch(room)) this.all = true;
