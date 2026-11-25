@@ -20,7 +20,7 @@ import { chamber, chamberStatus } from './structureStyleC.transport.chamber.js';
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
  *  art for this family re-bakes and nothing else does. */
-export const version = 't4';
+export const version = 't5';
 
 /** Medium dock (`freight_dock`, 1000 × 400): the loading pad is OUTSIDE the
  *  building (the rig's `lip` apron, past the open -y edge, pixi), so the
@@ -111,6 +111,8 @@ export const kinds: StyleDrawerTable = {
   // Teleporter redesign T4: the chamber (structureStyleC.transport.chamber.ts).
   teleporter: chamber,
   pocket_pad: chamber,
+  // T5: the large teleporter (2120, eight towers) shares the drawer.
+  teleporter_large: chamber,
 };
 
 /** This family's rig drawing hooks, by rig id (`RigDrawHook`,
@@ -118,6 +120,7 @@ export const kinds: StyleDrawerTable = {
 export const rigs: RigDrawHookTable = {
   // The chamber's blast doors wear the gatehouse leaf art.
   'tp-doors': { partArt: doorLeafContext },
+  'tp-doors-large': { partArt: doorLeafContext },
 };
 
 /** This family's live body-state hooks (`BodyStatusHook`): the chamber's
@@ -125,4 +128,5 @@ export const rigs: RigDrawHookTable = {
 export const status: BodyStatusHookTable = {
   teleporter: chamberStatus,
   pocket_pad: chamberStatus,
+  teleporter_large: chamberStatus,
 };

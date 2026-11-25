@@ -22,7 +22,7 @@ import {
   AMBER_FLASH_TICKS, COIL_STEPS, TP_AMBER, TP_AMBER_OFF, chamber, chamberCode, chamberStatus, coilStep, phaseLightColor,
 } from './structureStyleC.transport.chamber.js';
 
-const PADS = ['teleporter', 'pocket_pad'] as const;
+const PADS = ['teleporter', 'pocket_pad', 'teleporter_large'] as const;
 const PHASES = [TP_PHASE.IDLE, TP_PHASE.ARMED, TP_PHASE.CLOSING, TP_PHASE.SEALED, TP_PHASE.OPEN] as const;
 
 /** A built pad row at `phase` with `chargePct`, door fully open or shut. */
@@ -37,7 +37,7 @@ function row(phase: number, chargePct: number, powered = true, open = true): Str
 const near = (a: number, b: number): boolean => Math.abs(a - b) < 0.01;
 
 describe('teleporter chamber art (T4)', () => {
-  it('teleporter and transit pad draw the chamber; Large and the Ancients\' gate keep their art; version bumped', () => {
+  it('all three pads draw the chamber (Large from T5); the Ancients\' gate keeps its art; version bumped', () => {
     for (const id of PADS) {
       expect(kinds[id], id).toBe(chamber);
       expect(structureStyleDrawer('c', id), id).toBe(chamber);
@@ -45,8 +45,8 @@ describe('teleporter chamber art (T4)', () => {
       expect(status[id], id).toBe(chamberStatus);
       expect(hasBodyStatus(id), id).toBe(true);
     }
-    expect(version).toBe('t4');
-    expect(structureStyleDrawer('c', 'teleporter_large')).toBeUndefined();
+    expect(version).toBe('t5');
+    expect(rigs['tp-doors-large']?.partArt).toBe(rigs['tp-doors']?.partArt);
     expect(structureStyleDrawer('c', 'alien_gate')).toBeUndefined();
   });
 
