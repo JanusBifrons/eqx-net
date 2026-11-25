@@ -90,6 +90,19 @@ export function doorLeafCount(kind: string | null | undefined): number {
 }
 
 /**
+ * The kind's rig is a door driven by a door segment (`doorMotion.ts`) and its
+ * room-state row carries that segment, not a plain clip: a rig with a door
+ * clip (`door` / `door-a`). The shield gate, the airlock and the teleporter
+ * chambers. Not `doorLeafCount > 0`: a turret's barrels are outlined parts too.
+ */
+export function hasDoorRig(kind: string | null | undefined): boolean {
+  const l = kind ? layoutFor(kind) : null;
+  if (l === null) return false;
+  for (const c of l.rig.clips) if (c.id === 'door' || c.id === 'door-a') return true;
+  return false;
+}
+
+/**
  * The door position (0 shut .. DOOR_POS_MAX open) a kind's leaves stand at
  * with no clip record: the end of its rig's `idleClip` (a teleporter
  * chamber's doors rest OPEN), else 0 (a gate's doors rest shut).

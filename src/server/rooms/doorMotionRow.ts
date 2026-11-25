@@ -10,7 +10,7 @@
  */
 import { rigClipIndex } from '../../core/articulation/rig.js';
 import { rigForStructureKind } from '../../core/articulation/rigCatalogue.js';
-import type { GateType } from '../../core/structures/gateGeometry.js';
+import { DOOR_POS_MAX, type GateType } from '../../core/structures/gateGeometry.js';
 import type { AirlockState, GateState } from '../../core/structures/gateLogic.js';
 import type { DoorSegment } from '../../core/structures/doorMotion.js';
 import { STRUCTURE_DEFAULTS as SD, encodeDoorMotion, type DoorMotionFields, type DoorMotionSeg } from '../../shared-types/structureStateWire.js';
@@ -67,7 +67,20 @@ function encodeGateDoors(id: string, type: GateType, src: GateDoorSource): DoorM
 /** Write a gate's / airlock's door motion into its row (on change only). The
  *  door kinds' rig fields belong to this writer, not `writeRigClipRow`. */
 export function writeDoorMotionRow(id: string, type: GateType, src: GateDoorSource, st: StructureState): void {
-  const f = encodeGateDoors(id, type, src);
+  writeFields(encodeGateDoors(id, type, src), st);
+}
+
+/** A teleporter chamber's resting doors: open and still (no track yet). */
+const OPEN_REST: DoorSegment = { p0: DOOR_POS_MAX, t0: 0, dir: 1, level: 0 };
+
+/** Redesign T2 — a chamber pad's blast-door segment (`PadDoors.segFor`;
+ *  undefined = resting open) into its row: both doorways ride the one `door`
+ *  clip. On change only, like the gate row. */
+export function writePadDoorRow(seg: Readonly<DoorMotionSeg> | undefined, kind: string, st: StructureState): void {
+  writeFields(encodeDoorMotion(seg ?? OPEN_REST, doorClipIndex(kind, 'door'), fields), st);
+}
+
+function writeFields(f: Readonly<DoorMotionFields>, st: StructureState): void {
   if ((st.rigClip ?? SD.rigClip) !== f.rigClip) st.rigClip = f.rigClip;
   if ((st.rigStart ?? SD.rigStart) !== f.rigStart) st.rigStart = f.rigStart;
   if ((st.rigHold ?? SD.rigHold) !== f.rigHold) st.rigHold = f.rigHold;
