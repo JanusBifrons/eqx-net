@@ -31,9 +31,8 @@ The two views have separate jobs (owner, 2026-11-21):
   move you give goes at that speed, and changing it re-paces the selected
   ships that are already moving. Stop brakes them where they are but they
   keep their destination: pick a speed again and they carry on. The bar
-  starts on Full. It sits in the fleet panel (the fleet strip on a phone)
-  at the bottom of the screen, never over the map, where a click is an
-  order.
+  starts on Full. It sits in the Orders panel on the right (⚙ on the
+  fleet strip), never over the map, where a click is an order.
 - **Fly** is hand flying only: WASD or the thumbstick. There is no ship-speed
   telegraph (Stop / ⅓ / ⅔ / Full) and tapping empty space sets no course.
   This holds for every hull, capitals included: a battleship in Fly turns and
@@ -80,10 +79,11 @@ Attack sends them after whatever you tapped.
 ## The fleet panel
 
 While ships are selected, the left strip shows the quick orders as icons:
-Order, Stance and Speed (tap one and its choices fly out beside it; a pick
-takes effect at once) and Stop. A selection whose ships differ shows a
-neutral dots icon. The ⚙ on the strip opens the full fleet panel on the right
-(a slimmer fleet strip on a phone). It lists each ship by type,
+Order and Stance (tap one and its choices fly out beside it; a pick
+takes effect at once), Move and Stop. A selection whose ships differ shows a
+neutral dots icon. The ⚙ on the strip opens the Orders panel on the right:
+Order, Stance and Speed as switches (a change shows amber until you press
+Apply, then the panel folds away), Stop, squad buttons and Take controls. It lists each ship by type,
 its hull, and what it is doing in plain words: Idle, Moving, Patrolling,
 Chasing a Drone, Attacking, Guarding, Forming up, or Retreating with its hull
 percentage.

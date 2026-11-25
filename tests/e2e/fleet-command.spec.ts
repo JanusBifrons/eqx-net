@@ -122,7 +122,7 @@ test.describe('RTS fleet command loop @feature', () => {
     await expect(page.locator('[data-testid="left-strip"]')).toHaveAttribute('data-open', 'true');
     await expect(page.locator('[data-testid="left-strip-identity"]')).toHaveAttribute('aria-label', '2 ships selected');
     await expect(page.locator('[data-testid="left-strip-order"]')).toBeVisible();
-    await expect(page.locator('[data-testid="fleet-panel"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="fleet-mode"]')).toHaveCount(0);
 
     // ── Right-click empty space → move order; the server reports motion. ──
     const box = (await page.locator(SURFACE).boundingBox())!;
@@ -173,9 +173,9 @@ test.describe('RTS fleet command loop @feature', () => {
     await expect(page.locator('[data-testid="left-strip-route"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="left-strip-order"]')).toHaveAttribute('aria-label', 'Order: Patrol', { timeout: 5_000 });
 
-    // ── ⚙ → the rail Fleet panel: ship list, squad, Stop. ──────────────────
+    // ── ⚙ → the Orders panel: ship list, squad, Stop. ──────────────────────
     await page.locator('[data-testid="left-strip-cog"]').click();
-    const panel = page.locator('[data-testid="fleet-panel"]');
+    const panel = page.locator('[data-testid="orders-panel"]');
     await expect(panel).toBeVisible();
     await expect(panel).toHaveAttribute('data-fleet-count', '2');
     await expect(page.locator('[data-testid="fleet-ship-row"]')).toHaveCount(2);
@@ -196,7 +196,7 @@ test.describe('RTS fleet command loop @feature', () => {
     // click below lands on where the hull is drawn this frame (well inside its
     // pick radius).
     await waitRowsActivity(page, /^(?!.*Patrolling).*Guarding/, 'Stop ends the patrol and the ships hold');
-    await page.locator('[data-testid="rail-panel-fleet-close"]').click();
+    await page.locator('[data-testid="orders-panel-close"]').click();
     await expect(page.locator('[data-testid="left-strip"]')).toHaveAttribute('data-open', 'true');
     const target = (await ownHulls(page))[0]!;
     await page.keyboard.down('Shift');
