@@ -413,10 +413,12 @@ describe('SectorPersistence — structure-catalogue version gate (campaign 6.2)'
     const p = new SectorPersistence(deps);
     p.persist();
     // Simulate a catalogue bump between save and restart: rewrite the stored
-    // row with a STALE stamped version (everything else untouched).
+    // row with a STALE stamped version (everything else untouched). Version 1:
+    // the bumps since then include unflagged ones (`STRUCTURE_KIND_WIPES`), so
+    // the whole set is discarded; LIVE - 1 may be a per-kind (no-wipe) bump.
     const row = deps.loadRow('galaxy-sol')!;
     const payload = JSON.parse(row.snapshot) as SectorSnapshotPayload;
-    payload.structureCatalogueVersion = STRUCTURE_KIND_CATALOGUE_VERSION - 1;
+    payload.structureCatalogueVersion = 1;
     deps.saveRow('galaxy-sol', payload);
     p.hydrate();
     expect(restoredStructures).not.toHaveBeenCalled();

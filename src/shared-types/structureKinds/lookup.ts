@@ -37,8 +37,10 @@ export const STRUCTURE_KINDS: Record<StructureKindId, StructureKind> = Object.fr
  *  base fits the 5,000-mineral Capital bank.
  *  15→16 (structure-restyle F2, gate family size): SHIELD_GATE 320×72 →
  *  416×72, SHIELD_AIRLOCK 320×260 → 392×260, SHIELD_PYLON 72×72 → 120×120
- *  (the openings ships fly through are unchanged). */
-export const STRUCTURE_KIND_CATALOGUE_VERSION = 16;
+ *  (the openings ships fly through are unchanged).
+ *  16→17 (base platforms): every kind gains `deckSlot`. No size or stat
+ *  changed, so the bump wipes no kind (`STRUCTURE_KIND_WIPES[17] = []`). */
+export const STRUCTURE_KIND_CATALOGUE_VERSION = 17;
 // Gates (SHIELD_GATE, SHIELD_AIRLOCK) were APPENDED without a bump: a bump
 // discards every saved structure on the next boot (SectorPersistence's version
 // gate), and appending a kind leaves every existing record — and so every saved
