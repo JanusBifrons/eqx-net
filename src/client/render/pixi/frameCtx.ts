@@ -112,6 +112,8 @@ export interface RendererFrameRefs {
   readonly rekeyShip: (from: string, to: string) => void;
   readonly captureFleetRingProbe: () => void;
   readonly fxNow: () => number;
+  /** The sector shown (`setSector`); absent in test stubs. */
+  readonly sectorKey?: string | null;
 }
 
 export interface RendererFrameCtx {

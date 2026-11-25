@@ -11,12 +11,20 @@ import { forgeStructure, MAT, type Fields } from '../art/fields.js';
 import { structHandleFor, type ShipArtCtx } from '../art/shipArtSprites.js';
 import type { ArtHandle, ArtService } from '../art/ArtService.js';
 import { STRUCTURE_KINDS_LIST, structureSockets } from '../../../shared-types/structureKinds.js';
+import { padPostCenters } from '../../../shared-types/teleport.js';
 import { STYLE_C_FAMILIES } from './structureStyleC.js';
 
 /** The kinds style C draws, read from its family files (`structureStyleC.<family>.ts`). */
 const C_KINDS = Object.values(STYLE_C_FAMILIES).flatMap((f) => Object.keys(f.kinds));
 /** The six outpost pieces styles A and B draw (their own tables). */
 const OUTPOST = Object.keys(STRUCTURE_STYLES.a.kinds);
+/** On a pad post that itself stands past the style C outline (the Ancients'
+ *  gate's corner posts, colliders the art must draw): exempt from the fit. */
+const onOuterPost = (id: string, x: number, y: number): boolean => {
+  if (id !== 'alien_gate') return false;
+  const out = outlinePx(id, 'c');
+  return padPostCenters(id).some(([px, py]) => !insidePoly(out, px, -py) && Math.max(Math.abs(x - px), Math.abs(y + py)) <= 70);
+};
 const bytes = (f: Fields): Buffer[] => [f.albedo, f.height, f.emis, f.mat, f.key, f.cov].map((a) => Buffer.from(a.buffer));
 
 describe('style registry', () => {
@@ -97,9 +105,11 @@ describe('style A', () => {
         expect(p.pts.length, id).toBeGreaterThanOrEqual(3);
         for (const [x, y] of p.pts) expect(polyEdgeDist(out, x, y), `${id} ${x},${y}`).toBeGreaterThan(-0.5);
       }
-      for (const l of v.lights) expect(insidePoly(out, l.x, l.y), id).toBe(true);
+      for (const l of v.lights) if (!onOuterPost(id, l.x, l.y)) expect(insidePoly(out, l.x, l.y), id).toBe(true);
       for (const s of v.sigils!) expect(polyEdgeDist(out, s.x, s.y), id).toBeGreaterThan(s.r);
-      expect(v.bands!.length, id).toBeGreaterThan(0);
+      // The Ancients' gate is nobody's plating: no livery bands.
+      if (id === 'alien_gate') expect(v.bands!.length, id).toBe(0);
+      else expect(v.bands!.length, id).toBeGreaterThan(0);
     }
   });
   it('the beacon carries the biggest sigil screen, centred', () => {
@@ -144,10 +154,12 @@ describe('style C (shipyard brutalist, 1f)', () => {
       expect(v.rects, id).toEqual([]);
       expect(v.polys, id).not.toEqual(a.polys);
       const out = outlinePx(id, 'c');
-      for (const p of v.polys!) for (const [x, y] of p.pts) expect(polyEdgeDist(out, x, y), `${id} ${x},${y}`).toBeGreaterThan(-0.5);
-      for (const l of v.lights) expect(insidePoly(out, l.x, l.y), id).toBe(true);
+      for (const p of v.polys!) for (const [x, y] of p.pts) if (!onOuterPost(id, x, y)) expect(polyEdgeDist(out, x, y), `${id} ${x},${y}`).toBeGreaterThan(-0.5);
+      for (const l of v.lights) if (!onOuterPost(id, l.x, l.y)) expect(insidePoly(out, l.x, l.y), id).toBe(true);
       for (const s of v.sigils ?? []) expect(polyEdgeDist(out, s.x, s.y), id).toBeGreaterThan(s.r);
-      expect(v.bands!.length, id).toBeGreaterThan(0);
+      // The Ancients' gate is nobody's plating: no livery bands.
+      if (id === 'alien_gate') expect(v.bands!.length, id).toBe(0);
+      else expect(v.bands!.length, id).toBeGreaterThan(0);
     }
     const cap = buildStructureVisual('capital', { accent: 0, style: 'c', livery: true }).sigils!;
     expect(cap.find((s) => s.screen === true)).toMatchObject({ x: 0, y: 0 });
