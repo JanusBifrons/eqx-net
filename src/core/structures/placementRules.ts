@@ -12,7 +12,19 @@
  * iterables are caller-owned, so it's safe to call from the per-frame ghost
  * preview (invariant #14). `null` means legal.
  */
-import { getStructureKind, isConnectorKind, isStructureKindId, normaliseStructureQuarterTurn, normaliseStructureRotation, structureHalfExtents, structureLocalToWorld } from '../../shared-types/structureKinds.js';
+import {
+  getStructureKind,
+  isConnectorKind,
+  isStructureKindId,
+  isStructureQuarterTurn,
+  normaliseStructureQuarterTurn,
+  normaliseStructureRotation,
+  orientedBoxesOverlap,
+  orientedBoxOverlapsCircle,
+  structureHalfExtentsInto,
+  structureLocalToWorld,
+  structureRotationCosSinInto,
+} from '../../shared-types/structureKinds.js';
 import type { HexPoint } from '../hex/hex.js';
 import { PLATE_DIRS, plateCentreWorldInto, type PlateIndex } from '../hex/plates.js';
 import { plateCentreAtWorldInto } from '../hex/plateSet.js';
@@ -78,33 +90,59 @@ export function placementRejectionNotice(r: PlacementRejection): string {
   return PLACEMENT_REJECTION_NOTICE[r];
 }
 
+/** A kind's `keepClear` area in world space (see {@link keepClearBox}). */
+export interface KeepClearBox {
+  readonly x: number;
+  readonly y: number;
+  /** Axis-aligned half extents at the NEAREST quarter turn (the box base
+   *  growth and cable routing read). */
+  readonly hw: number;
+  readonly hh: number;
+  /** The real (oriented) box: LOCAL half extents turned by (`cos`, `sin`).
+   *  At a quarter turn this is the axis-aligned box (`cos` 1, `sin` 0). */
+  readonly lhw: number;
+  readonly lhh: number;
+  readonly cos: number;
+  readonly sin: number;
+}
+
 /** Scratch for {@link keepClearBox} (alloc-free: the ghost preview calls this per frame). */
-const padBox = { x: 0, y: 0, hw: 0, hh: 0 };
+const padBox = { x: 0, y: 0, hw: 0, hh: 0, lhw: 0, lhh: 0, cos: 1, sin: 0 };
+const padTurn = { cos: 1, sin: 0 };
 
 /** The world box of a kind's `keepClear` area (a dock's landing pad) for a
  *  structure at (x, y) turned `rotDeg` (30° steps, game space y-up, CCW), or
  *  `null` when the kind reserves nothing. `mirror` flips the pad's local
  *  offset first (build mirror, `structureLocalToWorld`). Returns shared
  *  scratch: read it before the next call. */
-export function keepClearBox(kindId: string | undefined, x: number, y: number, rotDeg: number | undefined, mirror?: boolean): { readonly x: number; readonly y: number; readonly hw: number; readonly hh: number } | null {
+export function keepClearBox(kindId: string | undefined, x: number, y: number, rotDeg: number | undefined, mirror?: boolean): KeepClearBox | null {
   if (kindId === undefined || !isStructureKindId(kindId)) return null;
   const kc = getStructureKind(kindId).keepClear;
   if (kc === undefined) return null;
   const r = normaliseStructureRotation(rotDeg);
   // Quarter turns stay exact (0 / ±1); a 30° step turns the pad's offset by
   // its real angle.
-  const quarterTurn = r % 90 === 0;
-  const cos = quarterTurn ? (r === 0 ? 1 : r === 180 ? -1 : 0) : Math.cos((r * Math.PI) / 180);
-  const sin = quarterTurn ? (r === 90 ? 1 : r === 270 ? -1 : 0) : Math.sin((r * Math.PI) / 180);
-  structureLocalToWorld(kc.cx, kc.cy, x, y, cos, sin, mirror, padBox);
-  // TODO(bp-16): oriented box — the pad's extents swap at the nearest quarter turn (axis-aligned).
+  structureRotationCosSinInto(r, padTurn);
+  structureLocalToWorld(kc.cx, kc.cy, x, y, padTurn.cos, padTurn.sin, mirror, padBox);
   const swap = normaliseStructureQuarterTurn(r) % 180 !== 0;
   padBox.hw = (swap ? kc.h : kc.w) / 2;
   padBox.hh = (swap ? kc.w : kc.h) / 2;
+  if (r % 90 === 0) {
+    padBox.lhw = padBox.hw;
+    padBox.lhh = padBox.hh;
+    padBox.cos = 1;
+    padBox.sin = 0;
+  } else {
+    // The pad box is symmetric, so the mirror flip moves only its offset.
+    padBox.lhw = kc.w / 2;
+    padBox.lhh = kc.h / 2;
+    padBox.cos = padTurn.cos;
+    padBox.sin = padTurn.sin;
+  }
   return padBox;
 }
 
-/** Two axis-aligned boxes (structure footprints, rotations are 90° steps)
+/** Two axis-aligned boxes (structure footprints at quarter turns)
  *  overlap when they intersect on BOTH axes. Touching edges are legal. */
 function boxesOverlap(ax: number, ay: number, ahw: number, ahh: number, bx: number, by: number, bhw: number, bhh: number): boolean {
   return Math.abs(ax - bx) < ahw + bhw && Math.abs(ay - by) < ahh + bhh;
@@ -168,7 +206,31 @@ function boxOverlapsObstacle(bx: number, by: number, hw: number, hh: number, o: 
   return false;
 }
 
+/** {@link boxOverlapsObstacle} for an ORIENTED box (local half extents turned
+ *  by `bcos`, `bsin`): the obstacle is taken into the box's frame (its
+ *  centre turned back, its parts turned by the angle difference), then it is
+ *  the axis-aligned test. Allocation-free. */
+function orientedBoxOverlapsObstacle(bx: number, by: number, hw: number, hh: number, bcos: number, bsin: number, o: GridObstacle): boolean {
+  if (!orientedBoxOverlapsCircle(bx, by, hw, hh, bcos, bsin, o.x, o.y, o.radius)) return false;
+  const parts = o.parts;
+  if (parts === undefined) return true;
+  const ox = o.x - bx, oy = o.y - by;
+  const lx = ox * bcos + oy * bsin, ly = -ox * bsin + oy * bcos;
+  const a = o.angle ?? 0, ocos = Math.cos(a), osin = Math.sin(a);
+  // Turn by (a − b): cos(a−b), sin(a−b).
+  const cos = ocos * bcos + osin * bsin, sin = osin * bcos - ocos * bsin;
+  for (let p = 0; p < parts.length; p++) {
+    if (boxOverlapsPolygon(0, 0, hw, hh, parts[p]!, lx, ly, cos, sin)) return true;
+  }
+  return false;
+}
+
 const DECK_PLATE: PlateIndex = { i: 0, j: 0 };
+/** Scratch for {@link placementRejection} (alloc-free, #14). */
+const myExt = { hw: 0, hh: 0 };
+const myLocal = { hw: 0, hh: 0 };
+const myTurn = { cos: 1, sin: 0 };
+const theirTurn = { cos: 1, sin: 0 };
 const DECK_PT: HexPoint = { x: 0, y: 0 };
 
 /**
@@ -214,20 +276,49 @@ export function placementRejection(
   mirror?: boolean,
   deck?: PlacementDeck | null,
 ): PlacementRejection | null {
-  // TODO(bp-16): oriented box — footprint, pad and obstacle tests below are axis-aligned.
-  const { hw, hh } = structureHalfExtents(kindId, rotDeg);
+  // A quarter turn keeps the exact axis-aligned rules (byte-identical); a
+  // 30° step tests the real turned box (base platforms 16).
+  structureHalfExtentsInto(kindId, rotDeg, myExt);
+  const hw = myExt.hw, hh = myExt.hh;
+  const turned = !isStructureQuarterTurn(rotDeg);
+  let mhw = hw, mhh = hh, mcos = 1, msin = 0;
+  if (turned) {
+    structureHalfExtentsInto(kindId, 0, myLocal);
+    structureRotationCosSinInto(rotDeg, myTurn);
+    mhw = myLocal.hw; mhh = myLocal.hh; mcos = myTurn.cos; msin = myTurn.sin;
+  }
   for (const s of structures) {
     const shw = s.halfW ?? s.radius, shh = s.halfH ?? s.radius;
-    if (boxesOverlap(s.x, s.y, shw, shh, x, y, hw, hh)) return 'overlap-structure';
+    const theirTurned = s.rot !== undefined && !isStructureQuarterTurn(s.rot);
+    let thw = shw, thh = shh, tcos = 1, tsin = 0;
+    if (theirTurned) {
+      // `halfW`/`halfH` are the nearest-quarter box: swap back to local.
+      const swap = normaliseStructureQuarterTurn(s.rot) % 180 !== 0;
+      thw = swap ? shh : shw;
+      thh = swap ? shw : shh;
+      structureRotationCosSinInto(s.rot, theirTurn);
+      tcos = theirTurn.cos; tsin = theirTurn.sin;
+    }
+    if (turned || theirTurned) {
+      if (orientedBoxesOverlap(s.x, s.y, thw, thh, tcos, tsin, x, y, mhw, mhh, mcos, msin)) return 'overlap-structure';
+    } else if (boxesOverlap(s.x, s.y, shw, shh, x, y, hw, hh)) return 'overlap-structure';
     const theirs = keepClearBox(s.kind, s.x, s.y, s.rot, s.mirror);
-    if (theirs !== null && boxesOverlap(theirs.x, theirs.y, theirs.hw, theirs.hh, x, y, hw, hh)) return 'overlap-pad';
+    if (theirs !== null) {
+      if (turned || theirs.sin !== 0) {
+        if (orientedBoxesOverlap(theirs.x, theirs.y, theirs.lhw, theirs.lhh, theirs.cos, theirs.sin, x, y, mhw, mhh, mcos, msin)) return 'overlap-pad';
+      } else if (boxesOverlap(theirs.x, theirs.y, theirs.hw, theirs.hh, x, y, hw, hh)) return 'overlap-pad';
+    }
     const mine = keepClearBox(kindId, x, y, rotDeg, mirror);
-    if (mine !== null && boxesOverlap(mine.x, mine.y, mine.hw, mine.hh, s.x, s.y, shw, shh)) return 'overlap-pad';
+    if (mine !== null) {
+      if (theirTurned || mine.sin !== 0) {
+        if (orientedBoxesOverlap(mine.x, mine.y, mine.lhw, mine.lhh, mine.cos, mine.sin, s.x, s.y, thw, thh, tcos, tsin)) return 'overlap-pad';
+      } else if (boxesOverlap(mine.x, mine.y, mine.hw, mine.hh, s.x, s.y, shw, shh)) return 'overlap-pad';
+    }
   }
   if (obstacles) {
     for (let i = 0; i < obstacles.length; i++) {
       const o = obstacles[i]!;
-      if (boxOverlapsObstacle(x, y, hw, hh, o)) return 'overlap-obstacle';
+      if (turned ? orientedBoxOverlapsObstacle(x, y, mhw, mhh, mcos, msin, o) : boxOverlapsObstacle(x, y, hw, hh, o)) return 'overlap-obstacle';
     }
   }
   if (deck && !onOwnDeck(kindId, x, y, deck)) return 'off-deck';
