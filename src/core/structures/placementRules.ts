@@ -13,10 +13,11 @@
  * preview (invariant #14). `null` means legal.
  */
 import { getStructureKind, isConnectorKind, isStructureKindId, normaliseStructureRotation, structureHalfExtents, structureLocalToWorld } from '../../shared-types/structureKinds.js';
-import type { HexPoint } from '../hex/hex.js';
-import { PLATE_DIRS, plateCentreWorldInto, type PlateIndex } from '../hex/plates.js';
+import { pixelToAxialInto, type AxialHex, type HexPoint } from '../hex/hex.js';
+import { DECK_HEX_SIZE, PLATE_DIRS, plateCentreWorldInto, plateOfHexInto, type PlateIndex } from '../hex/plates.js';
 import { plateCentreAtWorldInto } from '../hex/plateSet.js';
 import type { GridObstacle } from './Grid.js';
+import { plateOverlapsObstacle } from './plateClearance.js';
 
 /** A circular footprint to test against (a placed structure or the ghost). */
 export interface PlacementFootprint {
@@ -35,7 +36,7 @@ export interface PlacementFootprint {
 }
 
 /** Why a placement is illegal. `null` (from {@link placementRejection}) = legal. */
-export type PlacementRejection = 'overlap-structure' | 'overlap-obstacle' | 'overlap-pad' | 'off-deck';
+export type PlacementRejection = 'overlap-structure' | 'overlap-obstacle' | 'overlap-pad' | 'off-deck' | 'plate-blocked';
 
 /** The one plate query the deck rule needs (`PlateSet` on the server and the
  *  client mirror; `OwnerPlateList` in the renderer). */
@@ -59,6 +60,7 @@ export const PLACEMENT_REJECTION_TEXT: Readonly<Record<PlacementRejection, strin
   'overlap-obstacle': 'Blocked by an asteroid or wreck',
   'overlap-pad': "Keep the landing pad clear",
   'off-deck': 'Off your deck',
+  'plate-blocked': 'Plate area not clear',
 });
 
 /** The notice a player gets when the server refuses a placement, e.g.
@@ -164,6 +166,34 @@ function boxOverlapsObstacle(bx: number, by: number, hw: number, hh: number, o: 
 
 const DECK_PLATE: PlateIndex = { i: 0, j: 0 };
 const DECK_PT: HexPoint = { x: 0, y: 0 };
+const DECK_HEX: AxialHex = { q: 0, r: 0 };
+const DECK_OF: PlateIndex = { i: 0, j: 0 };
+
+/** {@link deckStanding} results. */
+const ON_DECK = 0, NEW_PLATE = 1, OFF_DECK = 2;
+
+/** Where a `kindId` centre at (x, y) stands against `deck.owner`'s deck:
+ *  ON_DECK, NEW_PLATE (a connector exactly on the centre of an unowned plate
+ *  bordering theirs; that plate is left in DECK_PLATE) or OFF_DECK. */
+function deckStanding(kindId: string, x: number, y: number, deck: PlacementDeck): number {
+  const { plates, owner } = deck;
+  if (plates.plateAtWorld(owner, x, y)) return ON_DECK;
+  if (!isConnectorKind(kindId) || !plateCentreAtWorldInto(x, y, DECK_PLATE)) return OFF_DECK;
+  const i = DECK_PLATE.i, j = DECK_PLATE.j;
+  for (let d = 0; d < PLATE_DIRS.length; d++) {
+    const dir = PLATE_DIRS[d]!;
+    plateCentreWorldInto(i + dir.i, j + dir.j, DECK_PT);
+    if (plates.plateAtWorld(owner, DECK_PT.x, DECK_PT.y)) return NEW_PLATE;
+  }
+  return OFF_DECK;
+}
+
+/** Is world point (x, y) on plate DECK_PLATE? */
+function onLaidPlate(x: number, y: number): boolean {
+  pixelToAxialInto(x, y, DECK_HEX_SIZE, DECK_HEX);
+  plateOfHexInto(DECK_HEX.q, DECK_HEX.r, DECK_OF);
+  return DECK_OF.i === DECK_PLATE.i && DECK_OF.j === DECK_PLATE.j;
+}
 
 /**
  * Base platforms: may a `kindId` centre at (x, y) stand on `deck.owner`'s
@@ -173,16 +203,7 @@ const DECK_PT: HexPoint = { x: 0, y: 0 };
  * Allocation-free.
  */
 export function onOwnDeck(kindId: string, x: number, y: number, deck: PlacementDeck): boolean {
-  const { plates, owner } = deck;
-  if (plates.plateAtWorld(owner, x, y)) return true;
-  if (!isConnectorKind(kindId) || !plateCentreAtWorldInto(x, y, DECK_PLATE)) return false;
-  const i = DECK_PLATE.i, j = DECK_PLATE.j;
-  for (let d = 0; d < PLATE_DIRS.length; d++) {
-    const dir = PLATE_DIRS[d]!;
-    plateCentreWorldInto(i + dir.i, j + dir.j, DECK_PT);
-    if (plates.plateAtWorld(owner, DECK_PT.x, DECK_PT.y)) return true;
-  }
-  return false;
+  return deckStanding(kindId, x, y, deck) !== OFF_DECK;
 }
 
 /**
@@ -196,7 +217,10 @@ export function onOwnDeck(kindId: string, x: number, y: number, deck: PlacementD
  * when the obstacle has them). `obstacles` omitted/empty ⇒ structures-only
  * (byte-identical to the legacy server check). `deck` given (the room's
  * deck flag is on and this is a player's placement) ⇒ the centre must also be
- * on the owner's deck ({@link onOwnDeck}), else `off-deck`.
+ * on the owner's deck ({@link onOwnDeck}), else `off-deck`. A connector
+ * that lays a NEW plate needs the whole plate clear (owner ruling, no rock
+ * clearing): no obstacle touching any of its 7 hexes and no structure
+ * centred on it, else `plate-blocked`.
  */
 export function placementRejection(
   kindId: string,
@@ -209,6 +233,8 @@ export function placementRejection(
   deck?: PlacementDeck | null,
 ): PlacementRejection | null {
   const { hw, hh } = structureHalfExtents(kindId, rotDeg);
+  const standing = deck ? deckStanding(kindId, x, y, deck) : ON_DECK;
+  let plateBlocked = false;
   for (const s of structures) {
     const shw = s.halfW ?? s.radius, shh = s.halfH ?? s.radius;
     if (boxesOverlap(s.x, s.y, shw, shh, x, y, hw, hh)) return 'overlap-structure';
@@ -216,14 +242,17 @@ export function placementRejection(
     if (theirs !== null && boxesOverlap(theirs.x, theirs.y, theirs.hw, theirs.hh, x, y, hw, hh)) return 'overlap-pad';
     const mine = keepClearBox(kindId, x, y, rotDeg, mirror);
     if (mine !== null && boxesOverlap(mine.x, mine.y, mine.hw, mine.hh, s.x, s.y, shw, shh)) return 'overlap-pad';
+    if (standing === NEW_PLATE && !plateBlocked && onLaidPlate(s.x, s.y)) plateBlocked = true;
   }
   if (obstacles) {
     for (let i = 0; i < obstacles.length; i++) {
       const o = obstacles[i]!;
       if (boxOverlapsObstacle(x, y, hw, hh, o)) return 'overlap-obstacle';
+      if (standing === NEW_PLATE && !plateBlocked && plateOverlapsObstacle(DECK_PLATE.i, DECK_PLATE.j, o)) plateBlocked = true;
     }
   }
-  if (deck && !onOwnDeck(kindId, x, y, deck)) return 'off-deck';
+  if (standing === OFF_DECK) return 'off-deck';
+  if (plateBlocked) return 'plate-blocked';
   return null;
 }
 

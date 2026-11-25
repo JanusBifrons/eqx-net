@@ -3,7 +3,7 @@ import { snapToDeckSlot, rhombusOf, rhombusCentroidInto, deckSlotOutline, type D
 import { pixelToAxial, hexCornerInto, type HexPoint } from './hex.js';
 import { DECK_HEX_SIZE, DECK_HEX_FLAT, deckHexCentreInto, plateOfHex } from './plates.js';
 
-const snap = (): DeckSnap => ({ x: 0, y: 0, q: 0, r: 0, rhombus: -1 });
+const snap = (): DeckSnap => ({ x: 0, y: 0, q: 0, r: 0, rhombus: -1, slot: 'small' });
 const SLOTS: DeckSlot[] = ['small', 'hex', 'plate'];
 
 /** A deterministic spread of sample points over several plates. */

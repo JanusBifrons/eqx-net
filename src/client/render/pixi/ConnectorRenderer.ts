@@ -48,12 +48,8 @@ import {
   CONNECTION_MAX_RANGE,
 } from '../../../core/structures/structureGridConstants.js';
 import type { Connection } from '../../../core/structures/Connection.js';
-import {
-  CABLE_NO_SOCKET,
-  linkReachBoxAdd,
-  linkReachBoxStart,
-  makeCableSocketPick,
-} from '../../../core/structures/cableCurve.js';
+import { CABLE_NO_SOCKET, linkReachBoxAdd, linkReachBoxStart, makeCableSocketPick } from '../../../core/structures/cableCurve.js';
+import { ghostPlateReachBoxAdd } from './placementDeckSnap.js';
 import { makeCableReseat } from '../../../core/structures/socketReseat.js';
 import { drawMines, drawNoPowerBolt, drawStatusBar } from './structureStatusMarks.js';
 import { hasBodyStatus } from './structureSocketNubs.js';
@@ -569,7 +565,7 @@ export class ConnectorRenderer {
     // shared in core): the ghost plus every own partner in range, each padded
     // by its extent + the cable tail.
     const box = this._previewBox;
-    linkReachBoxStart(ghost, box);
+    linkReachBoxStart(ghost, box); if (preview.deck === true) ghostPlateReachBoxAdd(preview.kind, ghostX, ghostY, box); // laying a plate: rocks over all of it
     const nodes = this._previewNodes;
     nodes.clear();
     const adjacency = this._previewAdjacency;

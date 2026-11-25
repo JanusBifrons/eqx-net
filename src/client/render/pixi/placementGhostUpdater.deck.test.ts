@@ -10,6 +10,7 @@ import { Container, Matrix } from 'pixi.js';
 import { createPlacementGhostCtx, updatePlacementGhost } from './placementGhostUpdater.js';
 import { snapPlacementToDeck } from '../../../core/structures/deckPlacement.js';
 import type { DeckSnap } from '../../../core/hex/deckSnap.js';
+import { DECK_HEX_FLAT, deckHexCentreInto, plateCentreWorldInto, plateHexes } from '../../../core/hex/plates.js';
 import type { RenderMirror, RendererFeedback } from '../../../core/contracts/IRenderer.js';
 import type { RendererInputController } from './rendererInputController.js';
 import type { Camera } from '../worker/Camera.js';
@@ -29,7 +30,7 @@ function harness(chosen: [number, number] | null) {
   return { ctx, feedback, input, mirror };
 }
 
-const snapOf = (kind: string, x: number, y: number): DeckSnap => snapPlacementToDeck(kind, x, y, { x: 0, y: 0, q: 0, r: 0, rhombus: -1 });
+const snapOf = (kind: string, x: number, y: number): DeckSnap => snapPlacementToDeck(kind, x, y, { x: 0, y: 0, q: 0, r: 0, rhombus: -1, slot: 'small' });
 
 describe('placement ghost on a deck room', () => {
   for (const [kind, x, y] of [['connector', 137, -412], ['reactor', -905, 333], ['teleporter_large', 2210, 1777]] as const) {
@@ -72,5 +73,20 @@ describe('placement ghost on a deck room', () => {
       expect(m.a).toBeCloseTo(1, 9); expect(m.b).toBeCloseTo(0, 9);
       expect(m.c).toBeCloseTo(0, 9); expect(m.d).toBeCloseTo(1, 9);
     }
+  });
+
+  it('laying a plate: a connector in a middle hex outlines the whole 7-hex plate; in a ring hex, its small slot', () => {
+    const c = plateCentreWorldInto(1, 0, { x: 0, y: 0 });
+    const ring = plateHexes(1, 0)[2]!, rp = deckHexCentreInto(ring.q, ring.r, { x: 0, y: 0 });
+    const widthAt = (x: number, y: number): number => {
+      const { ctx, mirror } = harness([x, y]);
+      updatePlacementGhost(mirror('connector', 0, 0, true), ctx);
+      const slot = ctx.placementGhost!.children[0]!;
+      expect(slot.visible).toBe(true);
+      return slot.getLocalBounds().width;
+    };
+    // The plate spans 5 hexes flat to flat (≈ 3 × 1300); a small slot is under one hex.
+    expect(widthAt(c.x + 200, c.y - 150)).toBeGreaterThan(3 * DECK_HEX_FLAT);
+    expect(widthAt(rp.x + 200, rp.y - 150)).toBeLessThan(DECK_HEX_FLAT);
   });
 });

@@ -112,3 +112,12 @@ export function deckHexCentreInto(q: number, r: number, out: HexPoint): HexPoint
 export function plateCentreWorldInto(i: number, j: number, out: HexPoint): HexPoint {
   return axialToPixelInto(i * A.q + j * B.q, i * A.r + j * B.r, DECK_HEX_SIZE, out);
 }
+
+/** Is hex (q, r) the middle hex of its plate? Allocation-free. */
+export function isPlateCentreHex(q: number, r: number): boolean {
+  return mod7(q - 2 * r) === 0;
+}
+
+/** A safe bound on how far any point of a plate lies from its centre: one
+ *  hex step plus a hex circumradius (the true farthest corner is ≈ 1986 u). */
+export const PLATE_REACH = DECK_HEX_FLAT + DECK_HEX_SIZE;

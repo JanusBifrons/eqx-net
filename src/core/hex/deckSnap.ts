@@ -32,6 +32,8 @@ export interface DeckSnap {
   r: number;
   /** `'small'`: rhombus 0..2 (centroid at 90° + 120°·k). Otherwise -1. */
   rhombus: number;
+  /** The slot size actually snapped to (a connector may snap to `'plate'`). */
+  slot: DeckSlot;
 }
 
 const hexScratch: AxialHex = { q: 0, r: 0 };
@@ -68,6 +70,7 @@ export function rhombusCentroidInto(cx: number, cy: number, k: number, out: HexP
  */
 export function snapToDeckSlot(slot: DeckSlot, x: number, y: number, out: DeckSnap): DeckSnap {
   pixelToAxialInto(x, y, DECK_HEX_SIZE, hexScratch);
+  out.slot = slot;
   if (slot === 'plate') {
     plateOfHexInto(hexScratch.q, hexScratch.r, plateScratch, centreScratch);
     deckHexCentreInto(centreScratch.q, centreScratch.r, pointScratch);

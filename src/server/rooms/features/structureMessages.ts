@@ -48,7 +48,7 @@ export interface StructureMessageHost extends ParsedMessageHost {
 }
 
 /** Deck-snap scratch for `place_structure` (invariant 14). */
-const deckSnap: DeckSnap = { x: 0, y: 0, q: 0, r: 0, rhombus: -1 };
+const deckSnap: DeckSnap = { x: 0, y: 0, q: 0, r: 0, rhombus: -1, slot: 'small' };
 
 export function registerStructureMessages(h: StructureMessageHost): RoomFeature {
   // ── Structures plan, Phase 2 — placement / removal ──────────────────
