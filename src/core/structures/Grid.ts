@@ -29,7 +29,7 @@ import { GraphSearch, type SearchGoal, type SearchGraph } from '../nav/search.js
 import { addDraw, addNodePower, supplyFraction, type PowerTally } from './gridSupply.js';
 import { CABLE_NO_SOCKET, gridNodePadBox, linkSocketMask, pickCableSocketPair, type CableSocketPick } from './cableCurve.js';
 import { pickWithReseat, type CableReseat } from './socketReseat.js';
-import { DECK_LINK_NONE, deckCapExempt, deckCapLinkCount, deckLinkKind, deckRefusalVerdict } from './deckLinks.js';
+import { DECK_LINK_NONE, deckCapExempt, deckCapLinkCount, deckLinkKind, deckSeamVerdict } from './deckLinks.js';
 
 /** The grid's abstract view of a structure. The server projects each
  *  `StructureRecord` (+ its catalogue kind) into one of these. */
@@ -297,8 +297,8 @@ function shieldPylonRejection(
  * (the build preview draws both red). A fence link (shield emitter to emitter) keeps its straight post-to-post
  * rule (edge range + centre line of sight) and writes `CABLE_NO_SOCKET` for both ends. With `reseat`, a refused
  * pick may move one connector link to another face (`pickWithReseat`; the caller applies it).
- * With `deck` (the room's base-platforms flag) a plate-anchor link (`deckLinks.ts`) skips range and the anchor's cap, and past
- * its free sockets takes none (`deckRefusalVerdict`: the same overlap + crossing refusals).
+ * With `deck` (the room's base-platforms flag) a plate-anchor link (`deckLinks.ts`) skips range and the anchor's cap, takes no
+ * socket and skips the overlap + crossing refusals: its cable is the seam path (`deckSeamVerdict`); other links ignore deck cables.
  */
 export function canConnect(
   a: GridNode,
@@ -370,11 +370,11 @@ export function canConnect(
     if (isConnectionLineBlocked(a, b, nodes, obstacles)) return { ok: false, reason: 'blocked' };
     return { ok: true };
   }
+  if (dk !== DECK_LINK_NONE) return deckSeamVerdict(sockets);
   // One cable per stud: the sockets each end's links already hold.
   const usedA = a.usedSockets ?? linkSocketMask(a.id, aConns), usedB = b.usedSockets ?? linkSocketMask(b.id, bConns);
-  const refusal = pickCableSocketPair(a, b, maxRange, nodes, obstacles, sockets, usedA, usedB, adjacency);
-  if (refusal === null || (reseat && pickWithReseat(a, b, maxRange, adjacency, nodes, obstacles, sockets, usedA, usedB, reseat))) return { ok: true };
-  return deckRefusalVerdict(dk, refusal, a, b, adjacency, nodes, obstacles, sockets);
+  const refusal = pickCableSocketPair(a, b, maxRange, nodes, obstacles, sockets, usedA, usedB, adjacency, undefined, deck);
+  return refusal === null || (reseat && pickWithReseat(a, b, maxRange, adjacency, nodes, obstacles, sockets, usedA, usedB, reseat)) ? { ok: true } : { ok: false, reason: refusal };
 }
 
 interface ComponentInfo extends PowerTally {

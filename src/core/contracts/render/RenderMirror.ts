@@ -385,4 +385,6 @@ export interface DeckPlatesMirror {
   version: number;
   count: number;
   ij: Int32Array;
+  /** The room's deck flag (deck links draw their seam path). Absent ⇒ off. */
+  deck?: boolean;
 }

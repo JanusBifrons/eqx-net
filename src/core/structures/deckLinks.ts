@@ -14,10 +14,10 @@
 import { pixelToAxialInto, type AxialHex } from '../hex/hex.js';
 import { DECK_HEX_SIZE, PLATE_DIRS, plateOfHexInto, type PlateIndex } from '../hex/plates.js';
 import { isPlateAnchor } from '../hex/plateSet.js';
-// Function-only cycle (Grid calls these; they call cableCurve, which calls Grid).
-import type { CanConnectReason, CanConnectResult, GridNode, GridObstacle } from './Grid.js';
-import type { Connection } from './Connection.js';
-import { CABLE_CURVE_FLOATS, CABLE_NO_SOCKET, cableCrossesExisting, flattenLinkCable, isCablePolylineBlocked, type CableBox, type CableSocketPick } from './cableCurve.js';
+// Type-only imports of Grid / cableCurve (both call into this module).
+import type { CanConnectResult, GridNode } from './Grid.js';
+import { CABLE_NO_SOCKET, type Connection } from './Connection.js';
+import type { CableSocketPick } from './cableCurve.js';
 
 /** What `deckLinkKind` needs of a structure: its kind and world centre. */
 export interface DeckLinkEnd {
@@ -92,55 +92,15 @@ export function deckCapLinkCount(
   return count;
 }
 
-/** Straight-cable scratch for {@link deckStraightRefusal} (invariant 14). */
-// Built on first use: this module loads inside the Grid <-> cableCurve cycle,
-// so cableCurve's exports are not ready at load time.
-let straightPoly: Float64Array | null = null;
-const straightBox: CableBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
-
 /**
- * A deck link whose socket pick found no free facing socket pair (a plate
- * connector fans out past its 6 sockets): the link takes no sockets
- * (`CABLE_NO_SOCKET`, drawn centre to centre) and still passes the SAME
- * overlap (`isCablePolylineBlocked`) and crossing (`cableCrossesExisting`)
- * refusals as every socket cable. Returns the refusal or null.
- *
- * TODO(base-platforms slice 12): unsocketed cables of one plate connector
- * all start at its centre, so `cableCrossesExisting` refuses every second
- * one ('crosses-cable', shared end point within `CABLE_BODY_WIDTH`). Slice
- * 12 gives deck cables their seam path and the crossing/overlap exemption.
+ * `canConnect`'s verdict on a deck link (`dk` != none; slice 12): its cable
+ * is the seam path (`flattenDeckSeamCable`, centre to centre), so it takes no
+ * socket (`CABLE_NO_SOCKET` both ends) and skips the overlap and crossing
+ * refusals (deck cables share seams by design). Always ok.
  */
-export function deckStraightRefusal(
-  a: GridNode,
-  b: GridNode,
-  adjacency: ReadonlyMap<string, readonly Connection[]>,
-  nodes: ReadonlyMap<string, GridNode>,
-  obstacles: readonly GridObstacle[] | undefined,
-  sockets: CableSocketPick | undefined,
-): CanConnectReason | null {
+export function deckSeamVerdict(sockets: CableSocketPick | undefined): CanConnectResult {
   if (sockets) { sockets.a = CABLE_NO_SOCKET; sockets.b = CABLE_NO_SOCKET; }
-  straightPoly ??= new Float64Array(CABLE_CURVE_FLOATS);
-  flattenLinkCable(a, CABLE_NO_SOCKET, b, CABLE_NO_SOCKET, straightPoly, straightBox);
-  if (isCablePolylineBlocked(a, b, straightPoly, straightBox, nodes, obstacles)) return 'blocked';
-  if (cableCrossesExisting(a, b, straightPoly, straightBox, adjacency, nodes)) return 'crosses-cable';
-  return null;
-}
-
-/** `canConnect`'s verdict on a refused socket pick: a deck link (`dk`) whose
- *  pick found no free facing socket pair tries {@link deckStraightRefusal};
- *  any other refusal stands. */
-export function deckRefusalVerdict(
-  dk: DeckLinkKind,
-  refusal: CanConnectReason,
-  a: GridNode,
-  b: GridNode,
-  adjacency: ReadonlyMap<string, readonly Connection[]>,
-  nodes: ReadonlyMap<string, GridNode>,
-  obstacles: readonly GridObstacle[] | undefined,
-  sockets: CableSocketPick | undefined,
-): CanConnectResult {
-  const why = dk !== DECK_LINK_NONE && refusal === 'no-facing-socket' ? deckStraightRefusal(a, b, adjacency, nodes, obstacles, sockets) : refusal;
-  return why === null ? DECK_OK : { ok: false, reason: why };
+  return DECK_OK;
 }
 
 const DECK_OK: CanConnectResult = Object.freeze({ ok: true });

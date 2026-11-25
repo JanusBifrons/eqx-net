@@ -86,7 +86,7 @@ describe('deck link rule: a plate connector and its plate (base platforms slice 
     expect(deckCapLinkCount(con, deckAdj.get('c')!, deckNodes, false)).toBe(6);
   });
 
-  it('eight buildings on one plate: six link past range; 7th/8th blocked by the crossing refusal until slice 12', () => {
+  it('eight buildings on one plate all link past range and the cap (seam cables skip the crossing refusal, slice 12)', () => {
     const pick = makeCableSocketPick();
     // Six hex buildings on the ring, two small ones between them.
     const parts: GridNode[] = [0, 1, 2, 3, 4, 5].map((k) => { const h = hexOf(0, 0, k); return real(`s${k}`, 'solar', h.x, h.y); });
@@ -105,16 +105,12 @@ describe('deck link rule: a plate connector and its plate (base platforms slice 
       adj.set(n.id, [...(adj.get(n.id) ?? []), link]);
       adj.set('c', [...(adj.get('c') ?? []), link]);
     }
-    // TODO(base-platforms slice 12): past the connector's 6 sockets the 7th
-    // and 8th links are unsocketed straight cables from its centre, and
-    // `cableCrossesExisting` refuses them ('crosses-cable': they pass within
-    // CABLE_BODY_WIDTH of the socket cables at the connector). Slice 12 routes
-    // deck cables on seams and exempts them; then every verdict is 'ok'.
-    expect(verdicts.slice(0, 6)).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'ok']);
-    expect(verdicts.slice(6)).toEqual(['crosses-cable', 'crosses-cable']); // TODO(slice 12): ['ok', 'ok']
+    expect(verdicts).toEqual(['ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok', 'ok']);
+    // Deck cables take no socket: the connector's studs stay free for ordinary links.
+    expect(adj.get('c')!.every((l) => l.socketA === CABLE_NO_SOCKET && l.socketB === CABLE_NO_SOCKET)).toBe(true);
   });
 
-  it('a deck link past the sockets takes none (CABLE_NO_SOCKET)', () => {
+  it('a deck link takes no socket (CABLE_NO_SOCKET), even with studs free', () => {
     const pick = makeCableSocketPick();
     const p = hexOf(0, 0, 0);
     const solar = real('s', 'solar', p.x, p.y);

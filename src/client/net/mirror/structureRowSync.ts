@@ -162,6 +162,7 @@ export class StructureRowSync {
     if (!dp) { dp = { version: 0, count: 0, ij: new Int32Array(32) }; this.mirror.deckPlates = dp; }
     dp.version++;
     dp.count = 0;
+    dp.deck = deck;
     if (deck) this.plates.forEachOwnerPlate(this.writePlate);
   }
 
