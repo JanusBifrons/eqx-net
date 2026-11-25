@@ -30,7 +30,7 @@ import { addDraw, addNodePower, supplyFraction, type PowerTally } from './gridSu
 import { CABLE_NO_SOCKET, gridNodePadBox, linkSocketMask, pickCableSocketPair, type CableSocketPick } from './cableCurve.js';
 import { edgeDistance, segmentHitsGridNodeBox, segmentIntersectsAabb, segmentIntersectsOrientedBox } from './gridNodeBox.js';
 import { pickWithReseat, type CableReseat } from './socketReseat.js';
-import { DECK_LINK_NONE, deckCapExempt, deckCapLinkCount, deckLinkKind, deckSeamVerdict } from './deckLinks.js';
+import { DECK_LINK_NONE, deckCapExempt, deckCapLinkCount, deckLinkKind, deckSeamVerdict, isDeckFenceOffSeam } from './deckLinks.js';
 
 /** The grid's abstract view of a structure. The server projects each
  *  `StructureRecord` (+ its catalogue kind) into one of these. */
@@ -112,7 +112,10 @@ export type CanConnectReason =
   | 'pylon-rule'
   /** Owner rule: every free pair's cable would cross or run within a cable body
    *  width of a stored cable (fan-outs too; fence links never count; `cableCrossesExisting`). */
-  | 'crosses-cable';
+  | 'crosses-cable'
+  /** Base platforms slice 19: two deck fence posts not on one hex seam (deck
+   *  pylons pair only along hex edges, `deckLinks.ts`). */
+  | 'off-seam';
 
 export type CanConnectResult = { ok: true } | { ok: false; reason: CanConnectReason };
 
@@ -257,6 +260,7 @@ function shieldPylonRejection(
  * pick may move one connector link to another face (`pickWithReseat`; the caller applies it).
  * With `deck` (the room's base-platforms flag) a plate-anchor link (`deckLinks.ts`) skips range and the anchor's cap, takes no
  * socket and skips the overlap + crossing refusals: its cable is the seam path (`deckSeamVerdict`); other links ignore deck cables.
+ * Deck fence posts (slice 19) link only along one hex seam, past range (`DECK_LINK_SEAM_FENCE`), else `'off-seam'`.
  */
 export function canConnect(
   a: GridNode,
@@ -310,6 +314,7 @@ export function canConnect(
   // authority) and for a plate anchor's deck link (its deck links never count).
   // A socket-bound kind never holds more links than it has sockets, whatever its level.
   const dk = deck ? deckLinkKind(a, b) : DECK_LINK_NONE;
+  if (deck && isDeckFenceOffSeam(a, b)) return { ok: false, reason: 'off-seam' }; // deck fences: seams only
   if (a.isShieldPylon !== true && !deckCapExempt(a, dk) && deckCapLinkCount(a, aConns, nodes, deck) >= clampLinksToSockets(a.maxConnections, a.kind)) return { ok: false, reason: 'a-full' };
   const bConns = adjacency.get(b.id) ?? [];
   if (b.isShieldPylon !== true && !deckCapExempt(b, dk) && deckCapLinkCount(b, bConns, nodes, deck) >= clampLinksToSockets(b.maxConnections, b.kind)) return { ok: false, reason: 'b-full' };

@@ -8,6 +8,7 @@
  *   rhombi; rhombus `k` spans corners `2k`, `2k+1`, `2k+2`, so its centroid is
  *   half-way to corner `2k+1` (90°, 210°, 330°).
  * - `'plate'`: the centre of the plate's middle hex (`plates.ts`).
+ * - `'corner'`: the nearest hex corner (`deckCorners.ts`; a fence post, slice 19).
  *
  * Angles are measured with `atan2(y, x)` in whatever frame the caller passes;
  * the player path passes game coordinates on both sides (client ghost and
@@ -18,9 +19,10 @@
  */
 import { hexCornerInto, pixelToAxialInto, type AxialHex, type HexPoint } from './hex.js';
 import { DECK_HEX_SIZE, deckHexCentreInto, plateOfHexInto, type PlateIndex } from './plates.js';
+import { nearestDeckCornerInto } from './deckCorners.js';
 
 /** A kind's deck slot size (mirrors `StructureKind['deckSlot']`). */
-export type DeckSlot = 'small' | 'hex' | 'plate';
+export type DeckSlot = 'small' | 'hex' | 'plate' | 'corner';
 
 /** A snapped deck slot: the building's centre, its hex, and (small slots
  *  only) which third of the hex. */
@@ -71,7 +73,13 @@ export function rhombusCentroidInto(cx: number, cy: number, k: number, out: HexP
 export function snapToDeckSlot(slot: DeckSlot, x: number, y: number, out: DeckSnap): DeckSnap {
   pixelToAxialInto(x, y, DECK_HEX_SIZE, hexScratch);
   out.slot = slot;
-  if (slot === 'plate') {
+  if (slot === 'corner') {
+    // Fence post (slice 19): the nearest hex corner; `q`/`r` the hex holding the point.
+    nearestDeckCornerInto(x, y, pointScratch);
+    out.q = hexScratch.q;
+    out.r = hexScratch.r;
+    out.rhombus = -1;
+  } else if (slot === 'plate') {
     plateOfHexInto(hexScratch.q, hexScratch.r, plateScratch, centreScratch);
     deckHexCentreInto(centreScratch.q, centreScratch.r, pointScratch);
     out.q = centreScratch.q;
@@ -99,6 +107,17 @@ export function snapToDeckSlot(slot: DeckSlot, x: number, y: number, out: DeckSn
  * to the slot's snapped centre: one hex, one rhombus (`rhombus` 0..2), or the
  * plate's 7 hexes. For cached ghost art; allocates.
  */
+/** A small hex marking a corner slot (a fence post), centred on the corner. */
+function cornerMark(): number[] {
+  const p: HexPoint = { x: 0, y: 0 };
+  const out: number[] = [];
+  for (let i = 0; i < 6; i++) {
+    hexCornerInto(0, 0, DECK_HEX_SIZE * 0.08, i, p);
+    out.push(p.x, p.y);
+  }
+  return out;
+}
+
 export function deckSlotOutline(slot: DeckSlot, rhombus = 0): number[][] {
   const p: HexPoint = { x: 0, y: 0 };
   const hexAt = (cx: number, cy: number): number[] => {
@@ -110,6 +129,7 @@ export function deckSlotOutline(slot: DeckSlot, rhombus = 0): number[][] {
     return out;
   };
   if (slot === 'hex') return [hexAt(0, 0)];
+  if (slot === 'corner') return [cornerMark()];
   if (slot === 'plate') {
     const polys = [hexAt(0, 0)];
     // The 6 ring hexes, as offsets from the middle hex's centre.
