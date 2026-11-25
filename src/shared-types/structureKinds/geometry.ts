@@ -45,16 +45,42 @@ export function structureHullPoints(
   ];
 }
 
-/** Allowed structure rotations (degrees). Structures are rectangles, so a
- *  quarter-turn swaps width and height; 180° is visually distinct only for
- *  the draw plan (e.g. which side a turret's ammo racks sit on). */
-export const STRUCTURE_ROTATIONS = [0, 90, 180, 270] as const;
+/** Allowed structure rotations (degrees), in 30° steps (base platforms: hex
+ *  sides are slanted, so a deck building turns in twelfths). The value is
+ *  DEGREES everywhere it travels (place_structure.rot, the registry's `rot`,
+ *  the save's `structures[].rot`; the swarm angle carries it in radians), so
+ *  the quarter turns 0/90/180/270 keep their meaning: no migration. A room
+ *  without the `deck` flag still turns in quarters
+ *  (`normaliseStructureQuarterTurn`, applied to the player's message). */
+export const STRUCTURE_ROTATION_STEP_DEG = 30;
+export const STRUCTURE_ROTATIONS = [0, 30, 60, 90, 120, 150, 180, 210, 240, 270, 300, 330] as const;
 export type StructureRotation = (typeof STRUCTURE_ROTATIONS)[number];
 
-/** Normalise any angle-ish input to one of the four allowed rotations. */
+/** Normalise any angle-ish input to one of the twelve allowed rotations. */
 export function normaliseStructureRotation(deg: number | null | undefined): StructureRotation {
+  const step = STRUCTURE_ROTATION_STEP_DEG;
+  const r = (((Math.round((deg ?? 0) / step) * step) % 360) + 360) % 360;
+  return r as StructureRotation;
+}
+
+/** Normalise any angle-ish input to a quarter turn (0/90/180/270): the rule
+ *  in a room without the `deck` flag. */
+export function normaliseStructureQuarterTurn(deg: number | null | undefined): StructureRotation {
   const r = (((Math.round((deg ?? 0) / 90) * 90) % 360) + 360) % 360;
   return r as StructureRotation;
+}
+
+/** The step a PLAYER's building turns by: 30° on a `deck` room, a quarter
+ *  turn elsewhere. One rule for the ghost's rotate control and the server's
+ *  `place_structure` snap (invariant 15). */
+export function playerStructureRotationStep(deck: boolean): number {
+  return deck ? STRUCTURE_ROTATION_STEP_DEG : 90;
+}
+
+/** A PLAYER's requested rotation snapped by the room's rule
+ *  (`playerStructureRotationStep`). */
+export function snapPlayerStructureRotation(deg: number | null | undefined, deck: boolean): StructureRotation {
+  return deck ? normaliseStructureRotation(deg) : normaliseStructureQuarterTurn(deg);
 }
 
 /** Axis-aligned half extents of a kind's footprint at a rotation (a quarter
@@ -76,7 +102,10 @@ export function structureHalfExtentsInto<T extends { hw: number; hh: number }>(
 ): T {
   const id = kindId != null && isStructureKindId(kindId) ? kindId : DEFAULT_STRUCTURE_KIND;
   const { w, h } = getStructureKind(id).footprint;
-  const quarter = normaliseStructureRotation(rotDeg) % 180 !== 0;
+  // The NEAREST quarter turn decides the swap (30° keeps the box, 60° swaps).
+  // TODO(bp-16): oriented box — an odd-30° turn is approximated by this
+  // axis-aligned box (every caller of structureHalfExtents inherits it).
+  const quarter = normaliseStructureQuarterTurn(rotDeg) % 180 !== 0;
   out.hw = quarter ? h / 2 : w / 2;
   out.hh = quarter ? w / 2 : h / 2;
   return out;

@@ -86,6 +86,7 @@ export function resolveSelectable(mirror: RenderMirror, id: string, out: Selecta
     // kind (the 960x600 Shipyard) would get a box far taller than the yard.
     // Frame its (quarter-turn) footprint box instead, as `pickEntityAt` hits it.
     const fp = getStructureKind(sw.shipKind).footprint;
+    // TODO(bp-16): oriented box — axis-aligned at an odd-30° turn.
     const quarter = Math.round((sw.angle * 2) / Math.PI) % 2 !== 0;
     out.hw = (quarter ? fp.h : fp.w) / 2;
     out.hh = (quarter ? fp.w : fp.h) / 2;

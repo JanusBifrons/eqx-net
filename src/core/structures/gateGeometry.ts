@@ -224,6 +224,7 @@ export function emitterAnchor(
 export function gateWorldAxisBoxes(kind: string | null | undefined, angle: number, mirror?: boolean): Float32Array | null {
   const boxes = gateColliderBoxes(kind);
   if (!boxes) return null;
+  // TODO(bp-16): oriented box — axis-aligned at an odd-30° turn.
   const q = (((Math.round(angle / (Math.PI / 2)) % 4) + 4) % 4);
   const out = new Float32Array(boxes.length * 4);
   const c = q === 0 ? 1 : q === 2 ? -1 : 0;

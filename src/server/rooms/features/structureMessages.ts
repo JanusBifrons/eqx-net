@@ -15,7 +15,7 @@ import type { StorageService } from '../../cargo/StorageService.js';
 import type { SectorPersistence } from '../SectorPersistence.js';
 import { auditEvent } from '../../audit/GameplayAuditLog.js';
 import { parsedMessage, type ParsedMessageHost, type RoomFeature } from './parsedMessage.js';
-import { getStructureKind, isBuildableStructureKind } from '../../../shared-types/structureKinds.js';
+import { getStructureKind, isBuildableStructureKind, snapPlayerStructureRotation } from '../../../shared-types/structureKinds.js';
 import { needsPackedCrate, productName } from '../../../shared-types/blueprints.js';
 import { snapPlacementToDeck } from '../../../core/structures/deckPlacement.js';
 import type { DeckSnap } from '../../../core/hex/deckSnap.js';
@@ -65,13 +65,16 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
       snapPlacementToDeck(msg.kind, px, py, deckSnap);
       px = deckSnap.x; py = deckSnap.y;
     }
+    // The turn snaps by the same room rule as the ghost: 30° steps on a deck
+    // room, quarter turns elsewhere. place() itself keeps any 30° step.
+    const rot = snapPlayerStructureRotation(msg.rot, h.deck());
     const id = h.structurePlacement().place(
       owner,
       msg.kind,
       px,
       py,
       // P2b — only a PLAYER's placement can need a packed structure.
-      { rot: msg.rot, mirror: msg.mirror, requirePacked: true, deck: h.deck() },
+      { rot, mirror: msg.mirror, requirePacked: true, deck: h.deck() },
     );
     if (id === null) {
       h.logger.warn({ sessionId: client.sessionId, kind: msg.kind }, 'place_structure rejected');

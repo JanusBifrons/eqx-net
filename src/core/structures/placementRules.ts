@@ -12,7 +12,7 @@
  * iterables are caller-owned, so it's safe to call from the per-frame ghost
  * preview (invariant #14). `null` means legal.
  */
-import { getStructureKind, isConnectorKind, isStructureKindId, normaliseStructureRotation, structureHalfExtents, structureLocalToWorld } from '../../shared-types/structureKinds.js';
+import { getStructureKind, isConnectorKind, isStructureKindId, normaliseStructureQuarterTurn, normaliseStructureRotation, structureHalfExtents, structureLocalToWorld } from '../../shared-types/structureKinds.js';
 import type { HexPoint } from '../hex/hex.js';
 import { PLATE_DIRS, plateCentreWorldInto, type PlateIndex } from '../hex/plates.js';
 import { plateCentreAtWorldInto } from '../hex/plateSet.js';
@@ -82,7 +82,7 @@ export function placementRejectionNotice(r: PlacementRejection): string {
 const padBox = { x: 0, y: 0, hw: 0, hh: 0 };
 
 /** The world box of a kind's `keepClear` area (a dock's landing pad) for a
- *  structure at (x, y) turned `rotDeg` (90° steps, game space y-up, CCW), or
+ *  structure at (x, y) turned `rotDeg` (30° steps, game space y-up, CCW), or
  *  `null` when the kind reserves nothing. `mirror` flips the pad's local
  *  offset first (build mirror, `structureLocalToWorld`). Returns shared
  *  scratch: read it before the next call. */
@@ -91,10 +91,16 @@ export function keepClearBox(kindId: string | undefined, x: number, y: number, r
   const kc = getStructureKind(kindId).keepClear;
   if (kc === undefined) return null;
   const r = normaliseStructureRotation(rotDeg);
-  const cos = r === 0 ? 1 : r === 180 ? -1 : 0, sin = r === 90 ? 1 : r === 270 ? -1 : 0;
+  // Quarter turns stay exact (0 / ±1); a 30° step turns the pad's offset by
+  // its real angle.
+  const quarterTurn = r % 90 === 0;
+  const cos = quarterTurn ? (r === 0 ? 1 : r === 180 ? -1 : 0) : Math.cos((r * Math.PI) / 180);
+  const sin = quarterTurn ? (r === 90 ? 1 : r === 270 ? -1 : 0) : Math.sin((r * Math.PI) / 180);
   structureLocalToWorld(kc.cx, kc.cy, x, y, cos, sin, mirror, padBox);
-  padBox.hw = (sin === 0 ? kc.w : kc.h) / 2;
-  padBox.hh = (sin === 0 ? kc.h : kc.w) / 2;
+  // TODO(bp-16): oriented box — the pad's extents swap at the nearest quarter turn (axis-aligned).
+  const swap = normaliseStructureQuarterTurn(r) % 180 !== 0;
+  padBox.hw = (swap ? kc.h : kc.w) / 2;
+  padBox.hh = (swap ? kc.w : kc.h) / 2;
   return padBox;
 }
 
@@ -208,6 +214,7 @@ export function placementRejection(
   mirror?: boolean,
   deck?: PlacementDeck | null,
 ): PlacementRejection | null {
+  // TODO(bp-16): oriented box — footprint, pad and obstacle tests below are axis-aligned.
   const { hw, hh } = structureHalfExtents(kindId, rotDeg);
   for (const s of structures) {
     const shw = s.halfW ?? s.radius, shh = s.halfH ?? s.radius;

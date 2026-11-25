@@ -117,6 +117,7 @@ export function pickEntityAt(
         // bounding circle: a tap in the empty corner beside a long Solar must
         // not select it. Inline (no allocation — runs on pointer-move hover).
         const fp = getStructureKind(sw.shipKind).footprint;
+        // TODO(bp-16): oriented box — axis-aligned at an odd-30° turn.
         const quarter = Math.round((sw.angle * 2) / Math.PI) % 2 !== 0;
         const hw = (quarter ? fp.h : fp.w) / 2 + slop;
         const hh = (quarter ? fp.w : fp.h) / 2 + slop;
