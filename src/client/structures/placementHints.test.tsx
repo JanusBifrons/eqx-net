@@ -45,12 +45,10 @@ describe('updatePlacementHints: too-close link hint', () => {
     expect(el.hidden).toBe(true);
   });
 
-  it('leaves a docked hint (touch: under the top-centre banner) where it is', () => {
-    el.dataset.docked = '1';
+  it('follows the ghost on every device (the placing tools are on the left strip; no docked copy)', () => {
     updatePlacementHints({ placementPreviewConnectionCount: 0, placementPreviewTooShortCount: 1, placementPreviewRejection: null, viewHalf: 0 }, 200, 300, 'connector', 0, 0, mirror);
     expect(el.hidden).toBe(false);
-    expect(el.style.left).toBe('');
-    expect(el.style.top).toBe('');
+    expect(el.style.left).toBe('200px');
   });
 
   it('sits just below the ghost edge at any zoom (a 1000 u dock at 2 px per unit)', () => {

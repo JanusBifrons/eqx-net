@@ -5,8 +5,8 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
 /**
  * Structures plan, Phase 2 — Build → place flow (CLIENT half) regression lock.
  *
- * The speed-dial "Build ▸" action opens the Build sidebar, where a kind tile
- * raises the placement confirm banner; confirming sends `place_structure`
+ * The rail's Build item opens the Build sidebar, where a kind tile raises the
+ * left strip's placing tools (✓ Place, Rotate, Mirror, ✕); confirming sends `place_structure`
  * (a drop a fixed clearance ahead of the ship — the Phase 2 fallback coordinate
  * model). The new structure then rides the existing kind=2 swarm path and shows
  * up in the client's swarm mirror (`data-swarm-count`).
@@ -23,8 +23,8 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function joinClient(browser: Browser): Promise<{ ctx: Awaited<ReturnType<Browser['newContext']>>; page: Page }> {
-  // The Confirm/Cancel banner is the TOUCH placement flow (desktop places on
-  // click since P3.6, d239bbf8), so these tests join as a touch device.
+  // These tests join as a touch device (the two-step tap → Place flow); the
+  // left strip's placing tools show on desktop too (U3-7).
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
   const page = await ctx.newPage();
   await page.goto(`${BASE_URL}?room=test-sector-fast&shipKind=scout`);
@@ -59,8 +59,8 @@ test('Build ▸ Capital → confirm places a structure that appears in the swarm
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="build-capital"] button').click();
 
-    // The placement confirm banner appears; confirm sends place_structure.
-    await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
+    // The left strip's placing tools appear; ✓ Place sends place_structure.
+    await expect(page.locator('[data-testid="placement-kind"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="placement-confirm"]').click();
 
     // The structure rides the kind=2 swarm path → swarm count climbs by ≥ 1.
@@ -74,8 +74,8 @@ test('Build ▸ Capital → confirm places a structure that appears in the swarm
     );
     expect(await swarmCount(page)).toBeGreaterThan(before);
 
-    // Banner dismisses after confirm.
-    await expect(page.locator('[data-testid="placement-banner"]')).toBeHidden();
+    // A Capital places once: the placing tools go after Place.
+    await expect(page.locator('[data-testid="placement-kind"]')).toBeHidden();
   } finally {
     await ctx.close();
   }
@@ -116,7 +116,7 @@ test('no ghost↔structure gap after Confirm — the blueprint never vanishes (p
     await page.locator('[data-testid="right-rail-build"]').click(); // no auto-open: the rail's Build item opens the panel
     await page.locator('[data-testid="build-cat-core"]').click();
     await page.locator('[data-testid="build-capital"] button').click();
-    await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="placement-kind"]')).toBeVisible({ timeout: 5_000 });
 
     // The live positioning ghost is on the dataset before the sampler starts.
     await page.waitForFunction(
@@ -183,10 +183,10 @@ test('placement Cancel exits placement mode without placing', async ({ browser }
     await page.locator('[data-testid="right-rail-build"]').click(); // no auto-open: the rail's Build item opens the panel
     await page.locator('[data-testid="build-cat-economy"]').click();
     await page.locator('[data-testid="build-solar"] button').click();
-    await expect(page.locator('[data-testid="placement-banner"]')).toBeVisible({ timeout: 5_000 });
+    await expect(page.locator('[data-testid="placement-kind"]')).toBeVisible({ timeout: 5_000 });
 
-    await page.locator('[data-testid="build-strip-cancel"]').click();
-    await expect(page.locator('[data-testid="placement-banner"]')).toBeHidden();
+    await page.locator('[data-testid="placement-cancel"]').click();
+    await expect(page.locator('[data-testid="placement-kind"]')).toBeHidden();
 
     // Give it a moment; nothing should have been placed.
     await page.waitForTimeout(500);

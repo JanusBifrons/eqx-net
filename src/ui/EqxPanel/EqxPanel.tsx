@@ -14,12 +14,12 @@
  * and action bar inside the Paper's column — or, given a `title`, the panel
  * draws the header itself (the title is the grab handle, plus a ✕). A
  * `centred` size is a slim strip of its own
- * children only, vertically centred on the right edge (the folded Build sidebar).
+ * children only, vertically centred on the right edge (unused since UI U3-7 moved the placing tools to the left strip).
  *
  * Used by the galaxy map's sector drawer (SectorInfoDrawer.tsx), the right
  * panels (Details, where a building's settings live, and the rest) and the
  * Build sidebar (BuildSidebar.tsx); one right panel is open at a time. A new docked panel
- * builds on this, never on a copy of it; a full-screen window uses GameWindow.
+ * builds on this, never on a copy of it; a full-screen window uses EqxWindow.
  */
 import { useEffect, useRef, type ReactNode } from 'react';
 import { Box, Drawer, Portal, useMediaQuery } from '@mui/material';
@@ -69,13 +69,6 @@ export const SECTOR_PANEL_SIZE: SidePanelSize = {
  *  (owner 2026-11-22: cover ⛶, leave no gap for it); 380 px on desktop. */
 export const BUILD_PANEL_SIZE: SidePanelSize = {
   width: 380, touchFrac: 0.4, touchMinW: 280, touchTop: null, fullHeight: true,
-};
-
-/** The Build sidebar folded while placing (BuildPlacingStrip.tsx): a slim
- *  strip, vertically centred on the right edge with auto height; ~100 px wide
- *  on a sideways phone. Same panel as BUILD_PANEL_SIZE, never a second one. */
-export const BUILD_STRIP_SIZE: SidePanelSize = {
-  width: 112, touchFrac: 0, touchMinW: 100, touchTop: null, centred: true,
 };
 
 /** Esc closes a panel, unless typing in a field or another Esc owner took the

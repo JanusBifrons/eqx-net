@@ -220,3 +220,47 @@ describe('structureWreckGunArts: the live gun\'s own bake', () => {
     expect(structureWreckGunArts(ctx(true).actx, null, 'turret')).toBeNull();
   });
 });
+
+// Capital death (in-game): the landing pad vanished. The pad is the crane
+// rig's `lip`, an under-layer apron OUTSIDE the hull past the open edge; the
+// piece mask (its outline) clipped it away on every piece. Like a barrel
+// past the hull, the pad goes whole with the piece it attaches to (the one
+// holding the open edge where it meets the hull), drawn by no other piece.
+describe('the Capital\'s landing pad survives on the piece it attaches to', () => {
+  const k = 'capital';
+  const lip = rigForStructureKind(k)!.parts.find((p) => p.id === 'lip')!;
+  const o = lip.outline!;
+  const xs = o.filter((_, i) => i % 2 === 0), ys = o.filter((_, i) => i % 2 === 1);
+  // Inset sample grid over the pad, in the lip part's own frame (game y-up).
+  const x0 = Math.min(...xs) + 4, x1 = Math.max(...xs) - 4, y0 = Math.min(...ys) + 4, y1 = Math.max(...ys) - 4;
+  const samples: Array<{ x: number; y: number }> = [];
+  for (let a = 0; a <= 4; a++) for (let b = 0; b <= 4; b++) samples.push({ x: x0 + ((x1 - x0) * a) / 4, y: y0 + ((y1 - y0) * b) / 4 });
+  const art = structArtAsShipArt(structArt(k));
+
+  it('every seed: exactly one piece draws the whole pad, and it holds the open edge where the pad meets the hull', () => {
+    for (const [seed, kx, ky] of [[3, 0, 0], [17, 40, 120], [31, -90, 60], [8, 0, 200]] as const) {
+      const ds = { ...root(k), seed, killX: kx, killY: ky };
+      const ps = rebuildWreckPieces(ds)!;
+      const inf = new WreckArtState().infoFor(ds, ps, 0, { x: 0, y: 0, angle: 0 }, 0, 1000);
+      let owners = 0;
+      for (const p of ps) {
+        const sp = new WreckPieceSprite(p, WRECK_STRUCTURE_PARENT_KIND, art, inf, p.index, null, null, structureWreckSource({ k }));
+        const rigArt = sp.getChildByLabel('wreck-rig')!;
+        const mask = rigArt.mask as Graphics;
+        const lipG = rigArt.getChildByLabel('rig-part-lip', true)!;
+        const at = (x: number, y: number): { x: number; y: number } => rigArt.toLocal({ x, y: -y }, lipG);
+        const hits = samples.filter((s) => mask.containsPoint(at(s.x, s.y))).length;
+        expect(hits === 0 || hits === samples.length, `s${seed} piece ${p.index}: pad split (${hits}/${samples.length})`).toBe(true);
+        if (hits === samples.length) {
+          owners++;
+          const ring = p.outline.map((v) => ({ x: v.x, y: -v.y }));
+          // Just inside the hull, back from where the pad meets it.
+          const onEdge = [-6, -16, -32].some((dy) => [-40, 0, 40].some((dx) => { const q = at(dx, dy); return pointInRing(ring, q.x, q.y); }));
+          expect(onEdge, `s${seed} piece ${p.index}: the pad hangs off a piece away from the open edge`).toBe(true);
+        }
+        sp.destroy({ children: true });
+      }
+      expect(owners, `s${seed}: one pad owner`).toBe(1);
+    }
+  });
+});

@@ -13,6 +13,7 @@ import { HowlerAudioService } from './audio/HowlerAudioService';
 import { selectRenderer, installProfileWindow } from './app/gameSurfaceBootstrap';
 import { runGameSurfaceConnectFlow } from './app/gameSurfaceConnectFlow';
 import { shouldPauseTickerUnderUi, safeLocalStorage } from './app/automationTickerPause';
+import { useAnyWindowOpen } from '../ui/index.js';
 import {
   useServerHealthPoll,
   useShipSwapDispatcher,
@@ -60,7 +61,6 @@ import { captureDeviceInfo } from './debug/deviceInfo';
 import { useMountLog } from './debug/useMountLog';
 import { useWarpOrchestration } from './useWarpOrchestration';
 import { WarpStatusChip } from './components/WarpPicker';
-import { StructurePlacementBanner } from './components/StructurePlacementBanner';
 import { PlacementFenceHint } from './components/PlacementFenceHint';
 import { PlacementLinkHint } from './components/PlacementLinkHint';
 import { TeleportWarning } from './components/TeleportWarning';
@@ -868,7 +868,9 @@ function GameSurface({
   // roundtrip. There we pause the ticker entirely while the
   // drawer is open. NOT keyed on `navigator.webdriver`: the
   // Playwright showcase recorder must film a live game behind menus.
-  const uiCoversGame = isDrawerOpen;
+  // A full-screen EqxWindow (the loot window) covers the game the same way.
+  const isWindowOpen = useAnyWindowOpen();
+  const uiCoversGame = isDrawerOpen || isWindowOpen;
   useEffect(() => {
     const renderer = rendererRef.current;
     if (!renderer) return;
@@ -961,12 +963,8 @@ function GameSurface({
        *  level-up (the WS-B1 `pendingLevelUp` seam) to spend the earned point. */}
       <UpgradeModalHost />
       <HyperspaceOverlay onCancel={handleCancelTransit} />
-      {/* Structure placement confirm — WORLD-ANCHORED (smoke handoff 2026-06-06,
-       *  Issue 5). Rendered OUTSIDE the Slot system as a `position:fixed`,
-       *  high-z element so it sits ABOVE the thumb-cluster/dial (the old
-       *  bottom-center/Z.hud slot put it UNDER them on mobile). gameRafLoop
-       *  moves it to the projected on-screen position of the blueprint ghost. */}
-      <StructurePlacementBanner />
+      {/* The ghost's world hints (under the ghost, moved by gameRafLoop); the
+       *  placing tools are on the left strip (layout/placingStripItems.tsx). */}
       <PlacementFenceHint />
       <PlacementLinkHint />
       <LostConnectionOverlay />

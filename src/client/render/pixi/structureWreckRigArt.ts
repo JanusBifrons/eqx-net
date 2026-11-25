@@ -91,7 +91,10 @@ export function structureWreckRigArt(
   mask.label = 'wreck-rig-mask';
   const ring = piece.outline.map((v) => ({ x: v.x, y: -v.y }));
   mask.poly(ring).fill({ color: 0xffffff }); // once per piece
-  if (pivots.length > 0) addBarrelOverhangs(mask, root, kindId, piece, ring, places, pivots);
+  // The structure's hull, body frame (Pixi) → the piece's.
+  const hull = structureWreckSource({ k: getStructureKind(kindId).id }).outline.map(([x, y]) => ({ x: x - piece.cx, y: y + piece.cy }));
+  if (pivots.length > 0) addBarrelOverhangs(mask, root, hull, ring, places, pivots);
+  if (view !== null) addPartOverhangs(mask, root, body, view, hull, ring);
   root.addChild(mask);
   root.mask = mask;
   return root;
@@ -118,11 +121,9 @@ const OWNER_BACK = 0.5, OWNER_SIDE = 0.3;
  * frame; build time only.
  */
 function addBarrelOverhangs(
-  mask: Graphics, root: Container, kindId: string, piece: WreckRigPiece,
+  mask: Graphics, root: Container, hull: ReadonlyArray<{ x: number; y: number }>,
   ring: ReadonlyArray<{ x: number; y: number }>, places: ReturnType<typeof structureTurrets>, pivots: readonly Container[],
 ): void {
-  // The structure's hull, body frame (Pixi) → the piece's.
-  const hull = structureWreckSource({ k: getStructureKind(kindId).id }).outline.map(([x, y]) => ({ x: x - piece.cx, y: y + piece.cy }));
   for (let i = 0; i < pivots.length; i++) {
     const pv = pivots[i]!, pl = places[i]!;
     const hw = pl.wid, len = Math.max(pl.muzzle, pl.len) + pl.wid;
@@ -143,5 +144,52 @@ function addBarrelOverhangs(
     const own = root.toLocal({ x: OWNER_SIDE * hw, y: -Math.max(0, t0 - OWNER_BACK * hw) }, pv);
     if (!pointInRing(ring, own.x, own.y)) continue; // the barrel leaves the hull from another piece
     mask.poly([[-hw, -t0], [hw, -t0], [hw, -len], [-hw, -len]].map(([x, y]) => root.toLocal({ x: x!, y: y! }, pv))).fill({ color: 0xffffff });
+  }
+}
+
+/** Bisection steps finding where a part past the hull meets it. */
+const MEET_STEPS = 16;
+/** Where a part overhang's owner is decided, as fractions of the part's
+ *  distance from the structure centre: this far in from where it meets the
+ *  hull, this far off that line (a generic point, never on a cut). */
+const PART_OWNER_IN = 0.05, PART_OWNER_SIDE = 0.01;
+
+/**
+ * A rig part drawn past the hull (the Capital's landing pad: the crane rig's
+ * `lip` apron beyond the open edge) was clipped away by every piece's mask,
+ * so a dead Capital lost its pad. As a barrel past the hull
+ * (`addBarrelOverhangs`), the part goes whole with the piece it attaches to:
+ * the piece holding the hull just inside where the line from the part's
+ * centre to the structure's centre meets it; no other piece draws it. A part
+ * whose centre is on the hull keeps breaking with the pieces it lies on.
+ * Root (piece Pixi) frame; build time only.
+ */
+function addPartOverhangs(
+  mask: Graphics, root: Container, body: Container, view: StructureRigView,
+  hull: ReadonlyArray<{ x: number; y: number }>, ring: ReadonlyArray<{ x: number; y: number }>,
+): void {
+  const origin = root.toLocal({ x: 0, y: 0 }, body);
+  if (!pointInRing(hull, origin.x, origin.y)) return;
+  for (let i = 0; i < view.rig.partCount; i++) {
+    const o = view.rig.parts[i]!.outline;
+    if (o === undefined || o.length < 6) continue;
+    const g = view.parts[i]!;
+    const pts: Array<{ x: number; y: number }> = [];
+    let cx = 0, cy = 0;
+    for (let j = 0; j < o.length; j += 2) {
+      const p = root.toLocal({ x: o[j]!, y: -o[j + 1]! }, g); // the part's art frame (`outlinePts`' flip)
+      pts.push({ x: p.x, y: p.y });
+      cx += p.x; cy += p.y;
+    }
+    cx /= pts.length; cy /= pts.length;
+    if (pointInRing(hull, cx, cy)) continue; // on the hull: the outline masks keep it
+    const dx = origin.x - cx, dy = origin.y - cy, d = Math.hypot(dx, dy);
+    let lo = 0, hi = 1;
+    for (let k = 0; k < MEET_STEPS; k++) { const m = (lo + hi) / 2; if (pointInRing(hull, cx + dx * m, cy + dy * m)) hi = m; else lo = m; }
+    const ux = dx / d, uy = dy / d;
+    const ox = cx + dx * hi + (ux * PART_OWNER_IN - uy * PART_OWNER_SIDE) * d;
+    const oy = cy + dy * hi + (uy * PART_OWNER_IN + ux * PART_OWNER_SIDE) * d;
+    if (!pointInRing(ring, ox, oy)) continue; // it attaches to another piece
+    mask.poly(pts).fill({ color: 0xffffff });
   }
 }

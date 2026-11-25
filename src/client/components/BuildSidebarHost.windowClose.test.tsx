@@ -10,7 +10,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { useState } from 'react';
-import { render, screen, fireEvent, act } from '@testing-library/react';
+import { render, screen, act } from '@testing-library/react';
 import { useUIStore } from '../state/store.js';
 import { BuildSidebarHost } from './BuildSidebarHost.js';
 import { GameWindow } from './GameWindow.js';
@@ -48,18 +48,6 @@ describe('BuildSidebarHost closes when a game window opens', () => {
     act(() => openWindow());
     expect(sidebarOpen()).toBe(false);
     expect(useUIStore.getState().rightPanel).toBeNull(); // the one flag clears
-  });
-
-  it('closes the placing strip when a GameWindow opens', () => {
-    render(<Harness />);
-    act(() => openBuild());
-    fireEvent.click(screen.getByTestId('build-cat-economy'));
-    fireEvent.click(screen.getByTestId('build-solar').querySelector('button')!);
-    expect(screen.getByTestId('build-strip')).toBeTruthy();
-    act(() => openWindow());
-    expect(screen.queryByTestId('build-strip')).toBeNull();
-    expect(useUIStore.getState().placementKind).toBe('solar');
-    act(() => useUIStore.setState({ placementKind: null }));
   });
 
   it('one right panel at a time: Details (building settings) closes Build, and Build closes Details', () => {

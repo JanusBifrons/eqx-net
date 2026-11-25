@@ -92,7 +92,7 @@ export interface RendererFeedback {
    * Screen-space (CSS px, canvas-relative) projection of the current structure
    * placement preview pose (`RenderMirror.pendingPlacementPreview`), or `null`
    * when there's no preview / it's off-screen. Lets the world-anchored
-   * placement confirm (`StructurePlacementBanner`) sit at the blueprint's
+   * placement hints (`PlacementFenceHint`, `PlacementLinkHint`) sit at the blueprint's
    * on-screen position instead of a fixed HUD slot (smoke handoff 2026-06-06,
    * Issue 5). Published as `data-placement-screen-x/y`. Test-only / UI-position
    * surface — not consumed by gameplay logic.
