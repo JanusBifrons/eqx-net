@@ -5,6 +5,11 @@
  *   - (slice 10) to any structure whose centre lies on ITS plate, and
  *   - (slice 11) to a plate-anchor connector on a NEIGHBOURING plate,
  * past `CONNECTION_MAX_RANGE` and past the anchor's link cap (`canConnect`).
+ * Slice 19 (fence): two shield pylons on the two ends of ONE hex edge (a seam,
+ * `deckCorners.ts`) link past range, so the `ShieldWallManager` / client
+ * `derivedWalls` wall forms along the seam. On a deck, pylon pairs link ONLY
+ * along seams (`isDeckFenceOffSeam`: `canConnect` refuses `'off-seam'`); gates
+ * and airlocks keep the normal range rule.
  *
  * Pure geometry over kind + world centre, so the server projection and the
  * client mirror evaluate the identical rule (invariant 15). Ownership is the
@@ -14,6 +19,7 @@
 import { pixelToAxialInto, type AxialHex } from '../hex/hex.js';
 import { DECK_HEX_SIZE, PLATE_DIRS, plateOfHexInto, type PlateIndex } from '../hex/plates.js';
 import { isPlateAnchor } from '../hex/plateSet.js';
+import { isDeckSeam } from '../hex/deckCorners.js';
 // Type-only imports of Grid / cableCurve (both call into this module).
 import type { CanConnectResult, GridNode } from './Grid.js';
 import { CABLE_NO_SOCKET, type Connection } from './Connection.js';
@@ -32,7 +38,19 @@ export const DECK_LINK_NONE = 0;
 export const DECK_LINK_ON_PLATE = 1;
 /** Slice 11: two anchors on neighbouring plates. */
 export const DECK_LINK_NEIGHBOUR = 2;
-export type DeckLinkKind = typeof DECK_LINK_NONE | typeof DECK_LINK_ON_PLATE | typeof DECK_LINK_NEIGHBOUR;
+/** Slice 19: two fence posts on the ends of one hex seam. */
+export const DECK_LINK_SEAM_FENCE = 3;
+export type DeckLinkKind = typeof DECK_LINK_NONE | typeof DECK_LINK_ON_PLATE | typeof DECK_LINK_NEIGHBOUR | typeof DECK_LINK_SEAM_FENCE;
+
+/** The kind a deck fence post is: it snaps to a hex corner (`deckPlacement.ts`)
+ *  and pairs along seams. */
+export const DECK_FENCE_POST_KIND = 'shield_pylon';
+
+/** On a deck: are `a` and `b` two fence posts NOT on one seam (refused
+ *  `'off-seam'`: deck fences run only along hex edges)? */
+export function isDeckFenceOffSeam(a: DeckLinkEnd, b: DeckLinkEnd): boolean {
+  return a.kind === DECK_FENCE_POST_KIND && b.kind === DECK_FENCE_POST_KIND && !isDeckSeam(a.x, a.y, b.x, b.y);
+}
 
 const HEX: AxialHex = { q: 0, r: 0 };
 const PA: PlateIndex = { i: 0, j: 0 };
@@ -48,9 +66,13 @@ export function plateOfWorldInto(x: number, y: number, out: PlateIndex): PlateIn
  * How `a` and `b` may link on a deck (order-free): {@link DECK_LINK_ON_PLATE}
  * when one is a plate anchor and the other's centre is on that plate,
  * {@link DECK_LINK_NEIGHBOUR} when both anchor neighbouring plates, else
+ * {@link DECK_LINK_SEAM_FENCE} for two fence posts on one seam, else
  * {@link DECK_LINK_NONE}. Callers gate on the room's deck flag.
  */
 export function deckLinkKind(a: DeckLinkEnd, b: DeckLinkEnd): DeckLinkKind {
+  if (a.kind === DECK_FENCE_POST_KIND && b.kind === DECK_FENCE_POST_KIND) {
+    return isDeckSeam(a.x, a.y, b.x, b.y) ? DECK_LINK_SEAM_FENCE : DECK_LINK_NONE;
+  }
   const aAnchor = isPlateAnchor(a.kind, a.x, a.y);
   const bAnchor = isPlateAnchor(b.kind, b.x, b.y);
   if (!aAnchor && !bAnchor) return DECK_LINK_NONE;
