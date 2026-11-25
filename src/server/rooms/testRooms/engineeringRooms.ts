@@ -7,6 +7,7 @@ import type { Server } from 'colyseus';
 import { SectorRoom } from '../SectorRoom.js';
 import { BASE_BUILD_PREBUILT, GATE_TEST_PREBUILT, PREBUILT_ADOPT_OWNER, RIG_SANDBOX_E2E_SCENE, RIG_SANDBOX_PREBUILT, RIG_HOME, RIG_UNLOAD, rigSandboxScene, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../scenarioLayouts.js';
 import { SHOWCASE_PILOT_ID } from '../showcaseRooms.js';
+import { deckHexCentreInto } from '../../../core/hex/plates.js';
 
 /**
  * `?room=base-build-test` (Sunday base loop): stills and films of building.
@@ -44,16 +45,19 @@ export const BASE_BUILD_TEST_OPTS = {
 
 /**
  * `?room=deck` (base-platforms prototype): `base-build-test`'s setup with the
- * `deck` flag on (`state.deck`). The first pilot to join adopts a Capital and
- * ONE Connector at the world origin, the first plate's anchor; the pair keeps
- * the proven Capital → north-Connector offset so they auto-connect.
+ * `deck` flag on (`state.deck`). The first pilot to join adopts ONE Connector
+ * at the world origin (the first plate's anchor) and a Capital centred in the
+ * plate's lower-right outer hex (axial (1,-1), 1300 u away), sitting in its
+ * hex slot; the plate-connector deck link rule cables and powers it.
  */
+const DECK_CAPITAL_AT = deckHexCentreInto(1, -1, { x: 0, y: 0 });
+
 export const DECK_TEST_OPTS = {
   ...BASE_BUILD_TEST_OPTS,
   sectorKey: 'deck',
   deck: true,
   prebuiltStructures: [
-    { kind: 'capital' as const, x: 0, y: -SCENARIO.connectorN.y, rot: SCENARIO.capital.rot },
+    { kind: 'capital' as const, x: DECK_CAPITAL_AT.x, y: DECK_CAPITAL_AT.y, rot: SCENARIO.capital.rot },
     { kind: 'connector' as const, x: 0, y: 0 },
   ],
   scenarioAsteroids: [],
