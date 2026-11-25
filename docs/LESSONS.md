@@ -3425,3 +3425,7 @@ own click-suppress window only guards the dial. Options of a menu opened on touc
 least `MENU_ARM_MS` after opening (touch; a mouse opens on release), then its click (keyboard clicks,
 `detail === 0`, always act). A whole surface (the drawer, the in-game galaxy map) spreads
 `useFreshPressSurface`, the same guard in the capture phase.
+
+## 2026-11-25 — Playwright 1.49 hangs forever under Node 24.14 on Windows, even `--list`
+
+Running the e2e CLI (`pnpm exec playwright test …`, even `--list`) under Node 24.14 on Windows never returns: a module-loader deadlock between Node's main thread and its loader thread. It is not the game, the server or the port. Run the Playwright CLI with Node 22 (what CI uses, `node-version: '22.x'`): `<node22> node_modules/@playwright/test/cli.js test …`, where `<node22>` is a Node 22 binary on the box.

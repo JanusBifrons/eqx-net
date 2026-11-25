@@ -6,6 +6,7 @@ Plan `soft-leaping-truffle` v4, phase A. Every sector has a ring of ancient gate
 
 - **A teleporter nobody owns or builds.** It is the `alien_gate` structure kind, and it works like a built teleporter (see [teleporters.md](teleporters.md)). It has the same pad, the same doors-closing cycle, and the same rule that everyone on the pad rides.
 - **Bigger:** a 1600 × 1600 footprint, ringed by three turning stone rings (the Astrolabe). It has no posts: outside a jump nothing at the gate blocks a ship.
+- **The Astrolabe** (redesign A1–A2, `structureStyleC.transport.astrolabe.ts`): a glowing hex-tiled light pool at the centre with a dark floating crystal over it, ringed by three rings of dark stone with teal glyphs. Each ring is three arcs with three gaps ("lanes") 120° apart. The rings turn at different speeds and directions, slow into line before each timetabled jump so the lanes line up and glow, hold through the cycle, then speed up again. Their angles come from the timetable and the live `tpPhase`, never frame time (`alienGateAstrolabe.ts`), so everyone, late joiners included, sees the same pose. The rings are art only: no collider.
 - **Sealed by its outer ring** (teleporter redesign A3). Through the last seconds before a jump (the SEALED phase) the outermost stone ring becomes a solid circle, so nobody gets in or out; everyone inside it rides. The circle is a closed loop of 32 straight iris walls whose corners sit on the ring's outer edge (radius 818, a chord sags under 4 units). One shared source, `src/shared-types/alienGateSeal.ts`, gives the ring's size (the Astrolabe rig reads it), the walls (server iris walls and the client's derived walls, locked equal by `tests/unit/irisSpanParity.test.ts`), the ride disc (`onPad`) and the radial closing push (`padPushDir` round). The walls reach about 30 units past the 1600 footprint's edge.
 - **Quicker:** its cycle runs at about a third of a built teleporter's (about 5 s from warning to arrival).
 - **Free:** it charges itself. No grid, no capacitor, no toll.
@@ -44,9 +45,10 @@ A disabled ship's **engines and weapons go offline for 10 seconds**. Its hull is
 | Guard (unit) | `src/server/structures/AlienGateGuard.test.ts`: hits and zone shots disable, re-applied attacks extend it, NPC slots, turrets ignored |
 | Both sides agree (unit) | `tests/unit/disableParity.test.ts`: the shared gate clears every movement bit; the server handler honours it; both sides call it |
 | Integration | `tests/integration/sectorRoom/alienGates.test.ts` (two real neighbouring rooms): twins pair, the timetable carries a pilot across the border for free, a hit disables the attacker and puts `disabledMs` on its snapshot, a shot inside the zone disables, nobody can build or pair one. `galaxyBases.test.ts` checks the gates fit around the biggest bases |
-| E2E | `tests/e2e/alien-gate.spec.ts` (`alien-gate-test` room): the owner reads "The Ancients", no pairing offer, firing in the zone shows the disabled chip |
+| Astrolabe (unit) | `src/core/galaxy/alienGateAstrolabe.test.ts` (the rings line up at the jump, from the timetable); `structureStyleC.transport.astrolabe.test.ts` (the art, no pylons) |
+| E2E | `tests/e2e/alien-gate.spec.ts` (`alien-gate-test` room): the owner reads "The Ancients", no pairing offer, firing in the zone shows the disabled chip; unsealed, a ship flies through the ring where a post stood; sealed, it stops at the ring |
 
-The `alien-gate-test` room seeds one gate at the origin through the `testAlienGate` room option, with the pilot spawning inside its zone. The timetable runs on the teleporter test speed-up (`teleportCycleScale` shortens the minute too).
+The `alien-gate-test` room seeds one gate at the origin through the `testAlienGate` room option, with the pilot spawning inside its zone. The timetable runs on the teleporter test speed-up (`teleportCycleScale` shortens the minute too). That gate has no twin, so its timetable never fires: the seal tests force the phase with the `test_gate_seal` cue (`{ sealed: true | false }`, test mode or dev overrides only), which holds the room's gates SEALED or IDLE.
 
 ## Client rules in detail
 
@@ -65,3 +67,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 - **Invulnerable + disable.** `applyDamage` returns early for a gate and calls `AlienGateGuard.onGateAttacked`; `handleFire` / `handleAiFire` call `onFired` (2500 u zone) and drop a disabled shooter's fire. The input handler strips movement bits through the SHARED `gateDisabledInput` (#15), and `postIntent` zeroes a disabled NPC's AI intent by slot. `evictSwarmEntity` must `forget` the ship (slots are reused). The own-ship snapshot carries `disabledMs` (#16).
 - **Steady state** with no gates is one `gateCount` check per fire/damage call.
 - Locks: `AlienGateGuard.test.ts`, `tests/unit/disableParity.test.ts`, `tests/integration/sectorRoom/alienGates.test.ts`, `galaxyBases.test.ts` (gates fit around the bases). Story: [docs/features/alien-gates.md](../features/alien-gates.md).
+
+## History
+
+- **Teleporter redesign (2026-11-25):** the gate used to share the built teleporter's flat pad: twelve solid posts round the edge and a dashed shield iris between them. Now it is the Astrolabe (A1 rings, A2 art), its twelve posts removed at the owner's call, and its outer ring is the seal (A3): 32 iris walls on the ring, solid only while SEALED. Built teleporters became walled chambers at the same time ([teleporters](teleporters.md#history)).
