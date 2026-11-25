@@ -44,7 +44,9 @@ describe('SectorRoom integration — transit pads (W1b)', () => {
     expect(Math.hypot(internals.playerPose(PILOT)!.x - home.x, internals.playerPose(PILOT)!.y - home.y)).toBeLessThan(320);
     expect(internals.playerPose(PILOT)!.poseEpoch).toBe(0);
     for (let i = 0; i < 200 && internals.playerPose(PILOT)!.poseEpoch === 0; i++) {
-      internals.pulseStructureGrid();
+      // The doors take their full travel to shut (T2) in wall time here, so
+      // keep each step cheap: the grid pulse (slow on CI) every 10th step.
+      if (i % 10 === 0) internals.pulseStructureGrid();
       internals.tickStructureTurrets();
       await harness.advance(30);
     }
