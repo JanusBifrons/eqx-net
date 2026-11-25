@@ -11,11 +11,13 @@ import { snapPlacementToDeck } from '../../../core/structures/deckPlacement.js';
 import type { DeckSnap } from '../../../core/hex/deckSnap.js';
 import { OwnerPlateList } from '../../../core/hex/plateSet.js';
 import type { PlacementDeck } from '../../../core/structures/placementRules.js';
+import { plateReachBoxAdd } from '../../../core/structures/plateClearance.js';
+import { isPlateAnchor } from '../../../core/hex/plateSet.js';
 
 type Preview = NonNullable<RenderMirror['pendingPlacementPreview']>;
 
 /** Shared scratch (invariant 14): read the result before the next call. */
-const scratch: DeckSnap = { x: 0, y: 0, q: 0, r: 0, rhombus: -1 };
+const scratch: DeckSnap = { x: 0, y: 0, q: 0, r: 0, rhombus: -1, slot: 'small' };
 
 /** The deck slot the live ghost at (x, y) snaps to, or null when the room has
  *  no deck (or this is the pending ghost). Allocation-free; the returned
@@ -36,4 +38,12 @@ export function ghostDeckContext(preview: Preview | null | undefined): Placement
   plateList.set(preview.deckOwner, preview.deckPlates ?? []);
   deckCtx.owner = preview.deckOwner;
   return deckCtx;
+}
+
+/** The ghost's rock-query box (`ConnectorRenderer`'s preview obstacles),
+ *  grown to the whole plate when the ghost lays one (a connector on a plate
+ *  centre): the server fetches the same area, so `plate-blocked` agrees.
+ *  Allocation-free. */
+export function ghostPlateReachBoxAdd(kind: string, x: number, y: number, box: { x0: number; y0: number; x1: number; y1: number }): void {
+  if (isPlateAnchor(kind, x, y)) plateReachBoxAdd(x, y, box);
 }

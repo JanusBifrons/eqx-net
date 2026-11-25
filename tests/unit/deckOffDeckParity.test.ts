@@ -19,6 +19,9 @@ import { deckHexCentreInto, plateCentreWorldInto, plateHexes } from '../../src/c
 import { placementRejectionNotice } from '../../src/core/structures/placementRules.js';
 import type { StructureRenderState, SwarmRenderState } from '../../src/core/contracts/IRenderer.js';
 import type { StructureKindId } from '../../src/shared-types/structureKinds.js';
+import type { GridObstacle } from '../../src/core/structures/Grid.js';
+import { HEX_DIRS } from '../../src/core/hex/hex.js';
+import { plateCentreHex } from '../../src/core/hex/plates.js';
 
 const centre = (i: number, j: number): { x: number; y: number } => plateCentreWorldInto(i, j, { x: 0, y: 0 });
 const ringHex = (i: number, j: number, k: number): { x: number; y: number } => {
@@ -27,13 +30,16 @@ const ringHex = (i: number, j: number, k: number): { x: number; y: number } => {
 };
 
 /** A deck room: player-1 owns plate (0,0), rival owns plate (4,0), both as
- *  real connectors (system placements, no deck rule). */
-function rig() {
+ *  real connectors (system placements, no deck rule). `rocks` are the
+ *  room's obstacles: the server's `getObstacles` and the ghost's list. */
+function rig(rocks: GridObstacle[] = []) {
   const registry = new StructureRegistry();
   let n = 0;
   const placement = new StructurePlacementSubsystem({
     spawnStructure: () => true, seedHealth: () => {}, despawn: () => {}, clamp: (x, y) => ({ x, y }),
-    nextId: () => `pstruct-${n++}`, registry, getObstacles: () => [],
+    nextId: () => `pstruct-${n++}`, registry, // Like the room: only the rocks overlapping the asked box (so a plate-laying
+    // placement must widen it to the whole plate).
+    getObstacles: (b?: { x0: number; y0: number; x1: number; y1: number }) => (b ? rocks.filter((o) => o.x + o.radius > b.x0 && o.x - o.radius < b.x1 && o.y + o.radius > b.y0 && o.y - o.radius < b.y1) : rocks),
   });
   const a = centre(0, 0), b = centre(4, 0);
   expect(placement.place('player-1', 'connector', a.x, a.y)).not.toBeNull();
@@ -84,7 +90,7 @@ function rig() {
     const preview: PlacementPreview = { kind: kind as StructureKindId, x: 0, y: 0, angle: 0 };
     writePreviewDeck(preview, true, clientPlates, 'player-1');
     const snap = snapIt ? snapGhostToDeck(preview, x, y)! : { x, y };
-    const r = verdict.check({ kind, x: snap.x, y: snap.y, angle: 0 }, structures, swarm, null, ghostDeckContext(preview));
+    const r = verdict.check({ kind, x: snap.x, y: snap.y, angle: 0 }, structures, swarm, rocks, ghostDeckContext(preview));
     return r === null ? null : placementRejectionNotice(r);
   };
   return { serverVerdict, serverExact, ghostVerdict };
@@ -110,9 +116,7 @@ describe('off-deck parity (client ghost verdict == server place_structure)', () 
     });
   }
 
-  // A connector on a plate centre: the player snap puts a connector on a
-  // small slot, never a plate centre (laying a plate through the player path
-  // is slice 8), so these compare the exact point: server place(deck) vs ghost.
+  // A connector on a plate centre at the exact point: server place(deck) vs ghost.
   const EXACT: Array<[string, string, { x: number; y: number }, string | null]> = [
     ['new plate: connector on an adjacent plate centre', 'connector', centre(1, 0), null],
     ['new plate: connector on a far plate centre', 'connector', centre(2, 2), off],
@@ -127,6 +131,41 @@ describe('off-deck parity (client ghost verdict == server place_structure)', () 
       expect(serverExact(kind, p.x, p.y)).toBe(ghost);
     });
   }
+
+  // Slice 8: laying a plate through the player path. A connector dropped in a
+  // plate's middle hex snaps to its centre on both sides; a new plate must be
+  // clear of rocks and other owners' structures.
+  const near = (p: { x: number; y: number }): { x: number; y: number } => ({ x: p.x + 310, y: p.y - 240 });
+  const offPlate10 = (): { x: number; y: number } => {
+    const h = plateCentreHex(1, 0), d = HEX_DIRS[0]!;
+    return deckHexCentreInto(h.q + 2 * d.q, h.r + 2 * d.r, { x: 0, y: 0 });
+  };
+  const rock = (p: { x: number; y: number }, radius = 120): GridObstacle => ({ x: p.x, y: p.y, radius });
+  const LAY: Array<[string, { x: number; y: number }, GridObstacle[], string | null]> = [
+    ['lays a clear plate bordering the deck', near(centre(1, 0)), [], null],
+    ['plate not touching the deck', near(centre(2, 2)), [], off],
+    ['a rock in a ring hex of the new plate', near(centre(1, 0)), [rock(ringHex(1, 0, 4))], placementRejectionNotice('plate-blocked')],
+    ['a rock just off the new plate', near(centre(1, 0)), [rock(offPlate10())], null],
+    ["a plate bordering only the rival's deck", near(centre(3, 0)), [], off],
+  ];
+  for (const [name, p, rocks, want] of LAY) {
+    it(`laying a plate: ${name}`, () => {
+      const { serverVerdict, ghostVerdict } = rig(rocks);
+      const ghost = ghostVerdict('connector', p.x, p.y);
+      expect(ghost).toBe(want);
+      expect(serverVerdict('connector', p.x, p.y)).toBe(ghost);
+    });
+  }
+
+  it('laying a plate: the ghost snaps a middle-hex connector to the plate centre, as the server places it', () => {
+    const preview: PlacementPreview = { kind: 'connector', x: 0, y: 0, angle: 0 };
+    writePreviewDeck(preview, true, new PlateSet<number>(), 'player-1');
+    const c = centre(1, 0), p = near(c);
+    const snap = snapGhostToDeck(preview, p.x, p.y)!;
+    expect(snap.slot).toBe('plate');
+    expect(snap.x).toBeCloseTo(c.x, 6);
+    expect(snap.y).toBeCloseTo(c.y, 6);
+  });
 
   it('deck off: the preview carries no deck context', () => {
     const preview: PlacementPreview = { kind: 'reactor', x: 0, y: 0, angle: 0 };

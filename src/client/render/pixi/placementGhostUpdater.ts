@@ -138,7 +138,8 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
     // Build mirror (4B): flip in the local frame, then rotate (structureLocalToWorld).
     ctx.placementGhost.scale.x = preview.mirror === true ? -1 : 1;
     // The slot outline under the ghost (after the turn + mirror it undoes).
-    ctx.placementGhost.setDeckSlot(snap ? getStructureKind(preview.kind).deckSlot : null, snap ? snap.rhombus : -1);
+    // A connector on a plate's middle hex snaps to the anchor: the whole 7-hex plate outline.
+    ctx.placementGhost.setDeckSlot(snap ? snap.slot : null, snap ? snap.rhombus : -1);
     // Red / green before the click: the server's own overlap rule at the drawn
     // pose (structures, landing pads, rocks; off-deck on a deck room). The pending ghost is already sent.
     let rejection: PlacementRejection | null = null;

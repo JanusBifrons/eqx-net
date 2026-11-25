@@ -7,7 +7,9 @@
 import { describe, it, expect } from 'vitest';
 import { placementRejection, type PlacementDeck } from './placementRules.js';
 import { OwnerPlateList, PlateSet } from '../hex/plateSet.js';
-import { deckHexCentreInto, plateCentreWorldInto, plateHexes } from '../hex/plates.js';
+import { deckHexCentreInto, plateCentreHex, plateCentreWorldInto, plateHexes } from '../hex/plates.js';
+import { HEX_DIRS } from '../hex/hex.js';
+import type { GridObstacle } from './Grid.js';
 
 const centre = (i: number, j: number): { x: number; y: number } => plateCentreWorldInto(i, j, { x: 0, y: 0 });
 const ringHex = (i: number, j: number, k: number): { x: number; y: number } => {
@@ -91,5 +93,57 @@ describe('placementRejection — off-deck', () => {
       expect(placementRejection('connector', c.x, c.y, [], null, 0, false, b)).toBe(placementRejection('connector', c.x, c.y, [], null, 0, false, a));
     }
     expect(list.plateAtWorld('bob', centre(4, 0).x, centre(4, 0).y)).toBe(false);
+  });
+});
+
+describe('placementRejection — laying a plate needs clear space (plate-blocked)', () => {
+  const c = centre(1, 0); // borders alice's (0,0)
+  const rock = (p: { x: number; y: number }, radius = 100, parts?: GridObstacle['parts']): GridObstacle => ({ x: p.x, y: p.y, radius, parts });
+  /** A hex two steps out from plate (1,0)'s centre: off the plate. */
+  const outside = (dir: number): { x: number; y: number } => {
+    const h = plateCentreHex(1, 0), d = HEX_DIRS[dir]!;
+    return deckHexCentreInto(h.q + 2 * d.q, h.r + 2 * d.r, { x: 0, y: 0 });
+  };
+  const lay = (obstacles: GridObstacle[], structures: Parameters<typeof placementRejection>[3] = []) =>
+    placementRejection('connector', c.x, c.y, structures, obstacles, 0, false, deckOf('alice'));
+
+  it('a clear plate is laid', () => {
+    expect(lay([])).toBeNull();
+  });
+
+  it('a rock in any of the 6 ring hexes blocks it', () => {
+    for (let k = 1; k <= 6; k++) expect(lay([rock(ringHex(1, 0, k))]), 'ring ' + k).toBe('plate-blocked');
+  });
+
+  it('a rock on the connector itself is still overlap-obstacle', () => {
+    expect(lay([rock(c)])).toBe('overlap-obstacle');
+  });
+
+  it('a rock off the plate does not block it', () => {
+    for (let d = 0; d < 6; d++) expect(lay([rock(outside(d))]), 'dir ' + d).toBeNull();
+  });
+
+  it('a big rock reaching over the plate edge blocks it; its parts decide', () => {
+    const p = outside(0);
+    expect(lay([rock(p, 900)])).toBe('plate-blocked');
+    // Same bounding circle, but the body is a small triangle round its centre.
+    const small = [[{ x: -100, y: -100 }, { x: 100, y: -100 }, { x: 0, y: 100 }]];
+    expect(lay([rock(p, 900, small)])).toBeNull();
+    // A part reaching back toward the plate centre blocks again.
+    const dx = c.x - p.x, dy = c.y - p.y, len = Math.hypot(dx, dy), ux = dx / len, uy = dy / len;
+    const reach = [[{ x: -uy * 100, y: ux * 100 }, { x: ux * 880, y: uy * 880 }, { x: uy * 100, y: -ux * 100 }]];
+    expect(lay([rock(p, 900, reach)])).toBe('plate-blocked');
+  });
+
+  it("another owner's structure on the plate blocks it", () => {
+    const p = ringHex(1, 0, 3);
+    expect(lay([], [{ x: p.x, y: p.y, radius: 40, halfW: 40, halfH: 40 }])).toBe('plate-blocked');
+    const q = outside(3);
+    expect(lay([], [{ x: q.x, y: q.y, radius: 40, halfW: 40, halfH: 40 }])).toBeNull();
+  });
+
+  it('the clear-space rule only applies to a NEW plate (not building on your own deck)', () => {
+    const p = ringHex(0, 0, 2);
+    expect(placementRejection('reactor', p.x, p.y, [], [rock(ringHex(0, 0, 5))], 0, false, deckOf('alice'))).toBeNull();
   });
 });

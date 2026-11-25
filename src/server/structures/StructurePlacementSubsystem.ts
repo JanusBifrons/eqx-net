@@ -31,6 +31,8 @@ import {
 } from '../../core/structures/structureGridConstants.js';
 import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
 import { placementRejection, placementRejectionNotice, type PlacementDeck } from '../../core/structures/placementRules.js';
+import { plateReachBoxAdd } from '../../core/structures/plateClearance.js';
+import { isPlateAnchor } from '../../core/hex/plateSet.js';
 import { StructureRegistry, type StructureRecord } from './StructureRegistry.js';
 import { autoConnectStructure, linkReachBox } from './structureGridView.js';
 import { STARTER_STRUCTURE_KINDS, needsPackedCrate } from '../../shared-types/blueprints.js';
@@ -160,6 +162,8 @@ export class StructurePlacementSubsystem {
       deck = this.deckScratch;
       deck.plates = this.hooks.registry.plates;
       deck.owner = owner;
+      // Laying a plate: its whole 7-hex area must be clear of rocks, so fetch them all.
+      if (isPlateAnchor(kindId, pos.x, pos.y)) plateReachBoxAdd(pos.x, pos.y, near);
     }
     const rejection = placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), opts?.ignoreObstacles === true ? undefined : this.hooks.getObstacles?.(near, true), rot, mirror, deck);
     if (rejection !== null) {
