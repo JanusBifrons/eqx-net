@@ -6,7 +6,7 @@ import { fingerSlopWorld, onCraneBayPad, pickEntityAt, TAP_SLOP, type PickedEnti
 import { CommandPointerRouter, type BoxRect, type HoldArmed, type RouterAction, type RouterPointerEvent } from '../input/commandPointerRouter.js';
 import { decideTapAction } from '../input/tapAction.js';
 import { DoubleTapTracker } from '../input/doubleTap.js';
-import { createFleetPickState, decidePickTap, pickAddPoint, pickFinishPatrol, pickStart, type FleetPickResult } from '../input/fleetPick.js';
+import { createFleetPickState, decidePickTap, pickAddPoint, pickFinishPatrol, pickStart, pickUndoPoint, type FleetPickResult } from '../input/fleetPick.js';
 import { applySelection, boxSelectOwn, collectFleetShips, focusSurvives, isMine, isOwnShipPresent, isOwnStructure, pickOwnShipAt, sameSelection, tapSelectOwn } from '../fleetSelection.js';
 import type { FleetOverlay, OrderFlash } from '../FleetOverlay.js';
 import { isParkedHull } from '../shipOwnership.js';
@@ -552,6 +552,11 @@ export abstract class RendererCommandRouting {
   commitFleetPick(): void {
     const result = pickFinishPatrol(this._fleetPick);
     if (result !== null) this.publishPickResult(result);
+  }
+
+  /** See `IRenderer.undoFleetPickPoint`. Drops the last patrol point. */
+  undoFleetPickPoint(): void {
+    if (pickUndoPoint(this._fleetPick)) this.feedback.fleetPickPoints = this._fleetPick.count;
   }
 
   /** See `IRenderer.setFleetOverlayModel`. Allocates on a status change only. */

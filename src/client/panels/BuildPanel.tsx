@@ -12,10 +12,9 @@
  * mounts it and drives the flag. Under the grid, a details strip shows the
  * hovered (desktop) or last tapped kind: a locked tile's tap shows why.
  *
- * One right panel at a time: opening this clears `structureSettingsOpen`, which
- * closes the building settings panel; that panel opening announces a game
- * window, which closes this (BuildSidebarHost's onGameWindowOpen). Any other
- * rail panel replaces it (the same flag).
+ * One right panel at a time: any other right panel (a rail panel, or Details,
+ * where a building's settings live) replaces it (the one `rightPanel` flag); a
+ * game window opening closes it (BuildSidebarHost's onGameWindowOpen).
  *
  * Its ✕ (SidePanel draws the header; the panel covers the top-right toolbar), Esc (SidePanel) and a swipe on the
  * handle close it. The active category is local state (presentation only), kept
@@ -69,9 +68,6 @@ export function BuildPanel({ open, onClose, onPick }: BuildPanelProps): JSX.Elem
   const placing = useUIStore((s) => s.placementKind !== null);
   const packedStock = usePackedStock(open || placing);
   const inSector = useUIStore((s) => s.currentSectorKey !== null); // no sector = no crate rule
-  useEffect(() => {
-    if (open && useUIStore.getState().structureSettingsOpen) useUIStore.setState({ structureSettingsOpen: false });
-  }, [open]);
   const [shown, setShown] = useState<StructureKindId | null>(null);
   const cat = categoryById(category);
   const shownKind = shown !== null && cat.kinds.includes(shown) ? shown : null;

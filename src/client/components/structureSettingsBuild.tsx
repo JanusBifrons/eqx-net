@@ -7,17 +7,21 @@
  * of the queue, hold ~500 ms = five (capped at MAX_RECIPE_QUEUE); hulls mix
  * freely (`edit_recipe_queue`). A tile is locked when neither the slot nor
  * the network's storage holds its blueprint. The blueprint slot row sits
- * under the grid. Other processors keep the modal's recipe / count controls.
+ * under the grid. Other processors get the recipe / count rows (`ProductionTab`).
  */
+import { useEffect, useState } from 'react';
 import { Box, Tooltip } from '@mui/material';
 import { getShipKind } from '@shared-types/shipKinds';
 import { RECIPES, hullKindOf, type RecipeId } from '@shared-types/recipes';
-import { MAX_RECIPE_QUEUE } from '@shared-types/production';
+import { MAX_BUILD_COUNT, MAX_RECIPE_QUEUE, nextRecipe } from '@shared-types/production';
 import { HUD } from '../hud/tokens';
 import { HullTile } from './HullTile';
 import { CostChips, recipeBill } from './CostChips';
 import { GOOD_DEFS } from '@shared-types/goods';
-import { hullRecipesFor, type ProductionView } from './structureSettingsProduction';
+import { buildCountText, hullRecipesFor, readProduction, sameProduction, type ProductionView } from './structureSettingsProduction';
+import {
+  BUILD_SX, COUNT_SX, GRID_SX, LABEL_SX, ROW_SX as NOTE_SX, SETTINGS_POLL_MS, STEP_BTN_SX, STEPPER_SX, VALUE_SX,
+} from './structureSettingsSx';
 import { sendBlueprintSlot, sendEditRecipeQueue, sendSetRecipe } from '../structures/structureActionsClient';
 import { useHoldPress, type HoldPressHandlers } from './useHoldPress';
 
@@ -187,4 +191,48 @@ export function HullBuildTab({ entityId, p, sx }: { entityId: number; p: Product
   );
 }
 
-const ROW_SX = { display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 1 } as const;
+/** The Build page of the building settings section (StructureSettings.tsx):
+ *  recipe (+ Change), build count and the blueprint slot. Minus stops at 1;
+ *  Forever clears the count. A hull yard gets the picture tiles above.
+ *  Re-reads the mirror at 4 Hz while shown. */
+export function ProductionTab({ entityId }: { entityId: number }): JSX.Element {
+  const [p, setP] = useState<ProductionView | null>(() => readProduction(entityId));
+  useEffect(() => {
+    const h = window.setInterval(() => setP((prev) => {
+      const next = readProduction(entityId);
+      return sameProduction(prev, next) ? prev : next;
+    }), SETTINGS_POLL_MS);
+    return () => window.clearInterval(h);
+  }, [entityId]);
+  if (p === null) return <Box sx={NOTE_SX}>No production data</Box>;
+  if (p.hullYard) return <HullBuildTab entityId={entityId} p={p} sx={BUILD_SX} />;
+  const { recipe, left, canChange } = p;
+  const plus = left === undefined ? 1 : Math.min(MAX_BUILD_COUNT, left + 1);
+  return (
+    <Box data-testid="structure-settings-production" data-recipe={recipe} data-left={left ?? 'forever'} sx={GRID_SX}>
+      <Box sx={LABEL_SX}>Makes</Box>
+      <Box sx={STEPPER_SX}>
+        <Box sx={VALUE_SX} data-testid="settings-production-recipe">{RECIPES[recipe].displayName}</Box>
+        {canChange && (
+          <Tooltip title="Change what this makes">
+            <Box component="button" sx={STEP_BTN_SX} data-testid="structure-action-recipe"
+              onClick={() => sendSetRecipe(entityId, nextRecipe(RECIPES[recipe].processors[0]!, recipe))}>Change</Box>
+          </Tooltip>
+        )}
+      </Box>
+      <Box sx={LABEL_SX}>Build</Box>
+      <Box sx={STEPPER_SX}>
+        <Box component="button" sx={STEP_BTN_SX} aria-label="One fewer" data-testid="settings-build-minus"
+          disabled={left === undefined || left <= 1} onClick={() => sendSetRecipe(entityId, recipe, left! - 1)}>−</Box>
+        <Box sx={COUNT_SX} data-testid="settings-build-count">{buildCountText(left)}</Box>
+        <Box component="button" sx={STEP_BTN_SX} aria-label="One more" data-testid="settings-build-plus"
+          disabled={left !== undefined && left >= MAX_BUILD_COUNT} onClick={() => sendSetRecipe(entityId, recipe, plus)}>+</Box>
+        <Box component="button" sx={STEP_BTN_SX} aria-label="Repeat forever" data-testid="settings-build-forever"
+          disabled={left === undefined} onClick={() => sendSetRecipe(entityId, recipe)}>∞</Box>
+      </Box>
+      <BlueprintRow entityId={entityId} p={p} {...BUILD_SX} />
+    </Box>
+  );
+}
+
+const ROW_SX ={ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 1 } as const;

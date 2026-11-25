@@ -2,8 +2,8 @@
  * Lock for "one place for building settings": the inspector's settings-type
  * buttons (recipe, blueprint slot, gate access) and management (deconstruct,
  * reconnect, clear, upgrade) live in the side panel's tabs, sending the same
- * messages as before; the card's owner row keeps only Open and one-shot
- * actions.
+ * messages as before; the card's owner row keeps only one-shot actions
+ * (no Open step: the settings sit in the Details panel).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent, within } from '@testing-library/react';
@@ -12,12 +12,12 @@ import { EntityStatsPanel } from './EntityStatsPanel.js';
 import { applySelectionStats, resetSelectionStats } from '../net/selectionStats.js';
 import { setGameClient } from '../net/clientSingleton.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
-import { settingsTabsFor } from './StructureSettingsModal.js';
+import { settingsTabsFor } from './StructureSettings.js';
 import { nextGateAccess } from './structureSettingsGate.js';
 import { SetGateAccessSchema, SetRecipeSchema, LoadBlueprintSchema, UnloadBlueprintSchema } from '../../shared-types/messages.js';
 
-/** The one-shot actions the card keeps beside Open. */
-const KEPT = new Set(['structure-action-settings', 'structure-action-repair-ship', 'structure-action-refine']);
+/** The one-shot actions the card's owner row keeps. */
+const KEPT = new Set(['structure-action-repair-ship', 'structure-action-refine']);
 const MOVED = [
   'structure-action-recipe', 'structure-action-gate-access', 'structure-action-load-blueprint', 'structure-action-unload-blueprint',
   'structure-action-deconstruct', 'structure-action-reconnect', 'structure-action-clear', 'structure-action-upgrade',
@@ -40,11 +40,10 @@ function seed(kind: string, extra: Record<string, unknown> = {}): ReturnType<typ
 }
 
 function openTab(tab: string): void {
-  fireEvent.click(screen.getByTestId('structure-action-settings'));
   fireEvent.click(screen.getByTestId(`structure-settings-tab-${tab}`));
 }
 
-describe('building settings live in the cog window', () => {
+describe('building settings live in the Details panel', () => {
   beforeEach(() => {
     // #1045 — building management (the cog) shows in Build mode only.
     useUIStore.setState({ buildMode: true, selection: { ids: [], focusId: null, focusKind: null } });
@@ -56,12 +55,13 @@ describe('building settings live in the cog window', () => {
     ['refinery', {}],
     ['fabricator', { bpRuns: 3, bpQuality: 2 }],
     ['shield_gate', {}],
-  ])('the card shows only Open and one-shot actions (%s)', (kind, extra) => {
+  ])('no Open step; the card owner row keeps only one-shot actions (%s)', (kind, extra) => {
     seed(kind, extra);
     render(<EntityStatsPanel />);
-    const row = screen.getByTestId('entity-stats-actions');
+    expect(screen.queryByTestId('structure-action-settings')).toBeNull();
+    expect(screen.getByTestId('structure-settings')).toBeInTheDocument();
+    const row = screen.queryByTestId('entity-stats-actions') ?? document.createElement('div');
     const ids = [...row.querySelectorAll('button[data-testid]')].map((e) => e.getAttribute('data-testid')!);
-    expect(ids[0]).toBe('structure-action-settings');
     for (const id of ids) expect(KEPT.has(id)).toBe(true);
     for (const id of MOVED) expect(within(row).queryByTestId(id)).toBeNull();
   });

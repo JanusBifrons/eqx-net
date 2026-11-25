@@ -185,6 +185,7 @@ describe('renderer-worker protocol', () => {
       { name: 'SET_FLEET_PICK patrol', msg: { type: 'SET_FLEET_PICK', kind: 'patrol' } },
       { name: 'SET_FLEET_PICK cancel', msg: { type: 'SET_FLEET_PICK', kind: null } },
       { name: 'COMMIT_FLEET_PICK', msg: { type: 'COMMIT_FLEET_PICK' } },
+      { name: 'UNDO_FLEET_PICK_POINT', msg: { type: 'UNDO_FLEET_PICK_POINT' } },
       {
         name: 'SET_FLEET_OVERLAY_MODEL',
         msg: {

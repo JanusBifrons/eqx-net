@@ -16,9 +16,9 @@
  * `centred` size is a slim strip of its own
  * children only, vertically centred on the right edge (unused since UI U3-7 moved the placing tools to the left strip).
  *
- * Used by the galaxy map's sector drawer (SectorInfoDrawer.tsx) and the
- * building settings panel (StructureSettingsModal.tsx) and the Build sidebar
- * (BuildSidebar.tsx); only one of the last two is open at a time. A new docked panel
+ * Used by the galaxy map's sector drawer (SectorInfoDrawer.tsx), the right
+ * panels (Details, where a building's settings live, and the rest) and the
+ * Build sidebar (BuildSidebar.tsx); one right panel is open at a time. A new docked panel
  * builds on this, never on a copy of it; a full-screen window uses GameWindow.
  */
 import { useEffect, useRef, type ReactNode } from 'react';

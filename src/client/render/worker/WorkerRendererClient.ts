@@ -575,6 +575,11 @@ export class WorkerRendererClient implements IRenderer {
     this.post({ type: 'COMMIT_FLEET_PICK' });
   }
 
+  /** See `IRenderer.undoFleetPickPoint`. Posts to the worker's renderer. */
+  undoFleetPickPoint(): void {
+    this.post({ type: 'UNDO_FLEET_PICK_POINT' });
+  }
+
   /** See `IRenderer.setRadarPrefs`. */
   setRadarPrefs(prefs: RadarPrefs): void {
     this.post({ type: 'SET_RADAR_PREFS', prefs });

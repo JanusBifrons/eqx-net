@@ -3,9 +3,12 @@
  *
  * - Draws the active strip in `<Slot anchor="left-strip">`. For now that is the
  *   selection strip: identity (icon + count); for own ships in Command the fleet
- *   section (Order and Stance fly-outs and Stop, `fleetStripItems.tsx`);
+ *   section (Order and Stance fly-outs and Stop, `fleetStripItems.tsx`); for
+ *   your own building in Build its Power fly-out (`buildingStripItems.tsx`);
  *   the selection's quick actions (Target, cargo / pod, Pilot,
  *   `selectionStripItems.tsx`); then ⚙ and ✕.
+ * - Doing mode: while a route / target pick is under way (Patrol, Escort,
+ *   Retreat), the route tools replace it (`routeStripItems.tsx`, U3-3).
  * - Doing-mode strip (U3-7): while a building is being placed (`placementKind`)
  *   the strip shows the placing tools instead, whatever is selected
  *   (`placingStripItems.tsx`: the building, ✓ Place, Rotate, Mirror, ✕).
@@ -38,8 +41,10 @@ import { useSelectionPanelData, type PanelData } from '../components/selectionPa
 import { fleetLockApplies, lockFocus } from '../components/targetLock';
 import { Slot } from './Slot';
 import { useFleetStripItems } from './fleetStripItems';
+import { useBuildingStripItems } from './buildingStripItems';
 import { useSelectionStripItems } from './selectionStripItems';
 import { usePlacingStripItems } from './placingStripItems';
+import { useRouteStripItems } from './routeStripItems';
 import { useLeftStripFit } from './leftStripFit';
 import { STANCE_COLOUR } from '../components/contactRows';
 
@@ -93,20 +98,30 @@ export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
   const setRightPanel = useUIStore((s) => s.setRightPanel);
   const fleetItems = useFleetStripItems();
   const data = useSelectionPanelData();
+  const buildingItems = useBuildingStripItems(data);
   const fleetLock = fleetLockApplies(selection)
     ? (): void => { lockFocus(useUIStore.getState().selection, rendererRef.current, () => false); }
     : null;
   const { items: quickItems, loot } = useSelectionStripItems(data, fleetLock);
   const placingItems = usePlacingStripItems();
+  const routeItems = useRouteStripItems();
   const id = stripIdentity(selection);
   const focus = stripFocusIdentity(selection);
   const placing = placingItems.length > 0;
-  useLeftStripFit(shown && (placing || id !== null));
+  useLeftStripFit(shown && (placing || routeItems !== null || id !== null));
   if (!shown) return null;
-  if (placing) {
+  if (placing || routeItems !== null) {
+    // Doing mode: placing a building (U3-7) or a route / target pick (U3-3) replaces
+    // the selection strip until it ends.
     return (
       <Slot anchor="left-strip">
-        <EqxStrip aria-label="Placing" open={!panelOpen} data-testid="left-strip">{placingItems}</EqxStrip>
+        <EqxStrip
+          aria-label={placing ? "Placing" : "Picking on the map"}
+          open={!panelOpen}
+          data-testid="left-strip"
+        >
+          {placing ? placingItems : routeItems}
+        </EqxStrip>
       </Slot>
     );
   }
@@ -133,6 +148,7 @@ export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
           <EqxStripIdentity icon={<EqxIcon name={focus.icon} />} tooltip={named ?? focus.tooltip} health={stripHealth(data)}
             count={1} {...tint} data-testid="left-strip-focus" />
         )}
+        {buildingItems}
         {quickItems}
         <EqxStrip.Separator />
         <EqxIconButton variant="strip" icon={<EqxIcon name="cog" />} tooltip={panel === 'fleet' ? 'All orders and details' : 'Details'}

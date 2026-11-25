@@ -9,7 +9,7 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 import { setGameClient } from '../net/clientSingleton.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
-import { StructureSettingsModal } from './StructureSettingsModal.js';
+import { StructureSettings } from './StructureSettings.js';
 import { SetStructurePowerSchema } from '../../shared-types/messages.js';
 import { PROD_STATE } from '../../shared-types/production.js';
 
@@ -23,7 +23,7 @@ function seed(kind: string, st: Record<string, unknown>): ReturnType<typeof vi.f
       swarm: new Map([[9, { kind: 2, shipKind: kind, radius: 36, x: 0, y: 0 }]]),
     },
   } as unknown as ColyseusGameClient);
-  render(<StructureSettingsModal open entityId={9} title="Building" onClose={() => {}} />);
+  render(<StructureSettings entityId={9} />);
   return send;
 }
 
