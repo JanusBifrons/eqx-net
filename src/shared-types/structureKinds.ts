@@ -63,6 +63,7 @@ export {
   DEFAULT_STRUCTURE_KIND,
   UNBUILDABLE_STRUCTURE_KINDS,
   isBuildableStructureKind,
+  isConnectorKind,
   getStructureKind,
   isStructureKindId,
   structureKindToIndex,

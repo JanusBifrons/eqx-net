@@ -10,14 +10,14 @@ import { describe, it, expect } from 'vitest';
 import { canConnect, type GridNode } from './Grid.js';
 import { CABLE_CROSS_STATS, makeCableSocketPick } from './cableCurve.js';
 import { Connection } from './Connection.js';
-import { getStructureKind, structureHalfExtents } from '../../shared-types/structureKinds.js';
+import { getStructureKind, isConnectorKind, structureHalfExtents } from '../../shared-types/structureKinds.js';
 
 function real(id: string, kind: string, x: number, y: number): GridNode {
   const k = getStructureKind(kind);
   const { hw, hh } = structureHalfExtents(kind, 0);
   return {
     id, kind, x, y, rot: 0, radius: k.radius, halfW: hw, halfH: hh, isHub: k.isHub,
-    isCapital: kind === 'capital', isConnector: kind === 'connector',
+    isCapital: kind === 'capital', isConnector: isConnectorKind(kind),
     isShieldPylon: kind === 'shield_pylon' || kind === 'shield_gate' || kind === 'shield_airlock',
     maxConnections: 10, powerOutput: 0, powerConsumption: 0, isConstructed: true,
   };

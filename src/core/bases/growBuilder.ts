@@ -1,7 +1,7 @@
 /** The base generator's placement checker (`growBase.ts`, step 2: "Lay
  *  out"): every placement passes the real `placementRejection` and every
  *  edge the real `canConnect`, AS the base is built. */
-import { getStructureKind, structureHalfExtents, structureSockets, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { getStructureKind, isConnectorKind, structureHalfExtents, structureSockets, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { canConnect, type GridNode } from '../structures/Grid.js';
 import { Connection } from '../structures/Connection.js';
 import {
@@ -80,7 +80,7 @@ export class Builder {
     this.placed.push({ x: p.x, y: p.y, radius: k.radius, halfW: hw, halfH: hh, kind: p.kind, rot });
     this.nodes.set(`s${i}`, {
       id: `s${i}`, kind: p.kind, x: p.x, y: p.y, rot: (rot * Math.PI) / 180, radius: k.radius, halfW: hw, halfH: hh,
-      isHub: k.isHub, isCapital: p.kind === 'capital', isConnector: p.kind === 'connector',
+      isHub: k.isHub, isCapital: p.kind === 'capital', isConnector: isConnectorKind(p.kind),
       isShieldPylon: isShieldEmitterKind(p.kind), maxConnections: k.maxConnections,
       connectionRange: k.connectionRange, powerOutput: k.powerOutput, powerConsumption: k.powerConsumption,
       isConstructed: true,
