@@ -45,6 +45,7 @@ import type { SwarmSpawner } from '../spawn/SwarmSpawner.js';
 import type { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
 import type { StructureRegistry } from '../structures/StructureRegistry.js';
 import { parseSavedDoor } from '../../core/structures/gateLogic.js';
+import { plateAnchorsFirst } from '../../core/hex/plateSet.js';
 import type { WingmanPilots } from './features/wingmanPilots.js';
 import type { WorkerCmd } from './PhysicsWorkerProxy.js';
 import { ShipState } from './schema/SectorState.js';
@@ -91,7 +92,9 @@ export class SectorSnapshotRestore {
    */
   restoreStructures(rows: readonly SectorSnapshotStructure[]): void {
     let restored = 0;
-    for (const r of rows) {
+    // Base platforms slice 9: plate-anchor connectors come back FIRST, so the
+    // derived plate set exists before the buildings that sit on it (stable).
+    for (const r of plateAnchorsFirst(rows)) {
       // PR 3a — a structure saved under one of the account's historical
       // per-browser ids belongs to the account's canonical playerId now.
       const id = this.h.structurePlacement().place(canonicalPlayerId(r.owner), r.kind, r.x, r.y, { rot: r.rot, mirror: r.mirror === true });

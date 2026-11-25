@@ -173,3 +173,27 @@ export class PlateSet<K = string> {
     if (op.list.length === 0) this.owners.delete(owner);
   }
 }
+
+/** Plate scratch for {@link isPlateAnchor} (invariant 14). */
+const ANCHOR_PLATE: PlateIndex = { i: 0, j: 0 };
+
+/**
+ * Does a structure of `kind` at world (x, y) anchor a plate (a connector-kind
+ * on a plate centre; slice 9)? The same rule {@link PlateSet.upsert} keys on.
+ * Allocation-free.
+ */
+export function isPlateAnchor(kind: string | null | undefined, x: number, y: number): boolean {
+  return isConnectorKind(kind) && plateCentreAtWorldInto(x, y, ANCHOR_PLATE);
+}
+
+/**
+ * Slice 9 restore order: the rows that anchor a plate ({@link isPlateAnchor})
+ * first, then the rest, each group in its original order (stable). Not a hot
+ * path (hydrate only), so it returns a new array.
+ */
+export function plateAnchorsFirst<T extends { kind: string; x: number; y: number }>(rows: readonly T[]): T[] {
+  const anchors: T[] = [];
+  const rest: T[] = [];
+  for (const r of rows) (isPlateAnchor(r.kind, r.x, r.y) ? anchors : rest).push(r);
+  return anchors.concat(rest);
+}
