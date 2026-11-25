@@ -31,7 +31,7 @@ export function localPadPhase(): number {
     const phase = st.teleport?.phase ?? 0;
     if (phase === 0) continue;
     const e = m.swarm.get(eid);
-    if (e && isTeleporterKind(e.shipKind) && onPad(e.shipKind, e.x, e.y, me.x, me.y)) return phase;
+    if (e && isTeleporterKind(e.shipKind) && onPad(e.shipKind, e.x, e.y, me.x, me.y, e.angle)) return phase;
   }
   return 0;
 }
