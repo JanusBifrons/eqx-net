@@ -14,7 +14,7 @@ interface Props {
  *
  * Orientation policy (docs/features/mobile-layout.md): phones play sideways;
  * an upright phone shows RotatePhoneOverlay in the `rotate` anchor. Full
- * screen starts only from a tap on `<FullscreenToggle>`.
+ * screen starts on the first tap in game (`useFirstTapFullscreen`).
  */
 export function LayoutProvider({ children }: Props): JSX.Element {
   // Element map lives in state so context consumers re-render only when an

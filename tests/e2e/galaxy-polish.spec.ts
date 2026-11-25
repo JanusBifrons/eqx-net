@@ -9,8 +9,7 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
  *     old splash-style "Equinox" banner / hero copy over the map (the
  *     standalone splash screen was deleted when the map became the homepage).
  *  (The former FullscreenCTA lock was retired when the component was
- *   deleted: full screen is offered only by FullscreenToggle, whose
- *   "Tap for full screen" label shows briefly when a phone turns sideways.)
+ *   deleted: full screen is offered only by the first tap in game and the cog.)
  *
  * (The former "default zoom is 0.7 via data-galaxy-zoom" lock was
  *  retired with the single-canvas refactor: the spawn picker now renders
