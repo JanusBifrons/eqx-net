@@ -1253,7 +1253,7 @@ export class SectorRoom extends Room<SectorState> {
     // create, so reject oversized seed arrays before they seed the sector.
     assertRoomSeedBounds(roomOpts as Record<string, unknown>);
     this.testMode = roomOpts.testMode ?? false;
-    this.state.deck = this.testMode && roomOpts.deck === true; // base-platforms prototype flag (synced; client-suppliable, so testMode only)
+    this.state.deck = this.structureRegistry.deck = this.testMode && roomOpts.deck === true; // base-platforms prototype flag (synced; client-suppliable, so testMode only; the registry feeds canConnect)
     this.enforceHullGate = !this.testMode || roomOpts.enforceHullGate === true;
     this.launchCostsOn = this.testMode ? (roomOpts.launchCosts ?? LAUNCH_COSTS_ON) : LAUNCH_COSTS_ON;
     this.disableCollisionDamage = this.testMode && (roomOpts.disableCollisionDamage ?? false);

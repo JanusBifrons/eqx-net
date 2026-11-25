@@ -282,6 +282,9 @@ export class StructureRegistry {
    *  plate's centre. Kept on add / remove / owner change; the client mirror
    *  keeps the same set from room state (#15). */
   readonly plates = new PlateSet<string>();
+  /** Base platforms — the room's deck flag (`SectorState.deck`, set at room
+   *  create): `canConnect`'s plate-anchor link rule reads it (#15). */
+  deck = false;
 
   /** Re-read the owner of every plate-anchoring structure (after an owner
    *  flip: capture, orphaning, adoption). Discrete; touches anchors only. */

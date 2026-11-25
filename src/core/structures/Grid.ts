@@ -29,6 +29,7 @@ import { GraphSearch, type SearchGoal, type SearchGraph } from '../nav/search.js
 import { addDraw, addNodePower, supplyFraction, type PowerTally } from './gridSupply.js';
 import { CABLE_NO_SOCKET, gridNodePadBox, linkSocketMask, pickCableSocketPair, type CableSocketPick } from './cableCurve.js';
 import { pickWithReseat, type CableReseat } from './socketReseat.js';
+import { DECK_LINK_NONE, deckCapExempt, deckCapLinkCount, deckLinkKind, deckRefusalVerdict } from './deckLinks.js';
 
 /** The grid's abstract view of a structure. The server projects each
  *  `StructureRecord` (+ its catalogue kind) into one of these. */
@@ -296,6 +297,8 @@ function shieldPylonRejection(
  * (the build preview draws both red). A fence link (shield emitter to emitter) keeps its straight post-to-post
  * rule (edge range + centre line of sight) and writes `CABLE_NO_SOCKET` for both ends. With `reseat`, a refused
  * pick may move one connector link to another face (`pickWithReseat`; the caller applies it).
+ * With `deck` (the room's base-platforms flag) a plate-anchor link (`deckLinks.ts`) skips range and the anchor's cap, and past
+ * its free sockets takes none (`deckRefusalVerdict`: the same overlap + crossing refusals).
  */
 export function canConnect(
   a: GridNode,
@@ -305,6 +308,7 @@ export function canConnect(
   obstacles?: readonly GridObstacle[],
   sockets?: CableSocketPick,
   reseat?: CableReseat,
+  deck = false,
 ): CanConnectResult {
   if (reseat) reseat.conn = null;
   if (a.id === b.id) return { ok: false, reason: 'self' };
@@ -345,19 +349,16 @@ export function canConnect(
   }
 
   // Generic per-kind cap — SKIPPED for a pylon endpoint (its dual-cap above is the
-  // authority; the pylon's `maxConnections` of 3 is less than its true 1+3=4 max).
-  // A socket-bound kind never holds more links than it has sockets (one cable
-  // per socket), whatever its levelled cap.
-  if (a.isShieldPylon !== true && aConns.length >= clampLinksToSockets(a.maxConnections, a.kind)) return { ok: false, reason: 'a-full' };
+  // authority) and for a plate anchor's deck link (its deck links never count).
+  // A socket-bound kind never holds more links than it has sockets, whatever its level.
+  const dk = deck ? deckLinkKind(a, b) : DECK_LINK_NONE;
+  if (a.isShieldPylon !== true && !deckCapExempt(a, dk) && deckCapLinkCount(a, aConns, nodes, deck) >= clampLinksToSockets(a.maxConnections, a.kind)) return { ok: false, reason: 'a-full' };
   const bConns = adjacency.get(b.id) ?? [];
-  if (b.isShieldPylon !== true && bConns.length >= clampLinksToSockets(b.maxConnections, b.kind)) return { ok: false, reason: 'b-full' };
+  if (b.isShieldPylon !== true && !deckCapExempt(b, dk) && deckCapLinkCount(b, bConns, nodes, deck) >= clampLinksToSockets(b.maxConnections, b.kind)) return { ok: false, reason: 'b-full' };
 
-  // P3.2 — UNIFORM range: every kind uses the global CONNECTION_MAX_RANGE (the
-  // R2.10 Capital short-reach was reverted, "everything has the same range").
-  // `connectionRange` stays an optional per-kind override seam (the `min` of the
-  // two endpoints, symmetric) but no kind sets it today, so this collapses to
-  // the global for every pair.
-  const maxRange = Math.min(
+  // P3.2 — UNIFORM range: the global CONNECTION_MAX_RANGE (`connectionRange` is an
+  // optional per-kind override seam, the `min` of the two ends); a deck link has none.
+  const maxRange = dk !== DECK_LINK_NONE ? Infinity : Math.min(
     a.connectionRange ?? CONNECTION_MAX_RANGE,
     b.connectionRange ?? CONNECTION_MAX_RANGE,
   );
@@ -373,7 +374,7 @@ export function canConnect(
   const usedA = a.usedSockets ?? linkSocketMask(a.id, aConns), usedB = b.usedSockets ?? linkSocketMask(b.id, bConns);
   const refusal = pickCableSocketPair(a, b, maxRange, nodes, obstacles, sockets, usedA, usedB, adjacency);
   if (refusal === null || (reseat && pickWithReseat(a, b, maxRange, adjacency, nodes, obstacles, sockets, usedA, usedB, reseat))) return { ok: true };
-  return { ok: false, reason: refusal };
+  return deckRefusalVerdict(dk, refusal, a, b, adjacency, nodes, obstacles, sockets);
 }
 
 interface ComponentInfo extends PowerTally {

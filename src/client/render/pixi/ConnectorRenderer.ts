@@ -55,6 +55,7 @@ import {
   makeCableSocketPick,
 } from '../../../core/structures/cableCurve.js';
 import { makeCableReseat } from '../../../core/structures/socketReseat.js';
+import { DECK_LINK_NONE, deckLinkKind } from '../../../core/structures/deckLinks.js';
 import { drawMines, drawNoPowerBolt, drawStatusBar } from './structureStatusMarks.js';
 import { hasBodyStatus } from './structureSocketNubs.js';
 import { visitDerivedWalls, type DerivedWallVisitor } from '../../structures/derivedWalls.js';
@@ -562,6 +563,7 @@ export class ConnectorRenderer {
     const ghostX = this.ghostWorldX ?? preview.x;
     const ghostY = this.ghostWorldY ?? preview.y;
     const ghost = ghostToGridNode(preview, this._ghostNode, ghostX, ghostY); // keeps the ghost's angle
+    const deck = preview.deck === true; // base platforms: the room deck flag (server: `StructureRegistry.deck`)
 
     // Build the node map + adjacency + obstacle list (asteroids) for the
     // SAME canConnect the server uses, all into reused scratch.
@@ -597,7 +599,7 @@ export class ConnectorRenderer {
         structureMirrorToGridNode(sid, st, entry, node);
         nodes.set(sid, node);
         this._nodeCandidate[poolIdx] = candidate;
-        if (candidate) linkReachBoxAdd(ghost, node, CONNECTION_MAX_RANGE, box);
+        if (candidate) linkReachBoxAdd(ghost, node, deck && deckLinkKind(ghost, node) !== DECK_LINK_NONE ? Infinity : CONNECTION_MAX_RANGE, box);
         // REAL adjacency: one pooled connection-like entry per `st.connTo` link,
         // carrying `aId`/`bId` so `shieldPylonRejection`'s `c.getOtherNode(...)`
         // resolves (a sparse length-only array threw on the `undefined` element —
@@ -698,7 +700,7 @@ export class ConnectorRenderer {
     for (let k = 0; k < poolIdx; k++) {
       if (this._nodeCandidate[k] !== true) continue;
       const node = this._nodePool[k]!;
-      const res = canConnect(ghost, node, adjacency, nodes, obstacles, pick, this._reseat);
+      const res = canConnect(ghost, node, adjacency, nodes, obstacles, pick, this._reseat, deck);
       let v = verdicts[vn];
       if (v === undefined) {
         v = { id: '', ok: false, reason: null, sockA: CABLE_NO_SOCKET, sockB: CABLE_NO_SOCKET };
