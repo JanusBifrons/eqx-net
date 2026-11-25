@@ -502,7 +502,7 @@ export class StructureGridSubsystem {
     this.processReconnect();
     if (registry.topologyDirty) {
       // Capture 4E S4 — the ONE seam: ownerless pieces joined to a player's Capital flip first.
-      if (captureOwnerlessGrids(registry)) this.hooks.onCaptured?.();
+      if (captureOwnerlessGrids(registry)) { registry.syncPlateOwners(); this.hooks.onCaptured?.(); }
       this.grid.rebuild(buildGridNodes(registry), registry.adjacencyMap());
       registry.topologyDirty = false;
     }

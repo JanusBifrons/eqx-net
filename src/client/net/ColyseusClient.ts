@@ -2117,6 +2117,8 @@ export class ColyseusGameClient {
   private readonly _mines = new MineSync(this.mirror, this._structureOwners, () => this.room);
   /** A2 — room-state `structures` into `mirror.structures` (`mirror/structureRowSync.ts`). */
   private readonly _structureRows = new StructureRowSync(this.mirror, this._structureOwners);
+  /** Base platforms — the derived plate set (`core/hex/plateSet.ts`), kept from room state. */
+  get plates(): StructureRowSync['plates'] { return this._structureRows.plates; }
 
   /** Beam links (shared-types/beamLinksWire.ts): structure turret / mining
    *  targets onto their rows; ship tractor links go to the tractor client
