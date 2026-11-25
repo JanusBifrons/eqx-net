@@ -91,7 +91,7 @@ describe('fillWarpStructureFootprint', () => {
       for (const rot of STRUCTURE_ROTATIONS) {
         const { hw, hh } = structureHalfExtents(kind, rot);
         fillWarpStructureFootprint(kind, 12, -34, rot, null, out);
-        expect(out).toEqual({ x: 12, y: -34, halfW: hw, halfH: hh, boxes: undefined });
+        expect(out).toEqual({ x: 12, y: -34, halfW: hw, halfH: hh, boxes: undefined, rotDeg: rot % 90 === 0 ? undefined : rot });
       }
     }
   });
