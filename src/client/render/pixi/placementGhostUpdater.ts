@@ -23,7 +23,7 @@ import type { GridObstacle } from '@core/structures/Grid';
 import type { PlacementRejection } from '@core/structures/placementRules';
 import { PlacementGhostVerdict, type GhostPose } from '../../structures/placementGhostVerdict.js';
 import { StructureHologram } from './structureHologram.js';
-import { snapGhostToDeck } from './placementDeckSnap.js';
+import { ghostDeckContext, snapGhostToDeck } from './placementDeckSnap.js';
 
 export interface PlacementGhostCtx {
   /** Structure placement ghost (Issue 5) — the plan as a bright hologram
@@ -140,12 +140,12 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
     // The slot outline under the ghost (after the turn + mirror it undoes).
     ctx.placementGhost.setDeckSlot(snap ? getStructureKind(preview.kind).deckSlot : null, snap ? snap.rhombus : -1);
     // Red / green before the click: the server's own overlap rule at the drawn
-    // pose (structures, landing pads, rocks). The pending ghost is already sent.
+    // pose (structures, landing pads, rocks; off-deck on a deck room). The pending ghost is already sent.
     let rejection: PlacementRejection | null = null;
     if (!pendingGhost && !heldGhost && mirror.swarm) {
       const pose = ctx.pose;
       pose.kind = preview.kind; pose.x = gx; pose.y = gy; pose.angle = preview.angle; pose.mirror = preview.mirror === true;
-      rejection = ctx.verdict.check(pose, mirror.structures, mirror.swarm, ctx.obstacles);
+      rejection = ctx.verdict.check(pose, mirror.structures, mirror.swarm, ctx.obstacles, ghostDeckContext(preview));
     }
     ctx.feedback.placementPreviewRejection = rejection;
     // Cyan when clear, red when blocked; the pending ghost is dimmer and still

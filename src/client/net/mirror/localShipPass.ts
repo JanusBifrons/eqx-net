@@ -1,7 +1,7 @@
 import { useUIStore } from '../../state/store.js';
 import { logEvent, isFullDiagMode, isRammingProbeEnabled } from '../../debug/ClientLogger.js';
 import { renderTickElapsedMs } from '../renderTickPhase.js';
-import { resolvePlacementPreviewStatus } from '../../structures/structurePlacementClient.js';
+import { resolvePlacementPreviewStatus, writePreviewDeck } from '../../structures/structurePlacementClient.js';
 import { placementChosen, setPlacementHeld } from '../../structures/placementChosen.js';
 import type { MirrorPassCtx } from './mirrorPassCtx.js';
 
@@ -186,7 +186,7 @@ export function updateLocalShipMirror(ctx: MirrorPassCtx, frameNowMs: number | u
       );
       // The next ghost right after Place: dim, no verdict, Place refused (held).
       // Base platforms: the live ghost snaps to its deck slot on a deck room.
-      ctx.placementPreviewScratch.deck = useUIStore.getState().deck;
+      writePreviewDeck(ctx.placementPreviewScratch, useUIStore.getState().deck, ctx.plates, ctx.mirror.localPlayerId ?? null);
       setPlacementHeld(placementStatus === 'active' && ctx.placementPreviewScratch.held === true);
       if (placementStatus === 'active' || placementStatus === 'pending') {
         ctx.mirror.pendingPlacementPreview = ctx.placementPreviewScratch;

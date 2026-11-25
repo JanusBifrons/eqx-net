@@ -58,7 +58,8 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
     // v4 A — nobody builds an alien gate.
     if (!isBuildableStructureKind(msg.kind)) return;
     // Base platforms: on a deck room the PLAYER's point snaps to its kind's
-    // deck slot (the client ghost runs the same core snap). place() never snaps.
+    // deck slot (the client ghost runs the same core snap) and must stand on
+    // the owner's deck (`off-deck`, same core rule). place() never snaps.
     let px = msg.x, py = msg.y;
     if (h.deck()) {
       snapPlacementToDeck(msg.kind, px, py, deckSnap);
@@ -70,7 +71,7 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
       px,
       py,
       // P2b — only a PLAYER's placement can need a packed structure.
-      { rot: msg.rot, mirror: msg.mirror, requirePacked: true },
+      { rot: msg.rot, mirror: msg.mirror, requirePacked: true, deck: h.deck() },
     );
     if (id === null) {
       h.logger.warn({ sessionId: client.sessionId, kind: msg.kind }, 'place_structure rejected');

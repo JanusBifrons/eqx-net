@@ -1171,7 +1171,7 @@ export class ColyseusGameClient {
     get pendingPlacement() { return c._pendingPlacement; },
     set pendingPlacement(v) { c._pendingPlacement = v; },
     get placementShipScratch() { return c._placementShipScratch; },
-    get placementPreviewScratch() { return c._placementPreviewScratch; },
+    get placementPreviewScratch() { return c._placementPreviewScratch; }, get plates() { return c._structureRows.plates; },
     get swarmNearbyIds() { return c._swarmNearbyIds; }, set swarmNearbyIds(v) { c._swarmNearbyIds = v; },
     get swarmNearbySwapScratch() { return c._swarmNearbySwapScratch; },
     set swarmNearbySwapScratch(v) { c._swarmNearbySwapScratch = v; },

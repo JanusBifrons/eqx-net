@@ -12,7 +12,10 @@
  * iterables are caller-owned, so it's safe to call from the per-frame ghost
  * preview (invariant #14). `null` means legal.
  */
-import { getStructureKind, isStructureKindId, normaliseStructureRotation, structureHalfExtents, structureLocalToWorld } from '../../shared-types/structureKinds.js';
+import { getStructureKind, isConnectorKind, isStructureKindId, normaliseStructureRotation, structureHalfExtents, structureLocalToWorld } from '../../shared-types/structureKinds.js';
+import type { HexPoint } from '../hex/hex.js';
+import { PLATE_DIRS, plateCentreWorldInto, type PlateIndex } from '../hex/plates.js';
+import { plateCentreAtWorldInto } from '../hex/plateSet.js';
 import type { GridObstacle } from './Grid.js';
 
 /** A circular footprint to test against (a placed structure or the ghost). */
@@ -32,7 +35,22 @@ export interface PlacementFootprint {
 }
 
 /** Why a placement is illegal. `null` (from {@link placementRejection}) = legal. */
-export type PlacementRejection = 'overlap-structure' | 'overlap-obstacle' | 'overlap-pad';
+export type PlacementRejection = 'overlap-structure' | 'overlap-obstacle' | 'overlap-pad' | 'off-deck';
+
+/** The one plate query the deck rule needs (`PlateSet` on the server and the
+ *  client mirror; `OwnerPlateList` in the renderer). */
+export interface DeckPlateQuery {
+  /** Is world point (x, y) on one of `owner`'s plates? */
+  plateAtWorld(owner: string, x: number, y: number): boolean;
+}
+
+/** Deck context for {@link placementRejection} (base platforms, room flag
+ *  `deck` on): whose deck the structure must stand on. Absent = no deck rule
+ *  (system placements: NPC seeding, restore, scenarios). */
+export interface PlacementDeck {
+  plates: DeckPlateQuery;
+  owner: string;
+}
 
 /** Plain player-facing text for each rejection. */
 export const PLACEMENT_REJECTION_TEXT: Readonly<Record<PlacementRejection, string>> = Object.freeze({
@@ -40,6 +58,7 @@ export const PLACEMENT_REJECTION_TEXT: Readonly<Record<PlacementRejection, strin
   // Wreck pieces block placement too (wreck fields 7), so say both.
   'overlap-obstacle': 'Blocked by an asteroid or wreck',
   'overlap-pad': "Keep the landing pad clear",
+  'off-deck': 'Off your deck',
 });
 
 /** The notice a player gets when the server refuses a placement, e.g.
@@ -143,6 +162,29 @@ function boxOverlapsObstacle(bx: number, by: number, hw: number, hh: number, o: 
   return false;
 }
 
+const DECK_PLATE: PlateIndex = { i: 0, j: 0 };
+const DECK_PT: HexPoint = { x: 0, y: 0 };
+
+/**
+ * Base platforms: may a `kindId` centre at (x, y) stand on `deck.owner`'s
+ * deck? Yes when (x, y) is on one of their plates; also for a connector-kind
+ * structure exactly on the centre of a plate that borders one of theirs (that
+ * connector lays a NEW plate). Occupancy is the overlap check's job.
+ * Allocation-free.
+ */
+export function onOwnDeck(kindId: string, x: number, y: number, deck: PlacementDeck): boolean {
+  const { plates, owner } = deck;
+  if (plates.plateAtWorld(owner, x, y)) return true;
+  if (!isConnectorKind(kindId) || !plateCentreAtWorldInto(x, y, DECK_PLATE)) return false;
+  const i = DECK_PLATE.i, j = DECK_PLATE.j;
+  for (let d = 0; d < PLATE_DIRS.length; d++) {
+    const dir = PLATE_DIRS[d]!;
+    plateCentreWorldInto(i + dir.i, j + dir.j, DECK_PT);
+    if (plates.plateAtWorld(owner, DECK_PT.x, DECK_PT.y)) return true;
+  }
+  return false;
+}
+
 /**
  * The reason a `kindId` footprint at (x, y) cannot be placed, or `null` when it
  * is legal. A kind's `keepClear` box (a dock's landing pad) counts as
@@ -152,7 +194,9 @@ function boxOverlapsObstacle(bx: number, by: number, hw: number, hh: number, o: 
  * pad. Tests the sum-of-radii overlap against every `structures` entry and
  * every `obstacles` entry (asteroids: bounding circle, then the convex `parts`
  * when the obstacle has them). `obstacles` omitted/empty ⇒ structures-only
- * (byte-identical to the legacy server check).
+ * (byte-identical to the legacy server check). `deck` given (the room's
+ * deck flag is on and this is a player's placement) ⇒ the centre must also be
+ * on the owner's deck ({@link onOwnDeck}), else `off-deck`.
  */
 export function placementRejection(
   kindId: string,
@@ -162,6 +206,7 @@ export function placementRejection(
   obstacles?: readonly GridObstacle[] | null,
   rotDeg: number = 0,
   mirror?: boolean,
+  deck?: PlacementDeck | null,
 ): PlacementRejection | null {
   const { hw, hh } = structureHalfExtents(kindId, rotDeg);
   for (const s of structures) {
@@ -178,6 +223,7 @@ export function placementRejection(
       if (boxOverlapsObstacle(x, y, hw, hh, o)) return 'overlap-obstacle';
     }
   }
+  if (deck && !onOwnDeck(kindId, x, y, deck)) return 'off-deck';
   return null;
 }
 
@@ -190,6 +236,7 @@ export function canPlaceStructureAt(
   obstacles?: readonly GridObstacle[] | null,
   rotDeg: number = 0,
   mirror?: boolean,
+  deck?: PlacementDeck | null,
 ): boolean {
-  return placementRejection(kindId, x, y, structures, obstacles, rotDeg, mirror) === null;
+  return placementRejection(kindId, x, y, structures, obstacles, rotDeg, mirror, deck) === null;
 }

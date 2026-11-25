@@ -9,6 +9,8 @@
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { snapPlacementToDeck } from '../../../core/structures/deckPlacement.js';
 import type { DeckSnap } from '../../../core/hex/deckSnap.js';
+import { OwnerPlateList } from '../../../core/hex/plateSet.js';
+import type { PlacementDeck } from '../../../core/structures/placementRules.js';
 
 type Preview = NonNullable<RenderMirror['pendingPlacementPreview']>;
 
@@ -21,4 +23,17 @@ const scratch: DeckSnap = { x: 0, y: 0, q: 0, r: 0, rhombus: -1 };
 export function snapGhostToDeck(preview: Preview | null | undefined, x: number, y: number): DeckSnap | null {
   if (!preview || preview.deck !== true || preview.pending === true) return null;
   return snapPlacementToDeck(preview.kind, x, y, scratch);
+}
+
+const plateList = new OwnerPlateList();
+const deckCtx: PlacementDeck = { plates: plateList, owner: '' };
+
+/** The ghost's `off-deck` context (the server's `placementRejection` deck
+ *  arg) from the preview's plate copy, or null when the room has no deck.
+ *  Allocation-free; the returned object is shared scratch. */
+export function ghostDeckContext(preview: Preview | null | undefined): PlacementDeck | null {
+  if (!preview || preview.deck !== true || preview.deckOwner === undefined) return null;
+  plateList.set(preview.deckOwner, preview.deckPlates ?? []);
+  deckCtx.owner = preview.deckOwner;
+  return deckCtx;
 }
