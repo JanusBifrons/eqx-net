@@ -239,6 +239,8 @@ export interface UIStore extends ShieldToggleUi, RightPanelUi {
   swarmCount: number;
   /** Phase 6 TiDi rate broadcast by the server (1.0 = normal, 0.7 = floor). */
   clockRate: number;
+  /** Room flag `state.deck` (base-platforms prototype): build on hex deck plates. */
+  deck: boolean;
   /** Effective server wall-clock tick rate, derived from snapshot inter-arrival
    *  intervals. 60 Hz = healthy; <50 Hz means the server's `update()` is
    *  running over budget, which is a different failure mode than TiDi. */
@@ -514,6 +516,7 @@ export interface UIStore extends ShieldToggleUi, RightPanelUi {
   setShipCount: (n: number) => void;
   setSwarmCount: (n: number) => void;
   setClockRate: (n: number) => void;
+  setDeck: (on: boolean) => void;
   setServerTickHz: (n: number) => void;
   setDevData: (d: DevData) => void;
   setHealthStats: (s: UIHealthStats) => void;
