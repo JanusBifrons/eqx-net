@@ -3,12 +3,12 @@
  * the approved "B Astrolabe" mock-up). Alien stone, not player plating: no
  * rivets, hazard paint or welds.
  *
- * - The static base (`alienGate`, the baked body): the twelve posts as stone
- *   pylons with teal glyph slits, the hex light pool at the centre and the
- *   floating crystal over it. Nothing is drawn in the ring band: the rings
- *   are rig parts on the `under` layer, BELOW the body sprite, so anything
- *   baked there would cover them (the pylons stand over the outer ring, as
- *   they should).
+ * - The static base (`alienGate`, the baked body): the hex light pool at
+ *   the centre and the floating crystal over it. No pylons (owner,
+ *   2026-11-25: the gate is the rings round the crystal; the seal runs round
+ *   the outer ring). Nothing is drawn in the ring band: the rings are rig
+ *   parts on the `under` layer, BELOW the body sprite, so anything baked
+ *   there would cover them.
  * - The three rings (`alien-astrolabe` rig, `ALIEN_GATE_ASTROLABE_DEF`): each
  *   ring part's art (`astrolabePartContext`) is dark stone in three arc
  *   segments with three lane gaps and dim teal edge lines and glyph ticks;
@@ -23,17 +23,15 @@ import { GraphicsContext } from 'pixi.js';
 import { ASTROLABE_RINGS, astrolabePoseAt, createAstrolabePose, type AstrolabeRing } from '../../../core/galaxy/alienGateAstrolabe.js';
 import type { Rig } from '../../../core/articulation/rig.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
-import { ALIEN_GATE_INTERVAL_MS, TP_PHASE, alienGateOffsetMs, padPostCenters } from '../../../shared-types/teleport.js';
+import { ALIEN_GATE_INTERVAL_MS, TP_PHASE, alienGateOffsetMs } from '../../../shared-types/teleport.js';
 import { alienGateNeighbour } from '../../components/alienGateInfo.js';
-import { SOOT, chamferBox, ngon, poly, strip, type PolyOp, type Pts, type StyleCtx } from './structureStyleKit.js';
+import { SOOT, ngon, poly, strip, type StyleCtx } from './structureStyleKit.js';
 import type { RigClockFrame, RigClockMemo, RigClockTarget, RigDrawHook } from './structureRigLook.js';
 
 /** The Ancients' teal (the mock-up's `C.teal`). */
 export const ANCIENT_TEAL = 0x3fe0c5;
-/** Ring stone and pylon stone (dark basalt). */
+/** Ring stone (dark basalt). */
 const RING_STONE = 0x2a3339;
-const PYLON_STONE = 0x2e373e;
-const CAP_STONE = 0x3a464e;
 const CRYSTAL = 0x0e1a1b;
 /** The hex light pool's radius (inside the inner ring) and hex cell size. */
 export const LIGHT_POOL_R = 360;
@@ -42,25 +40,6 @@ const HEX = 62;
 const SECTOR = (2 * Math.PI) / 3;
 /** Lit overlay strength at full alignment (taste: subtle). */
 export const ASTROLABE_GLOW_MAX = 0.8;
-
-/** A polygon pushed WITHOUT the outline fit check: the corner pylons stand on
- *  the gate's corner posts, past the style outline's deep chamfer. Still
- *  inside the footprint box the forge bakes. */
-function stand(c: StyleCtx, pts: Pts, color: number, mat: PolyOp['mat'], lift: number, bevel: number, extra?: Partial<PolyOp>): void {
-  c.polys.push({ pts, color, mat, lift, bevel, ...extra });
-}
-
-/** One stone pylon on a post (`post` wide, the collider's size). */
-function pylon(c: StyleCtx, x: number, y: number, post: number): void {
-  const h = post / 2;
-  stand(c, chamferBox(x - h + 14, y - h + 18, post, post, 18), SOOT, 'mark', 0.4, 1, { alpha: 0.85 });
-  stand(c, chamferBox(x - h, y - h, post, post, 18), PYLON_STONE, 'metal', 44, 10, { roof: [8, 16] });
-  stand(c, ngon(x, y, h * 0.52, 4, Math.PI / 4), CAP_STONE, 'metal', 6, 4);
-  // Glyph slits etched down two faces, and the lit eye on the cap.
-  for (const s of [-1, 1]) stand(c, strip([x + s * (h - 14), y - h + 22], [x + s * (h - 14), y + h - 22], 5), ANCIENT_TEAL, 'glow', -0.8, 1, { alpha: 0.4 });
-  stand(c, ngon(x, y, 9, 6), ANCIENT_TEAL, 'glow', -0.8, 1, { alpha: 0.9 });
-  c.lit(x, y, 12, ANCIENT_TEAL);
-}
 
 /** The hex light pool: a dark teal disc, a hex lattice glowing brighter
  *  toward the centre, a lit rim. */
@@ -101,12 +80,11 @@ function crystal(c: StyleCtx): void {
   c.lit(0, 0, 60, ANCIENT_TEAL);
 }
 
-/** Ancients' gate (`alien_gate`, 1600 × 1600): pylons, light pool, crystal.
+/** Ancients' gate (`alien_gate`, 1600 × 1600): light pool and crystal.
  *  The rings are the rig's (`astrolabePartContext`). */
 export function alienGate(c: StyleCtx): void {
   lightPool(c);
   crystal(c);
-  for (const [x, y] of padPostCenters('alien_gate')) pylon(c, x, -y, 100);
 }
 
 // ── The rings (rig part art) ──────────────────────────────────────────────

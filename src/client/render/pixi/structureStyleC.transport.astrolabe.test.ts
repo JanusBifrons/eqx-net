@@ -1,6 +1,6 @@
 /**
  * Ancients' gate "Astrolabe" art (teleporter redesign A2): the style C
- * drawer for `alien_gate` (stone pylons on the 12 posts, light pool and
+ * drawer for `alien_gate` (light pool and
  * crystal, nothing in the ring band the under-layer rings turn in), the ring
  * art on the rig parts, and the rig's spin clock fed from the jump timetable
  * (`astrolabePoseAt`) instead of frame time, lanes in line at fire time.
@@ -18,7 +18,7 @@ import { rigForStructureKind } from '../../../core/articulation/rigCatalogue.js'
 import { alienGateSites } from '../../../core/galaxy/alienGates.js';
 import { GALAXY_SECTORS } from '../../../core/galaxy/galaxy.js';
 import { astrolabePoseAt, createAstrolabePose } from '../../../core/galaxy/alienGateAstrolabe.js';
-import { ALIEN_GATE_INTERVAL_MS, alienGateOffsetMs, nextAlienGateJumpMs, padPostCenters, TP_PHASE } from '../../../shared-types/teleport.js';
+import { ALIEN_GATE_INTERVAL_MS, alienGateOffsetMs, nextAlienGateJumpMs, TP_PHASE } from '../../../shared-types/teleport.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 
 const SECTOR = GALAXY_SECTORS.find((s) => alienGateSites(s.key).length > 0)!.key;
@@ -37,24 +37,12 @@ describe('astrolabe: style C alien_gate drawer', () => {
     expect(structureStyleVersion('c', 'alien_gate')).toBe('a2');
   });
 
-  it('bakes a pylon on every post and nothing in the ring band', () => {
+  it('bakes no pylons and nothing in the ring band', () => {
     const v = buildStructureVisual('alien_gate', { accent: 0x66ccaa, style: 'c', livery: true, powered: true });
-    const posts = padPostCenters('alien_gate');
-    expect(posts.length).toBe(12);
     expect(v.polys.length).toBeGreaterThan(0);
-    for (const [x, y] of posts) {
-      const near = v.polys.some((p) => p.pts.some(([px, py]) => Math.hypot(px - x, py + y) < 60));
-      expect(near, `post ${x},${y}`).toBe(true);
-    }
-    // Rings turn under the body sprite at 422..818 from the centre: only the
-    // pylons (posts sit at 230..976 from the centre) may reach into the band.
-    const byPost = (px: number, py: number): boolean => posts.some(([x, y]) => Math.hypot(px - x, py + y) < 160);
-    for (const p of v.polys) {
-      for (const [px, py] of p.pts) {
-        const r = Math.hypot(px, py);
-        if (r > 430 && r < 810) expect(byPost(px, py), `r=${r.toFixed(0)}`).toBe(true);
-      }
-    }
+    // Rings turn under the body sprite at 422..818 from the centre; the body
+    // is only the light pool and crystal (no pylons), all inside the inner ring.
+    for (const p of v.polys) for (const [px, py] of p.pts) expect(Math.hypot(px, py), `${px},${py}`).toBeLessThan(430);
   });
 });
 
