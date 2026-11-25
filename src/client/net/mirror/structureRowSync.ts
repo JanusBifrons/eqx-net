@@ -17,6 +17,7 @@ import type { RenderMirror, StructureRenderState } from '@core/contracts/IRender
 import type { StructureStateView } from '../../../shared-types/structureStateWire.js';
 import { SWARM_KIND_STRUCTURE } from '../../../shared-types/swarmWireFormat.js';
 import { decodeStructureState, emptyStructureRow } from '../structureStateDecode.js';
+import { PlateSet } from '../../../core/hex/plateSet.js';
 
 type StrMap = { forEach(cb: (v: string, k: string) => void): void };
 
@@ -35,6 +36,10 @@ interface DecoderHook { triggerChanges?: ChangeFeed }
 export interface StructureRoom { readonly state?: unknown }
 
 export class StructureRowSync {
+  /** Base platforms — the derived plate set, the same core module the server
+   *  registry keeps (#15): refreshed as rows decode (owner / kind / pose) and
+   *  leave. Read it; never write it. */
+  readonly plates = new PlateSet<number>();
   /** entityId → generation last seen in room state (stale sweep). */
   private readonly gen = new Map<number, number>();
   private genN = 0;
@@ -103,6 +108,8 @@ export class StructureRowSync {
       d.has(v) || d.has(v.connTo) || (v.connSock !== undefined && d.has(v.connSock))
     ) {
       decodeStructureState(v, this.owners, row, kind);
+      const sw = this.mirror.swarm?.get(id);
+      this.plates.upsert(id, row.owner ?? '', kind, sw?.x ?? 0, sw?.y ?? 0);
       this.decodedRow.set(id, v);
       this.decodedKind.set(id, kind);
     }
@@ -135,6 +142,7 @@ export class StructureRowSync {
       this.decodedRow.clear();
       this.decodedKind.clear();
       this.dirty.clear();
+      this.plates.clear();
       return;
     }
     let map = this.mirror.structures;
@@ -151,6 +159,7 @@ export class StructureRowSync {
       this.gen.delete(id);
       this.decodedRow.delete(id);
       this.decodedKind.delete(id);
+      this.plates.remove(id);
       map.delete(id);
       const sw = this.mirror.swarm?.get(id);
       if (sw && sw.kind === SWARM_KIND_STRUCTURE) this.mirror.swarm!.delete(id);

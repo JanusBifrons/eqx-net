@@ -18,6 +18,7 @@ import type { PlayingClip } from '../../core/articulation/evaluate.js';
 import type { SavedDoor } from '../../core/structures/gateLogic.js';
 import { noteBaseFall, orphanBaseOnCapitalLoss } from './ownerlessBase.js';
 import { isNpcOwner } from '../../shared-types/relations.js';
+import { PlateSet } from '../../core/hex/plateSet.js';
 
 export interface StructureRecord {
   /** Swarm entity id (also the binary-wire id). */
@@ -276,6 +277,20 @@ export class StructureRegistry {
    *  (`noteBaseFall`). Saved with the sector (`fallenBases`), so a fallen
    *  base never regrows, even once every piece of it is gone. */
   readonly fallenBases = new Set<string>();
+  /** Base platforms — the derived plate set (`core/hex/plateSet.ts`): owner
+   *  O has plate (i, j) while O owns a connector, built or blueprint, on that
+   *  plate's centre. Kept on add / remove / owner change; the client mirror
+   *  keeps the same set from room state (#15). */
+  readonly plates = new PlateSet<string>();
+
+  /** Re-read the owner of every plate-anchoring structure (after an owner
+   *  flip: capture, orphaning, adoption). Discrete; touches anchors only. */
+  syncPlateOwners(): void {
+    for (const id of this.plates.anchorIds()) {
+      const rec = this.byId.get(id);
+      if (rec && this.plates.anchorOwner(id) !== rec.owner) this.plates.upsert(id, rec.owner, rec.kind, rec.x, rec.y);
+    }
+  }
 
   /** Hydrate: the saved `fallenBases` (unvalidated JSON; non-`npc:` dropped). */
   restoreFallenBases(origins: readonly unknown[]): void {
@@ -290,6 +305,7 @@ export class StructureRegistry {
 
   add(rec: StructureRecord): void {
     this.byId.set(rec.id, rec);
+    this.plates.upsert(rec.id, rec.owner, rec.kind, rec.x, rec.y);
     this.topologyDirty = true;
     for (const fn of this.changeListeners) fn(rec, true);
   }
@@ -315,10 +331,11 @@ export class StructureRegistry {
     const rec = this.byId.get(id);
     // Capture plan 4E — the base a lost last Capital held turns ownerless (the
     // ONE seam: combat, pack and take-down all end here). Before disconnect.
-    if (rec) { orphanBaseOnCapitalLoss(this, rec); noteBaseFall(this, rec); }
+    if (rec) { orphanBaseOnCapitalLoss(this, rec); noteBaseFall(this, rec); this.syncPlateOwners(); }
     this.disconnect(id);
     if (rec) {
       this.byId.delete(id);
+      this.plates.remove(id);
       this.everConnected.delete(id); // structure gone — no leak
       this.topologyDirty = true;
       for (const fn of this.changeListeners) fn(rec, false);
