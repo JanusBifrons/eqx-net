@@ -29,6 +29,7 @@ import {
   CABLE_CURVE_FLOATS, CABLE_CURVE_SEGMENTS, CABLE_NO_SOCKET, flattenLinkCable, makeCableBox,
 } from '../../../core/structures/cableCurve.js';
 import { isShieldEmitterKind } from '../../../core/structures/gateGeometry.js';
+import { isConnectorKind } from '../../../shared-types/structureKinds.js';
 import { blankGridNode } from '../../structures/mirrorToGridNode.js';
 import {
   addCablePathSparks, cablePulseWidth, cableStudInset, drawCablePathBody, drawCablePathCollarFlash, drawCablePathGlow,
@@ -118,7 +119,7 @@ function endNode(e: SwarmRenderState, mirror: boolean, out: GridNode): GridNode 
   out.y = e.y;
   out.rot = e.angle;
   out.mirror = mirror;
-  out.isConnector = kind === 'connector';
+  out.isConnector = isConnectorKind(kind);
   out.isShieldPylon = isShieldEmitterKind(kind);
   return out;
 }

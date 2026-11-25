@@ -21,6 +21,7 @@
 import { structureDraw } from '../../shared-types/structurePower.js';
 import {
   getStructureKind,
+  isConnectorKind,
   type StructureKindId,
   structureHalfExtents,
 } from '../../shared-types/structureKinds.js';
@@ -189,7 +190,7 @@ export function structureMirrorToGridNode(
   out.halfH = ext.hh;
   out.isHub = kind.isHub;
   out.isCapital = swarmEntry.shipKind === 'capital';
-  out.isConnector = swarmEntry.shipKind === 'connector';
+  out.isConnector = isConnectorKind(swarmEntry.shipKind);
   out.isShieldPylon = isShieldEmitterKind(swarmEntry.shipKind);
   // Leveled connection cap — an upgraded connector holds MORE links (Equinox
   // Phase-5 audit). Must match the server's `structureToGridNode` so the preview
@@ -243,7 +244,7 @@ export function ghostToGridNode(
   out.halfH = ext.hh;
   out.isHub = kind.isHub;
   out.isCapital = preview.kind === 'capital';
-  out.isConnector = preview.kind === 'connector';
+  out.isConnector = isConnectorKind(preview.kind);
   out.isShieldPylon = isShieldEmitterKind(preview.kind);
   out.maxConnections = kind.maxConnections;
   out.connectionRange = kind.connectionRange;

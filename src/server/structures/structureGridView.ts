@@ -8,7 +8,7 @@
  * half-built node's power.
  */
 import { structureDraw } from '../../shared-types/structurePower.js';
-import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { getStructureKind, isConnectorKind } from '../../shared-types/structureKinds.js';
 import { isShieldEmitterKind } from '../../core/structures/gateGeometry.js';
 import { gridLinkAllowed, isUnownedOwner } from '../../shared-types/relations.js';
 import { effectiveStructurePowerOutput, effectiveStructureMaxConnections } from '../../core/leveling/structureLevel.js';
@@ -72,7 +72,7 @@ export function structureToGridNode(rec: StructureRecord): GridNode {
     // Capture plan 4E — a base that lost its last Capital keeps its power
     // (owner: no faction, everything else works as before).
     rootsPower: isUnownedOwner(rec.owner),
-    isConnector: rec.kind === 'connector',
+    isConnector: isConnectorKind(rec.kind),
     // Gates join a fence like a pylon (pylon connection rules).
     isShieldPylon: isShieldEmitterKind(rec.kind),
     // Leveled connection cap — an upgraded connector holds MORE links (Equinox

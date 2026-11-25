@@ -15,7 +15,7 @@ import { Connection } from './Connection.js';
 import { CONNECTION_MAX_RANGE } from './structureGridConstants.js';
 import {
   STRUCTURE_KINDS_LIST,
-  getStructureKind,
+  getStructureKind, isConnectorKind,
   structureHalfExtents,
   structureSockets,
   structureSocketToWorld,
@@ -27,7 +27,7 @@ function real(id: string, kind: string, x: number, y: number, rot = 0, over: Par
   const { hw, hh } = structureHalfExtents(kind, (rot * 180) / Math.PI);
   return {
     id, kind, x, y, rot, radius: k.radius, halfW: hw, halfH: hh, isHub: k.isHub,
-    isCapital: kind === 'capital', isConnector: kind === 'connector',
+    isCapital: kind === 'capital', isConnector: isConnectorKind(kind),
     isShieldPylon: kind === 'shield_pylon' || kind === 'shield_gate' || kind === 'shield_airlock',
     maxConnections: 10, powerOutput: 0, powerConsumption: 0, isConstructed: true, ...over,
   };

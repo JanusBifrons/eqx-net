@@ -67,6 +67,16 @@ export function isBuildableStructureKind(id: string): boolean {
   return !(UNBUILDABLE_STRUCTURE_KINDS as readonly string[]).includes(id);
 }
 
+/**
+ * Does this kind act as a grid connector (a cable junction the power grid
+ * routes through)? The ONE answer to "is this a connector?" for server and
+ * client alike: plate buildings (large teleporter, alien gate) will join this
+ * set later, so never test `kind === 'connector'` directly.
+ */
+export function isConnectorKind(kind: string | null | undefined): boolean {
+  return kind === 'connector';
+}
+
 export function getStructureKind(id: string | null | undefined): StructureKind {
   if (id != null && Object.prototype.hasOwnProperty.call(STRUCTURE_KINDS, id)) {
     return STRUCTURE_KINDS[id as StructureKindId];
