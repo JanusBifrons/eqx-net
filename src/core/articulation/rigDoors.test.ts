@@ -13,7 +13,10 @@ import {
 } from '../structures/gateGeometry.js';
 import { structureOutline } from '../../shared-types/structureKinds/outline.js';
 import { SOCKET_OUTLINE_STYLE } from '../../shared-types/structureKinds/structureSockets.js';
-import { AIRLOCK_DOOR_OPEN_TRAVEL } from './rigs/fences.js';
+import { AIRLOCK_DOOR_OPEN_TRAVEL, DOOR_LEAF_THICKNESS } from './rigs/fences.js';
+import { DOOR_POS_MAX, gateWorldAxisBoxes } from '../structures/gateGeometry.js';
+import { doorLeafCount, doorRestPos, gateHitBoxes, writeDoorLeafBoxes } from '../structures/doorLeafBoxes.js';
+import { PAD_SPECS, padDoorwayHalf, padHalfExtent } from '../../shared-types/teleport.js';
 
 interface Box { x0: number; x1: number; y0: number; y1: number }
 
@@ -228,4 +231,112 @@ describe('door leaves stay inside the building (every door rig)', () => {
       }
     });
   }
+});
+
+// Teleporter redesign T1: the chamber's blast doors, one leaf pair per
+// doorway (local ±y ends), BOTH on one clip, resting OPEN.
+describe('tp-doors (teleporter chamber)', () => {
+  const CASES = [
+    { kind: 'teleporter', rigId: 'tp-doors' },
+    { kind: 'pocket_pad', rigId: 'tp-doors' },
+    { kind: 'teleporter_large', rigId: 'tp-doors-large' },
+  ] as const;
+  const IDS = ['leaf-a-left', 'leaf-a-right', 'leaf-b-left', 'leaf-b-right'] as const;
+
+  it('the transit pad is the small teleporter\'s size, so it shares tp-doors', () => {
+    expect(PAD_SPECS.pocket_pad.padRadius).toBe(PAD_SPECS.teleporter.padRadius);
+    expect(PAD_SPECS.pocket_pad.post).toBe(PAD_SPECS.teleporter.post);
+  });
+
+  for (const { kind, rigId } of CASES) {
+    const rig = rigForStructureKind(kind)!;
+    const pose = createRigPose(rig);
+    const door = padDoorwayHalf(kind);
+    const r = PAD_SPECS[kind].padRadius, half = padHalfExtent(kind), post = PAD_SPECS[kind].post;
+    const lineY = half - post / 2;
+    const walls = gateColliderBoxes(kind)!;
+
+    it(`${kind}: four physical slide leaves on ONE clip 'door', idling on it (rest open)`, () => {
+      expect(rig).toBe(rigById(rigId));
+      expect([...rig.partIds]).toEqual([...IDS]);
+      for (const p of rig.parts) {
+        expect(p.kind).toBe('physical');
+        expect(p.joint.type).toBe('slide');
+        const ys = p.outline!.filter((_, k) => k % 2 === 1);
+        expect(Math.max(...ys) - Math.min(...ys)).toBe(DOOR_LEAF_THICKNESS);
+      }
+      expect(rig.clips.map((c) => c.id)).toEqual(['door']);
+      expect(rig.clips[0]!.endTick).toBe(DOOR_TRAVEL_TICKS);
+      for (let i = 0; i < rig.partCount; i++) expect(rig.clips[0]!.trackOfPart[i]).toBeGreaterThanOrEqual(0);
+      expect(rig.idleClip).toBe(0);
+    });
+
+    it(`${kind}: no clip = OPEN: both doorways fully clear, each leaf inside its wall stub`, () => {
+      at(rig, pose, null, 0);
+      for (const id of IDS) {
+        const b = boxOf(rig, pose, id);
+        expect(Math.min(Math.abs(b.x0), Math.abs(b.x1)), id).toBeCloseTo(door, 9);
+        expect(Math.max(Math.abs(b.x0), Math.abs(b.x1)), id).toBeLessThanOrEqual(r + 1e-9);
+        const midX = (b.x0 + b.x1) / 2, midY = (b.y0 + b.y1) / 2;
+        const stub = walls.find((w) => Math.abs(w.cx - midX) < 1e-9 && Math.abs(w.cy - midY) < 1e-9);
+        expect(stub, `${id} in a stub`).toBeDefined();
+        expectInside(b, { x0: stub!.cx - stub!.hw, x1: stub!.cx + stub!.hw, y0: stub!.cy - stub!.hh, y1: stub!.cy + stub!.hh });
+      }
+      // The clip's end pose is the same open pose.
+      at(rig, pose, 'door', DOOR_TRAVEL_TICKS);
+      expect(boxOf(rig, pose, 'leaf-b-right').x0).toBeCloseTo(door, 9);
+    });
+
+    it(`${kind}: clip time 0 = shut: BOTH doorways covered edge to edge on the wall line`, () => {
+      at(rig, pose, 'door', 0);
+      for (const [l, rr, sy] of [['leaf-a-left', 'leaf-a-right', 1], ['leaf-b-left', 'leaf-b-right', -1]] as const) {
+        const a = boxOf(rig, pose, l), b = boxOf(rig, pose, rr);
+        expect(a.x0).toBeCloseTo(-door, 9);
+        expect(a.x1).toBeCloseTo(0, 9);
+        expect(b.x0).toBeCloseTo(0, 9);
+        expect(b.x1).toBeCloseTo(door, 9);
+        for (const q of [a, b]) {
+          expect((q.y0 + q.y1) / 2).toBeCloseTo(sy * lineY, 9);
+          expect(Math.min(Math.abs(q.y0), Math.abs(q.y1))).toBeGreaterThanOrEqual(r); // off the pad floor
+        }
+      }
+    });
+
+    it(`${kind}: hit boxes spawn with the doors at rest (open); a re-pose to 0 shuts them`, () => {
+      expect(doorRestPos(kind)).toBe(DOOR_POS_MAX);
+      for (const angle of [0, Math.PI / 2, Math.PI]) {
+        const boxes = gateHitBoxes(kind, angle)!;
+        const n = doorLeafCount(kind);
+        expect(n).toBe(4);
+        const fixed = gateWorldAxisBoxes(kind, angle)!;
+        const open = new Float32Array(boxes);
+        writeDoorLeafBoxes(kind, angle, DOOR_POS_MAX, DOOR_POS_MAX, open);
+        expect([...boxes]).toEqual([...open]);
+        // Open: the doorway (local x = ±door/2, on the door line) is clear.
+        const c = Math.cos(angle), s = Math.sin(angle);
+        const clear = (bx: Float32Array): boolean => {
+          for (const sy of [1, -1]) for (const lx of [-door / 2, door / 2]) {
+            const px = lx * c - sy * lineY * s, py = lx * s + sy * lineY * c;
+            for (let i = 0; i < bx.length; i += 4) {
+              if (Math.abs(px - bx[i]!) < bx[i + 2]! && Math.abs(py - bx[i + 1]!) < bx[i + 3]!) return false;
+            }
+          }
+          return true;
+        };
+        expect(clear(boxes)).toBe(true);
+        expect(boxes.length).toBe(fixed.length + n * 4);
+        const shut = new Float32Array(boxes);
+        writeDoorLeafBoxes(kind, angle, 0, 0, shut);
+        expect(clear(shut)).toBe(false);
+      }
+    });
+  }
+
+  it("gates still rest shut, and the Ancients' gate has no doors", () => {
+    expect(doorRestPos('shield_gate')).toBe(0);
+    expect(doorRestPos('shield_airlock')).toBe(0);
+    expect(rigForStructureKind('alien_gate')).toBeNull();
+    expect(doorLeafCount('alien_gate')).toBe(0);
+    expect(doorRestPos('alien_gate')).toBe(0);
+  });
 });

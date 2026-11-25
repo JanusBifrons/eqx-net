@@ -161,3 +161,37 @@ describe('structureSockets', () => {
     console.log(`[structureSockets] ${counts.join(', ')}`);
   });
 });
+
+// Teleporter redesign T1: the large pad's 8 towers moved off the doorways
+// (4 corners + 2 down each side wall), so its sockets moved with them. Live
+// connections hold socket indices but are never saved (re-derived by the
+// auto-connect sweep), so no save migration. The 800 pads are unchanged.
+describe('teleporter chamber sockets (redesign T1)', () => {
+  const near = (s: { x: number; y: number; nx: number; ny: number }, e: readonly number[]): void => {
+    expect(s.x).toBeCloseTo(e[0]!, 6);
+    expect(s.y).toBeCloseTo(e[1]!, 6);
+    expect(s.nx).toBeCloseTo(e[2]!, 9);
+    expect(s.ny).toBeCloseTo(e[3]!, 9);
+  };
+
+  it('large teleporter: one stud per tower outer face, none on a doorway', () => {
+    const w = 980 / 3;
+    const want = [
+      [-980, -1060, 0, -1], [1060, -980, 1, 0], [1060, -w, 1, 0], [1060, w, 1, 0],
+      [980, 1060, 0, 1], [-1060, 980, -1, 0], [-1060, w, -1, 0], [-1060, -w, -1, 0],
+    ];
+    const got = structureSockets('teleporter_large');
+    expect(got.length).toBe(want.length);
+    got.forEach((s, i) => near(s, want[i]!));
+    for (const s of got) if (s.ny !== 0) expect(Math.abs(s.x)).toBeGreaterThanOrEqual(450);
+  });
+
+  it('small teleporter and transit pad: sockets unchanged', () => {
+    const want = [[-360, -400, 0, -1], [400, -360, 1, 0], [360, 400, 0, 1], [-400, 360, -1, 0]];
+    for (const k of ['teleporter', 'pocket_pad']) {
+      const got = structureSockets(k);
+      expect(got.length).toBe(4);
+      got.forEach((s, i) => near(s, want[i]!));
+    }
+  });
+});
