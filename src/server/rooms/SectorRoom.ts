@@ -307,7 +307,7 @@ import type { MountRangeTarget } from '../../core/combat/mountReach.js';
 import type { CapitalWreckSubsystem, WreckPiecePose } from './CapitalWreckSubsystem.js';
 import { buildCapitalWrecks } from './capitalWreckRoomWiring.js';
 import { rockViewOf } from './rockCut.js';
-import { isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
+import { isWeaponTransparent, isWreckPiece } from '../net/SwarmEntityRegistry.js';
 import type { LofBody } from './lofShipBody.js';
 import { NpcLineOfFire } from './features/npcLineOfFire.js';
 import { isTerrainLockKind } from '../../core/combat/lockState.js';
@@ -345,9 +345,9 @@ const ENV_TIME_SCALE: number | null = (() => {
  *  A pilot sends one on a lock-line change, two when switching groups mid-hold;
  *  a flood beyond this is silently dropped (src/server/CLAUDE.md thresholds). */
 export const MAX_LOCK_MSGS_PER_TICK = 3;
-/** A tractor beam's line of sight is blocked by any body but a loot pod
- *  (pre-bound for `LineOfFireGate.firstOnLine`, #14). */
-const notLootPod = (rec: LofBody): boolean => !isLootPod(rec);
+/** A line of sight is blocked by any body but a loot pod or a road
+ *  (`isWeaponTransparent`; pre-bound for `LineOfFireGate.firstOnLine`, #14). */
+const notTransparent = (rec: LofBody): boolean => !isWeaponTransparent(rec);
 // LAG_COMP_WINDOW now used inside PlayerFireResolver.ts
 
 /** Click-to-inspect live-stats emit cadence (Item B5). ~5 Hz on its OWN
@@ -592,7 +592,7 @@ export class SectorRoom extends Room<SectorState> {
     tick: () => this.serverTick, poseOf: (id, out) => this.rayHits.aiFireTargetShape(id, out), wireRef: (id) => this.swarmRegistry.get(id)?.entityId ?? id,
     lineBodies: (fx, fy, tx, ty, w, a, b, ids, cap) => this.lineOfFire.gate().lineBodies(fx, fy, tx, ty, w, a, b, ids, cap),
     // Line of sight: what a shot would hit first (loot pods pass, as for every beam).
-    lineBlocker: (fx, fy, tx, ty, e, t) => this.lineOfFire.gate().firstOnLine(fx, fy, tx, ty, e, t, notLootPod),
+    lineBlocker: (fx, fy, tx, ty, e, t) => this.lineOfFire.gate().firstOnLine(fx, fy, tx, ty, e, t, notTransparent),
     inCrackHold: (id) => this.capitalWrecks?.inCrackHold(id) === true, isTerrain: (id) => isTerrainLockKind(this.swarmRegistry.get(id)?.kind ?? -1), isWreckPiece: (id) => { const r = this.swarmRegistry.get(id); return r != null && isWreckPiece(r); },
     // Tractoring a ship is a hostile act, like a hit (weapon-mounts.md "Tractor beam"); terrain is neutral.
     onShipTractored: (e, t) => { this.hitStanding.noteStandingHit(t, e); if (this.playerToSlot.has(t)) this.refreshNpcAttackHostility(e, t); else if (this.swarmRegistry.get(t)?.kind === 1 && !this.isFriendlyFire(t, e)) this.aiController.markHostile(t, e, this.serverTick); },
@@ -2636,7 +2636,7 @@ export class SectorRoom extends Room<SectorState> {
     tractorLos: {
       target: (key, out) => { const r = this.swarmRegistry.getByEntityId(swarmLockId(key)); if (r == null) return false; const b = slotBase(r.slot); out.x = this.sabF32[b + SLOT_X_OFF]!; out.y = this.sabF32[b + SLOT_Y_OFF]!; out.id = r.id; return true; },
       activatedMounts: (id): ReadonlyArray<WeaponMount> | undefined => this.fireLocks._lockActivated.get(id)?.mounts,
-      firstOnLine: (fx, fy, tx, ty, e, tg) => this.lineOfFire.gate().firstOnLine(fx, fy, tx, ty, e, tg, notLootPod),
+      firstOnLine: (fx, fy, tx, ty, e, tg) => this.lineOfFire.gate().firstOnLine(fx, fy, tx, ty, e, tg, notTransparent),
     },
     lineHeld: (k, i, w, fx, fy, tx, ty, skip, tgt) => this.lineOfFire.lineHeld(k, i, w, fx, fy, tx, ty, skip, tgt),
   });

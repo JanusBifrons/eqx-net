@@ -69,6 +69,7 @@ export const STRUCTURE_FAMILY: Readonly<Record<StructureKindId, StructureFamilyI
   freight_dock: 'transport',
   teleporter_large: 'transport',
   alien_gate: 'transport',
+  road: 'transport',
 });
 
 /** A kind id's family, or undefined for an unknown id. */

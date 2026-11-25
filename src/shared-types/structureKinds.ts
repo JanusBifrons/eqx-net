@@ -56,6 +56,8 @@ export {
   COASTAL_LINDEMANN, SIEGE_GUN_80CM, COASTAL_DEFENCE_KINDS,
 } from './structureKinds/coastal.js';
 
+export { ROAD } from './structureKinds/deckTiles.js';
+
 export { STRUCTURE_KINDS_LIST } from './structureKinds/catalogueOrder.js';
 export {
   STRUCTURE_KINDS,
@@ -64,6 +66,10 @@ export {
   UNBUILDABLE_STRUCTURE_KINDS,
   isBuildableStructureKind,
   isConnectorKind,
+  FLAT_DECK_STRUCTURE_KINDS,
+  isFlatDeckKind,
+  DECK_ONLY_STRUCTURE_KINDS,
+  isDeckOnlyStructureKind,
   getStructureKind,
   isStructureKindId,
   structureKindToIndex,

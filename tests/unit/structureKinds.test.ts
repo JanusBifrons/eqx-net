@@ -64,6 +64,7 @@ describe('structureKinds catalogue', () => {
       'coastal_lindemann',
       'siege_gun_80cm',
       'territory_lock',
+      'road', // base platforms deck tile — appended
     ]);
   });
 

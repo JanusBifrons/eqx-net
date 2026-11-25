@@ -77,6 +77,27 @@ export function isConnectorKind(kind: string | null | undefined): boolean {
   return kind === 'connector';
 }
 
+/**
+ * Flat deck tiles (base platforms): kinds that lie ON the deck. Their body is
+ * a permanent hologram (the blueprint ghost body, never turned solid:
+ * `server/structures/blueprintBody.ts`), so ships fly over them, navigation
+ * routes over them and no weapon touches them (`isWeaponTransparent`). The
+ * ONE answer for server and client alike.
+ */
+export const FLAT_DECK_STRUCTURE_KINDS: readonly StructureKindId[] = ['road'];
+
+export function isFlatDeckKind(kind: string | null | undefined): boolean {
+  return kind === 'road';
+}
+
+/** Kinds only a deck room builds (base platforms, room flag `deck`): the
+ *  build menu hides them elsewhere and the server refuses them. */
+export const DECK_ONLY_STRUCTURE_KINDS: readonly StructureKindId[] = ['road'];
+
+export function isDeckOnlyStructureKind(kind: string): boolean {
+  return (DECK_ONLY_STRUCTURE_KINDS as readonly string[]).includes(kind);
+}
+
 export function getStructureKind(id: string | null | undefined): StructureKind {
   if (id != null && Object.prototype.hasOwnProperty.call(STRUCTURE_KINDS, id)) {
     return STRUCTURE_KINDS[id as StructureKindId];

@@ -64,6 +64,8 @@ export const StructureKindIdSchema = z.enum([
   'siege_gun_80cm',
   // Sector control lock (galaxy-map plan) — APPEND ONLY.
   'territory_lock',
+  // Base platforms (slice 20) — flat deck tiles — APPEND ONLY.
+  'road',
 ]);
 export type StructureKindId = z.infer<typeof StructureKindIdSchema>;
 

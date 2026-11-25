@@ -27,7 +27,7 @@
 
 import { shipRayHit } from '../../core/combat/shipHitShape.js';
 import { wreckRayHit } from '../../core/destruction/wreckHits.js';
-import { isLootPod } from '../net/SwarmEntityRegistry.js';
+import { isWeaponTransparent } from '../net/SwarmEntityRegistry.js';
 import type { Client } from 'colyseus';
 import type { Logger } from 'pino';
 import {
@@ -664,7 +664,7 @@ export class PlayerFireResolver implements WeaponFireSink {
 
     // 3. Swarm (drones + asteroids).
     for (const rec of d.swarmRegistry.all()) {
-      if (isLootPod(rec)) continue; // no weapon touches a cargo pod (owner 2026-11-17; #15: displayPoseHitscan)
+      if (isWeaponTransparent(rec)) continue; // no weapon touches a cargo pod or a road (owner 2026-11-17; #15: displayPoseHitscan)
       const rewound = d.snapshotRing.getPoseAt(rec.id, effTick);
       const b = slotBase(rec.slot);
       const cx = rewound?.x ?? d.sabF32[b + SLOT_X_OFF]!;
