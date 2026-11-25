@@ -2,8 +2,8 @@
  * Building panel camera nudge (building panels redesign, slice A5), the pure
  * maths: when a building's side panel opens it covers the right of the
  * screen, so the camera glides once to put the building in the middle of what
- * is left. The panel queues the target (`StructureSettingsModal` ->
- * `queuePanelNudge`); build mode's existing per-frame camera step fires it
+ * is left. The Details panel's Settings section queues the target
+ * (`StructureSettings` -> `queuePanelNudge`); build mode's existing per-frame camera step fires it
  * through the existing `glideCameraTo` with the renderer feedback's scale.
  */
 import type { SidePanelSize } from './SidePanel';

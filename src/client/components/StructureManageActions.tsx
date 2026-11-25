@@ -1,7 +1,7 @@
 /**
- * The building-MANAGEMENT controls of the settings side panel's Manage tab
+ * The building-MANAGEMENT controls of the Details panel Settings section's Manage page
  * (`StructureManageTab`, every building; a gate's access control sits above
- * them), laid out for a ~280-360 px panel: the Upgrade card on top (next
+ * them), laid out for a ~300-380 px panel: the Upgrade card on top (next
  * level, minerals + goods as `BillChips`), a compact Reconnect / Clear row,
  * and Deconstruct at the bottom as the danger action, hold-to-confirm
  * (`useHoldPress`); a running deconstruction cancels with a tap. The

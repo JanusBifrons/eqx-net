@@ -98,11 +98,12 @@ percentage.
 | **Hunt** | Goes after the nearest hostile it can sense, and guards its spot when there is none. |
 | **Retreat** | Flies to a point you pick (or back to its post) without fighting, then defends there. |
 
-Patrol, Escort and Retreat ask you to pick on the map first: the panel shows a
-short hint and **Done / Cancel** buttons. For a patrol, click two or more
-points, then Done (or Enter, or a right-click). For an escort, click the ship
-to escort. For a retreat, click the point, or press **Back to post**. Escape
-cancels.
+Patrol, Escort and Retreat ask you to pick on the map first: the left strip
+swaps to its picking tools, icons only (hover or hold one for its hint). The
+top icon says what you are picking. For a patrol, click two or more points,
+then ✓ (or Enter, or a right-click); undo drops the last point. For an escort,
+click the ship to escort. For a retreat, click the point, or press ✓ to go
+back to the post. ✕ or Escape cancels.
 
 An order (move, attack, stop) is a one-off on top of the mode. When the order
 is done, the ship goes back to its mode from where it is now.

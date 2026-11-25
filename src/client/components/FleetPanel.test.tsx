@@ -244,60 +244,27 @@ describe('FleetStrip (compact)', () => {
   it('patrol / escort / retreat in the select start a map pick instead of sending (slice 14b)', () => {
     setCompact(true);
     const cmds = mockCommands();
-    useUIStore.setState({ selection: { ids: ['a', 'b'], focusId: null, focusKind: null } });
+    useUIStore.setState({ selection: { ids: ['a', 'b'], focusId: null, focusKind: null }, rightPanel: 'fleet' });
     render(<FleetStrip commands={cmds} />);
     fireEvent.change(screen.getByTestId('fleet-strip-mode'), { target: { value: 'escort' } });
     expect(cmds.setMode).not.toHaveBeenCalled();
     expect(useUIStore.getState().fleetPick?.kind).toBe('escort');
-    expect(screen.getByTestId('fleet-pick-hint').textContent).toMatch(/your other ships to escort/);
-    expect(screen.queryByTestId('fleet-strip-mode')).toBeNull();
-    fireEvent.click(screen.getByTestId('fleet-pick-cancel'));
-    expect(useUIStore.getState().fleetPick).toBeNull();
-    expect(screen.getByTestId('fleet-strip-mode')).toBeInTheDocument();
+    expect(useUIStore.getState().rightPanel, 'the pick needs the map: its tools are on the left strip').toBeNull();
   });
 });
 
 describe('fleet map picks (slice 14b)', () => {
-  it('Patrol enters a route pick; Done is disabled under 2 points; Done bumps doneSeq', () => {
+  it('Patrol / Escort / Retreat start a map pick and close the panel (tools on the left strip, U3-3)', () => {
     const cmds = mockCommands();
-    useUIStore.setState({ selection: { ids: ['a', 'b'], focusId: null, focusKind: null } });
-    render(<FleetPanel commands={cmds} />);
-    fireEvent.click(screen.getByTestId('fleet-mode-patrol'));
-    expect(cmds.setMode).not.toHaveBeenCalled();
-    expect(useUIStore.getState().fleetPick).toEqual({ kind: 'patrol', points: 0, doneSeq: 0 });
-    expect(screen.getByTestId('fleet-pick-hint')).toHaveTextContent('Click points for the patrol route, then Done');
-    expect(screen.queryByTestId('fleet-mode-hunt'), 'mode buttons give way to the pick bar').toBeNull();
-    const done = screen.getByTestId('fleet-pick-done');
-    expect(done).toBeDisabled();
-    act(() => useUIStore.getState().setFleetPickPoints(1));
-    expect(screen.getByTestId('fleet-pick-done')).toBeDisabled();
-    act(() => useUIStore.getState().setFleetPickPoints(2));
-    expect(screen.getByTestId('fleet-pick-done')).toBeEnabled();
-    fireEvent.click(screen.getByTestId('fleet-pick-done'));
-    expect(useUIStore.getState().fleetPick?.doneSeq).toBe(1);
-    expect(cmds.setMode, 'the renderer sends the route, not the panel').not.toHaveBeenCalled();
-  });
-
-  it('Cancel leaves the pick and brings the mode buttons back', () => {
-    useUIStore.setState({ selection: { ids: ['a'], focusId: null, focusKind: null } });
-    render(<FleetPanel commands={mockCommands()} />);
-    fireEvent.click(screen.getByTestId('fleet-mode-escort'));
-    expect(screen.getByTestId('fleet-pick')).toHaveAttribute('data-fleet-pick', 'escort');
-    expect(screen.queryByTestId('fleet-pick-done')).toBeNull();
-    fireEvent.click(screen.getByTestId('fleet-pick-cancel'));
-    expect(useUIStore.getState().fleetPick).toBeNull();
-    expect(screen.getByTestId('fleet-mode-escort')).toBeInTheDocument();
-  });
-
-  it('Retreat: "Back to post" sends retreat with no point and ends the pick', () => {
-    const cmds = mockCommands();
-    useUIStore.setState({ selection: { ids: ['a', 'b'], focusId: null, focusKind: null } });
-    render(<FleetPanel commands={cmds} />);
-    fireEvent.click(screen.getByTestId('fleet-mode-retreat'));
-    expect(screen.getByTestId('fleet-pick-hint')).toHaveTextContent('Click where to retreat to');
-    fireEvent.click(screen.getByTestId('fleet-pick-post'));
-    expect(cmds.setMode).toHaveBeenCalledWith(['a', 'b'], 'retreat');
-    expect(useUIStore.getState().fleetPick).toBeNull();
+    for (const m of ['patrol', 'escort', 'retreat'] as const) {
+      useUIStore.setState({ selection: { ids: ['a', 'b'], focusId: null, focusKind: null }, fleetPick: null, rightPanel: 'fleet' });
+      const { unmount } = render(<FleetPanel commands={cmds} />);
+      fireEvent.click(screen.getByTestId(`fleet-mode-${m}`));
+      expect(useUIStore.getState().fleetPick).toEqual({ kind: m, points: 0, doneSeq: 0, undoSeq: 0 });
+      expect(useUIStore.getState().rightPanel).toBeNull();
+      unmount();
+    }
+    expect(cmds.setMode, 'the pick sends later, never the panel button').not.toHaveBeenCalled();
   });
 
   it('Defend and Hunt still send at once', () => {

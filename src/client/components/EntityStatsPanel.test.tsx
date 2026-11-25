@@ -44,10 +44,9 @@ function fakeClient(mirror: Record<string, unknown>): ColyseusGameClient {
   return { mirror } as unknown as ColyseusGameClient;
 }
 
-/** Building management lives in the side panel's Manage tab: open it from the
- *  card's Open button (owner, Build mode). */
+/** Building management lives on the Settings section's Manage page (owner,
+ *  Build mode; no Open step). */
 function openManage(): void {
-  fireEvent.click(screen.getByTestId('structure-action-settings'));
   fireEvent.click(screen.getByTestId('structure-settings-tab-access'));
 }
 
@@ -710,14 +709,13 @@ describe('EntityStatsPanel', () => {
     // Row 2 names what it makes; the chip says why it is waiting.
     expect(screen.getByTestId('entity-stats-making')).toHaveTextContent('Smelt alloy');
     expect(screen.getByTestId('entity-stats-status')).toHaveTextContent('Waiting for Minerals');
-    // A smelter has one recipe: no change-recipe button (in the cog window either).
+    // A smelter has one recipe: no change-recipe button (on the Build page either).
     expect(screen.queryByTestId('structure-action-recipe')).toBeNull();
-    fireEvent.click(screen.getByTestId('structure-action-settings'));
     fireEvent.click(screen.getByTestId('structure-settings-tab-production'));
     expect(screen.queryByTestId('structure-action-recipe')).toBeNull();
   });
 
-  it('P2b: the owner cycles a refinery to its next recipe from the cog window Production tab', () => {
+  it('P2b: the owner cycles a refinery to its next recipe from the Settings section Build page', () => {
     const sendSpy = vi.fn();
     setGameClient({
       mirror: {
@@ -733,9 +731,8 @@ describe('EntityStatsPanel', () => {
     useUIStore.setState({ pilotMode: 'spectator', buildMode: true, selection: { ids: [], focusId: 'swarm-9', focusKind: 'structure' } });
     render(<EntityStatsPanel />);
     expect(screen.getByTestId('entity-stats-making')).toHaveAttribute('data-recipe', 'refine_rock_chunk');
-    // The recipe button lives in the cog window now, not on the inspector.
+    // The recipe button lives on the Settings section's Build page, not on the inspector.
     expect(screen.queryByTestId('structure-action-recipe')).toBeNull();
-    fireEvent.click(screen.getByTestId('structure-action-settings'));
     fireEvent.click(screen.getByTestId('structure-settings-tab-production'));
     fireEvent.click(screen.getByTestId('structure-action-recipe'));
     expect(sendSpy).toHaveBeenCalledWith('set_recipe', { type: 'set_recipe', entityId: 9, recipe: 'refine_ice_fuel' });

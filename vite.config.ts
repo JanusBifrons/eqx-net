@@ -233,7 +233,8 @@ export default defineConfig({
   // build is playable through one origin (the phone lane, docs/ops/phone-link.md).
   preview: {
     proxy: API_PROXY,
-    allowedHosts: ['.trycloudflare.com'],
+    // Quick tunnels, plus the named tunnel's fixed address (EQX_PHONE_HOST, set by the lane).
+    allowedHosts: ['.trycloudflare.com', ...(process.env['EQX_PHONE_HOST'] ? [process.env['EQX_PHONE_HOST']] : [])],
   },
   build: {
     outDir: path.resolve(__dirname, 'dist/client'),

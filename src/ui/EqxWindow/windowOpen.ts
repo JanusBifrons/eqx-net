@@ -2,8 +2,8 @@
  * Who hears that a Window opened, and whether one is open now (moved from
  * `client/components/GameWindow.tsx` with EqxWindow; the old path re-exports it).
  *
- * - `onGameWindowOpen`: run a callback each time a Window (or the building
- *   settings panel) opens. The Build sidebar closes itself on it, so it never
+ * - `onGameWindowOpen`: run a callback each time a Window opens. The Build
+ *   sidebar closes itself on it, so it never
  *   pokes out from under a window.
  * - `useAnyWindowOpen`: true while at least one EqxWindow is open. App.tsx's
  *   `uiCoversGame` check reads it, as it reads the open drawer panel.
@@ -16,8 +16,7 @@ export function onGameWindowOpen(fn: () => void): () => void {
   openListeners.add(fn);
   return () => { openListeners.delete(fn); };
 }
-/** Tell the {@link onGameWindowOpen} listeners a game window or panel opened
- *  (EqxWindow, and the building settings side panel). */
+/** Tell the {@link onGameWindowOpen} listeners a game window opened (EqxWindow). */
 export function notifyGameWindowOpen(): void {
   for (const fn of openListeners) fn();
 }

@@ -1,7 +1,9 @@
 /**
- * The settings side panel's status block, above the tabs: owner, level,
- * connections (a connector) and the hold summary (owned storage). These left
- * the inspector card (building-panels A2). Read from the structure slice and
+ * The Settings section's status block (Details panel), above the pages:
+ * connections (a connector) and the hold summary (owned storage). Owner and
+ * level are on the card header right above it (`structureCard.tsx`), so the
+ * block never repeats them, and it draws nothing when neither line applies.
+ * Read from the structure slice and
  * the selection's server stats (the hold is owner-only on the wire) at the
  * panel's 4 Hz cadence.
  */
@@ -55,11 +57,9 @@ export function SettingsStatus({ entityId, pollMs }: { entityId: number; pollMs:
     }), pollMs);
     return () => window.clearInterval(h);
   }, [entityId, pollMs]);
-  if (s === null) return null;
+  if (s === null || (s.conn === undefined && s.hold === undefined)) return null;
   return (
     <Box sx={ROOT_SX} data-testid="settings-status">
-      {s.owner !== undefined && <Item label="Owner" value={s.owner} testId="settings-status-owner" />}
-      <Item label="Level" value={String(s.level)} testId="settings-status-level" />
       {s.conn !== undefined && <Item label="Conn" value={s.conn} testId="settings-status-conn" />}
       {s.hold !== undefined && <Item label="Hold" value={s.hold} testId="settings-status-hold" wide />}
     </Box>
@@ -77,7 +77,7 @@ function Item({ label, value, testId, wide = false }: { label: string; value: st
 const C = HUD.color;
 const ROOT_SX = {
   flex: 'none', display: 'flex', flexWrap: 'wrap' as const, columnGap: 2, rowGap: 0.5,
-  px: 1.5, py: 0.75, borderBottom: WINDOW_EDGE, fontSize: 12,
+  py: 0.75, borderBottom: WINDOW_EDGE, fontSize: 12,
 } as const;
 const ITEM_SX = { whiteSpace: 'nowrap' as const } as const;
 const WIDE_SX = { flexBasis: '100%' } as const;

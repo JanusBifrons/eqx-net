@@ -13,6 +13,7 @@ import { HowlerAudioService } from './audio/HowlerAudioService';
 import { selectRenderer, installProfileWindow } from './app/gameSurfaceBootstrap';
 import { runGameSurfaceConnectFlow } from './app/gameSurfaceConnectFlow';
 import { shouldPauseTickerUnderUi, safeLocalStorage } from './app/automationTickerPause';
+import { useAnyWindowOpen } from '../ui/index.js';
 import {
   useServerHealthPoll,
   useShipSwapDispatcher,
@@ -279,6 +280,10 @@ function GameSurface({
   useEffect(() => {
     if (fleetPickDoneSeq > 0) rendererRef.current?.commitFleetPick();
   }, [fleetPickDoneSeq]);
+  const fleetPickUndoSeq = useUIStore((s) => s.fleetPick?.undoSeq ?? 0);
+  useEffect(() => {
+    if (fleetPickUndoSeq > 0) rendererRef.current?.undoFleetPickPoint();
+  }, [fleetPickUndoSeq]);
 
   // Radar (plan sparkling-wondering-rose) — clear the off-screen radar only
   // while IN_TRANSIT / ARRIVED (the mirror still holds the OLD sector). It stays
@@ -864,7 +869,9 @@ function GameSurface({
   // roundtrip. There we pause the ticker entirely while the
   // drawer is open. NOT keyed on `navigator.webdriver`: the
   // Playwright showcase recorder must film a live game behind menus.
-  const uiCoversGame = isDrawerOpen;
+  // A full-screen EqxWindow (the loot window) covers the game the same way.
+  const isWindowOpen = useAnyWindowOpen();
+  const uiCoversGame = isDrawerOpen || isWindowOpen;
   useEffect(() => {
     const renderer = rendererRef.current;
     if (!renderer) return;

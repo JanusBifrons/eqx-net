@@ -43,7 +43,7 @@ describe('GameHud right-thumb controls under a right panel', () => {
     document.body.innerHTML = '';
     useUIStore.setState({
       phase: 'galaxy-map', pilotMode: 'pilot', isDead: false, placementKind: null, buildMode: false,
-      rightPanel: null, structureSettingsOpen: false,
+      rightPanel: null,
     });
   });
 
@@ -63,8 +63,8 @@ describe('GameHud right-thumb controls under a right panel', () => {
     for (const id of RIGHT_THUMB_IDS) expect(shown(id), id).toBe(true);
   });
 
-  it('the building-settings panel hides them too', () => {
-    useUIStore.setState({ structureSettingsOpen: true });
+  it('the Details panel (where building settings live) hides them too', () => {
+    useUIStore.setState({ rightPanel: 'details' });
     render(
       <LayoutContext.Provider value={hosts() as never}>
         <GameHud touchInput={touchInput} />

@@ -55,6 +55,14 @@ export function pickAddPoint(s: FleetPickState, x: number, y: number): boolean {
   return true;
 }
 
+/** Undo (UI plan U3-3, the left strip): drop the last patrol waypoint.
+ *  False when not picking a patrol or there is no point to drop. */
+export function pickUndoPoint(s: FleetPickState): boolean {
+  if (s.kind !== 'patrol' || s.count === 0) return false;
+  s.count--;
+  return true;
+}
+
 /** Done is allowed: a patrol with enough points. */
 export function pickCanFinish(s: FleetPickState): boolean {
   return s.kind === 'patrol' && s.count >= FLEET_PICK_ROUTE_MIN;
