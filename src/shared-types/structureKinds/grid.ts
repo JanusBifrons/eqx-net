@@ -18,6 +18,7 @@ export const CAPITAL: StructureKind = {
   description: 'The Core. Pre-built root hub: baseline power output and the main mineral bank.',
   radius: 396, // bounding circle of the 560×560 footprint
   footprint: { w: 560, h: 560 },
+  deckSlot: 'hex',
   // structure-restyle 3i: the built-in crane bay (first load home), 500 × 300
   // past the +y edge with a 10 u gap (y 290..590), centre (0, 440). The ONE
   // definition: `CAPITAL_BAY` (rigCatalogue) derives from it.
@@ -48,6 +49,7 @@ export const CARGO_BAY: StructureKind = {
   description: 'A forward drop-off. Fly close to deposit loot; it joins your base storage network.',
   radius: 189, // bounding circle of the 320×200 footprint
   footprint: { w: 320, h: 200 },
+  deckSlot: 'small',
   maxHealth: 900,
   maxConnections: 1,
   isHub: false,
@@ -68,6 +70,7 @@ export const CONNECTOR: StructureKind = {
   // building. Floored well above the ~8 u collider/core-dot degeneracy point.
   radius: 46, // bounding circle of the 64×64 footprint
   footprint: { w: 64, h: 64 },
+  deckSlot: 'small',
   maxHealth: 200,
   maxConnections: 6,
   isHub: true,
@@ -85,6 +88,7 @@ export const SOLAR: StructureKind = {
   description: 'Power generator. Attaches to a hub and feeds the grid once built.',
   radius: 381, // bounding circle of the 700×300 footprint
   footprint: { w: 700, h: 300 },
+  deckSlot: 'hex',
   maxHealth: 300,
   maxConnections: 1,
   isHub: false,
@@ -102,6 +106,7 @@ export const MINER: StructureKind = {
   description: 'Drills asteroids in range for minerals (power-gated). A leaf node.',
   radius: 170, // bounding circle of the 240×240 footprint
   footprint: { w: 240, h: 240 },
+  deckSlot: 'small',
   maxHealth: 2000,
   maxConnections: 1,
   isHub: false,
@@ -135,6 +140,7 @@ export const TURRET: StructureKind = {
   description: 'Defensive turret. Targets hostile drones in range (power-gated). A leaf node.',
   radius: 99, // bounding circle of the 140×140 footprint
   footprint: { w: 140, h: 140 },
+  deckSlot: 'small',
   maxHealth: 600,
   maxConnections: 1,
   isHub: false,
@@ -171,6 +177,7 @@ export const BATTERY: StructureKind = {
     'Stores surplus power and discharges to keep the grid running through a deficit. A leaf node.',
   radius: 135, // bounding circle of the 190×190 footprint
   footprint: { w: 190, h: 190 },
+  deckSlot: 'small',
   maxHealth: 800,
   maxConnections: 1,
   isHub: false,
@@ -197,6 +204,7 @@ export const SHIELD_PYLON: StructureKind = {
   // (ShieldWall.ts centre-to-centre), so a smaller post does NOT shrink the wall.
   radius: 85, // bounding circle of the 120×120 footprint (restyle F2, was 72×72)
   footprint: { w: 120, h: 120 },
+  deckSlot: 'small',
   maxHealth: 800,
   maxConnections: 3,
   isHub: true,
@@ -218,6 +226,7 @@ export const LASER_BOLT_TURRET: StructureKind = {
   description: 'Fires travelling bolts at hostile drones in range (power-gated). A leaf node.',
   radius: 107, // bounding circle of the 150×150 footprint
   footprint: { w: 150, h: 150 },
+  deckSlot: 'small',
   maxHealth: 600,
   maxConnections: 1,
   isHub: false,
@@ -255,6 +264,7 @@ export const MISSILE_TURRET: StructureKind = {
   description: 'Launches homing missiles at hostile drones in range (power-gated). A leaf node.',
   radius: 135, // bounding circle of the 190×190 footprint
   footprint: { w: 190, h: 190 },
+  deckSlot: 'small',
   maxHealth: 800,
   maxConnections: 1,
   isHub: false,
@@ -293,6 +303,7 @@ export const SHIELD_GATE: StructureKind = {
   // Restyle F2: 120-wide towers round the unchanged 176 opening (gatePosts.ts).
   radius: 212, // bounding circle of the 416×72 footprint
   footprint: { w: GATE_W, h: GATE_DEPTH },
+  deckSlot: 'small',
   maxHealth: 1200,
   maxConnections: 3,
   isHub: true,
@@ -313,6 +324,7 @@ export const SHIELD_AIRLOCK: StructureKind = {
   // Restyle F2: 100-wide side blocks round the unchanged 192 opening.
   radius: 236, // bounding circle of the 392×260 footprint
   footprint: { w: AIRLOCK_W, h: AIRLOCK_H },
+  deckSlot: 'hex',
   maxHealth: 1800,
   maxConnections: 3,
   isHub: true,

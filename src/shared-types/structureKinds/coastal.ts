@@ -29,6 +29,7 @@ export const AA_QUAD_40MM: StructureKind = {
   description: 'A quad Bofors mount. Fast-training anti-fighter fire; prefers small craft. Uses munitions. A leaf node.',
   radius: 107, // bounding circle of the 150×150 footprint
   footprint: { w: 150, h: 150 },
+  deckSlot: 'small',
   maxHealth: 1200,
   maxConnections: 1,
   isHub: false,
@@ -52,6 +53,7 @@ export const DP_MOUNT_5IN: StructureKind = {
   description: 'A twin 5"/38 dual-purpose mount. Prefers gunships and light capitals. Uses munitions. A leaf node.',
   radius: 142, // bounding circle of the 200×200 footprint
   footprint: { w: 200, h: 200 },
+  deckSlot: 'small',
   maxHealth: 1800,
   maxConnections: 1,
   isHub: false,
@@ -75,6 +77,7 @@ export const COASTAL_CASEMATE_8IN: StructureKind = {
   description: 'A heavy gun in a concrete casemate. Fires only through its embrasure (120°). Uses munitions. A leaf node.',
   radius: 235, // bounding circle of the 360×300 footprint
   footprint: { w: 360, h: 300 },
+  deckSlot: 'hex',
   maxHealth: 4000,
   maxConnections: 1,
   isHub: false,
@@ -99,6 +102,7 @@ export const COASTAL_TURRET_11IN: StructureKind = {
   description: 'A capital-ship triple turret set in concrete. Trains all round; prefers capitals. Uses munitions. A leaf node.',
   radius: 297, // bounding circle of the 420×420 footprint
   footprint: { w: 420, h: 420 },
+  deckSlot: 'hex',
   maxHealth: 4500,
   maxConnections: 1,
   isHub: false,
@@ -122,6 +126,7 @@ export const COASTAL_BARBETTE_16IN: StructureKind = {
   description: 'Twin battleship guns under a casemate (145° of fire). Out-ranges most ships. Uses munitions. A leaf node.',
   radius: 368, // bounding circle of the 520×520 footprint
   footprint: { w: 520, h: 520 },
+  deckSlot: 'hex',
   maxHealth: 6000,
   maxConnections: 1,
   isHub: false,
@@ -145,6 +150,7 @@ export const COASTAL_LINDEMANN: StructureKind = {
   description: 'One enormous coast gun in a fortress casemate (120°). Outranges every ship afloat. Uses munitions. A leaf node.',
   radius: 426, // bounding circle of the 640×560 footprint
   footprint: { w: 640, h: 560 },
+  deckSlot: 'hex',
   maxHealth: 9000,
   maxConnections: 1,
   isHub: false,
@@ -169,6 +175,7 @@ export const SIEGE_GUN_80CM: StructureKind = {
   description: 'The largest gun ever built, on a rail carriage. One shell every two minutes, with a huge blast (60° of fire). Uses munitions. A leaf node.',
   radius: 475, // bounding circle of the 300×900 footprint
   footprint: { w: 300, h: 900 },
+  deckSlot: 'hex',
   maxHealth: 7000,
   maxConnections: 1,
   isHub: false,

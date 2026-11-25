@@ -17,6 +17,7 @@ export const HABITAT_MODULE: StructureKind = {
   description: 'Housing. Its residents use provisions and consumer goods from base storage and pay you taxes. A leaf node.',
   radius: 217, // bounding circle of the 360×240 footprint
   footprint: { w: 360, h: 240 },
+  deckSlot: 'small',
   maxHealth: 1500,
   maxConnections: 1,
   isHub: false,
@@ -34,6 +35,7 @@ export const TOWER_MODULE: StructureKind = {
   description: 'A residential spire. Wealthier residents use more consumer goods from base storage and pay more taxes. A leaf node.',
   radius: 170, // bounding circle of the 240×240 footprint
   footprint: { w: 240, h: 240 },
+  deckSlot: 'small',
   maxHealth: 2200,
   maxConnections: 1,
   isHub: false,
@@ -52,6 +54,7 @@ export const MINE_LAYER: StructureKind = {
   description: 'Lays proximity mines around itself from munitions in base storage. Mines go off on ships hostile to you. A leaf node.',
   radius: 156, // bounding circle of the 220×220 footprint
   footprint: { w: 220, h: 220 },
+  deckSlot: 'small',
   maxHealth: 1400,
   maxConnections: 1,
   isHub: false,
@@ -75,6 +78,7 @@ export const TELEPORTER: StructureKind = {
     'A pad paired with one partner. A jump swaps whatever sits on both pads (ships and cargo). Charges from spare power; the charge depends on distance.',
   radius: 566, // bounding circle of the 800×800 footprint
   footprint: { w: 800, h: 800 },
+  deckSlot: 'hex',
   maxHealth: 2500,
   maxConnections: 1,
   isHub: false,
@@ -93,6 +97,7 @@ export const TELEPORTER_LARGE: StructureKind = {
     'A massive pad paired with one partner, sized for the largest hulls. A jump swaps whatever sits on both pads. Charges from spare power.',
   radius: 1500, // bounding circle of the 2120×2120 footprint
   footprint: { w: 2120, h: 2120 },
+  deckSlot: 'plate',
   maxHealth: 8000,
   maxConnections: 1,
   isHub: false,
@@ -118,6 +123,7 @@ export const ALIEN_GATE: StructureKind = {
     'An ancient gate twinned with one across the border. It jumps on its own every minute, free, and disables anyone who attacks it.',
   radius: 1132, // bounding circle of the 1600×1600 footprint
   footprint: { w: 1600, h: 1600 },
+  deckSlot: 'plate',
   maxHealth: 1_000_000,
   maxConnections: 0,
   isHub: false,
@@ -143,6 +149,7 @@ export const POCKET_PAD: StructureKind = {
     'A free pad linked to another pocket of this system. Fly onto it and it jumps you across, instantly and safely.',
   radius: 566, // bounding circle of the 800×800 footprint
   footprint: { w: 800, h: 800 },
+  deckSlot: 'hex',
   maxHealth: 1_000_000,
   maxConnections: 0,
   isHub: false,
