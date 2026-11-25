@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import path from 'node:path';
-import { gateDecision, keyCookie, laneServerEnv, newKey, parseTunnelUrl, readCookie, PHONE_COOKIE } from '../../scripts/dev/phone-lane-core.mjs';
+import { gateDecision, keyCookie, laneGoogleEnv, laneServerEnv, newKey, parseNamedTunnel, parseTunnelUrl, tunnelArgs, readCookie, PHONE_COOKIE } from '../../scripts/dev/phone-lane-core.mjs';
 
 const KEY = 'k3y_abc-DEF123';
 
@@ -66,6 +66,38 @@ describe('tunnel address', () => {
     ].join('\n');
     expect(parseTunnelUrl(out)).toBe('https://brave-otter-sample-words.trycloudflare.com');
     expect(parseTunnelUrl('INF Requesting new quick Tunnel on trycloudflare.com...')).toBeUndefined();
+  });
+});
+
+describe('named tunnel (fixed address on the owner domain)', () => {
+  const cfg = { hostname: 'play.example.com', tunnelId: '0000-tunnel-id', credentialsFile: 'C:/cf/0000.json' };
+
+  it('no file means a quick tunnel', () => {
+    expect(parseNamedTunnel(undefined)).toBeUndefined();
+    expect(tunnelArgs(undefined)).toEqual(['tunnel', '--no-autoupdate', '--metrics', '127.0.0.1:20590', '--url', 'http://localhost:8090']);
+  });
+
+  it('a complete file runs that tunnel by id, pointed at the preview port', () => {
+    const named = parseNamedTunnel(JSON.stringify(cfg));
+    expect(named).toEqual(cfg);
+    expect(tunnelArgs(named)).toEqual(['tunnel', '--no-autoupdate', '--metrics', '127.0.0.1:20590',
+      'run', '--credentials-file', cfg.credentialsFile, '--url', 'http://localhost:8090', cfg.tunnelId]);
+  });
+
+  it('an incomplete or bad file fails loudly instead of falling back to a random address', () => {
+    expect(() => parseNamedTunnel(JSON.stringify({ ...cfg, tunnelId: '' }))).toThrow(/tunnelId/);
+    expect(() => parseNamedTunnel(JSON.stringify({ ...cfg, hostname: 'evil.com/x' }))).toThrow(/hostname/);
+    expect(() => parseNamedTunnel('{')).toThrow();
+  });
+});
+
+describe('named-tunnel Google sign-in env', () => {
+  it('uses the main .env client and a redirect on the fixed address', () => {
+    expect(laneGoogleEnv({ GOOGLE_API_CLIENT_ID: 'id', GOOGLE_API_CLIENT_SECRET: 's', GOOGLE_REDIRECT_URI: 'http://localhost:5173/x' }, 'play.example.com'))
+      .toEqual({ GOOGLE_API_CLIENT_ID: 'id', GOOGLE_API_CLIENT_SECRET: 's', GOOGLE_REDIRECT_URI: 'https://play.example.com/auth/google/callback' });
+  });
+  it('adds nothing when the client is not configured', () => {
+    expect(laneGoogleEnv({ GOOGLE_API_CLIENT_ID: 'id' }, 'play.example.com')).toEqual({});
   });
 });
 

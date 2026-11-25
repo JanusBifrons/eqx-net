@@ -281,3 +281,15 @@ describe('LeftStripHost in Fly (T4)', () => {
     });
   }
 });
+
+describe('the strip hosts the building section (U3-6)', () => {
+  it('your own switchable building in Build shows Power on the strip; not in Command', () => {
+    panelData = { name: 'Turret', hpPct: 100, shieldPct: null, entityId: 9, isStructure: true, isOwn: true, powerSwitch: true };
+    useUIStore.setState({ buildMode: true });
+    mount();
+    select([], 'swarm-9', 'structure');
+    expect(screen.getByTestId('left-strip-power')).toBeInTheDocument();
+    act(() => { useUIStore.setState({ buildMode: false }); });
+    expect(screen.queryByTestId('left-strip-power')).toBeNull();
+  });
+});

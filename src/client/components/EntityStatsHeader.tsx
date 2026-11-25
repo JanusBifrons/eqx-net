@@ -11,7 +11,7 @@ export function EntityStatsHeader({ data }: { data: PanelData }): JSX.Element {
   return data.isStructure ? (
     // Building-panels A2 — the compact building card: badge, name, Lv, short
     // hull, power icon, one status chip (+ the "making" slot). Detail lives
-    // in the settings side panel behind the Open button.
+    // in the Details panel's Settings section (StructureSettings.tsx).
     <StructureCardRows d={data} />
   ) : (
     <Box sx={NAME_SX} data-testid="entity-stats-name">{data.name}</Box>
