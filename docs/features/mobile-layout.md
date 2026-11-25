@@ -15,7 +15,8 @@ The slot system replaces that with twelve named anchors and a single z-index tab
 | Anchor | Layout | Typical residents |
 |---|---|---|
 | `top-left` | Column, growing down. Below AppBar + safe-area-top. | HUD chips (sector, hull, ammo, connection, clock) |
-| `top-center` | Column, centered. | MAP button (touch) |
+| `top-center` | Column, centered. | Status capsule, lock band, disabled countdown, pilot toggle (touch) |
+| `top-center-prompt` | Column, centered, `prompt` tier (above Windows); top just under the `top-center` column (`--hud-tc-bottom`, `layout/topCenterPromptFit.ts`). | EqxPrompt: toll / pair prompts, warp-in warning, teleport warning, warp status chip, trade toasts |
 | `top-right` | Column, growing down, right-aligned. | FullscreenToggle, ShipStatsCard |
 | `middle-center` / `middle-right` | Available; unused today. | reserved |
 | `bottom-left` | Column-reverse, growing up. Above safe-area-bottom + `--mobile-edge-inset`. | Joystick zone (touch) |

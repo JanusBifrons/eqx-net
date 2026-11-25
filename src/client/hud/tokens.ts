@@ -326,6 +326,23 @@ export const HUD = {
     btnFont: 13,
     btnRadius: 6,
   },
+  /** EqxPrompt: the top-centre answer-me prompt and toast. Px; colours from `color`. */
+  prompt: {
+    /** Card paper (the strip / fly-out paper, a touch see-through). */
+    bg: 'rgba(8,12,24,0.92)',
+    /** Message text and the gap between the message and the buttons. */
+    font: 11,
+    gap: 4,
+    padY: 4,
+    padX: 8,
+    radius: 5,
+    /** Width cap: narrow on a sideways phone, never wider than this on desktop. */
+    maxW: 'min(80vw, 360px)',
+    /** A faded prompt (an all-clear readout). */
+    dimOpacity: 0.7,
+    /** Gap between stacked prompts. */
+    stackGap: 4,
+  },
 } as const;
 
 export function hullColor(pct: number): string {
