@@ -14,7 +14,7 @@
  * GALAXY_FACTIONS / ENTRY_SECTOR_KEYS literals — your edit will be lost on the
  * next regen. Hand-edit the types + helper functions freely (they are stable).
  *
- * Pure module: no I/O, no imports outside the TS stdlib. Both the server (room
+ * Pure module: no I/O; imports only the core hex maths (../hex/hex.ts). Both the server (room
  * registration, neighbour validation) and the client (galaxy map) consume this.
  *
  * Topology: a home CORE (Sol Dominion) + 3 frontier regions (Verdant Reach,
@@ -22,11 +22,10 @@
  * single chokepoint gateway. See docs/architecture/galaxy-graph.md.
  */
 
-/** Axial hex coordinates. q runs east, r runs south-east. (0,0) = centre. */
-export interface AxialHex {
-  q: number;
-  r: number;
-}
+import { axialToPixel, type AxialHex } from '../hex/hex.js';
+
+/** Axial hex coordinates and the pointy-top projection live in hex/hex.ts. */
+export { axialToPixel, type AxialHex };
 
 export type AsteroidConfigKey = 'sparse' | 'dense' | 'none';
 
@@ -420,9 +419,3 @@ export function isEntrySector(key: string): boolean {
   return ENTRY_SECTOR_KEYS.has(key);
 }
 
-/** Standard pointy-top axial→pixel projection. Used by the map renderer. */
-export function axialToPixel(hex: AxialHex, size: number): { x: number; y: number } {
-  const x = size * Math.sqrt(3) * (hex.q + hex.r / 2);
-  const y = size * (3 / 2) * hex.r;
-  return { x, y };
-}
