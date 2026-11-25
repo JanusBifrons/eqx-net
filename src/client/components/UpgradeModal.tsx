@@ -1,20 +1,9 @@
 import type { RosterEntry } from '../state/storeTypes';
 import { RESPEC_CREDIT_COST } from '../../shared-types/goods';
 import { useEffect, useMemo, useState } from 'react';
-import {
-  Box,
-  Button,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
-  IconButton,
-  Stack,
-  Typography,
-} from '@mui/material';
+import { Box, Button, IconButton, Stack, Typography } from '@mui/material';
 import AddIcon from '@mui/icons-material/Add';
 import RemoveIcon from '@mui/icons-material/Remove';
-import RestartAltIcon from '@mui/icons-material/RestartAlt';
 import { getShipKind } from '../../shared-types/shipKinds';
 import { weaponUnlocked } from '../../shared-types/blueprints';
 import { useUIStore } from '../state/store';
@@ -27,7 +16,8 @@ import {
   remainingPoints,
   draftToAlloc,
 } from './upgradeModalDraft';
-import { GAME_DIALOG_CONTENT_SX, GAME_DIALOG_PAPER_SX, GAME_DIALOG_TITLE_SX } from './gameDialogChrome';
+import { EqxButton, EqxWindow } from '../../ui/index.js';
+import { HUD } from '../hud/tokens';
 
 /**
  * Ship stat-upgrade modal (Phase 4 WS-B2, plan: effervescent-umbrella). Spend
@@ -35,9 +25,9 @@ import { GAME_DIALOG_CONTENT_SX, GAME_DIALOG_PAPER_SX, GAME_DIALOG_TITLE_SX } fr
  * stat pool (+max hull, +energy, +damage %, +top speed, +turn rate,
  * +shield/regen), with a respec that refunds every point.
  *
- * Cloned from `ShipDetailModal` (same `xs` Dialog chrome). `keepMounted` (the
- * drawer-perf rule — MUI Modal cold-mount is the dominant first-open cost). The
- * server is the authority: `Apply` sends `apply_ship_upgrade { shipId, alloc }`
+ * Drawn in the one Window (`EqxWindow`): title + ✕ header, the stat rows, a
+ * footer with Respec / Close / Apply; full screen on a phone. The host mounts
+ * it only while open. The server is the authority: `Apply` sends `apply_ship_upgrade { shipId, alloc }`
  * and `Respec` sends `respec_ship { shipId }`; the physics multipliers re-anchor
  * off the authoritative own-ship snapshot slice, never this modal (risk #1).
  *
@@ -55,6 +45,11 @@ interface UpgradeModalProps {
 
 /** Selectable weapons for a freshly-activated mount (WS-B3) — mirrors the
  *  catalogue `MountWeaponIdSchema`. The player picks one per latent slot. */
+/** The window body's padding (the window draws no padding of its own). */
+const BODY_STYLE = { padding: `${HUD.window.padY}px ${HUD.window.padX}px` } as const;
+const TITLE_STYLE = { display: 'inline-flex', alignItems: 'center', gap: HUD.window.gap } as const;
+const GROW_STYLE = { flex: 1 } as const;
+
 const MOUNT_WEAPON_CHOICES: ReadonlyArray<{ id: 'hitscan' | 'laser' | 'heat-seeker'; label: string }> = [
   { id: 'laser', label: 'Bolt' },
   { id: 'hitscan', label: 'Beam' },
@@ -107,20 +102,24 @@ export function UpgradeModal({ ship, open, onClose, onApply, onRespec, onActivat
   const fitted = useUIStore((s) => s.fittedBlueprints);
 
   return (
-    <Dialog
+    <EqxWindow
       open={open}
       onClose={onClose}
-      keepMounted
-      maxWidth="xs"
-      fullWidth
-      data-testid="upgrade-modal"
-      PaperProps={{ sx: GAME_DIALOG_PAPER_SX }}
+      testId="upgrade-modal"
+      closeTestId="upgrade-modal-x"
+      title={<span style={TITLE_STYLE}><span>{kind.displayName}</span><LevelBadge level={level} /></span>}
+      footer={(
+        <>
+          <EqxButton tone="danger" onClick={handleRespec} data-testid="upgrade-respec">
+            {`Respec (${RESPEC_CREDIT_COST} cr)`}
+          </EqxButton>
+          <span style={GROW_STYLE} />
+          <EqxButton onClick={onClose} data-testid="upgrade-close">Close</EqxButton>
+          <EqxButton tone="primary" onClick={handleApply} disabled={!dirty} data-testid="upgrade-apply">Apply</EqxButton>
+        </>
+      )}
     >
-      <DialogTitle sx={GAME_DIALOG_TITLE_SX}>
-        <span>{kind.displayName}</span>
-        <LevelBadge level={level} />
-      </DialogTitle>
-      <DialogContent sx={GAME_DIALOG_CONTENT_SX}>
+      <div style={BODY_STYLE}>
         <Typography
           variant="caption"
           data-testid="upgrade-points-remaining"
@@ -240,29 +239,7 @@ export function UpgradeModal({ ship, open, onClose, onApply, onRespec, onActivat
             </Stack>
           </Box>
         )}
-      </DialogContent>
-      <DialogActions sx={{ bgcolor: '#0c1020', justifyContent: 'space-between', px: 2.5, pb: 2 }}>
-        <Button
-          onClick={handleRespec}
-          startIcon={<RestartAltIcon />}
-          data-testid="upgrade-respec"
-          sx={{ color: '#ffb347', border: '1px solid #5a4520', '&:hover': { bgcolor: 'rgba(255,179,71,0.08)' } }}
-        >
-          {`Respec (${RESPEC_CREDIT_COST} cr)`}
-        </Button>
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button onClick={onClose} sx={{ color: '#9aa0b4' }} data-testid="upgrade-close">Close</Button>
-          <Button
-            onClick={handleApply}
-            variant="contained"
-            data-testid="upgrade-apply"
-            disabled={!dirty}
-            sx={{ bgcolor: '#1f7a4d', color: '#fff', '&:hover': { bgcolor: '#288c5b' } }}
-          >
-            Apply
-          </Button>
-        </Box>
-      </DialogActions>
-    </Dialog>
+      </div>
+    </EqxWindow>
   );
 }
