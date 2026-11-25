@@ -9,6 +9,7 @@ import { BASE_FLOW_OPTS, BASE_LOOP_OPTS } from './scenarioLayouts.js';
 import { StructureRegistry } from '../structures/StructureRegistry.js';
 import { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { perfSceneById } from '../../shared-types/perf/perfScenes.js';
 
 type Layout = { prebuiltStructures: ReadonlyArray<{ kind: string; x: number; y: number; rot?: number }> };
 
@@ -73,6 +74,24 @@ describe('base-loop perf base', () => {
   it('puts the Shipyard on a blueprint recipe', () => {
     const yard = BASE_LOOP_OPTS.prebuiltStructures.find((p) => p.kind === 'shipyard');
     expect(yard?.recipe).toBe('build_interceptor');
+  });
+});
+
+describe('base-loop teleporters (redesign T6)', () => {
+  it('puts the paired pads and the Ancients\x27 gate inside a sideways phone\x27s view', () => {
+    // The runner's phone-proxy hold: 915 × 412 CSS px at zoom × 915 / 1920.
+    const cam = perfSceneById('base-loop')!.camera;
+    const scale = cam.zoom * (915 / 1920);
+    const halfW = 915 / 2 / scale, halfH = 412 / 2 / scale;
+    const inView = (x: number, y: number, half: number): boolean =>
+      Math.abs(x - cam.x) + half <= halfW && Math.abs(y - cam.y) + half <= halfH;
+    const pads = BASE_LOOP_OPTS.prebuiltStructures.filter((p) => p.kind === 'teleporter');
+    expect(pads).toHaveLength(2);
+    expect(BASE_LOOP_OPTS.pairTeleporters).toBe(true);
+    const padHalf = getStructureKind('teleporter').footprint.w / 2;
+    for (const p of pads) expect(inView(p.x, p.y, padHalf), `pad ${p.x},${p.y}`).toBe(true);
+    const gate = BASE_LOOP_OPTS.testAlienGate;
+    expect(inView(gate.x, gate.y, getStructureKind('alien_gate').footprint.w / 2)).toBe(true);
   });
 });
 

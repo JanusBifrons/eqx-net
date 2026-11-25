@@ -1,0 +1,3437 @@
+{
+  "when": "2026-11-25T18:57:35.173Z",
+  "device": "phone-proxy",
+  "reps": 16,
+  "cpuRate": 2,
+  "noiseCheck": false,
+  "host": {
+    "hostname": "2T9394",
+    "platform": "win32 10.0.26200",
+    "node": "v24.14.0",
+    "cpuModel": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "threads": 16,
+    "totalMemMb": 31849,
+    "freeMemMbAtStart": 4775,
+    "gpuRenderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 5070 Ti (0x00002C05) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "browserArgs": [
+      "--use-angle=d3d11",
+      "--ignore-gpu-blocklist",
+      "--enable-gpu-rasterization",
+      "--disable-background-timer-throttling",
+      "--disable-renderer-backgrounding",
+      "--disable-backgrounding-occluded-windows"
+    ],
+    "headed": false
+  },
+  "load": {
+    "gate": false,
+    "limits": {
+      "minFreeMemMb": 1024,
+      "maxCpuPct": 25
+    },
+    "ignorePorts": [],
+    "portOffset": 300,
+    "atStart": {
+      "at": "2026-11-25T18:41:57.991Z",
+      "cpuPct": 12.3,
+      "cpuWindowMs": 1000,
+      "threads": 16,
+      "freeMemMb": 12480,
+      "totalMemMb": 31849,
+      "foreignListeners": [
+        {
+          "port": 2590,
+          "pid": 23828,
+          "name": "node.exe",
+          "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+        },
+        {
+          "port": 8090,
+          "pid": 26112,
+          "name": "node.exe",
+          "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+        }
+      ],
+      "foreignProcs": {
+        "node": 13,
+        "chrome": 10
+      }
+    }
+  },
+  "arms": [
+    {
+      "name": "base",
+      "sha": "5809ce3b1",
+      "clientParams": {
+        "shipKind": "fighter",
+        "initialHull": "1000000",
+        "art": "machined",
+        "fx": "new",
+        "diag": "0",
+        "perfprobe": "1"
+      },
+      "serverEnv": {}
+    },
+    {
+      "name": "head",
+      "sha": "11a840871",
+      "clientParams": {
+        "shipKind": "fighter",
+        "initialHull": "1000000",
+        "art": "machined",
+        "fx": "new",
+        "diag": "0",
+        "perfprobe": "1"
+      },
+      "serverEnv": {}
+    }
+  ],
+  "scenes": {
+    "base-loop": {
+      "title": "The Sunday-loop base in an asteroid sector: Shipyard building, shield wall up, teleporters by a gate",
+      "injected": {
+        "serverBurnMs": 0,
+        "clientBurnMs": 0
+      },
+      "verdict": {
+        "status": "GREEN",
+        "rows": [
+          {
+            "metric": "clientFrameP95",
+            "base": 16.7,
+            "head": 16.8,
+            "ratio": 1.01,
+            "p": 0.15,
+            "status": "GREEN"
+          },
+          {
+            "metric": "clientHitchesPerMin",
+            "base": 4.92,
+            "head": 5.94,
+            "ratio": 1.21,
+            "p": 0.48,
+            "status": "GREEN"
+          },
+          {
+            "metric": "displayObjects",
+            "base": 1492,
+            "head": 1255,
+            "ratio": 0.84,
+            "p": 0,
+            "status": "GREEN"
+          },
+          {
+            "metric": "renderP95",
+            "base": 1.35,
+            "head": 1.3,
+            "ratio": 0.96,
+            "p": 0.77,
+            "status": "GREEN"
+          },
+          {
+            "metric": "rxKBps",
+            "base": 14.95,
+            "head": 14.98,
+            "ratio": 1,
+            "p": 0.04,
+            "status": "GREEN"
+          },
+          {
+            "metric": "serverTickP95",
+            "base": 0.43,
+            "head": 0.44,
+            "ratio": 1.02,
+            "p": 0.96,
+            "status": "GREEN"
+          },
+          {
+            "metric": "serverTickP99",
+            "base": 0.59,
+            "head": 0.68,
+            "ratio": 1.15,
+            "p": 0.83,
+            "status": "GREEN"
+          },
+          {
+            "metric": "clientFrameP99",
+            "base": 16.8,
+            "head": 16.8,
+            "ratio": 1,
+            "p": 0.36,
+            "status": "PRINT"
+          },
+          {
+            "metric": "heapMb",
+            "base": 98,
+            "head": 93,
+            "ratio": 0.95,
+            "p": 0.13,
+            "status": "PRINT"
+          },
+          {
+            "metric": "longTaskMsPerMin",
+            "base": 50.19,
+            "head": 0,
+            "ratio": 0,
+            "p": 0.66,
+            "status": "PRINT"
+          },
+          {
+            "metric": "navExpanded",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "navInFlightMax",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "navMessages",
+            "base": 5,
+            "head": 0.5,
+            "ratio": 0.1,
+            "p": 0,
+            "status": "PRINT"
+          },
+          {
+            "metric": "navRoutes",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "renderP99",
+            "base": 2,
+            "head": 2.05,
+            "ratio": 1.02,
+            "p": 0.7,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverAiAgentsPerTick",
+            "base": 2.94,
+            "head": 2.94,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverBodiesPerTick",
+            "base": 4.22,
+            "head": 4.01,
+            "ratio": 0.95,
+            "p": 0,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverContactsPerTick",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverCpuMsPerTick",
+            "base": 17.19,
+            "head": 17.02,
+            "ratio": 0.99,
+            "p": 0.47,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverEntitiesPerSnapshot",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverSwarmBytesPerTick",
+            "base": 10,
+            "head": 10,
+            "ratio": 1,
+            "p": 0.9,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverSwarmRecordsPerTick",
+            "base": 0.27,
+            "head": 0.29,
+            "ratio": 1.06,
+            "p": 0.12,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverTickMax",
+            "base": 6.51,
+            "head": 6.82,
+            "ratio": 1.05,
+            "p": 0.34,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverUpdateCpuMsPerTick",
+            "base": 0.26,
+            "head": 0,
+            "ratio": 0,
+            "p": 0.14,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverWingmanHostileQueriesPerTick",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverWingmanHostileScansPerTick",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverWingmanReplansPerTick",
+            "base": 2.94,
+            "head": 2.94,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverWingmenPerTick",
+            "base": 2.94,
+            "head": 2.94,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "sprites",
+            "base": 22,
+            "head": 22,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "swarmAtEnd",
+            "base": 260,
+            "head": 260,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "workerElu",
+            "base": 0.03,
+            "head": 0.03,
+            "ratio": 1.02,
+            "p": 0.99,
+            "status": "PRINT"
+          },
+          {
+            "metric": "workerTickP95",
+            "base": 0.71,
+            "head": 0.73,
+            "ratio": 1.03,
+            "p": 0.93,
+            "status": "PRINT"
+          }
+        ]
+      },
+      "base": [
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 1.53,
+            "serverTickP99": 2.83,
+            "serverTickMax": 9.12,
+            "workerTickP95": 1.75,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 17.765495459928935,
+            "renderP95": 2.1,
+            "renderP99": 5.5,
+            "longTaskMsPerMin": 110.54086063955782,
+            "serverCpuMsPerTick": 14.671,
+            "serverUpdateCpuMsPerTick": 0.59,
+            "workerElu": 0.055
+          },
+          "counts": {
+            "rxKBps": 14.952143425532965,
+            "displayObjects": 1492,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 104,
+            "serverBodiesPerTick": 4.21,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.28,
+            "serverSwarmBytesPerTick": 10,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 5,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:29:41.155Z",
+              "cpuPct": 36.5,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 1450,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 17,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:30:18.803Z",
+              "cpuPct": 58.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13420,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 19,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.44,
+            "serverTickP99": 0.64,
+            "serverTickMax": 6.01,
+            "workerTickP95": 0.69,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 5.90493061706525,
+            "renderP95": 1.5,
+            "renderP99": 2.6,
+            "longTaskMsPerMin": 100.38382049010924,
+            "serverCpuMsPerTick": 17.629,
+            "serverUpdateCpuMsPerTick": 0.945,
+            "workerElu": 0.031
+          },
+          "counts": {
+            "rxKBps": 14.973573897746284,
+            "displayObjects": 1492,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 98,
+            "serverBodiesPerTick": 4.09,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.27,
+            "serverSwarmBytesPerTick": 10,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 3,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:31:59.414Z",
+              "cpuPct": 52.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 8246,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 17,
+                "chrome": 11
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:32:36.855Z",
+              "cpuPct": 25.4,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 7719,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 14,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.49,
+            "serverTickP99": 0.74,
+            "serverTickMax": 3,
+            "workerTickP95": 0.69,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 15.754751042111137,
+            "renderP95": 1.7,
+            "renderP99": 3.9,
+            "longTaskMsPerMin": 129.97669609741686,
+            "serverCpuMsPerTick": 16.944,
+            "serverUpdateCpuMsPerTick": 0.087,
+            "workerElu": 0.032
+          },
+          "counts": {
+            "rxKBps": 14.983841379607444,
+            "displayObjects": 1492,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 87,
+            "serverBodiesPerTick": 4.9,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.29,
+            "serverSwarmBytesPerTick": 11,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 11,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:32:38.287Z",
+              "cpuPct": 21.8,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 7627,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 14,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:33:14.372Z",
+              "cpuPct": 23.4,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 15644,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.65,
+            "serverTickP99": 1.03,
+            "serverTickMax": 8.61,
+            "workerTickP95": 0.98,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 33.3,
+            "clientHitchesPerMin": 24.02562733582488,
+            "renderP95": 2.2,
+            "renderP99": 6.8,
+            "longTaskMsPerMin": 124.13240790176188,
+            "serverCpuMsPerTick": 16.934,
+            "serverUpdateCpuMsPerTick": 0.432,
+            "workerElu": 0.041
+          },
+          "counts": {
+            "rxKBps": 14.8971402829685,
+            "displayObjects": 1492,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 111,
+            "serverBodiesPerTick": 4.17,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.24,
+            "serverSwarmBytesPerTick": 9,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 3,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:34:55.564Z",
+              "cpuPct": 86.3,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 5069,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 30,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:35:36.409Z",
+              "cpuPct": 73.7,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2469,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 2614,
+                  "pid": 29488,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\gate-seal-a3\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import"
+                },
+                {
+                  "port": 5220,
+                  "pid": 27508,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\gate-seal-a3\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5220 --strictPort"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                },
+                {
+                  "port": 24725,
+                  "pid": 27508,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\gate-seal-a3\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5220 --strictPort"
+                }
+              ],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 14
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 2.95,
+            "serverTickP99": 11.11,
+            "serverTickMax": 19.27,
+            "workerTickP95": 1.92,
+            "clientFrameP95": 33.2,
+            "clientFrameP99": 33.4,
+            "clientHitchesPerMin": 67.60787432889242,
+            "renderP95": 4.5,
+            "renderP99": 14.6,
+            "longTaskMsPerMin": 127.26188108967985,
+            "serverCpuMsPerTick": 11.467,
+            "serverUpdateCpuMsPerTick": 0.344,
+            "workerElu": 0.066
+          },
+          "counts": {
+            "rxKBps": 14.888063295386758,
+            "displayObjects": 1492,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 98,
+            "serverBodiesPerTick": 3.92,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.24,
+            "serverSwarmBytesPerTick": 9,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:35:38.429Z",
+              "cpuPct": 98.5,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2267,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 2614,
+                  "pid": 29488,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\gate-seal-a3\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import"
+                },
+                {
+                  "port": 5220,
+                  "pid": 27508,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\gate-seal-a3\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5220 --strictPort"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                },
+                {
+                  "port": 24725,
+                  "pid": 27508,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\gate-seal-a3\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5220 --strictPort"
+                }
+              ],
+              "foreignProcs": {
+                "node": 23,
+                "chrome": 14
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:36:18.036Z",
+              "cpuPct": 42,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 4447,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.63,
+            "serverTickP99": 1.17,
+            "serverTickMax": 9.51,
+            "workerTickP95": 0.83,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 2.0028707814534163,
+            "renderP95": 1.6,
+            "renderP99": 2.3,
+            "longTaskMsPerMin": 118.16937610575157,
+            "serverCpuMsPerTick": 17.317,
+            "serverUpdateCpuMsPerTick": 0.175,
+            "workerElu": 0.035
+          },
+          "counts": {
+            "rxKBps": 14.937328139082684,
+            "displayObjects": 1492,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 98,
+            "serverBodiesPerTick": 4.07,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.26,
+            "serverSwarmBytesPerTick": 9,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 1,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:38:07.144Z",
+              "cpuPct": 56.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 4685,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 14,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:38:44.318Z",
+              "cpuPct": 31.1,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 10108,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 14,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.42,
+            "serverTickP99": 0.59,
+            "serverTickMax": 2.38,
+            "workerTickP95": 0.68,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 6.0164449495287124,
+            "renderP95": 1.4,
+            "renderP99": 2.1,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 16.756,
+            "serverUpdateCpuMsPerTick": 1.093,
+            "workerElu": 0.031
+          },
+          "counts": {
+            "rxKBps": 14.939271508790695,
+            "displayObjects": 1492,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 93,
+            "serverBodiesPerTick": 4.13,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.26,
+            "serverSwarmBytesPerTick": 10,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 3,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:38:45.748Z",
+              "cpuPct": 35.5,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 9799,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 14,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:39:22.653Z",
+              "cpuPct": 52.3,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 5660,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 14,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.37,
+            "serverTickP99": 0.54,
+            "serverTickMax": 5.63,
+            "workerTickP95": 0.73,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 1.965795164143896,
+            "renderP95": 1.3,
+            "renderP99": 1.8,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.546,
+            "serverUpdateCpuMsPerTick": 1.104,
+            "workerElu": 0.031
+          },
+          "counts": {
+            "rxKBps": 14.958568563249461,
+            "displayObjects": 1492,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 104,
+            "serverBodiesPerTick": 4.06,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.28,
+            "serverSwarmBytesPerTick": 10,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 1,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:41:01.929Z",
+              "cpuPct": 49.4,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 1887,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 30,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:41:40.444Z",
+              "cpuPct": 20.7,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 10981,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.84,
+            "serverTickP99": 1.78,
+            "serverTickMax": 25.76,
+            "workerTickP95": 1.17,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 14.251297886057479,
+            "renderP95": 1.6,
+            "renderP99": 3.6,
+            "longTaskMsPerMin": 232.09256557293608,
+            "serverCpuMsPerTick": 16.396,
+            "serverUpdateCpuMsPerTick": 1.033,
+            "workerElu": 0.044
+          },
+          "counts": {
+            "rxKBps": 15.060488488683792,
+            "displayObjects": 1492,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 93,
+            "serverBodiesPerTick": 4.22,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.31,
+            "serverSwarmBytesPerTick": 11,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 5,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:42:07.230Z",
+              "cpuPct": 27.3,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 10885,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:42:44.585Z",
+              "cpuPct": 84.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3290,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 14,
+                "chrome": 11
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.43,
+            "serverTickP99": 0.58,
+            "serverTickMax": 7,
+            "workerTickP95": 0.7,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 3.9372662248179013,
+            "renderP95": 1.2,
+            "renderP99": 1.7,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.25,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.03
+          },
+          "counts": {
+            "rxKBps": 14.915856314390707,
+            "displayObjects": 1492,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 104,
+            "serverBodiesPerTick": 4.32,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.25,
+            "serverSwarmBytesPerTick": 9,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 7,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:44:24.193Z",
+              "cpuPct": 26.7,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 1668,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 14,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:45:01.016Z",
+              "cpuPct": 40,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3241,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.31,
+            "serverTickP99": 0.43,
+            "serverTickMax": 1.73,
+            "workerTickP95": 0.65,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 1.9699257994615533,
+            "renderP95": 1.2,
+            "renderP99": 1.6,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.083,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.028
+          },
+          "counts": {
+            "rxKBps": 14.919687048558671,
+            "displayObjects": 1496,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 93,
+            "serverBodiesPerTick": 4.2,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.25,
+            "serverSwarmBytesPerTick": 9,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 3,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:45:02.437Z",
+              "cpuPct": 35.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3238,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:45:39.252Z",
+              "cpuPct": 26.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3172,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.41,
+            "serverTickP99": 0.58,
+            "serverTickMax": 6.55,
+            "workerTickP95": 0.71,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 1.9727108334703272,
+            "renderP95": 1.2,
+            "renderP99": 1.7,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.959,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.031
+          },
+          "counts": {
+            "rxKBps": 14.980561862978794,
+            "displayObjects": 1492,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 104,
+            "serverBodiesPerTick": 4.29,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.29,
+            "serverSwarmBytesPerTick": 11,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 5,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:47:12.987Z",
+              "cpuPct": 26.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2888,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 12
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:47:49.559Z",
+              "cpuPct": 32.3,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2975,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.33,
+            "serverTickP99": 0.45,
+            "serverTickMax": 1.92,
+            "workerTickP95": 0.69,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 1.9688269073010665,
+            "renderP95": 1.2,
+            "renderP99": 1.7,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.473,
+            "serverUpdateCpuMsPerTick": 1.443,
+            "workerElu": 0.029
+          },
+          "counts": {
+            "rxKBps": 15.016631203855619,
+            "displayObjects": 1492,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 93,
+            "serverBodiesPerTick": 4.37,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.28,
+            "serverSwarmBytesPerTick": 10,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 7,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:47:50.963Z",
+              "cpuPct": 26.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2977,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:48:27.314Z",
+              "cpuPct": 21.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2845,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.36,
+            "serverTickP99": 0.48,
+            "serverTickMax": 6.47,
+            "workerTickP95": 0.71,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 3.9313327217926872,
+            "renderP95": 1.2,
+            "renderP99": 1.8,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.343,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.03
+          },
+          "counts": {
+            "rxKBps": 14.93714474675665,
+            "displayObjects": 1492,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 87,
+            "serverBodiesPerTick": 4.27,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.27,
+            "serverSwarmBytesPerTick": 10,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 5,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:50:02.123Z",
+              "cpuPct": 22.7,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2857,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:50:38.811Z",
+              "cpuPct": 24.4,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3000,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.36,
+            "serverTickP99": 0.49,
+            "serverTickMax": 2.28,
+            "workerTickP95": 0.68,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 7.88306782722943,
+            "renderP95": 1.2,
+            "renderP99": 1.9,
+            "longTaskMsPerMin": 100.50911479717524,
+            "serverCpuMsPerTick": 17.135,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.029
+          },
+          "counts": {
+            "rxKBps": 14.873805479142716,
+            "displayObjects": 1492,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 98,
+            "serverBodiesPerTick": 4.37,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.23,
+            "serverSwarmBytesPerTick": 8,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 7,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:50:40.212Z",
+              "cpuPct": 25.1,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3040,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:51:16.458Z",
+              "cpuPct": 28.1,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2912,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.4,
+            "serverTickP99": 0.54,
+            "serverTickMax": 8.93,
+            "workerTickP95": 0.7,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 1.971479266609713,
+            "renderP95": 1.2,
+            "renderP99": 1.8,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.997,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.03
+          },
+          "counts": {
+            "rxKBps": 14.95869519903726,
+            "displayObjects": 1492,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 104,
+            "serverBodiesPerTick": 4.27,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.28,
+            "serverSwarmBytesPerTick": 10,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 5,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:52:49.676Z",
+              "cpuPct": 27.4,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2863,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:53:26.205Z",
+              "cpuPct": 19,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3066,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        }
+      ],
+      "head": [
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.53,
+            "serverTickP99": 1.1,
+            "serverTickMax": 7.33,
+            "workerTickP95": 0.77,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 4.007748313405918,
+            "renderP95": 1.5,
+            "renderP99": 2.3,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.388,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.033
+          },
+          "counts": {
+            "rxKBps": 15.0178039522243,
+            "displayObjects": 1255,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 104,
+            "serverBodiesPerTick": 4.13,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.3,
+            "serverSwarmBytesPerTick": 11,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 3,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:30:31.131Z",
+              "cpuPct": 42,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 7227,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2567,
+                  "pid": 21672,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-bp-10\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/Docume"
+                },
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 20,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:31:08.363Z",
+              "cpuPct": 41.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 5501,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 14,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.56,
+            "serverTickP99": 1.33,
+            "serverTickMax": 70.87,
+            "workerTickP95": 0.78,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 33.3,
+            "clientHitchesPerMin": 19.964064683569575,
+            "renderP95": 2.1,
+            "renderP99": 5.4,
+            "longTaskMsPerMin": 628.8680375324416,
+            "serverCpuMsPerTick": 16.165,
+            "serverUpdateCpuMsPerTick": 0.169,
+            "workerElu": 0.034
+          },
+          "counts": {
+            "rxKBps": 14.97402332052306,
+            "displayObjects": 1255,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 93,
+            "serverBodiesPerTick": 3.93,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.26,
+            "serverSwarmBytesPerTick": 9,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:31:09.804Z",
+              "cpuPct": 55.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 5307,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 15,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:31:47.938Z",
+              "cpuPct": 54.3,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 11547,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 20,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.57,
+            "serverTickP99": 0.93,
+            "serverTickMax": 22.56,
+            "workerTickP95": 0.76,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 15.759923827034834,
+            "renderP95": 1.6,
+            "renderP99": 3.7,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.317,
+            "serverUpdateCpuMsPerTick": 1.027,
+            "workerElu": 0.035
+          },
+          "counts": {
+            "rxKBps": 14.963270450963654,
+            "displayObjects": 1255,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 93,
+            "serverBodiesPerTick": 3.97,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.26,
+            "serverSwarmBytesPerTick": 9,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:33:25.149Z",
+              "cpuPct": 59.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 11043,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 16,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:34:03.169Z",
+              "cpuPct": 51.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 6549,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 24,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 2.01,
+            "serverTickP99": 8.28,
+            "serverTickMax": 28.28,
+            "workerTickP95": 1.43,
+            "clientFrameP95": 33.3,
+            "clientFrameP99": 50.1,
+            "clientHitchesPerMin": 147.66686355581808,
+            "renderP95": 7,
+            "renderP99": 13.9,
+            "longTaskMsPerMin": 1878.322504430006,
+            "serverCpuMsPerTick": 12.519,
+            "serverUpdateCpuMsPerTick": 0.257,
+            "workerElu": 0.058
+          },
+          "counts": {
+            "rxKBps": 14.965402115327821,
+            "displayObjects": 1255,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 98,
+            "serverBodiesPerTick": 3.92,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.29,
+            "serverSwarmBytesPerTick": 10,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:34:04.712Z",
+              "cpuPct": 77.3,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 5817,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2567,
+                  "pid": 26408,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-bp-10\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/Docume"
+                },
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 25,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:34:44.704Z",
+              "cpuPct": 92.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 6111,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 31,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.62,
+            "serverTickP99": 1.6,
+            "serverTickMax": 27.67,
+            "workerTickP95": 0.97,
+            "clientFrameP95": 33.3,
+            "clientFrameP99": 50,
+            "clientHitchesPerMin": 110.479071449709,
+            "renderP95": 5,
+            "renderP99": 9.8,
+            "longTaskMsPerMin": 722.0596455463124,
+            "serverCpuMsPerTick": 16.745,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.039
+          },
+          "counts": {
+            "rxKBps": 14.968060790204847,
+            "displayObjects": 1255,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 93,
+            "serverBodiesPerTick": 3.96,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.26,
+            "serverSwarmBytesPerTick": 9,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:36:29.451Z",
+              "cpuPct": 41,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2751,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 16,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:37:07.448Z",
+              "cpuPct": 35,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2126,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 14,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 2.79,
+            "serverTickP99": 7.67,
+            "serverTickMax": 11.4,
+            "workerTickP95": 2.26,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 33.3,
+            "clientHitchesPerMin": 23.989604504714624,
+            "renderP95": 2.9,
+            "renderP99": 8.2,
+            "longTaskMsPerMin": 115.94975510612069,
+            "serverCpuMsPerTick": 11.814,
+            "serverUpdateCpuMsPerTick": 1.967,
+            "workerElu": 0.071
+          },
+          "counts": {
+            "rxKBps": 14.995455094459066,
+            "displayObjects": 1255,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 93,
+            "serverBodiesPerTick": 3.89,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.26,
+            "serverSwarmBytesPerTick": 9,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:37:10.316Z",
+              "cpuPct": 49.7,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 15376,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 20,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:37:51.000Z",
+              "cpuPct": 92.7,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 6409,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 2614,
+                  "pid": 15100,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\gate-seal-a3\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import"
+                },
+                {
+                  "port": 5220,
+                  "pid": 28272,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\gate-seal-a3\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5220 --strictPort"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                },
+                {
+                  "port": 24725,
+                  "pid": 28272,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\eqx-net\\.claude\\worktrees\\gate-seal-a3\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" --port 5220 --strictPort"
+                }
+              ],
+              "foreignProcs": {
+                "node": 24,
+                "chrome": 14
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.49,
+            "serverTickP99": 0.67,
+            "serverTickMax": 6.81,
+            "workerTickP95": 0.74,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 4.00507309258394,
+            "renderP95": 1.4,
+            "renderP99": 2,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.664,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.033
+          },
+          "counts": {
+            "rxKBps": 14.932195364127896,
+            "displayObjects": 1255,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 87,
+            "serverBodiesPerTick": 4.07,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.26,
+            "serverSwarmBytesPerTick": 9,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 1,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:39:35.068Z",
+              "cpuPct": 37.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 4178,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:40:11.904Z",
+              "cpuPct": 28.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2114,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 16,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.43,
+            "serverTickP99": 0.69,
+            "serverTickMax": 6.83,
+            "workerTickP95": 0.74,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 7.877375521055568,
+            "renderP95": 1.5,
+            "renderP99": 2.5,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 16.579,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.032
+          },
+          "counts": {
+            "rxKBps": 14.93989654790429,
+            "displayObjects": 1255,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 93,
+            "serverBodiesPerTick": 3.93,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.28,
+            "serverSwarmBytesPerTick": 10,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:40:13.348Z",
+              "cpuPct": 41.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2076,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 16,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:40:51.469Z",
+              "cpuPct": 55.8,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2425,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.44,
+            "serverTickP99": 0.68,
+            "serverTickMax": 9.87,
+            "workerTickP95": 0.71,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 4.0034696737172215,
+            "renderP95": 1.2,
+            "renderP99": 1.9,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.421,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.031
+          },
+          "counts": {
+            "rxKBps": 14.989357964402481,
+            "displayObjects": 1255,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 98,
+            "serverBodiesPerTick": 4.09,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.29,
+            "serverSwarmBytesPerTick": 10,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 3,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:42:57.918Z",
+              "cpuPct": 39.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 1856,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 14,
+                "chrome": 11
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:43:35.085Z",
+              "cpuPct": 18.1,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2067,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 14,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.33,
+            "serverTickP99": 0.44,
+            "serverTickMax": 2.39,
+            "workerTickP95": 0.64,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 2.0051465427931694,
+            "renderP95": 1.2,
+            "renderP99": 1.7,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 16.848,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.028
+          },
+          "counts": {
+            "rxKBps": 14.99375741486482,
+            "displayObjects": 1255,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 93,
+            "serverBodiesPerTick": 3.93,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.29,
+            "serverSwarmBytesPerTick": 10,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:43:36.491Z",
+              "cpuPct": 29.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2015,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 14,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:44:13.803Z",
+              "cpuPct": 21.3,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2093,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 14,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.38,
+            "serverTickP99": 0.57,
+            "serverTickMax": 6.54,
+            "workerTickP95": 0.69,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 0,
+            "renderP95": 1.1,
+            "renderP99": 1.7,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.414,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.03
+          },
+          "counts": {
+            "rxKBps": 14.886233632841206,
+            "displayObjects": 1255,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 98,
+            "serverBodiesPerTick": 4.06,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.23,
+            "serverSwarmBytesPerTick": 8,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 1,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:45:48.588Z",
+              "cpuPct": 26.1,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2975,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:46:25.286Z",
+              "cpuPct": 24.5,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3092,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.35,
+            "serverTickP99": 0.47,
+            "serverTickMax": 2.31,
+            "workerTickP95": 0.66,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 3.9403690812372756,
+            "renderP95": 1.2,
+            "renderP99": 1.9,
+            "longTaskMsPerMin": 98.50922703093188,
+            "serverCpuMsPerTick": 16.885,
+            "serverUpdateCpuMsPerTick": 0.76,
+            "workerElu": 0.029
+          },
+          "counts": {
+            "rxKBps": 15.011497873842517,
+            "displayObjects": 1255,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 93,
+            "serverBodiesPerTick": 4.17,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.3,
+            "serverSwarmBytesPerTick": 11,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 3,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:46:26.699Z",
+              "cpuPct": 28.1,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3081,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:47:03.457Z",
+              "cpuPct": 18.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 3006,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 12
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.39,
+            "serverTickP99": 0.5,
+            "serverTickMax": 6.27,
+            "workerTickP95": 0.7,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 1.9727756954034326,
+            "renderP95": 1.2,
+            "renderP99": 1.7,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.89,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.03
+          },
+          "counts": {
+            "rxKBps": 14.990205476918524,
+            "displayObjects": 1255,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 104,
+            "serverBodiesPerTick": 4.16,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.29,
+            "serverSwarmBytesPerTick": 10,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 3,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:48:36.577Z",
+              "cpuPct": 26.1,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2665,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:49:13.458Z",
+              "cpuPct": 19.4,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2841,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.36,
+            "serverTickP99": 0.44,
+            "serverTickMax": 1.76,
+            "workerTickP95": 0.66,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 0,
+            "renderP95": 1.1,
+            "renderP99": 1.7,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 16.886,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.027
+          },
+          "counts": {
+            "rxKBps": 14.966124887147078,
+            "displayObjects": 1255,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 93,
+            "serverBodiesPerTick": 3.92,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.28,
+            "serverSwarmBytesPerTick": 10,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:49:14.857Z",
+              "cpuPct": 22.5,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2918,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:49:52.528Z",
+              "cpuPct": 23.7,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2878,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.4,
+            "serverTickP99": 0.59,
+            "serverTickMax": 6.8,
+            "workerTickP95": 0.71,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 7.880479395829912,
+            "renderP95": 1.2,
+            "renderP99": 2.1,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.248,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.031
+          },
+          "counts": {
+            "rxKBps": 14.991957909210312,
+            "displayObjects": 1255,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 93,
+            "serverBodiesPerTick": 4.1,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.31,
+            "serverSwarmBytesPerTick": 11,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 3,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:51:25.694Z",
+              "cpuPct": 24.5,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2782,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:52:02.532Z",
+              "cpuPct": 24,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2998,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.35,
+            "serverTickP99": 0.48,
+            "serverTickMax": 2.3,
+            "workerTickP95": 0.68,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 8.024877119069114,
+            "renderP95": 1.2,
+            "renderP99": 1.9,
+            "longTaskMsPerMin": 102.3171832681312,
+            "serverCpuMsPerTick": 17.144,
+            "serverUpdateCpuMsPerTick": 0.169,
+            "workerElu": 0.029
+          },
+          "counts": {
+            "rxKBps": 15.039983323302238,
+            "displayObjects": 1255,
+            "sprites": 22,
+            "swarmAtEnd": 260,
+            "heapMb": 93,
+            "serverBodiesPerTick": 4.25,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 2.94,
+            "serverSwarmRecordsPerTick": 0.3,
+            "serverSwarmBytesPerTick": 11,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 2.94,
+            "serverWingmanReplansPerTick": 2.94,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 5,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-25T18:52:03.935Z",
+              "cpuPct": 17.7,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2995,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            },
+            "after": {
+              "at": "2026-11-25T18:52:40.097Z",
+              "cpuPct": 20,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 2879,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 23828,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 26112,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 13,
+                "chrome": 10
+              }
+            }
+          },
+          "raw": null
+        }
+      ]
+    }
+  }
+}
