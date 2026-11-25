@@ -1,6 +1,6 @@
 /**
- * Should the Pixi ticker pause while a drawer / the galaxy overview covers
- * the game?
+ * Should the Pixi ticker pause while a drawer, the galaxy overview or a
+ * full-screen EqxWindow covers the game?
  *
  * Only under the E2E harness: at 60 Hz Pixi's rAF tax starves Playwright's
  * CDP loop (~500 ms median roundtrip, docs/LESSONS.md 2026-05-13 §6), so
