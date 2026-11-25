@@ -12,7 +12,7 @@
  * Allocation-free (module scratch, invariant 14).
  */
 import { pixelToAxialInto, type AxialHex } from '../hex/hex.js';
-import { DECK_HEX_SIZE, plateOfHexInto, type PlateIndex } from '../hex/plates.js';
+import { DECK_HEX_SIZE, PLATE_DIRS, plateOfHexInto, type PlateIndex } from '../hex/plates.js';
 import { isPlateAnchor } from '../hex/plateSet.js';
 // Function-only cycle (Grid calls these; they call cableCurve, which calls Grid).
 import type { CanConnectReason, CanConnectResult, GridNode, GridObstacle } from './Grid.js';
@@ -57,6 +57,12 @@ export function deckLinkKind(a: DeckLinkEnd, b: DeckLinkEnd): DeckLinkKind {
   plateOfWorldInto(a.x, a.y, PA);
   plateOfWorldInto(b.x, b.y, PB);
   if (PA.i === PB.i && PA.j === PB.j) return DECK_LINK_ON_PLATE;
+  if (!aAnchor || !bAnchor) return DECK_LINK_NONE;
+  const di = PB.i - PA.i, dj = PB.j - PA.j;
+  for (let k = 0; k < PLATE_DIRS.length; k++) {
+    const d = PLATE_DIRS[k]!;
+    if (d.i === di && d.j === dj) return DECK_LINK_NEIGHBOUR;
+  }
   return DECK_LINK_NONE;
 }
 

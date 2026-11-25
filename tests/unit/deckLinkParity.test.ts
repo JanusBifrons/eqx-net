@@ -1,5 +1,5 @@
 /**
- * Base platforms slice 10 (#15): the server's grid projection
+ * Base platforms slices 10/11 (#15): the server's grid projection
  * (`structureToGridNode`, fed `StructureRegistry.deck`) and the client build
  * preview's mirror (`structureMirrorToGridNode`, fed `preview.deck`) reach
  * the SAME `canConnect` verdict on the deck link rule, deck on and off.
@@ -13,7 +13,7 @@ import type { StructureRenderState, SwarmRenderState } from '../../src/core/cont
 import { getStructureKind, type StructureKindId } from '../../src/shared-types/structureKinds.js';
 import { structureHalfExtents } from '../../src/shared-types/structureKinds/geometry.js';
 import { HEX_DIRS } from '../../src/core/hex/hex.js';
-import { deckHexCentreInto, plateCentreHexInto } from '../../src/core/hex/plates.js';
+import { deckHexCentreInto, plateCentreHexInto, plateCentreWorldInto } from '../../src/core/hex/plates.js';
 
 function blank(): GridNode {
   return {
@@ -52,10 +52,12 @@ function hexOf(i: number, j: number, k: number): { x: number; y: number } {
   return deckHexCentreInto(c.q + d.q, c.r + d.r, { x: 0, y: 0 });
 }
 
-const CASES: Array<{ name: string; kind: StructureKindId; at: { x: number; y: number } }> = [
-  { name: 'hex building on the plate', kind: 'solar', at: hexOf(0, 0, 0) },
-  { name: 'small building on the plate', kind: 'battery', at: hexOf(0, 0, 2) },
-  { name: 'hex building on the next plate', kind: 'solar', at: hexOf(1, 0, 3) },
+const CASES: Array<{ name: string; kind: StructureKindId; at: { x: number; y: number }; links: boolean }> = [
+  { name: 'hex building on the plate', kind: 'solar', at: hexOf(0, 0, 0), links: true },
+  { name: 'small building on the plate', kind: 'battery', at: hexOf(0, 0, 2), links: true },
+  { name: 'hex building on the next plate', kind: 'solar', at: hexOf(1, 0, 3), links: false },
+  { name: 'connector on the neighbouring plate', kind: 'connector', at: plateCentreWorldInto(0, 1, { x: 0, y: 0 }), links: true },
+  { name: 'connector two plates away', kind: 'connector', at: plateCentreWorldInto(2, 0, { x: 0, y: 0 }), links: false },
 ];
 
 describe('deck link verdict parity: server projection vs client mirror (#15)', () => {
@@ -67,8 +69,7 @@ describe('deck link verdict parity: server projection vs client mirror (#15)', (
         const server = canConnect(sB, sCon, new Map(), new Map([['1', sCon], ['2', sB]]), undefined, undefined, undefined, deck);
         const client = canConnect(cB, cCon, new Map(), new Map([['1', cCon], ['2', cB]]), undefined, undefined, undefined, deck);
         expect(client).toEqual(server);
-        if (c.name.endsWith('on the plate')) expect(server.ok).toBe(deck);
-        else expect(server.ok).toBe(false);
+        expect(server.ok).toBe(deck && c.links);
       });
     }
   }

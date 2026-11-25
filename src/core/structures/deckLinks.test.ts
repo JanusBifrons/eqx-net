@@ -1,5 +1,5 @@
 /**
- * Base platforms slice 10 — on a deck room a plate-anchor connector links to
+ * Base platforms slices 10/11 — on a deck room a plate-anchor connector links to
  * any structure on its plate, past `CONNECTION_MAX_RANGE` and past its own
  * link cap (`canConnect`'s `deck` flag, `deckLinks.ts`). Deck off is today's
  * rule.
@@ -9,9 +9,9 @@ import { canConnect, type GridNode } from './Grid.js';
 import { Connection } from './Connection.js';
 import { CABLE_NO_SOCKET, makeCableSocketPick } from './cableCurve.js';
 import { CONNECTION_MAX_RANGE } from './structureGridConstants.js';
-import { DECK_LINK_NONE, DECK_LINK_ON_PLATE, deckCapLinkCount, deckLinkKind } from './deckLinks.js';
+import { DECK_LINK_NEIGHBOUR, DECK_LINK_NONE, DECK_LINK_ON_PLATE, deckCapLinkCount, deckLinkKind } from './deckLinks.js';
 import { HEX_DIRS, type HexPoint } from '../hex/hex.js';
-import { deckHexCentreInto, plateCentreHexInto, plateCentreWorldInto } from '../hex/plates.js';
+import { PLATE_DIRS, deckHexCentreInto, plateCentreHexInto, plateCentreWorldInto } from '../hex/plates.js';
 import { getStructureKind, isConnectorKind, structureHalfExtents } from '../../shared-types/structureKinds.js';
 
 function real(id: string, kind: string, x: number, y: number, over: Partial<GridNode> = {}): GridNode {
@@ -129,5 +129,56 @@ describe('deck link rule: a plate connector and its plate (base platforms slice 
   it('sanity: plate (1,0) is far beyond ordinary range', () => {
     const c = plateCentreWorldInto(1, 0, { x: 0, y: 0 });
     expect(Math.hypot(c.x, c.y)).toBeGreaterThan(CONNECTION_MAX_RANGE * 5);
+  });
+});
+
+describe('deck link rule: neighbouring plate connectors (base platforms slice 11)', () => {
+  const con = real('c', 'connector', 0, 0);
+  const at = (i: number, j: number, id: string): GridNode => { const p = plateCentreWorldInto(i, j, { x: 0, y: 0 }); return real(id, 'connector', p.x, p.y); };
+
+  it('every neighbouring plate connector (~3440 u) links, past range', () => {
+    for (const d of PLATE_DIRS) {
+      const n = at(d.i, d.j, 'n');
+      expect(Math.hypot(n.x, n.y)).toBeGreaterThan(3400);
+      expect(Math.hypot(n.x, n.y)).toBeLessThan(3480);
+      expect(deckLinkKind(con, n)).toBe(DECK_LINK_NEIGHBOUR);
+      expect(canConnect(con, n, NONE, map(con, n), undefined, undefined, undefined, true)).toEqual({ ok: true });
+      expect(canConnect(n, con, NONE, map(con, n), undefined, undefined, undefined, true)).toEqual({ ok: true });
+    }
+  });
+
+  it('deck off: the same pair is out of range', () => {
+    const n = at(1, 0, 'n');
+    expect(canConnect(con, n, NONE, map(con, n))).toEqual({ ok: false, reason: 'out-of-range' });
+  });
+
+  it('connectors two plates away do not link', () => {
+    for (const [i, j] of [[2, 0], [0, 2], [1, 1], [-2, 2]] as const) {
+      const n = at(i, j, 'n');
+      expect(deckLinkKind(con, n)).toBe(DECK_LINK_NONE);
+      expect(canConnect(con, n, NONE, map(con, n), undefined, undefined, undefined, true)).toEqual({ ok: false, reason: 'out-of-range' });
+    }
+  });
+
+  it('a non-connector on the neighbouring plate is no neighbour link', () => {
+    const p = plateCentreWorldInto(1, 0, { x: 0, y: 0 });
+    const solar = real('s', 'solar', p.x, p.y);
+    expect(deckLinkKind(con, solar)).toBe(DECK_LINK_NONE);
+  });
+
+  it('neither end’s cap blocks or counts a neighbour link', () => {
+    const n = at(1, 0, 'n');
+    const far = (pre: string) => [0, 1, 2, 3, 4, 5].map((k) => real(`${pre}${k}`, 'battery', -9000 - k * 400, 9000));
+    const fa = far('fa'), fb = far('fb');
+    const adj = new Map<string, Connection[]>([
+      ['c', fa.map((f) => new Connection(nextId++, 'c', f.id, 1))],
+      ['n', fb.map((f) => new Connection(nextId++, 'n', f.id, 1))],
+    ]);
+    const nodes = map(con, n, ...fa, ...fb);
+    expect(canConnect(con, n, adj, nodes, undefined, undefined, undefined, true)).toEqual({ ok: true });
+    expect(canConnect(con, n, adj, nodes).ok).toBe(false);
+    const link = [new Connection(nextId++, 'c', 'n', 1)];
+    expect(deckCapLinkCount(con, link, map(con, n), true)).toBe(0);
+    expect(deckCapLinkCount(n, link, map(con, n), true)).toBe(0);
   });
 });
