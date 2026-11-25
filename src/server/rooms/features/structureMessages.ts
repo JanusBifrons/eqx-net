@@ -66,8 +66,9 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
       px = deckSnap.x; py = deckSnap.y;
     }
     // The turn snaps by the same room rule as the ghost: 30° steps on a deck
-    // room, quarter turns elsewhere. place() itself keeps any 30° step.
-    const rot = snapPlayerStructureRotation(msg.rot, h.deck());
+    // room, quarter turns elsewhere and for a quarter-turn-only kind (gates,
+    // teleporters). place() itself keeps any 30° step.
+    const rot = snapPlayerStructureRotation(msg.rot, h.deck(), msg.kind);
     const id = h.structurePlacement().place(
       owner,
       msg.kind,

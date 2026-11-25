@@ -129,7 +129,9 @@ export function writeDoorLeafBoxes(kind: string, angle: number, posA: number, po
   const n = l.part.length;
   const base = out.length - n * 4;
   if (base < 0) return;
-  // TODO(bp-16): oriented box — axis-aligned at an odd-30° turn.
+  // Gates turn only in quarters (`isStructureQuarterTurnOnly`; the 30° deck
+  // step is refused for them by `snapPlayerStructureRotation`), so the
+  // nearest quarter IS the turn.
   const q = (((Math.round(angle / (Math.PI / 2)) % 4) + 4) % 4);
   const qc = q === 0 ? 1 : q === 2 ? -1 : 0;
   const qs = q === 1 ? 1 : q === 3 ? -1 : 0;

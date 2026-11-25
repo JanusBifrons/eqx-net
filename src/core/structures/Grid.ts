@@ -28,6 +28,7 @@ import { GraphSearch, type SearchGoal, type SearchGraph } from '../nav/search.js
 // reads the other at load time.
 import { addDraw, addNodePower, supplyFraction, type PowerTally } from './gridSupply.js';
 import { CABLE_NO_SOCKET, gridNodePadBox, linkSocketMask, pickCableSocketPair, type CableSocketPick } from './cableCurve.js';
+import { edgeDistance, segmentHitsGridNodeBox, segmentIntersectsAabb, segmentIntersectsOrientedBox } from './gridNodeBox.js';
 import { pickWithReseat, type CableReseat } from './socketReseat.js';
 import { DECK_LINK_NONE, deckCapExempt, deckCapLinkCount, deckLinkKind, deckSeamVerdict } from './deckLinks.js';
 
@@ -163,43 +164,8 @@ export function rockObstacleParts(
 /** A world box (a placement footprint's bounds) to gather obstacles near. */
 export interface ObstacleBox { x0: number; y0: number; x1: number; y1: number }
 
-/** Edge-to-edge distance between two nodes' square AABBs (half-extent =
- *  radius). Returns 0 when the boxes overlap or touch — eqx-peri's
- *  `edgeDistance`. */
-export function edgeDistance(a: GridNode, b: GridNode): number {
-  const dx = Math.max(0, Math.abs(a.x - b.x) - ((a.halfW ?? a.radius) + (b.halfW ?? b.radius)));
-  const dy = Math.max(0, Math.abs(a.y - b.y) - ((a.halfH ?? a.radius) + (b.halfH ?? b.radius)));
-  return Math.hypot(dx, dy);
-}
-
-/** Segment (x0,y0)-(x1,y1) vs AABB [minX,minY]-[maxX,maxY] (Liang–Barsky slab
- *  clip). */
-export function segmentIntersectsAabb(
-  x0: number, y0: number, x1: number, y1: number,
-  minX: number, minY: number, maxX: number, maxY: number,
-): boolean {
-  const dx = x1 - x0;
-  const dy = y1 - y0;
-  let t0 = 0;
-  let t1 = 1;
-  const clip = (p: number, q: number): boolean => {
-    if (p === 0) return q >= 0; // parallel: inside iff q >= 0
-    const r = q / p;
-    if (p < 0) {
-      if (r > t1) return false;
-      if (r > t0) t0 = r;
-    } else {
-      if (r < t0) return false;
-      if (r < t1) t1 = r;
-    }
-    return true;
-  };
-  if (!clip(-dx, x0 - minX)) return false;
-  if (!clip(dx, maxX - x0)) return false;
-  if (!clip(-dy, y0 - minY)) return false;
-  if (!clip(dy, maxY - y0)) return false;
-  return t0 <= t1;
-}
+// Footprint box rules (turned at a 30° step) live in `gridNodeBox.ts`.
+export { edgeDistance, segmentIntersectsAabb } from './gridNodeBox.js';
 
 /** Does segment (x0,y0)-(x1,y1) cross an obstacle? Its box (half-extent =
  *  `radius`) is the broad phase; with `parts` (C5c) the segment must also
@@ -232,17 +198,9 @@ export function isConnectionLineBlocked(
 ): boolean {
   for (const n of nodes.values()) {
     if (n.id === a.id || n.id === b.id) continue;
-    if (
-      segmentIntersectsAabb(
-        a.x, a.y, b.x, b.y,
-        n.x - (n.halfW ?? n.radius), n.y - (n.halfH ?? n.radius),
-        n.x + (n.halfW ?? n.radius), n.y + (n.halfH ?? n.radius),
-      )
-    ) {
-      return true;
-    }
+    if (segmentHitsGridNodeBox(a.x, a.y, b.x, b.y, n)) return true;
     const pad = gridNodePadBox(n);
-    if (pad !== null && segmentIntersectsAabb(a.x, a.y, b.x, b.y, pad.x - pad.hw, pad.y - pad.hh, pad.x + pad.hw, pad.y + pad.hh)) return true;
+    if (pad !== null && segmentIntersectsOrientedBox(a.x, a.y, b.x, b.y, pad.x, pad.y, pad.lhw, pad.lhh, pad.cos, pad.sin)) return true;
   }
   if (obstacles) {
     for (let i = 0; i < obstacles.length; i++) {

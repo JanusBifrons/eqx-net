@@ -119,7 +119,7 @@ export interface ShipPose {
 /** The swarm record fields the sweep reads. */
 export interface SwarmCandidate {
   id: string; slot: number; radius: number; kind?: number; shipKind?: string;
-  halfW?: number; halfH?: number; boxes?: Float32Array;
+  halfW?: number; halfH?: number; turnDeg?: number; boxes?: Float32Array;
   /** A ship's shield is down: hit on its hull, not its bubble. */
   shieldDown?: boolean;
   /** Capital wreck pieces (kind 4): convex parts, body-local. */
@@ -524,7 +524,7 @@ export class ProjectilePipeline {
     // shots: circle, then their parts.
     if (rec.kind === 4 || rec.wreckParts !== undefined) return wreckSweepHit(rec.wreckParts, rec.radius, proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, angle);
     return rec.halfW !== undefined && rec.halfH !== undefined
-      ? projectileSweepBox(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.halfW, rec.halfH, rec.boxes)
+      ? projectileSweepBox(proj.x, proj.y, stepX, stepY, proj.radius, cx, cy, rec.halfW, rec.halfH, rec.boxes, rec.turnDeg)
       : rec.kind === 1 && rec.shipKind
         // A ship: the same shape as if a player flew it (`shipHitShape.ts`,
         // owner's rule 2026-11-13): bubble while its shield is up, hull once

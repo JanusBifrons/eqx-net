@@ -47,7 +47,10 @@ import { CABLE_NO_SOCKET, type Connection } from './Connection.js';
 import { structureLinksBoundBySockets } from '../leveling/structureLevel.js';
 import { CABLE_BODY_WIDTH, MIN_CABLE_LENGTH } from './structureGridConstants.js';
 import { polylinesWithin } from './cableClearance.js';
-import { keepClearBox } from './placementRules.js';
+import { keepClearBox, type KeepClearBox } from './placementRules.js';
+import {
+  cablePolylineTurnedBoxHit, gridNodeTurnedBoxInto, TURNED_BROAD_MISS, TURNED_HIT, type TurnedBox,
+} from './gridNodeBox.js';
 import { DECK_LINK_NONE, deckLinkKind } from './deckLinks.js';
 import { flattenDeckSeamCable } from './deckCablePath.js';
 
@@ -189,10 +192,13 @@ export function cablePolylineHitsAabb(poly: Float64Array, minX: number, minY: nu
   return false;
 }
 
+/** Scratch: a node's turned box (alloc-free). */
+const nodeTurn: TurnedBox = { hw: 0, hh: 0, cos: 1, sin: 0 };
+
 /** A node's landing pad (its kind's `keepClear` box, `keepClearBox`) in world
  *  space, or null when the kind has none. Returns `keepClearBox`'s shared
  *  scratch: read it before the next call. Allocation-free. */
-export function gridNodePadBox(n: GridNode): { readonly x: number; readonly y: number; readonly hw: number; readonly hh: number } | null {
+export function gridNodePadBox(n: GridNode): KeepClearBox | null {
   return keepClearBox(n.kind, n.x, n.y, (n.rot * 180) / Math.PI, n.mirror);
 }
 
@@ -201,6 +207,11 @@ export function gridNodePadBox(n: GridNode): { readonly x: number; readonly y: n
 function polylineHitsPad(n: GridNode, poly: Float64Array, box: CableBox): boolean {
   const pad = gridNodePadBox(n);
   if (pad === null) return false;
+  if (pad.sin !== 0) { // a 30° step: the real turned pad box
+    const r = cablePolylineTurnedBoxHit(poly, CABLE_CURVE_SEGMENTS, box, pad.x, pad.y, pad.lhw, pad.lhh, pad.cos, pad.sin);
+    if (r !== TURNED_BROAD_MISS) CABLE_BLOCK_STATS.narrow++;
+    return r === TURNED_HIT;
+  }
   const minX = pad.x - pad.hw, maxX = pad.x + pad.hw, minY = pad.y - pad.hh, maxY = pad.y + pad.hh;
   if (maxX < box.x0 || minX > box.x1 || maxY < box.y0 || minY > box.y1) return false;
   CABLE_BLOCK_STATS.narrow++;
@@ -230,6 +241,12 @@ export function isCablePolylineBlocked(
   for (const n of nodes.values()) {
     if (n.id === a.id || n.id === b.id) continue;
     if (polylineHitsPad(n, poly, box)) return true;
+    if (gridNodeTurnedBoxInto(n, nodeTurn)) { // a 30° step: the real turned body box
+      const r = cablePolylineTurnedBoxHit(poly, CABLE_CURVE_SEGMENTS, box, n.x, n.y, nodeTurn.hw, nodeTurn.hh, nodeTurn.cos, nodeTurn.sin);
+      if (r !== TURNED_BROAD_MISS) CABLE_BLOCK_STATS.narrow++;
+      if (r === TURNED_HIT) return true;
+      continue;
+    }
     const hw = n.halfW ?? n.radius, hh = n.halfH ?? n.radius;
     const minX = n.x - hw, maxX = n.x + hw, minY = n.y - hh, maxY = n.y + hh;
     if (maxX < box.x0 || minX > box.x1 || maxY < box.y0 || minY > box.y1) continue;

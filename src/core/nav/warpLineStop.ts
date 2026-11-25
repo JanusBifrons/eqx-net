@@ -17,6 +17,7 @@
  * Pure and allocation-free (invariant #14): module scratch only.
  */
 import { rayHitsBox } from '../combat/Weapons.js';
+import { pointInOrientedBox, structureTurnedBoxInto } from '../../shared-types/structureKinds/geometry.js';
 import { COARSE_NAV_CELL, type CoarseFieldMap } from './coarseField.js';
 
 /** Field march step (world u): an eighth of a coarse nav cell. A blocked
@@ -26,8 +27,9 @@ export const WARP_FIELD_STEP = COARSE_NAV_CELL / 8;
 export const WARP_FIELD_TOLERANCE = 1;
 
 /** One structure's footprint in world space: the same shape every hit test
- *  uses (`rayHitsBox`). Rotations are quarter turns, so the box is axis
- *  aligned: fill `halfW`/`halfH` from `structureHalfExtents(kind, rotation)`.
+ *  uses (`rayHitsBox`): `halfW`/`halfH` are the nearest-quarter box
+ *  (`structureHalfExtents(kind, rotation)`) and `rotDeg`, set only at a 30°
+ *  deck step, turns it into the real box (`structureTurnedBoxInto`).
  *  `boxes`: a gate's parts (flat `[offX, offY, halfW, halfH, ...]` from the
  *  centre, as on its swarm record), else undefined. */
 export interface WarpStructureFootprint {
@@ -35,6 +37,8 @@ export interface WarpStructureFootprint {
   y: number;
   halfW: number;
   halfH: number;
+  /** The turn in degrees at a 30° step, else undefined (the axis box). */
+  rotDeg?: number | undefined;
   boxes: Float32Array | undefined;
 }
 
@@ -62,7 +66,8 @@ export function newWarpLineStop(): WarpLineStop {
   return { x: 0, y: 0, blocked: false, shortBy: 0 };
 }
 
-const fp: WarpStructureFootprint = { x: 0, y: 0, halfW: 0, halfH: 0, boxes: undefined };
+const fp: WarpStructureFootprint = { x: 0, y: 0, halfW: 0, halfH: 0, rotDeg: undefined, boxes: undefined };
+const fpTurn = { hw: 0, hh: 0, cos: 1, sin: 0 };
 const clearScratch = newWarpLineStop();
 
 /**
@@ -148,8 +153,9 @@ function structureHit(
     src.footprint(i, fp);
     // A structure whose footprint holds the start is ignored: a ship parked
     // inside its own base (or in a gate's passage) can warp out of it.
-    if (Math.abs(fx - fp.x) <= fp.halfW && Math.abs(fy - fp.y) <= fp.halfH) continue;
-    const t = rayHitsBox(fx, fy, ux, uy, best, fp.x, fp.y, fp.halfW, fp.halfH, fp.boxes);
+    structureTurnedBoxInto(fp.halfW, fp.halfH, fp.boxes === undefined ? fp.rotDeg : undefined, fpTurn);
+    if (pointInOrientedBox(fx, fy, fp.x, fp.y, fpTurn.hw, fpTurn.hh, fpTurn.cos, fpTurn.sin)) continue;
+    const t = rayHitsBox(fx, fy, ux, uy, best, fp.x, fp.y, fp.halfW, fp.halfH, fp.boxes, 0, fp.rotDeg);
     if (t !== null && t < best) best = t;
   }
   return best;

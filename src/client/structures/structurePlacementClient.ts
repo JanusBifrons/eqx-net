@@ -14,7 +14,8 @@
  * without a live room.
  */
 import {
-  getStructureKind, normaliseStructureRotation, playerStructureRotationStep, snapPlayerStructureRotation, type StructureKindId,
+  getStructureKind, isStructureQuarterTurnOnly, normaliseStructureQuarterTurn, normaliseStructureRotation,
+  playerStructureRotationStep, snapPlayerStructureRotation, type StructureKindId,
 } from '../../shared-types/structureKinds.js';
 import { useUIStore } from '../state/store.js';
 
@@ -30,11 +31,26 @@ export function setPlacementRotationDeg(deg: number): void {
   placementRotationDeg = normaliseStructureRotation(deg);
 }
 /** Rotate the ghost one step (R / the strip's Rotate): a quarter turn, or 30°
- *  when the room's `deck` flag is on (the server snaps by the same rule,
- *  `snapPlayerStructureRotation`). Returns the new rotation. */
-export function cyclePlacementRotation(deck: boolean = useUIStore.getState().deck): number {
-  placementRotationDeg = snapPlayerStructureRotation(placementRotationDeg + playerStructureRotationStep(deck), deck);
+ *  when the room's `deck` flag is on, except for a quarter-turn-only kind
+ *  (gates, teleporters: `isStructureQuarterTurnOnly`). The server snaps by
+ *  the same rule (`snapPlayerStructureRotation`). Returns the new rotation. */
+export function cyclePlacementRotation(
+  deck: boolean = useUIStore.getState().deck,
+  kind: string | null = useUIStore.getState().placementKind,
+): number {
+  placementRotationDeg = snapPlayerStructureRotation(
+    placementRotationRaw(kind) + playerStructureRotationStep(deck, kind), deck, kind,
+  );
   return placementRotationDeg;
+}
+/** The turn a `kind` ghost is drawn and sent at: the held rotation, snapped
+ *  to a quarter for a quarter-turn-only kind (a 30° turn held from another
+ *  kind never reaches a gate). Matches the server's per-kind snap. */
+export function placementRotationFor(kind: string | null | undefined): number {
+  return placementRotationRaw(kind);
+}
+function placementRotationRaw(kind: string | null | undefined): number {
+  return isStructureQuarterTurnOnly(kind) ? normaliseStructureQuarterTurn(placementRotationDeg) : placementRotationDeg;
 }
 /** Build mirror (base loop 4B): place the next building left-right flipped.
  *  Module state beside the rotation (a discrete choice the renderer reads
@@ -221,7 +237,7 @@ export function resolvePlacementPreviewStatus(
     out.kind = placementKind;
     out.x = pos.x;
     out.y = pos.y;
-    out.angle = placementRotationDeg * DEG;
+    out.angle = placementRotationFor(placementKind) * DEG;
     out.mirror = placementMirror;
     out.pending = false;
     out.held = isHeldOnSent(placementKind, pending, chosenX, chosenY);
@@ -259,7 +275,7 @@ export function isHeldOnSent(
 ): boolean {
   return sent !== null && chosenX !== null && chosenY !== null
     && sent.kind === kind && sent.x === chosenX && sent.y === chosenY
-    && (sent.rot ?? 0) === placementRotationDeg && (sent.mirror === true) === placementMirror;
+    && (sent.rot ?? 0) === placementRotationFor(kind) && (sent.mirror === true) === placementMirror;
 }
 
 /**
@@ -276,7 +292,7 @@ export function computePlacementPreview(
 ): PlacementPreview | null {
   if (!kindId) return null;
   const pos = computePlacementPose(ship, kindId);
-  return { kind: kindId, x: pos.x, y: pos.y, angle: placementRotationDeg * DEG, mirror: placementMirror };
+  return { kind: kindId, x: pos.x, y: pos.y, angle: placementRotationFor(kindId) * DEG, mirror: placementMirror };
 }
 
 /**
@@ -304,10 +320,11 @@ export function placeStructureAt(kindId: StructureKindId, x: number, y: number):
   if (!client) return false;
   const room = client.getRoom();
   if (!room) return false;
-  room.send('place_structure', { type: 'place_structure', kind: kindId, x, y, rot: placementRotationDeg, mirror: placementMirror });
+  const rot = placementRotationFor(kindId);
+  room.send('place_structure', { type: 'place_structure', kind: kindId, x, y, rot, mirror: placementMirror });
   // Keep a dim ghost at the sent point until the structure lands, so the
   // blueprint doesn't vanish for ~1 s (playtest 2026-06-10 Issue 7).
-  client.notePendingPlacement(kindId, x, y, placementRotationDeg, placementMirror);
+  client.notePendingPlacement(kindId, x, y, rot, placementMirror);
   return true;
 }
 

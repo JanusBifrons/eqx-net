@@ -10,7 +10,7 @@ import { SCRAP_DEFAULT_MASS, SCRAP_LINEAR_DAMPING } from '../../core/swarm/scrap
 import { BLUEPRINT_COLLISION_GROUPS, DEFAULT_COLLISION_GROUPS, SCRAP_COLLISION_GROUPS, WRECK_COLLISION_GROUPS } from '../../core/physics/collisionGroups.js';
 import { SWARM_KIND_SCRAP } from '../../shared-types/swarmWireFormat.js';
 import { SHIP_KINDS_LIST, GAMEPLAY_SHIP_KINDS_LIST, kindHasShield, shipKindToIndex, type ShipKind, type ShipKindId } from '../../shared-types/shipKinds.js';
-import { structureHalfExtents, structureHullPoints } from '../../shared-types/structureKinds.js';
+import { isStructureQuarterTurn, normaliseStructureRotation, structureHalfExtents, structureHullPoints } from '../../shared-types/structureKinds.js';
 import { gateColliderPolygons } from '../../core/structures/gateGeometry.js';
 import { gateHitBoxes } from '../structures/doorLeafBoxes.js';
 import { shipBodyMass } from '../../shared-types/shipScale/tuning.js';
@@ -265,10 +265,13 @@ export class SwarmSpawner {
       const rec = this.registry.get(s.id);
       if (rec) {
         rec.shipKind = s.shipKind;
-        // TODO(bp-16): oriented box — axis-aligned at an odd-30° turn.
-        const ext = structureHalfExtents(s.shipKind, ((s.angle ?? 0) * 180) / Math.PI);
+        // The nearest-quarter box; a 30° step also records its turn so ray
+        // hits test the real turned box (`rayHitsBox` rotDeg).
+        const rotDeg = ((s.angle ?? 0) * 180) / Math.PI;
+        const ext = structureHalfExtents(s.shipKind, rotDeg);
         rec.halfW = ext.hw;
         rec.halfH = ext.hh;
+        if (!isStructureQuarterTurn(rotDeg)) rec.turnDeg = normaliseStructureRotation(rotDeg);
         // Posts + towers, then the door leaves (posed shut; GateController re-poses them).
         const boxes = gateHitBoxes(s.shipKind, s.angle ?? 0, s.mirror);
         if (boxes) rec.boxes = boxes;

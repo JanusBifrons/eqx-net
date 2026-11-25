@@ -172,7 +172,7 @@ export interface PendingImpulse {
  *  based filter is a leaky abstraction). */
 interface SwarmRecLookup {
   get(id: string): { entityId: number; radius: number; kind: number } | null | undefined;
-  all(): Iterable<{ id: string; slot: number; radius: number; kind: number; halfW?: number; halfH?: number; boxes?: Float32Array; wreckParts?: ReadonlyArray<ReadonlyArray<Vec2>>; shipKind?: string | null; shieldDown?: boolean }>;
+  all(): Iterable<{ id: string; slot: number; radius: number; kind: number; halfW?: number; halfH?: number; turnDeg?: number; boxes?: Float32Array; wreckParts?: ReadonlyArray<ReadonlyArray<Vec2>>; shipKind?: string | null; shieldDown?: boolean }>;
 }
 
 export interface MissileSimulationDeps {
@@ -770,7 +770,7 @@ export class MissileSimulation {
       const sweep = rec.kind === 4 || rec.wreckParts !== undefined
         ? wreckSweepHit(rec.wreckParts, rec.radius, m.x, m.y, stepX, stepY, mr, cx, cy, this.deps.sabF32[b + SLOT_ANGLE_OFF]!)
         : rec.halfW !== undefined && rec.halfH !== undefined
-          ? projectileSweepBox(m.x, m.y, stepX, stepY, mr, cx, cy, rec.halfW, rec.halfH, rec.boxes)
+          ? projectileSweepBox(m.x, m.y, stepX, stepY, mr, cx, cy, rec.halfW, rec.halfH, rec.boxes, rec.turnDeg)
           : rec.kind === 1 && rec.shipKind
             ? shipSweepHit(rec.shipKind, !rec.shieldDown, m.x, m.y, stepX, stepY, mr, cx, cy, this.deps.sabF32[b + SLOT_ANGLE_OFF]!)
             : projectileSweepCircle(m.x, m.y, stepX, stepY, mr, cx, cy, rec.radius);
