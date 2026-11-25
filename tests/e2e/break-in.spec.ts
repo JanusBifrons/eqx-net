@@ -94,9 +94,10 @@ test("an NPC ship's hold is locked behind a break-in (C3)", async ({ page }) => 
  * Found while writing the break-in spec: from the default spawn (south of the
  * Capital) the Capital sits high on screen, and the then world-anchored
  * inspector slid UNDER the app header, so "Open cargo" couldn't be clicked.
- * Cargo is now a button on the left strip; the strip must stay fully below the header.
+ * Cargo is now a button on the left strip, and the game has no top bar (UI plan
+ * U5-3); the strip must stay fully on screen and clickable.
  */
-test('the selection strip stays clear of the app header when its target is high on screen', async ({ page }) => {
+test('the selection strip stays on screen and clickable when its target is high on screen', async ({ page }) => {
   test.setTimeout(120_000);
   await join(page);
   await expect.poll(() => poseOf(page, 2), { timeout: 10_000 }).not.toBeNull();
@@ -105,10 +106,9 @@ test('the selection strip stays clear of the app header when its target is high 
   const panel = page.getByTestId('left-strip');
   await expect(panel).toBeVisible({ timeout: 5_000 });
   await page.waitForTimeout(400); // a few frames for the Slot to lay out and the strip to slide in
-  const header = await page.getByTestId('app-header').boundingBox();
   const box = await panel.boundingBox();
   expect(box, 'the strip is laid out').not.toBeNull();
-  expect(box!.y, `strip top ${box!.y} vs header bottom ${(header?.y ?? 0) + (header?.height ?? 0)}`).toBeGreaterThanOrEqual((header?.y ?? 0) + (header?.height ?? 0));
+  expect(box!.y, `strip top ${box!.y} is on screen`).toBeGreaterThanOrEqual(0);
   // And its button is clickable (nothing intercepts it). Default action
   // timeout, as the other tests here: on the main-thread renderer in headless
   // Chrome a click can take > 5 s to be handled (a 5 s cap failed 6/6).

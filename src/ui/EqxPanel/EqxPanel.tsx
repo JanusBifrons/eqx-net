@@ -49,7 +49,7 @@ export interface SidePanelSize {
    *  `touchMinW` on touch. */
   centred?: boolean;
   /** The mock's dock: the right edge, top 0 to bottom 0, on any screen (touch
-   *  and desktop); `touchTop` is ignored. Covers the top-right toolbar (⛶). */
+   *  and desktop); `touchTop` is ignored. */
   fullHeight?: boolean;
 }
 
@@ -65,8 +65,7 @@ export const SECTOR_PANEL_SIZE: SidePanelSize = {
 };
 
 /** The Build sidebar (BuildSidebar.tsx): 0.4 of a sideways phone's width
- *  (915 px: 366 px), full height over the top-right toolbar like every panel
- *  (owner 2026-11-22: cover ⛶, leave no gap for it); 380 px on desktop. */
+ *  (915 px: 366 px), full height like every panel; 380 px on desktop. */
 export const BUILD_PANEL_SIZE: SidePanelSize = {
   width: 380, touchFrac: 0.4, touchMinW: 280, touchTop: null, fullHeight: true,
 };
@@ -125,14 +124,14 @@ export function rightPaperSx(size: SidePanelSize, touch: boolean): Record<string
     // Desktop: the same share of the width, capped at `width` (a 915 px window matches the phone).
     const frac = `${size.touchFrac * 100}vw`;
     const w = touch ? `clamp(${size.touchMinW}px, ${frac}, ${size.width}px)` : `min(${size.width}px, ${frac})`;
-    // Top = the app bar's height: 0 on touch (covers ⛶, owner 2026-11-22); on
-    // desktop it starts under the AppHeader, level with the rail, so the header's
+    // Top = the app bar's height: 0 in game and on touch (no top bar, U5-3); on
+    // the desktop homepage it starts under the AppHeader, so the header's
     // settings cog (z appBar) never sits over the panel's ✕.
     return { ...right, width: w, top: 'var(--app-bar-h, 0px)', bottom: 0, height: 'calc(100dvh - var(--app-bar-h, 0px))' };
   }
   if (!touch) return right;
   // Phone held sideways: a narrower panel; the sector panel starts below the
-  // top-right toolbar (full-screen chip), so the hex keeps the height.
+  // top-right corner (the homepage avatar badge), so the hex keeps the height.
   const width = `clamp(${size.touchMinW}px, ${size.touchFrac * 100}vw, ${size.width}px)`;
   return {
     ...right,

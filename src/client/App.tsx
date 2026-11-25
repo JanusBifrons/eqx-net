@@ -85,7 +85,6 @@ import { Slot } from './layout/Slot';
 import { RightPanelHost } from './layout/RightPanelHost';
 import { LeftStripHost } from './layout/LeftStripHost';
 import { handleRailKeys } from './input/railKeys';
-import { TopRightToolbar } from './layout/TopRightToolbar';
 import { applyHudMode, applyHudOverlays, hudModeFromSearch, isHudMode } from './cinematic/hudMode';
 import type { CameraCue } from '@core/contracts/cameraScript';
 
@@ -883,8 +882,8 @@ function GameSurface({
     renderer.setTickerMaxFPS(uiCoversGame ? null : undefined);
   }, [uiCoversGame]);
 
-  // LayoutProvider + FullscreenToggle live at the App level (not here) so the
-  // toggle persists across every phase — meta, auth, galaxy-map, game.
+  // LayoutProvider lives at the App level (not here) so it persists across
+  // every phase — auth, galaxy-map, game.
   return (
     <Box
       sx={{
@@ -1114,7 +1113,7 @@ export function App(): JSX.Element {
 
   // Per-phase content composition lives in PhaseRouter — the App
   // wraps it in LayoutProvider + ErrorBoundary so the
-  // TopRightToolbar / WarpScreen persist across phase transitions.
+  // WarpScreen persists across phase transitions.
   return (
     <ErrorBoundary>
       <LayoutProvider>
@@ -1135,7 +1134,6 @@ export function App(): JSX.Element {
           onAuthSuccess={handleAuthSuccess}
           onContinueAsGuest={handleContinueAsGuest}
         />
-        <TopRightToolbar />
         {/* Unified warp-screen overlay. Internally null when phase !==
             'game' && !== 'connecting'; auto-fades on `gameReady`. Mounted
             at the layout root so phase transitions (e.g. connecting →

@@ -50,13 +50,14 @@ export const ANCHOR_NAMES: readonly AnchorName[] = [
   'left-strip',
 ] as const;
 
-const SAFE_TOP = 'calc(env(safe-area-inset-top, 0px) + var(--app-bar-h, 48px) + 16px)';
+// The game has no top bar (UI plan U5-3): anchors start under the safe area only.
+const SAFE_TOP = 'calc(env(safe-area-inset-top, 0px) + 16px)';
 const SAFE_BOTTOM = 'calc(env(safe-area-inset-bottom, 0px) + 16px)';
 const SAFE_LEFT = 'calc(env(safe-area-inset-left, 0px) + 16px)';
 // Right-edge HUD sits in by the right rail (`--rail-w`, 0px until it mounts).
 export const SAFE_RIGHT = `calc(env(safe-area-inset-right, 0px) + ${RAIL_W_CSS} + 16px)`;
-// Top of the full-height edge anchors: under the safe area and the app bar.
-const EDGE_TOP = 'calc(env(safe-area-inset-top, 0px) + var(--app-bar-h, 48px))';
+// Top of the full-height edge anchors: under the safe area.
+const EDGE_TOP = 'env(safe-area-inset-top, 0px)';
 
 // Joystick / fire / boost — driven by --mobile-edge-inset (defined in
 // index.html) so a single landscape-on-touch media query kicks all three
