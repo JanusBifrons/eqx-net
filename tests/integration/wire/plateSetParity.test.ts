@@ -38,8 +38,9 @@ class Sides {
   private readonly ownerIds: string[] = [];
   private readonly rows = new Map<string, StructureState>();
   private readonly swarm = new Map<number, SwarmRenderState>();
-  private readonly sync = new StructureRowSync({ swarm: this.swarm } as unknown as RenderMirror, { ids: [], names: [] });
-  private readonly room = { state: { structures: this.rows, structureOwners: new Map<string, string>() } };
+  readonly mirror = { swarm: this.swarm } as unknown as RenderMirror;
+  readonly sync = new StructureRowSync(this.mirror, { ids: [], names: [] });
+  readonly room = { state: { structures: this.rows, structureOwners: new Map<string, string>(), deck: false } };
 
   private ownerIdx(o: string): number {
     let i = this.ownerIds.indexOf(o);
@@ -95,5 +96,34 @@ describe('derived plate set — server registry and client mirror agree (#15)', 
     s.remove(1);
     s.remove(3);
     expect(s.expectSame(owners)).toEqual(['bob:1,0']);
+  });
+});
+
+describe('deck plates on the render mirror (slice 14)', () => {
+  const plates = (m: RenderMirror): string[] => {
+    const dp = m.deckPlates;
+    const out: string[] = [];
+    for (let n = 0; n < (dp?.count ?? 0); n++) out.push(`${dp!.ij[2 * n]},${dp!.ij[2 * n + 1]}`);
+    return out.sort();
+  };
+
+  it('rides mirror.deckPlates while the deck flag is on; the version moves only on a change', () => {
+    const s = new Sides();
+    s.add({ id: 1, owner: 'alice', kind: 'connector', ...centre(0, 0), built: true });
+    expect(plates(s.mirror)).toEqual([]); // flag off
+    s.room.state.deck = true;
+    s.sync.sync(s.room);
+    expect(plates(s.mirror)).toEqual(['0,0']);
+    const v = s.mirror.deckPlates!.version;
+    s.sync.sync(s.room);
+    expect(s.mirror.deckPlates!.version).toBe(v); // no change ⇒ no rewrite
+    s.add({ id: 2, owner: 'bob', kind: 'connector', ...centre(1, 0), built: true });
+    expect(plates(s.mirror)).toEqual(['0,0', '1,0']);
+    expect(s.mirror.deckPlates!.version).toBeGreaterThan(v);
+    s.remove(1);
+    expect(plates(s.mirror)).toEqual(['1,0']);
+    s.room.state.deck = false;
+    s.sync.sync(s.room);
+    expect(plates(s.mirror)).toEqual([]);
   });
 });
