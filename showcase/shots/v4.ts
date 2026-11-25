@@ -10,8 +10,10 @@ import { SHOWCASE_HUB_PAD, SHOWCASE_PORT_PAD } from '../../src/server/rooms/show
 
 /**
  * Teleporters (T1/T2) — `showcase-teleport`: two paired pads that fire when a
- * ship boards. The pilot waits on the west pad: warned, the doors close, and
- * the jump lands it on the east pad.
+ * ship boards. The pilot waits inside the west chamber: warned, the blast
+ * doors close, and the jump lands it in the east chamber. Filmed on a
+ * sideways phone with the game's follow camera (a camera script needs
+ * spectator mode, and the pilot must stay aboard to ride).
  */
 export const teleporterRide: Shot = {
   id: 'teleporter-ride',
@@ -22,11 +24,10 @@ export const teleporterRide: Shot = {
   docs: ['teleporters'],
   reel: true,
   server: 'lean',
-  // A heavy reads at this zoom; a fighter is a few pixels across.
+  viewport: 'phone-landscape',
   target: { room: 'showcase-teleport', params: { shipKind: 'heavy', spawnX: -1300, spawnY: -60 } },
   hud: 'minimal',
   durationMs: 15_000,
-  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 0, y: -60, zoom: 0.55 } }],
   async run(ctx) {
     await ctx.sleep(1200);
     await ctx.hold(['a'], 350);
@@ -36,7 +37,8 @@ export const teleporterRide: Shot = {
 /**
  * Alien gates (A) — `alien-gate-test`: an Ancients' gate at the origin. The
  * pilot flies up to it and opens fire inside its zone: engines and weapons
- * go offline, and the countdown appears.
+ * go offline, and the countdown appears. Filmed on a sideways phone with the
+ * game's follow camera; then it spectates to show the whole Astrolabe.
  */
 export const alienGate: Shot = {
   id: 'alien-gate',
@@ -48,13 +50,10 @@ export const alienGate: Shot = {
   reel: true,
   server: 'lean',
   // Lock-to-fire: instantLock + MAN — the pilot locks the gate and opens fire on cue.
+  viewport: 'phone-landscape',
   target: { room: 'alien-gate-test', params: { shipKind: 'fighter', instantLock: 1 } },
   hud: 'minimal',
   durationMs: 10_000,
-  camera: [
-    { atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 0, y: -700, zoom: 0.38 } },
-    { atMs: 5000, smoothMs: 1200, shot: { kind: 'hold', x: 0, y: -800, zoom: 0.5 } },
-  ],
   async run(ctx) {
     await allGroupsManual(ctx);
     await ctx.sleep(1200);
@@ -62,7 +61,11 @@ export const alienGate: Shot = {
     await lockAhead(ctx);
     await ctx.hold(['Space'], 1600);
     // Engines are off now: holding thrust does nothing until it wears off.
-    await ctx.hold(['w'], 2000);
+    await ctx.hold(['w'], 1000);
+    // The Astrolabe (r ≈ 818) is wider than a sideways phone's follow view,
+    // which shows only its rim: spectate and pull back to the whole gate.
+    await ctx.spectate();
+    await ctx.cinema.play([{ atMs: 0, smoothMs: 1500, shot: { kind: 'hold', x: 0, y: -400, zoom: 0.18 } }]);
   },
 };
 
