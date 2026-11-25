@@ -37,7 +37,7 @@ function link(a: HexPoint, b: HexPoint, deck: boolean) {
   const na = pylon('a', a.x, a.y), nb = pylon('b', b.x, b.y);
   return canConnect(na, nb, NONE, new Map([['a', na], ['b', nb]]), undefined, undefined, undefined, deck);
 }
-const snap = (): DeckSnap => ({ x: 0, y: 0, q: 0, r: 0, rhombus: -1, slot: 'hex' });
+const snap = (): DeckSnap => ({ x: 0, y: 0, q: 0, r: 0, rhombus: -1, rot: -1, slot: 'hex' });
 
 describe('deck fence: a shield pylon snaps to the nearest hex corner', () => {
   it('a point near a corner snaps exactly onto it, and the snap is idempotent', () => {
