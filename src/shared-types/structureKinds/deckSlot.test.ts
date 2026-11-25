@@ -11,10 +11,19 @@
  * Every slot and footprint is centrally symmetric and the slot shape convex
  * (or, for the leaf, the footprint centred on the leaf centre), so centring is
  * the best placement.
+ *
+ * Slice 18: a small building no longer picks its best quarter-turn: the deck
+ * snap turns it to face its rhombus (`snapPlacementToDeck`). The turned-fit
+ * test places every small kind in each of the three rhombi of a hex at the
+ * snapped centre AND turn, and measures the real (turned) box in the world
+ * rhombus.
  */
 import { describe, expect, it } from 'vitest';
 import { STRUCTURE_KINDS_LIST } from './catalogueOrder.js';
 import type { StructureKind } from './types.js';
+import { snapPlacementToDeck } from '../../core/structures/deckPlacement.js';
+import { deckSlotOutline, rhombusCentroidInto, type DeckSnap } from '../../core/hex/deckSnap.js';
+import { deckHexCentreInto, isPlateCentreHex } from '../../core/hex/plates.js';
 
 type P = readonly [number, number];
 type Slot = StructureKind['deckSlot'];
@@ -82,7 +91,11 @@ function inside(p: P, edges: Array<[P, P]>): boolean {
 
 /** Room from a centred hw × hh box to the slot edge; negative if it pokes out. */
 function boxRoom(hw: number, hh: number, edges: Array<[P, P]>): number {
-  const box: P[] = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]];
+  return polyRoom([[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]], edges);
+}
+
+/** Room from a (turned) box polygon to the slot edge; negative if it pokes out. */
+function polyRoom(box: P[], edges: Array<[P, P]>): number {
   const boxEdges = polyEdges(box);
   if (!box.every((p) => inside(p, edges))) return -1;
   for (const [a, b] of edges) for (const [c, d] of boxEdges) if (segsCross(a, b, c, d)) return -1;
@@ -105,6 +118,34 @@ const ORDER: readonly Slot[] = ['small', 'hex', 'plate'];
  *  'hex' and are flagged here — an owner decision, not a silent force-fit. */
 const SHORT_ROOM: readonly string[] = ['teleporter', 'pocket_pad'];
 
+/** A small kind's footprint at the snapped centre + turn in rhombus `k` of
+ * a deck hex that is not a plate centre (a connector there lays a plate).
+ * Returns the room to the world rhombus edge, and the turn. */
+function turnedSmallRoom(k: StructureKind, rh: number): { room: number; rot: number } {
+  const hexC = { x: 0, y: 0 }, cen = { x: 0, y: 0 };
+  let q = 0;
+  while (isPlateCentreHex(q, 0)) q++;
+  deckHexCentreInto(q, 0, hexC);
+  rhombusCentroidInto(hexC.x, hexC.y, rh, cen);
+  const s: DeckSnap = { x: 0, y: 0, q: 0, r: 0, rhombus: -1, slot: 'small', rot: -1 };
+  snapPlacementToDeck(k.id, cen.x, cen.y, s, 0);
+  expect(s.slot).toBe('small');
+  expect(s.rhombus).toBe(rh);
+  const flat = deckSlotOutline('small', rh)[0]!; // relative to the centroid
+  const poly: P[] = [];
+  for (let i = 0; i < flat.length; i += 2) poly.push([flat[i]!, flat[i + 1]!]);
+  const t = (s.rot * Math.PI) / 180, c = Math.cos(t), sn = Math.sin(t);
+  const hw = k.footprint.w / 2, hh = k.footprint.h / 2;
+  const box: P[] = ([[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]] as const).map(([x, y]) => [x * c - y * sn, x * sn + y * c] as const);
+  return { room: polyRoom(box, polyEdges(poly)), rot: s.rot };
+}
+
+/** Small kinds short of 130 u room at their snapped facing (slice 18): the
+ *  shield gate turns only in quarters, so in rhombi 1 and 2 (long diagonal at
+ *  120° / 240°) it sits 30° off the diagonal and keeps ~127 u. It still fits;
+ *  flagged for the owner rather than force-fitted. */
+const SHORT_TURNED: readonly string[] = ['shield_gate'];
+
 describe('deckSlot (base platforms)', () => {
   it('the slot shapes measure as designed', () => {
     expect(slotRoom({ footprint: { w: 1e-6, h: 1e-6 } } as StructureKind, 'hex')).toBeCloseTo(FLAT / 2, 3);
@@ -125,6 +166,19 @@ describe('deckSlot (base platforms)', () => {
       }
       for (const smaller of ORDER.slice(0, ORDER.indexOf(k.deckSlot))) {
         expect(slotRoom(k, smaller), `${id} would fit ${smaller}`).toBeLessThan(MIN_ROOM);
+      }
+    },
+  );
+
+  it.each(STRUCTURE_KINDS_LIST.filter((k) => k.deckSlot === 'small').map((k) => [k.id, k] as const))(
+    '%s fits each rhombus of a hex at its snapped facing (slice 18)',
+    (id, k) => {
+      for (let rh = 0; rh < 3; rh++) {
+        const { room, rot } = turnedSmallRoom(k, rh);
+        if (SHORT_TURNED.includes(id) && rh > 0) {
+          expect(room, `${id} rhombus ${rh} at ${rot}°`).toBeGreaterThan(120);
+          expect(room, `${id} rhombus ${rh} at ${rot}°`).toBeLessThan(MIN_ROOM);
+        } else expect(room, `${id} rhombus ${rh} at ${rot}°`).toBeGreaterThanOrEqual(MIN_ROOM);
       }
     },
   );
