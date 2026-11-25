@@ -85,6 +85,8 @@ export interface SwarmSpriteCtx {
    *  down in slow motion and speed up at 4x. Absent: the wall `now` (tests).
    *  Pose interpolation stays on the wall clock (wall-stamped arrivals). */
   fxNowMs?: number;
+  /** The sector shown (`IRenderer.setSector`): the Ancients' gate rings' timetable. */
+  sectorKey?: string | null;
   /** Dying capitals held on screen until their wreck pieces are drawn; told
    *  of every piece drawn this frame. Absent ⇒ no hold. */
   dyingHulls?: DyingHullHold;
