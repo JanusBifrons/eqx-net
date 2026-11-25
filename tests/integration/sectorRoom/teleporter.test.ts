@@ -85,7 +85,7 @@ describe('SectorRoom integration — teleporters (v4 T1)', () => {
     await harness.advance(100);
     expect(a.tpPhase).not.toBe(TP_PHASE.IDLE);
     expect(b.tpPhase).toBe(a.tpPhase);
-    for (let i = 0; i < 40 && a.tpPhase !== TP_PHASE.IDLE; i++) {
+    for (let i = 0; i < 200 && a.tpPhase !== TP_PHASE.IDLE; i++) {
       internals.tickStructureTurrets();
       await harness.advance(30);
     }
@@ -152,7 +152,7 @@ describe('SectorRoom integration — ships ride the swap (v4 T2)', () => {
     expect(before.poseEpoch).toBe(0);
 
     client.send('teleport_fire', { type: 'teleport_fire', entityId: internals.swarmRegistry.get(a!.id)!.entityId });
-    for (let i = 0; i < 60 && (a!.tpPhase ?? 0) !== 0 || i < 2; i++) {
+    for (let i = 0; i < 200 && (a!.tpPhase ?? 0) !== 0 || i < 2; i++) {
       internals.tickStructureTurrets();
       await harness.advance(30);
     }
@@ -197,7 +197,7 @@ describe('SectorRoom integration — teleporter tolls (v4 T4)', () => {
   async function runJump(owner: { send(t: string, m: unknown): void }, internals: { tickStructureTurrets(): void }, a: { tpPhase?: number }, eid: number): Promise<void> {
     owner.send('teleport_fire', { type: 'teleport_fire', entityId: eid });
     await harness.advance(60);
-    for (let i = 0; i < 60 && (a.tpPhase ?? 0) !== 0; i++) {
+    for (let i = 0; i < 200 && (a.tpPhase ?? 0) !== 0; i++) {
       internals.tickStructureTurrets();
       await harness.advance(30);
     }

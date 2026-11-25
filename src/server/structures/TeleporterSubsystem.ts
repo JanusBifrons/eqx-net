@@ -30,6 +30,7 @@ import {
   alienGateOffsetMs,
   isAlienGateKind,
   isFreeTeleporterKind,
+  isPadChamberKind,
   isTeleporterKind,
   jumpCharge,
   jumpDistance,
@@ -40,7 +41,9 @@ import {
 } from '../../shared-types/teleport.js';
 import { DEFAULT_TELEPORT_RULES } from '../../shared-types/teleport.js';
 import { holdWeight } from '../../core/cargo/hold.js';
-import { armCycle, rulesSayFire, stepCycle, type CycleState } from '../../core/structures/teleportCycle.js';
+import { armCycle, rulesSayFire, stepCycle, type CycleDoors, type CycleState } from '../../core/structures/teleportCycle.js';
+import type { DoorSegment } from '../../core/structures/doorMotion.js';
+import type { PadDoorDriver } from './padDoorDriver.js';
 import type { StorageService } from '../cargo/StorageService.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 import type { Logger } from 'pino';
@@ -99,12 +102,16 @@ export interface TeleporterHooks {
   setIrisActive?(rec: StructureRecord, active: boolean): void;
   removeIris?(rec: StructureRecord): void;
   setPadField?(rec: StructureRecord, active: boolean): void;
+  /** Redesign T2 — the chamber pads' blast doors (`padDoors.ts`). */
+  padDoors?: PadDoorDriver;
 }
 
 const EMPTY_GOODS: Readonly<Record<string, number>> = Object.freeze({});
 
 export class TeleporterSubsystem {
   private readonly cycle: CycleState = { phase: TP_PHASE.IDLE, phaseEndsAtMs: 0 };
+  /** Reused door input for `stepCycle` (chamber pads). */
+  private readonly doors: CycleDoors = { shut: false, stalled: false };
 
   constructor(private readonly h: TeleporterHooks) {}
 
@@ -257,11 +264,30 @@ export class TeleporterSubsystem {
   }
 
   /** T2 — the physical side of a phase: the closing push while CLOSING, the
-   *  solid iris while SEALED, neither otherwise. */
+   *  solid iris while SEALED (the Ancients' gate), neither otherwise. A
+   *  chamber pad's blast doors shut for CLOSING and SEALED and reopen after
+   *  (redesign T2; its iris is gone, the leaves are the barrier). */
   private applyPhaseEffects(r: StructureRecord): void {
     const p = r.tpPhase ?? TP_PHASE.IDLE;
     this.h.setPadField?.(r, p === TP_PHASE.CLOSING);
     this.h.setIrisActive?.(r, p === TP_PHASE.SEALED);
+    this.h.padDoors?.drive(r, !doorsShutFor(p));
+  }
+
+  /** Redesign T2 — this pad's doors are fully shut (true for a pad with no
+   *  doors, so the Ancients' gate never waits). */
+  doorsShut(r: StructureRecord): boolean {
+    return !isPadChamberKind(r.kind) || this.h.padDoors === undefined || this.h.padDoors.shut(r);
+  }
+
+  /** Redesign T2 — this pad's doors cannot move (no power) and are not shut. */
+  doorsStalled(r: StructureRecord): boolean {
+    return this.h.padDoors?.stalled(r) ?? false;
+  }
+
+  /** Redesign T2 — a chamber's door segment for its row (undefined: open). */
+  padDoorSeg(id: string): Readonly<DoorSegment> | undefined {
+    return this.h.padDoors?.segFor(id);
   }
 
   /** ~10 Hz: run cycles (driven by the initiator) and check the rules. */
@@ -272,6 +298,9 @@ export class TeleporterSubsystem {
         this.h.spawnIris?.(rec);
         rec.tpIrisSpawned = true;
       }
+      // Redesign T2: keep the doors heading for their phase's pose (a power
+      // change mid-travel re-segments; a re-segment re-syncs the row).
+      if (isPadChamberKind(rec.kind) && this.h.padDoors?.drive(rec, !doorsShutFor(rec.tpPhase ?? TP_PHASE.IDLE)) === true) this.h.onChanged();
       if (this.busy(rec)) {
         if (rec.tpInitiator === true) this.advance(rec, nowMs);
         continue;
@@ -347,7 +376,14 @@ export class TeleporterSubsystem {
       return;
     }
     const before = this.cycle.phase;
-    const ev = stepCycle(this.cycle, nowMs, this.scaleFor(a));
+    let doors: CycleDoors | undefined;
+    if (isPadChamberKind(a.kind) && this.h.padDoors !== undefined) {
+      // Redesign T2: CLOSING waits for both ends' doors; a stalled end cancels.
+      doors = this.doors;
+      doors.shut = this.doorsShut(a) && l.sys.doorsShut(l.rec);
+      doors.stalled = this.doorsStalled(a) || l.sys.doorsStalled(l.rec);
+    }
+    const ev = stepCycle(this.cycle, nowMs, this.scaleFor(a), doors);
     if (this.cycle.phase === before) return;
     if (ev === 'swap') {
       const req = this.required(a);
@@ -391,6 +427,7 @@ export class TeleporterSubsystem {
   onRemoved(rec: StructureRecord): void {
     if (!isTeleporterKind(rec.kind)) return;
     if (rec.tpIrisSpawned === true) this.h.removeIris?.(rec);
+    this.h.padDoors?.remove(rec.id);
     const l = this.link(rec);
     if (l !== null && l.rec.tpPartner?.uid === rec.uid) {
       l.sys.clearPartner(l.rec);
@@ -400,6 +437,11 @@ export class TeleporterSubsystem {
 }
 
 type TeleportPhaseValue = 0 | 1 | 2 | 3 | 4;
+
+/** Redesign T2 — a chamber's doors are shut while CLOSING and SEALED. */
+function doorsShutFor(phase: number): boolean {
+  return phase === TP_PHASE.CLOSING || phase === TP_PHASE.SEALED;
+}
 
 // ── Boot seeding of NPC teleporters (moved verbatim from SectorRoom) ───────
 

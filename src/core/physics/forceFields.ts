@@ -101,10 +101,10 @@ export const FORCE_FIELD_MASS_SCALED: Readonly<Record<ForceFieldKind, boolean>> 
 export function storeForceField(prev: ForceField | undefined, src: ForceField): ForceField {
   if (src.kind === 'pad') {
     if (prev !== undefined && prev.kind === 'pad') {
-      prev.cx = src.cx; prev.cy = src.cy; prev.half = src.half; prev.active = src.active;
+      prev.cx = src.cx; prev.cy = src.cy; prev.half = src.half; prev.active = src.active; prev.doorAngle = src.doorAngle;
       return prev;
     }
-    return { kind: 'pad', cx: src.cx, cy: src.cy, half: src.half, active: src.active };
+    return { kind: 'pad', cx: src.cx, cy: src.cy, half: src.half, active: src.active, doorAngle: src.doorAngle };
   }
   const t: TractorForceField = prev !== undefined && prev.kind === 'tractor'
     ? prev

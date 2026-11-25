@@ -39,11 +39,12 @@ import {
   encodePlayerTurretTarget,
   encodeStructureMountAngles,
 } from '../../shared-types/structureStateWire.js';
-import { isTeleporterKind } from '../../shared-types/teleport.js';
+import { isPadChamberKind, isTeleporterKind } from '../../shared-types/teleport.js';
+import { hasDoorRig } from '../structures/doorLeafBoxes.js';
 import { writeConnToRow, writeStorageFillRow, writeTeleporterRow } from '../structures/structureStateRows.js';
 import { writeRigClipRow } from '../structures/structureRigClip.js';
 import { structureReadsPowered } from '../structures/structurePowerSwitch.js';
-import { writeDoorMotionRow, type GateDoorSource } from './doorMotionRow.js';
+import { writeDoorMotionRow, writePadDoorRow, type GateDoorSource } from './doorMotionRow.js';
 import { TERRITORY_LOCK_KIND, isHoldingTerritoryLock } from '../structures/territoryLockRules.js';
 import { isShieldEmitterKind, gateTypeOf } from '../../core/structures/gateGeometry.js';
 import { PROD_STATE, encodeBpProduct, encodeBpRuns, encodeGood, encodeProdBay, encodeProdCount, encodeProdFrac, encodeProdQ0, encodeProdQ1, encodeRecipe, isProcessorKind } from '../../shared-types/production.js';
@@ -87,7 +88,7 @@ export interface StructuresSliceHost {
   shieldWalls: () => Pick<ShieldWallManager, 'wallsUpFor' | 'wallStateFor' | 'update'>;
   /** `maskFor` and the door states (`GateDoorSource`) for the door rows. */
   gates: () => Pick<GateController, 'maskFor' | 'update'> & GateDoorSource;
-  teleporters: () => Pick<TeleporterSubsystem, 'required' | 'partnerOf' | 'pulse' | 'update'>;
+  teleporters: () => Pick<TeleporterSubsystem, 'required' | 'partnerOf' | 'pulse' | 'update' | 'padDoorSeg'>;
   /** The room's owner interning (also used by the mine sync). */
   internStructureOwner: (owner: string) => number;
   /** Who holds this sector now (`sectorHeldBy`; null = neutral). Read only
@@ -244,7 +245,7 @@ export class StructuresSliceSync {
       if (isTeleporterKind(rec.kind)) this.syncTeleporterState(rec, st);
       writeStorageFillRow(rec, st); // storage fill gauge, on step change only
       // restyle 2e (late-join safe, #16); door kinds' rig fields are the door row's.
-      if (rec.rigClip !== undefined && gateType === null) writeRigClipRow(rec, st);
+      if (rec.rigClip !== undefined && !hasDoorRig(rec.kind)) writeRigClipRow(rec, st);
       this.syncConnTo(rec.id, st);
       // Fast cosmetics stay on the snapshot (only structures with a target).
       if (
@@ -280,6 +281,8 @@ export class StructuresSliceSync {
   /** v4 T1 — a teleporter's room-state fields (`writeTeleporterRow`). */
   private syncTeleporterState(rec: StructureRecord, st: StructureState): void {
     writeTeleporterRow(rec, st, this.h.gameClock.now(), this.h.teleporters(), this.entityIdOf);
+    // Redesign T2: a chamber's blast doors ride its rig fields (`writePadDoorRow`).
+    if (isPadChamberKind(rec.kind)) writePadDoorRow(this.h.teleporters().padDoorSeg(rec.id), rec.kind, st);
   }
 
   /** `writeConnToRow`: the structure's connections into `connTo`, on change. */

@@ -84,6 +84,14 @@ describe('tractorImpulse (pure formula)', () => {
     expect(rec.lineIds[0]).toBe('z');
   });
 
+  it('storeForceField keeps a pad doorAngle, and clears it on reuse (teleporter redesign T2)', () => {
+    const pad = storeForceField(undefined, { kind: 'pad', cx: 1, cy: 2, half: 3, active: true, doorAngle: Math.PI / 2 });
+    expect(pad.kind === 'pad' && pad.doorAngle).toBe(Math.PI / 2);
+    const again = storeForceField(pad, { kind: 'pad', cx: 1, cy: 2, half: 3, active: false });
+    expect(again).toBe(pad);
+    expect(again.kind === 'pad' && again.doorAngle).toBeUndefined();
+  });
+
   it('MOUNT_SIZE_TUNING.power rises with mount size, AA below S', () => {
     const p = (['AA', 'S', 'M', 'L', 'XL'] as const).map((s) => MOUNT_SIZE_TUNING[s].power);
     for (let i = 1; i < p.length; i++) expect(p[i]!).toBeGreaterThan(p[i - 1]!);

@@ -28,11 +28,13 @@ import { slotBase, TICK_IDX, SLOT_X_OFF, SLOT_Y_OFF, SLOT_VX_OFF, SLOT_VY_OFF, S
 import type { SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
 import { parsedMessage, type ParsedMessageHost, type MessageSchema, type RoomFeature } from './parsedMessage.js';
 import type { StorageService } from '../../cargo/StorageService.js';
+import { padAngle, type PadDoors } from '../../structures/padDoors.js';
 import { getSector } from '../../../core/galaxy/galaxy.js';
 import { getStructureKind } from '../../../shared-types/structureKinds.js';
 import { isNpcOwner, relationOf, type RelationContext } from '../../../shared-types/relations.js';
 import {
   isFreeTeleporterKind,
+  isPadChamberKind,
   isTeleporterKind,
   onPad,
   padIrisSpanLocal,
@@ -257,7 +259,7 @@ export class TeleportPadRiders {
       const sb = slotBase(slot);
       const x = sabF32[sb + SLOT_X_OFF]!;
       const y = sabF32[sb + SLOT_Y_OFF]!;
-      if (!onPad(kind, from.x, from.y, x, y)) continue;
+      if (!onPad(kind, from.x, from.y, x, y, padAngle(from))) continue;
       if (ship.isActive) batch.pilots.push({ playerId: pid, dx: x - from.x, dy: y - from.y });
       // A disconnected pilot's hull lingers under their id; a connected but
       // inactive hull is a pending join and stays (#17).
@@ -271,7 +273,7 @@ export class TeleportPadRiders {
       const sb = slotBase(slot);
       const x = sabF32[sb + SLOT_X_OFF]!;
       const y = sabF32[sb + SLOT_Y_OFF]!;
-      if (!onPad(kind, from.x, from.y, x, y)) continue;
+      if (!onPad(kind, from.x, from.y, x, y, padAngle(from))) continue;
       batch.hulls.push({
         shipInstanceId: sid, playerId: ship.playerId, kind: ship.kind,
         dx: x - from.x, dy: y - from.y,
@@ -285,7 +287,7 @@ export class TeleportPadRiders {
       const sb = slotBase(rec.slot);
       const x = sabF32[sb + SLOT_X_OFF]!;
       const y = sabF32[sb + SLOT_Y_OFF]!;
-      if (onPad(kind, from.x, from.y, x, y)) batch.bots.push({ botId: rec.id, dx: x - from.x, dy: y - from.y });
+      if (onPad(kind, from.x, from.y, x, y, padAngle(from))) batch.bots.push({ botId: rec.id, dx: x - from.x, dy: y - from.y });
     }
     return batch;
   }
@@ -324,15 +326,17 @@ export class TeleportPadRiders {
       const ship = this.h.getActiveShip(pid);
       if (!ship?.alive || !ship.isActive) continue;
       const pose = this.h.shipPoseCache().get(pid);
-      if (pose && onPad(rec.kind, rec.x, rec.y, pose.x, pose.y)) n++;
+      if (pose && onPad(rec.kind, rec.x, rec.y, pose.x, pose.y, padAngle(rec))) n++;
     }
     return n;
   }
 
   /** T2 — call `fn` with each iris span's worker id and its offset from the
-   *  pad centre (the pad is square, so a quarter turn leaves them unchanged). */
+   *  pad centre (the pad is square, so a quarter turn leaves them unchanged).
+   *  Only the Ancients' gate has an iris: a chamber pad (redesign T2) is
+   *  sealed by its blast-door leaves (`padDoors.ts`). */
   forIrisSpan(rec: StructureRecord, fn: (id: string, s: { ax: number; ay: number; bx: number; by: number }) => void): void {
-    if (!isTeleporterKind(rec.kind)) return;
+    if (!isTeleporterKind(rec.kind) || isPadChamberKind(rec.kind)) return;
     const n = PAD_SPECS[rec.kind].posts;
     for (let i = 0; i < n; i++) {
       padIrisSpanLocal(rec.kind, i, this._irisSpan);
@@ -366,20 +370,20 @@ export class TeleportPadRiders {
         const sb = slotBase(slot);
         const x = sabF32[sb + SLOT_X_OFF]!;
         const y = sabF32[sb + SLOT_Y_OFF]!;
-        if (onPad(kind, from.x, from.y, x, y)) moves.push({ bodyKey: pid, slot, nx: to.x + x - from.x, ny: to.y + y - from.y, playerId: pid });
+        if (onPad(kind, from.x, from.y, x, y, padAngle(from))) moves.push({ bodyKey: pid, slot, nx: to.x + x - from.x, ny: to.y + y - from.y, playerId: pid });
       }
       for (const [sid, slot] of this.h.lingeringSlots) {
         const sb = slotBase(slot);
         const x = sabF32[sb + SLOT_X_OFF]!;
         const y = sabF32[sb + SLOT_Y_OFF]!;
-        if (onPad(kind, from.x, from.y, x, y)) moves.push({ bodyKey: `linger-${sid}`, slot, nx: to.x + x - from.x, ny: to.y + y - from.y, lingerId: sid });
+        if (onPad(kind, from.x, from.y, x, y, padAngle(from))) moves.push({ bodyKey: `linger-${sid}`, slot, nx: to.x + x - from.x, ny: to.y + y - from.y, lingerId: sid });
       }
       for (const rec of this.h.swarmRegistry.all()) {
         if (rec.kind !== 1 && rec.kind !== 3) continue;
         const sb = slotBase(rec.slot);
         const x = sabF32[sb + SLOT_X_OFF]!;
         const y = sabF32[sb + SLOT_Y_OFF]!;
-        if (onPad(kind, from.x, from.y, x, y)) moves.push({ bodyKey: rec.id, slot: rec.slot, nx: to.x + x - from.x, ny: to.y + y - from.y });
+        if (onPad(kind, from.x, from.y, x, y, padAngle(from))) moves.push({ bodyKey: rec.id, slot: rec.slot, nx: to.x + x - from.x, ny: to.y + y - from.y });
       }
     }
     for (const m of moves) {
@@ -432,6 +436,8 @@ export interface TeleporterBuildHost extends Pick<TeleportRoom, 'canReceiveHull'
   forceFields: Pick<ForceFieldSubsystem, 'set' | 'remove'>;
   rebuildStructuresSlice(): void;
   postToWorker(cmd: WorkerCmd): void;
+  /** Redesign T2 — the chamber pads' blast doors. */
+  padDoors?: PadDoors;
 }
 
 /**
@@ -477,9 +483,12 @@ export function buildTeleporters(h: TeleporterBuildHost): { teleporters: Telepor
       h.padRiders.forIrisSpan(rec, (id) => h.postToWorker({ type: 'REMOVE_WALL', id }));
       h.forceFields.remove(`tpfield-${rec.id}`);
     },
+    padDoors: h.padDoors,
     setPadField: (rec, active) => {
       if (!isTeleporterKind(rec.kind)) return;
-      h.forceFields.set(`tpfield-${rec.id}`, { kind: 'pad', cx: rec.x, cy: rec.y, half: PAD_SPECS[rec.kind].padRadius, active });
+      // A chamber pushes only along its doorway axis (`padPushDir` doorAngle).
+      const doorAngle = isPadChamberKind(rec.kind) ? padAngle(rec) : undefined;
+      h.forceFields.set(`tpfield-${rec.id}`, { kind: 'pad', cx: rec.x, cy: rec.y, half: PAD_SPECS[rec.kind].padRadius, active, doorAngle });
     },
   });
   // v4 T3 — the broker reaches this room's teleporters from other sectors.
