@@ -29,6 +29,12 @@ describe('EqxWindow', () => {
     expect(onClose).toHaveBeenCalledTimes(1);
   });
 
+  it('with a title and a footer it draws the footer row under the body', () => {
+    render(<EqxWindow {...base} open onClose={() => {}} title="Loot" footer={<button type="button">OK</button>}>body</EqxWindow>);
+    expect(screen.getByRole('dialog').textContent).toMatch(/body.*OK/);
+    expect(screen.getByRole('button', { name: 'OK' })).toBeTruthy();
+  });
+
   it('without a title the content draws its own header (no ✕ of its own)', () => {
     render(<EqxWindow {...base} open onClose={() => {}}><div data-testid="own-head">mine</div></EqxWindow>);
     expect(screen.getByTestId('own-head')).toBeTruthy();

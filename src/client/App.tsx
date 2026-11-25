@@ -933,18 +933,19 @@ function GameSurface({
       {/* Living World P1a — carried cargo + pickup popups. */}
       <Slot anchor="top-left" order={3}><CargoChip /></Slot>
       <Slot anchor="top-left" order={10}><Hud /></Slot>
-      {/* The toll / pair prompts sit right under the status capsule: nothing above
-       *  them changes height, so their buttons hold still while the phase
-       *  warning below them changes text (a moving button misses taps). */}
-      <Slot anchor="top-center" order={2}><TeleportPrompts /></Slot>
-      <Slot anchor="top-center" order={3}><WarpInWarningBanner /></Slot>
-      <Slot anchor="top-center" order={3}><TeleportWarning /></Slot>
+      {/* Prompts (EqxPrompt, plan A6) sit in their own anchor under the top-centre
+       *  HUD column. The toll / pair prompts come first, so their buttons hold
+       *  still while the phase warning below them changes text (a moving button
+       *  misses taps). */}
+      <Slot anchor="top-center-prompt" order={2}><TeleportPrompts /></Slot>
+      <Slot anchor="top-center-prompt" order={3}><WarpInWarningBanner /></Slot>
+      <Slot anchor="top-center-prompt" order={3}><TeleportWarning /></Slot>
       <Slot anchor="top-center" order={3}><DisabledIndicator /></Slot>
-      <Slot anchor="top-center" order={3}><WarpStatusChip /></Slot>
-      {/* The Command speed telegraph (HelmPanel) rides the fleet panel / strip,
+      <Slot anchor="top-center-prompt" order={3}><WarpStatusChip /></Slot>
+      {/* The Command speed telegraph rides the Orders panel (panels/OrdersPanel.tsx),
        *  never a slot over the map (a bar there swallowed move orders). */}
       {/* Living World P2 — trade toasts (escort prompt when red). */}
-      <Slot anchor="top-center" order={5}><TradeToasts /></Slot>
+      <Slot anchor="top-center-prompt" order={5}><TradeToasts /></Slot>
       <WhileAwayDialog />
       {/* Phase 5 — always-visible Pilot/Spectate toggle (out of the speed-dial).
        *  No separate mode label: the switch itself shows the active mode

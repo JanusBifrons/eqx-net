@@ -4,14 +4,15 @@
  * name and path still work. A fixed, opaque, screen-space MUI Dialog: dims the
  * world, centred on desktop, the whole screen (less a small margin) on a phone,
  * `Z.modal`; closes on ✕ and Esc. Given a `title` it draws its header (title,
- * ✕) over a scrolling body; without one the content draws its own (CargoPanel).
+ * ✕) over a scrolling body and an optional footer row; without one the content
+ * draws its own (CargoPanel, the Hangar).
  */
 import { useEffect, type ReactNode } from 'react';
 import { Box, Dialog } from '@mui/material';
 import { Z } from '../../client/layout/zIndex.js';
 import { HUD } from '../../client/hud/tokens.js';
 import { useHudSize } from '../../client/hud/useHudScale.js';
-import { WINDOW_EDGE, WINDOW_HEAD_SX, WINDOW_ROOT_SX, WINDOW_TITLE_SX, WINDOW_X_SX } from './windowParts.js';
+import { WINDOW_EDGE, WINDOW_FOOT_SX, WINDOW_HEAD_SX, WINDOW_ROOT_SX, WINDOW_TITLE_SX, WINDOW_X_SX } from './windowParts.js';
 import { markWindowOpen, notifyGameWindowOpen } from './windowOpen.js';
 
 const W = HUD.window;
@@ -35,10 +36,12 @@ export interface EqxWindowProps {
   title?: ReactNode;
   /** The ✕'s test id (with `title`). */
   closeTestId?: string;
+  /** With `title`: a footer row under the body (the window's buttons). */
+  footer?: ReactNode;
   children: ReactNode;
 }
 
-export function EqxWindow({ open, onClose, testId, title, closeTestId, children }: EqxWindowProps): JSX.Element {
+export function EqxWindow({ open, onClose, testId, title, closeTestId, footer, children }: EqxWindowProps): JSX.Element {
   // The HUD's phone check: coarse pointer and short side < 500 px (a sideways phone too).
   const phone = useHudSize() === 'phone';
   useEffect(() => {
@@ -59,6 +62,7 @@ export function EqxWindow({ open, onClose, testId, title, closeTestId, children 
             <Box component="button" type="button" sx={WINDOW_X_SX} onClick={onClose} aria-label="Close" data-testid={closeTestId}>✕</Box>
           </Box>
           <Box sx={BODY_SX}>{children}</Box>
+          {footer !== undefined && <Box sx={WINDOW_FOOT_SX}>{footer}</Box>}
         </Box>
       )}
     </Dialog>

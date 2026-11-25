@@ -90,7 +90,7 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
 
       {/* ── Desktop ─────────────────────────────────────────────────────── */}
       {/* RTS command view: fleet orders, and a running map pick's tools, live on
-          the left strip (layout/LeftStripHost.tsx) and the rail's Fleet panel (⚙). */}
+          the left strip (layout/LeftStripHost.tsx) and the Orders panel (⚙, panels/OrdersPanel.tsx). */}
       {!touch && flying && (
         <Slot anchor="bottom-right" order={1}><DesktopFcHint scale={scale} /></Slot>
       )}

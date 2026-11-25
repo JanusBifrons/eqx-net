@@ -3,10 +3,10 @@
  *  open, never a position or size. */
 
 /** The right rail's item ids (plan A3), plus the cog pinned at the bottom. */
-export type RailId = 'contacts' | 'hold' | 'fleet' | 'build' | 'galaxy' | 'jobs' | 'trade' | 'faction' | 'cog';
+export type RailId = 'contacts' | 'hold' | 'orders' | 'build' | 'galaxy' | 'jobs' | 'trade' | 'faction' | 'cog';
 
 /** Which right-side panel is open; `null` = none. */
-export type RightPanel = RailId | 'orders' | 'details' | null;
+export type RightPanel = RailId | 'details' | null;
 
 /** The panel each page (`drawerTab`) belongs to: today's drawer tabs, and the
  *  Trade panel's drill-down (`trade` = its top list, `trade-<section>` a sub-page;

@@ -16,6 +16,7 @@ import { RAIL_W_CSS } from './railWidth';
 export type AnchorName =
   | 'top-left'
   | 'top-center'
+  | 'top-center-prompt'
   | 'top-right'
   | 'middle-left'
   | 'middle-left-over'
@@ -33,6 +34,7 @@ export type AnchorName =
 export const ANCHOR_NAMES: readonly AnchorName[] = [
   'top-left',
   'top-center',
+  'top-center-prompt',
   'top-right',
   'middle-left',
   'middle-left-over',
@@ -96,6 +98,21 @@ export const ANCHOR_STYLES: Record<AnchorName, CSSProperties> = {
     left: '50%',
     transform: 'translateX(-50%)',
     zIndex: Z.mobileControls,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    gap: STACK_GAP,
+    pointerEvents: 'none',
+  },
+  // The answer-me prompts and toasts (EqxPrompt, plan A6): top centre, just
+  // under the top-centre HUD column (`--hud-tc-bottom`, measured by
+  // layout/topCenterPromptFit.ts), on `Z.prompt` so a Window never hides them.
+  'top-center-prompt': {
+    position: 'fixed',
+    top: `max(${SAFE_TOP}, calc(var(--hud-tc-bottom, 0px) + ${STACK_GAP}px))`,
+    left: '50%',
+    transform: 'translateX(-50%)',
+    zIndex: Z.prompt,
     display: 'flex',
     flexDirection: 'column',
     alignItems: 'center',

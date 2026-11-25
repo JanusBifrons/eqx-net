@@ -10,8 +10,6 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 const BOOT_URL = `${BASE_URL}/?room=test-sector`;
 
-const APP_BAR_HEIGHT = 48;
-
 async function bootGame(page: import('@playwright/test').Page): Promise<void> {
   await page.goto(BOOT_URL);
   // INFRASTRUCTURAL cost, not game-time (so a budget bump is the sanctioned fix —
@@ -38,18 +36,22 @@ test.describe('layout-slots', () => {
   // Phase 1 regressions
   // ───────────────────────────────────────────────────────────
 
-  test('top-left sector panel clears the AppBar (safe-area-top regression)', async ({ browser }) => {
+  test('top-left sector panel clears the reserved top band (safe-area-top regression)', async ({ browser }) => {
     const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     const page = await ctx.newPage();
     await bootGame(page);
 
-    // Phase 5 — the top-right ShipStatsCard was removed; the always-present
-    // top-left SectorInfoPanel is now the canonical top-anchored element that
-    // must sit BELOW the AppBar (the safe-area-top regression this guards).
+    // The always-present top-left SectorInfoPanel must sit below whatever top
+    // band the page reserves (`--app-bar-h`). UI plan U5-3 removed the in-game
+    // top bar, so the band is 0 in game; the guard still catches a panel drawn
+    // above the band or off the top of the screen.
+    const band = await page.evaluate(() =>
+      parseFloat(getComputedStyle(document.documentElement).getPropertyValue('--app-bar-h')) || 0,
+    );
     const card = page.locator('[data-testid="hud-sector"]');
     const box = await card.boundingBox();
     expect(box).not.toBeNull();
-    expect(box!.y).toBeGreaterThanOrEqual(APP_BAR_HEIGHT);
+    expect(box!.y).toBeGreaterThanOrEqual(band);
 
     await ctx.close();
   });

@@ -6,17 +6,14 @@
  * Derived on the client from room state (#16): the pad's phase rides the
  * teleporter's room-state row, and the ship's pose is in the render mirror.
  * Polled a few times a second; React re-renders only when the text changes.
+ * Drawn as an amber EqxPrompt readout (top centre).
  */
 import { memo, useEffect, useState } from 'react';
-import { Box } from '@mui/material';
+import { EqxPrompt } from '../../ui/index.js';
 import { getGameClient } from '../net/clientSingleton';
 import { TP_PHASE, isTeleporterKind, onPad } from '../../shared-types/teleport';
 
 const POLL_MS = 200;
-const SX = {
-  px: 1, py: 0.25, borderRadius: '4px', fontSize: 11, fontWeight: 700, textAlign: 'center' as const,
-  color: '#efeaff', backgroundColor: 'rgba(70,40,150,0.85)', border: '1px solid #b9a6ff', pointerEvents: 'none' as const,
-};
 
 const TEXT: Readonly<Record<number, string>> = {
   [TP_PHASE.ARMED]: 'Teleport departing. Stay on the pad to ride, or fly off now.',
@@ -47,9 +44,5 @@ export const TeleportWarning = memo(function TeleportWarning(): JSX.Element | nu
   }, []);
   const text = TEXT[phase];
   if (text === undefined) return null;
-  return (
-    <Box sx={SX} data-testid="teleport-warning" data-phase={phase}>
-      {text}
-    </Box>
-  );
+  return <EqxPrompt tone="warn" message={text} data-testid="teleport-warning" dataAttrs={{ phase }} />;
 });

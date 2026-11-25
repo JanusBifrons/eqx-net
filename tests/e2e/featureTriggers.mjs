@@ -50,7 +50,7 @@ export const FEATURE_TRIGGERS = [
   {
     // Capital helm orders + the green move marker; Fly is manual only (no panel, no tap course).
     area: 'capital helm',
-    paths: ['src/core/helm/', 'src/client/helm/', 'src/client/render/helm/', 'src/client/components/HelmPanel'],
+    paths: ['src/core/helm/', 'src/client/helm/', 'src/client/render/helm/', 'src/client/panels/OrdersPanel', 'src/client/panels/ordersDraft'],
     specs: ['capital-helm', 'player-capital-galaxy'],
   },
   {
@@ -92,7 +92,7 @@ export const FEATURE_TRIGGERS = [
     // RTS command layer: Command view selection, orders, the fleet panel, wingman brains.
     area: 'fleet command',
     paths: ['src/client/fleet/', 'src/client/render/input/', 'src/client/render/fleetSelection', 'src/client/render/FleetOverlay', 'src/client/render/SelectionBracket',
-      'src/client/components/FleetPanel', 'src/client/components/FleetStrip', 'src/client/components/FleetPickBar',
+      'src/client/panels/OrdersPanel', 'src/client/panels/ordersDraft', 'src/client/components/FleetPickBar',
       'src/client/app/fleetWarp', 'src/client/net/fleetWarpFollow',
       'src/server/fleet/', 'src/core/ai/stepRoute', 'src/shared-types/messages/fleetStatusMessages'],
     specs: ['fleet-command', 'spectator-mode', 'rts-take-controls', 'rts-fleet-warp', 'fleet-overlay-camera', 'command-view-camera', 'entity-inspect'],

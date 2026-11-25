@@ -68,7 +68,7 @@ export interface StripIdentity {
 /** What the selection strip shows for `sel`, or null when nothing is selected (pure; unit-tested). */
 export function stripIdentity(sel: UISelection): StripIdentity | null {
   const n = sel.ids.length;
-  if (n > 0) return { icon: 'fleet', tooltip: n === 1 ? '1 ship selected' : `${n} ships selected`, count: n, panel: 'fleet' };
+  if (n > 0) return { icon: 'fleet', tooltip: n === 1 ? '1 ship selected' : `${n} ships selected`, count: n, panel: 'orders' };
   if (sel.focusId === null || sel.focusKind === null) return null;
   return { ...FOCUS_LOOK[sel.focusKind], count: 1, panel: 'details' };
 }
@@ -151,7 +151,7 @@ export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
         {buildingItems}
         {quickItems}
         <EqxStrip.Separator />
-        <EqxIconButton variant="strip" icon={<EqxIcon name="cog" />} tooltip={panel === 'fleet' ? 'All orders and details' : 'Details'}
+        <EqxIconButton variant="strip" icon={<EqxIcon name="cog" />} tooltip={panel === 'orders' ? 'All orders and details' : 'Details'}
           onClick={() => setRightPanel(panel)} data-testid="left-strip-cog" />
         <EqxIconButton variant="strip" icon={<EqxIcon name="close" />} tooltip="Deselect"
           onClick={() => rendererRef.current?.selectFleetShips([])} data-testid="left-strip-close" />

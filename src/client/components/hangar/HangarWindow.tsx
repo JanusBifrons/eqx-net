@@ -7,9 +7,11 @@
  * with the cost, the balance after, and LAUNCH. Owned hulls parked here are
  * gold (Launch resumes them; Abandon breaks them up). Every answer comes from
  * `hangarModel` → the shared `launchVerdict`, the same call the server's gate
- * makes.
+ * makes. Drawn in the one Window (`EqxWindow`, no title: the Hangar draws
+ * its own header and footer); full screen on a phone, centred on desktop.
  */
-import { Box, ButtonBase, Dialog } from '@mui/material';
+import { Box, ButtonBase } from '@mui/material';
+import { EqxWindow } from '../../../ui/index.js';
 import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import { DEFAULT_SHIP_KIND, getShipKind, type ShipKindId } from '../../../shared-types/shipKinds';
 import { FREE_LAUNCHES_START, launchCost } from '../../../shared-types/launch';
@@ -29,6 +31,8 @@ const C = HUD.color;
 const WIDE = '@media (min-width: 761px)';
 /** A sideways phone: little height, so the chrome rows tighten. */
 const SHORT = '@media (max-height: 500px)';
+/** The Hangar's column inside the window: header, tabs, body (scrolls), footer. */
+const ROOT_SX = { display: 'flex', flexDirection: 'column', flex: '1 1 auto', minHeight: 0, overflow: 'hidden', color: C.ink, fontFamily: HUD.font.label } as const;
 const cr = (n: number): string => n.toLocaleString('en-GB');
 
 export interface HangarWindowProps {
@@ -132,144 +136,132 @@ export function HangarWindow({ sectorKey, sectorName, playerId, selectedKind, on
   const costText = token ? '1 free launch' : verdict.kind === 'pay' || verdict.kind === 'debt' ? `${cr(verdict.cost)} cr` : verdict.kind === 'owned' ? 'free (yours)' : 'free';
 
   return (
-    <Dialog
-      open={open}
-      onClose={onClose}
-      maxWidth={false}
-      data-testid="hangar-window"
-      slotProps={{ backdrop: { sx: { bgcolor: 'rgba(3,5,11,0.62)' } } }}
-      PaperProps={{ sx: {
-        width: 'min(880px, calc(100% - 16px))', m: 1, maxHeight: 'calc(100% - 16px)',
-        bgcolor: C.paper, backgroundImage: 'none', color: C.ink, fontFamily: HUD.font.label,
-        border: `1px solid ${C.panelEdge}`, borderRadius: '10px', boxShadow: '0 10px 40px rgba(0,0,0,.65)',
-        display: 'flex', flexDirection: 'column', overflow: 'hidden',
-      } }}
-      // No open transition: the PICKER_OPEN_DELAY_MS touch-bleed guard already delays it.
-      transitionDuration={{ enter: 0, exit: 0 }}
-    >
-      {/* Header */}
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, px: '14px', py: '10px', borderBottom: `1px solid ${C.panelEdge}`, flexShrink: 0, [SHORT]: { py: '6px' } }}>
-        <Box component="h3" sx={{ m: 0, fontSize: 15, fontWeight: 700, letterSpacing: '.02em' }}>Hangar</Box>
-        <Box sx={{ fontFamily: HUD.font.num, fontSize: 11, color: C.inkDim, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          Launching into <Box component="b" sx={{ color: C.ink, fontWeight: 600 }}>{sectorName}</Box>
-        </Box>
-        <Box sx={{ flex: 1 }} />
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, fontFamily: HUD.font.num, fontSize: 13 }}>
-          <Box component="span" data-testid="hangar-wallet" sx={{ color: purse.wallet < 0 ? C.danger : C.credits, fontWeight: 600 }}>{cr(purse.wallet)} cr</Box>
-          <Box data-testid="hangar-free-launches" data-count={purse.freeLaunches} title="Free capital launches" sx={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
-            {Array.from({ length: FREE_LAUNCHES_START }, (_, i) => {
-              const on = i < purse.freeLaunches;
-              return <Box key={i} sx={{ width: 9, height: 9, transform: 'rotate(45deg)', border: `1px solid ${C.auto}`, bgcolor: on ? C.auto : 'transparent', boxShadow: on ? '0 0 6px rgba(52,216,255,.6)' : 'none', opacity: on ? 1 : 0.45 }} />;
-            })}
-            <Box component="span" sx={{ fontFamily: HUD.font.label, fontSize: 11, color: C.inkDim, ml: '3px', whiteSpace: 'nowrap' }}>free launches</Box>
+    <EqxWindow open={open} onClose={onClose} testId="hangar-window">
+      <Box sx={ROOT_SX}>
+        {/* Header */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.5, px: '14px', py: '10px', borderBottom: `1px solid ${C.panelEdge}`, flexShrink: 0, [SHORT]: { py: '6px' } }}>
+          <Box component="h3" sx={{ m: 0, fontSize: 15, fontWeight: 700, letterSpacing: '.02em' }}>Hangar</Box>
+          <Box sx={{ fontFamily: HUD.font.num, fontSize: 11, color: C.inkDim, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            Launching into <Box component="b" sx={{ color: C.ink, fontWeight: 600 }}>{sectorName}</Box>
           </Box>
-        </Box>
-        <ButtonBase data-testid="hangar-close" aria-label="Close" onClick={onClose} sx={{ width: 26, height: 26, border: `1px solid ${C.panelEdge}`, borderRadius: '4px', color: C.inkDim, fontSize: 13, flexShrink: 0 }}>✕</ButtonBase>
-      </Box>
-
-      {/* Tabs */}
-      <Box role="tablist" sx={{ display: 'flex', px: '10px', borderBottom: `1px solid ${C.panelEdge}`, flexShrink: 0 }}>
-        {HANGAR_TABS.map((t, i) => {
-          const sel = i === tabIx;
-          return (
-            <ButtonBase
-              key={t.id} role="tab" aria-selected={sel} data-testid={`hangar-tab-${t.id}`} onClick={() => pickTab(i)}
-              sx={{
-                fontFamily: HUD.font.label, fontWeight: 600, fontSize: 13, p: '10px 14px 9px', gap: 1, [SHORT]: { p: '7px 12px 6px' },
-                color: sel ? C.ink : C.inkDim, boxShadow: sel ? `inset 0 -2px 0 ${C.auto}` : 'none',
-                background: sel ? 'linear-gradient(to top, rgba(52,216,255,.08), transparent)' : 'none',
-              }}
-            >
-              {t.label}
-              <Box component="span" sx={{ fontFamily: HUD.font.num, fontSize: 10, border: `1px solid ${sel ? C.auto : C.edge2}`, color: sel ? C.auto : C.inkDim, borderRadius: '3px', px: '5px', py: '1px' }}>
-                {tabReadyCount(t, purse)} ready
-              </Box>
-            </ButtonBase>
-          );
-        })}
-      </Box>
-
-      {/* Body: tiles | detail */}
-      <Box sx={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '1fr', overflowY: 'auto', [WIDE]: { gridTemplateColumns: 'minmax(0,1.35fr) minmax(0,1fr)', overflowY: 'hidden' } }}>
-        <Box sx={{ px: '14px', py: '12px', minHeight: 0, [SHORT]: { py: '8px' }, [WIDE]: { borderRight: `1px solid ${C.panelEdge}`, overflowY: 'auto' } }}>
-          {ready.length > 0 && (
-            <TileGroup title="Ready to launch" note={isCapitalTab ? (needsSignIn ? 'sign in to launch a capital' : 'launch with credits') : 'free'}>
-              {ready.map((t) => <HangarTileCard key={t.id} tile={t} purse={purse} selectedKind={kind} onPick={setKind} />)}
-            </TileGroup>
-          )}
-          {yard.length > 0 && (
-            <TileGroup title="Shipyard hulls" note="build or buy at a base">
-              {yard.map((t) => <HangarTileCard key={t.id} tile={t} purse={purse} selectedKind={kind} onPick={setKind} />)}
-            </TileGroup>
-          )}
-        </Box>
-        <Box data-testid="hangar-detail" sx={{ px: '14px', py: '12px', [SHORT]: { py: '8px', gap: '8px' }, display: 'flex', flexDirection: 'column', gap: '10px', minHeight: 0, [WIDE]: { overflowY: 'auto' } }}>
-          <Box sx={{ position: 'relative', aspectRatio: '16 / 10', maxHeight: '42vh', [SHORT]: { maxHeight: '30vh' }, borderRadius: '8px', border: `1px solid ${C.panelEdge}`, bgcolor: '#020309', backgroundImage: art(fit.kind) ?? 'none', backgroundSize: 'contain', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
-            {art(fit.kind) === null && <ShipSilhouette shape={k.shape} size={96} />}
-            <Box component="span" sx={{ position: 'absolute', top: 8, left: 10, fontFamily: HUD.font.num, fontSize: 10, letterSpacing: '.1em', textTransform: 'uppercase', color: C.inkDim }}>
-              {hangarClassLine(tile, fit, verdict)}
-            </Box>
-            <Box component="span" sx={{ position: 'absolute', bottom: 8, left: 10, fontSize: 22, fontWeight: 700, textShadow: '0 2px 8px rgba(0,0,0,.8)' }}>{tile.displayName}</Box>
-          </Box>
-          {tile.fits.length > 1 && (
-            <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
-              {tile.fits.map((f) => {
-                const on = f.kind === fit.kind;
-                return (
-                  <ButtonBase
-                    key={f.kind} data-testid={`hangar-fit-${f.kind}`} aria-pressed={on} onClick={() => setKind(f.kind)}
-                    sx={{ fontFamily: HUD.font.label, fontWeight: 600, fontSize: 11, p: '3px 8px', borderRadius: '4px', border: `1px solid ${on ? C.auto : C.edge2}`, bgcolor: on ? 'rgba(52,216,255,.12)' : 'transparent', color: on ? C.ink : C.inkDim, minHeight: 28 }}
-                  >
-                    {FIT_LABEL[f.fit]}
-                  </ButtonBase>
-                );
+          <Box sx={{ flex: 1 }} />
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, fontFamily: HUD.font.num, fontSize: 13 }}>
+            <Box component="span" data-testid="hangar-wallet" sx={{ color: purse.wallet < 0 ? C.danger : C.credits, fontWeight: 600 }}>{cr(purse.wallet)} cr</Box>
+            <Box data-testid="hangar-free-launches" data-count={purse.freeLaunches} title="Free capital launches" sx={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+              {Array.from({ length: FREE_LAUNCHES_START }, (_, i) => {
+                const on = i < purse.freeLaunches;
+                return <Box key={i} sx={{ width: 9, height: 9, transform: 'rotate(45deg)', border: `1px solid ${C.auto}`, bgcolor: on ? C.auto : 'transparent', boxShadow: on ? '0 0 6px rgba(52,216,255,.6)' : 'none', opacity: on ? 1 : 0.45 }} />;
               })}
+              <Box component="span" sx={{ fontFamily: HUD.font.label, fontSize: 11, color: C.inkDim, ml: '3px', whiteSpace: 'nowrap' }}>free launches</Box>
             </Box>
-          )}
-          <Box sx={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
-            <StatRow label="Hull" value={k.maxHealth} pct={Math.max(3, Math.sqrt(k.maxHealth / scale.hull) * 100)} color={C.hullOk} />
-            <StatRow label="Speed" value={k.maxSpeed} pct={Math.max(3, (k.maxSpeed / scale.speed) * 100)} color={C.auto} />
           </Box>
-          <Box component="p" sx={{ m: 0, fontSize: 12, color: C.inkDim, lineHeight: 1.4 }}>{hangarRole(tile, k.description)}</Box>
-          {why !== null && (
-            <Box component="p" sx={{ m: 0, fontSize: 12, color: why.warn ? C.manual : C.inkDim, lineHeight: 1.4 }}>{why.text}</Box>
-          )}
-          {ownedShipId !== undefined && (
-            <ButtonBase data-testid="hangar-abandon" onClick={() => { void abandon(ownedShipId); }} sx={{ alignSelf: 'flex-start', fontFamily: HUD.font.label, fontWeight: 600, fontSize: 11, color: C.danger, border: `1px solid rgba(255,77,106,.4)`, borderRadius: '4px', p: '5px 10px', minHeight: 30 }}>
-              Abandon this ship
-            </ButtonBase>
-          )}
+          <ButtonBase data-testid="hangar-close" aria-label="Close" onClick={onClose} sx={{ width: 26, height: 26, border: `1px solid ${C.panelEdge}`, borderRadius: '4px', color: C.inkDim, fontSize: 13, flexShrink: 0 }}>✕</ButtonBase>
         </Box>
-      </Box>
 
-      {/* Footer */}
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, px: '14px', py: '10px', borderTop: `1px solid ${C.panelEdge}`, flexShrink: 0, [SHORT]: { py: '6px' } }}>
-        <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 2, rowGap: '2px', fontFamily: HUD.font.num, fontSize: 12, color: C.inkDim, minWidth: 0 }}>
-          {refused ? (
-            <Box component="span" data-testid="hangar-cost" data-cost={footer.cost}>Can&apos;t launch this from here</Box>
+        {/* Tabs */}
+        <Box role="tablist" sx={{ display: 'flex', px: '10px', borderBottom: `1px solid ${C.panelEdge}`, flexShrink: 0 }}>
+          {HANGAR_TABS.map((t, i) => {
+            const sel = i === tabIx;
+            return (
+              <ButtonBase
+                key={t.id} role="tab" aria-selected={sel} data-testid={`hangar-tab-${t.id}`} onClick={() => pickTab(i)}
+                sx={{
+                  fontFamily: HUD.font.label, fontWeight: 600, fontSize: 13, p: '10px 14px 9px', gap: 1, [SHORT]: { p: '7px 12px 6px' },
+                  color: sel ? C.ink : C.inkDim, boxShadow: sel ? `inset 0 -2px 0 ${C.auto}` : 'none',
+                  background: sel ? 'linear-gradient(to top, rgba(52,216,255,.08), transparent)' : 'none',
+                }}
+              >
+                {t.label}
+                <Box component="span" sx={{ fontFamily: HUD.font.num, fontSize: 10, border: `1px solid ${sel ? C.auto : C.edge2}`, color: sel ? C.auto : C.inkDim, borderRadius: '3px', px: '5px', py: '1px' }}>
+                  {tabReadyCount(t, purse)} ready
+                </Box>
+              </ButtonBase>
+            );
+          })}
+        </Box>
+
+        {/* Body: tiles | detail */}
+        <Box sx={{ flex: 1, minHeight: 0, display: 'grid', gridTemplateColumns: '1fr', overflowY: 'auto', [WIDE]: { gridTemplateColumns: 'minmax(0,1.35fr) minmax(0,1fr)', overflowY: 'hidden' } }}>
+          <Box sx={{ px: '14px', py: '12px', minHeight: 0, [SHORT]: { py: '8px' }, [WIDE]: { borderRight: `1px solid ${C.panelEdge}`, overflowY: 'auto' } }}>
+            {ready.length > 0 && (
+              <TileGroup title="Ready to launch" note={isCapitalTab ? (needsSignIn ? 'sign in to launch a capital' : 'launch with credits') : 'free'}>
+                {ready.map((t) => <HangarTileCard key={t.id} tile={t} purse={purse} selectedKind={kind} onPick={setKind} />)}
+              </TileGroup>
+            )}
+            {yard.length > 0 && (
+              <TileGroup title="Shipyard hulls" note="build or buy at a base">
+                {yard.map((t) => <HangarTileCard key={t.id} tile={t} purse={purse} selectedKind={kind} onPick={setKind} />)}
+              </TileGroup>
+            )}
+          </Box>
+          <Box data-testid="hangar-detail" sx={{ px: '14px', py: '12px', [SHORT]: { py: '8px', gap: '8px' }, display: 'flex', flexDirection: 'column', gap: '10px', minHeight: 0, [WIDE]: { overflowY: 'auto' } }}>
+            <Box sx={{ position: 'relative', aspectRatio: '16 / 10', maxHeight: '42vh', [SHORT]: { maxHeight: '30vh' }, borderRadius: '8px', border: `1px solid ${C.panelEdge}`, bgcolor: '#020309', backgroundImage: art(fit.kind) ?? 'none', backgroundSize: 'contain', backgroundPosition: 'center', backgroundRepeat: 'no-repeat', flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+              {art(fit.kind) === null && <ShipSilhouette shape={k.shape} size={96} />}
+              <Box component="span" sx={{ position: 'absolute', top: 8, left: 10, fontFamily: HUD.font.num, fontSize: 10, letterSpacing: '.1em', textTransform: 'uppercase', color: C.inkDim }}>
+                {hangarClassLine(tile, fit, verdict)}
+              </Box>
+              <Box component="span" sx={{ position: 'absolute', bottom: 8, left: 10, fontSize: 22, fontWeight: 700, textShadow: '0 2px 8px rgba(0,0,0,.8)' }}>{tile.displayName}</Box>
+            </Box>
+            {tile.fits.length > 1 && (
+              <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: '6px' }}>
+                {tile.fits.map((f) => {
+                  const on = f.kind === fit.kind;
+                  return (
+                    <ButtonBase
+                      key={f.kind} data-testid={`hangar-fit-${f.kind}`} aria-pressed={on} onClick={() => setKind(f.kind)}
+                      sx={{ fontFamily: HUD.font.label, fontWeight: 600, fontSize: 11, p: '3px 8px', borderRadius: '4px', border: `1px solid ${on ? C.auto : C.edge2}`, bgcolor: on ? 'rgba(52,216,255,.12)' : 'transparent', color: on ? C.ink : C.inkDim, minHeight: 28 }}
+                    >
+                      {FIT_LABEL[f.fit]}
+                    </ButtonBase>
+                  );
+                })}
+              </Box>
+            )}
+            <Box sx={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              <StatRow label="Hull" value={k.maxHealth} pct={Math.max(3, Math.sqrt(k.maxHealth / scale.hull) * 100)} color={C.hullOk} />
+              <StatRow label="Speed" value={k.maxSpeed} pct={Math.max(3, (k.maxSpeed / scale.speed) * 100)} color={C.auto} />
+            </Box>
+            <Box component="p" sx={{ m: 0, fontSize: 12, color: C.inkDim, lineHeight: 1.4 }}>{hangarRole(tile, k.description)}</Box>
+            {why !== null && (
+              <Box component="p" sx={{ m: 0, fontSize: 12, color: why.warn ? C.manual : C.inkDim, lineHeight: 1.4 }}>{why.text}</Box>
+            )}
+            {ownedShipId !== undefined && (
+              <ButtonBase data-testid="hangar-abandon" onClick={() => { void abandon(ownedShipId); }} sx={{ alignSelf: 'flex-start', fontFamily: HUD.font.label, fontWeight: 600, fontSize: 11, color: C.danger, border: `1px solid rgba(255,77,106,.4)`, borderRadius: '4px', p: '5px 10px', minHeight: 30 }}>
+                Abandon this ship
+              </ButtonBase>
+            )}
+          </Box>
+        </Box>
+
+        {/* Footer */}
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, px: '14px', py: '10px', borderTop: `1px solid ${C.panelEdge}`, flexShrink: 0, [SHORT]: { py: '6px' } }}>
+          <Box sx={{ display: 'flex', flexWrap: 'wrap', columnGap: 2, rowGap: '2px', fontFamily: HUD.font.num, fontSize: 12, color: C.inkDim, minWidth: 0 }}>
+            {refused ? (
+              <Box component="span" data-testid="hangar-cost" data-cost={footer.cost}>Can&apos;t launch this from here</Box>
+            ) : (
+              <>
+                <Box component="span">Cost <Box component="b" data-testid="hangar-cost" data-cost={footer.cost} sx={{ color: C.ink, fontWeight: 600 }}>{costText}</Box></Box>
+                <Box component="span">After launch <Box component="b" data-testid="hangar-after" sx={{ color: footer.after < 0 ? C.danger : C.credits, fontWeight: 600 }}>{cr(footer.after)} cr</Box>
+                  {token && <> · <Box component="b" sx={{ color: C.ink }}>{Math.max(0, purse.freeLaunches - 1)}</Box> free left</>}
+                </Box>
+              </>
+            )}
+          </Box>
+          <Box sx={{ flex: 1 }} />
+          {needsSignIn ? (
+            <>
+              <ButtonBase data-testid="hangar-guest" disabled={refused} onClick={() => { onPlayAsGuest?.(); launch(); }} sx={altBtn}>Play as guest</ButtonBase>
+              <ButtonBase data-testid="hangar-signin" onClick={() => { if (sectorKey !== null) onSignIn?.(kind as ShipKindId, sectorKey); }} sx={launchBtn(false)}>SIGN IN TO LAUNCH ▸</ButtonBase>
+            </>
           ) : (
             <>
-              <Box component="span">Cost <Box component="b" data-testid="hangar-cost" data-cost={footer.cost} sx={{ color: C.ink, fontWeight: 600 }}>{costText}</Box></Box>
-              <Box component="span">After launch <Box component="b" data-testid="hangar-after" sx={{ color: footer.after < 0 ? C.danger : C.credits, fontWeight: 600 }}>{cr(footer.after)} cr</Box>
-                {token && <> · <Box component="b" sx={{ color: C.ink }}>{Math.max(0, purse.freeLaunches - 1)}</Box> free left</>}
-              </Box>
+              <ButtonBase onClick={onClose} sx={altBtn}>Back to map</ButtonBase>
+              <ButtonBase data-testid="hangar-launch" disabled={refused} onClick={launch} sx={launchBtn(refused)}>{refused ? 'LAUNCH' : 'LAUNCH ▸'}</ButtonBase>
             </>
           )}
         </Box>
-        <Box sx={{ flex: 1 }} />
-        {needsSignIn ? (
-          <>
-            <ButtonBase data-testid="hangar-guest" disabled={refused} onClick={() => { onPlayAsGuest?.(); launch(); }} sx={altBtn}>Play as guest</ButtonBase>
-            <ButtonBase data-testid="hangar-signin" onClick={() => { if (sectorKey !== null) onSignIn?.(kind as ShipKindId, sectorKey); }} sx={launchBtn(false)}>SIGN IN TO LAUNCH ▸</ButtonBase>
-          </>
-        ) : (
-          <>
-            <ButtonBase onClick={onClose} sx={altBtn}>Back to map</ButtonBase>
-            <ButtonBase data-testid="hangar-launch" disabled={refused} onClick={launch} sx={launchBtn(refused)}>{refused ? 'LAUNCH' : 'LAUNCH ▸'}</ButtonBase>
-          </>
-        )}
       </Box>
-    </Dialog>
+    </EqxWindow>
   );
 }
 

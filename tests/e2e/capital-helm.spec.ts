@@ -44,7 +44,7 @@ test('Fly is manual: a battleship pilot gets no speed telegraph, a tap sets no c
   });
   try {
     await localShipReady(page);
-    await expect(page.getByTestId('helm-panel')).toHaveCount(0);
+    await expect(page.getByTestId('helm-speed')).toHaveCount(0);
 
     // Tap empty space up-right of the ship (the camera centres on it): no course.
     const box = (await page.locator('canvas').first().boundingBox())!;
@@ -77,7 +77,7 @@ test('a fighter shows no helm panel in Fly either', async ({ browser }) => {
   try {
     // Once the local ship is in the mirror, helm availability has been decided.
     await localShipReady(page);
-    await expect(page.getByTestId('helm-panel')).toHaveCount(0);
+    await expect(page.getByTestId('helm-speed')).toHaveCount(0);
   } finally {
     await ctx.close();
   }

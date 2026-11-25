@@ -1,6 +1,7 @@
 import { useMemo, useState, type ReactNode } from 'react';
 import { ANCHOR_NAMES, ANCHOR_STYLES, type AnchorName } from './anchors';
 import { LayoutContext, type AnchorElementMap } from './useLayout';
+import { useTopCenterPromptFit } from './topCenterPromptFit';
 
 interface Props {
   children: ReactNode;
@@ -38,6 +39,9 @@ export function LayoutProvider({ children }: Props): JSX.Element {
     }
     return out;
   }, []);
+
+  // The prompt anchor sits under the top-centre HUD column (topCenterPromptFit.ts).
+  useTopCenterPromptFit(elementMap['top-center'] ?? null);
 
   return (
     <LayoutContext.Provider value={elementMap}>

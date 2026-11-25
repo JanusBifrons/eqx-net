@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Alert, Box } from '@mui/material';
-import type { AlertColor } from '@mui/material';
+import { EqxPrompt, EqxPromptStack, useAnyWindowOpen, type EqxPromptTone } from '../../ui/index.js';
 import { useUIStore, useIsLoadingActive } from '../state/store';
 import type { WarpRelation } from '../state/storeTypes';
 
@@ -23,30 +22,26 @@ import type { WarpRelation } from '../state/storeTypes';
  * incoming" chip rather than an invisible empty `<Box>` — so the player can
  * always SEE the incoming-warp readout exists (the R2.21 idle state read as
  * "missing"; the user "never saw it"). Positioning / z-index / safe-area are
- * owned by the `<Slot>` host — never set here. Purity: the store carries only
+ * owned by the `<Slot>` host — never set here. Each line is an EqxPrompt
+ * readout in a token colour (no icon). Purity: the store carries only
  * count / label / timing / the discrete `relation` enum (invariant #2).
  */
-const ALERT_SX = { py: 0.25, fontSize: 11 } as const;
-// Idle chip: small + muted so the always-present "all clear" readout is visible
-// but unobtrusive (start-tiny HUD rule).
-const IDLE_SX = { py: 0.25, fontSize: 11, opacity: 0.7 } as const;
-const STACK_SX = { display: 'flex', flexDirection: 'column', gap: 0.5 } as const;
 
 function remainingSec(countdownMs: number, observedAtMs: number, nowMs: number): number {
   return Math.max(0, Math.ceil((countdownMs - (nowMs - observedAtMs)) / 1000));
 }
 
-/** Pure relation → MUI severity colour map (R2.21). Hostile reads RED (threat),
- *  neutral amber, friendly green. Exported for the component test. */
-export function severityForRelation(relation: WarpRelation): AlertColor {
+/** Pure relation → prompt tone (R2.21). Hostile reads RED (threat), neutral
+ *  amber, friendly green. Exported for the component test. */
+export function toneForRelation(relation: WarpRelation): EqxPromptTone {
   switch (relation) {
     case 'hostile':
-      return 'error';
+      return 'danger';
     case 'friendly':
-      return 'success';
+      return 'good';
     case 'neutral':
     default:
-      return 'warning';
+      return 'warn';
   }
 }
 
@@ -60,6 +55,9 @@ export function WarpInWarningBanner(): JSX.Element {
   // curtain drops. (Supersedes the P3.9 "stays visible during transit" stance for
   // the curtain phase specifically.)
   const isLoadingActive = useIsLoadingActive();
+  // A passive readout never draws over an open Window (the prompt anchor sits
+  // above Windows for answer-me prompts only).
+  const windowOpen = useAnyWindowOpen();
   // A monotonic tick to re-render the countdown ~5 Hz without per-warning RAF.
   const [, setTick] = useState(0);
 
@@ -69,10 +67,10 @@ export function WarpInWarningBanner(): JSX.Element {
     return () => window.clearInterval(id);
   }, [warpWarnings.length]);
 
-  // Render nothing visible while the curtain is up (the testid stays for the
+  // Render nothing visible while the curtain is up or a Window is open (the testid stays for the
   // always-mounted contract; no content ⇒ nothing over the curtain).
-  if (isLoadingActive) {
-    return <Box sx={STACK_SX} data-testid="warp-warning-banner" data-warning-active="0" />;
+  if (isLoadingActive || windowOpen) {
+    return <EqxPromptStack data-testid="warp-warning-banner" dataAttrs={{ 'warning-active': '0' }} />;
   }
 
   const now = (globalThis.performance ?? Date).now();
@@ -80,11 +78,9 @@ export function WarpInWarningBanner(): JSX.Element {
   // idle (no-incoming) state shows a VISIBLE "nothing incoming" chip so the
   // readout is never invisible.
   return (
-    <Box sx={STACK_SX} data-testid="warp-warning-banner" data-warning-active={warpWarnings.length > 0 ? '1' : '0'}>
+    <EqxPromptStack data-testid="warp-warning-banner" dataAttrs={{ 'warning-active': warpWarnings.length > 0 ? '1' : '0' }}>
       {warpWarnings.length === 0 ? (
-        <Alert severity="success" icon={false} sx={IDLE_SX} data-testid="warp-warning-idle">
-          ✓ Nothing incoming
-        </Alert>
+        <EqxPrompt tone="good" dim message="✓ Nothing incoming" data-testid="warp-warning-idle" />
       ) : (
         warpWarnings.map((w) => {
           const secs = remainingSec(w.countdownMs, w.observedAtMs, now);
@@ -95,21 +91,16 @@ export function WarpInWarningBanner(): JSX.Element {
             queueMicrotask(() => removeWarpWarning(w.id));
           }
           return (
-            <Alert
+            <EqxPrompt
               key={w.id}
-              severity={severityForRelation(w.relation)}
-              sx={ALERT_SX}
+              tone={toneForRelation(w.relation)}
+              message={`⚠ ${w.count} × ${w.label}${w.count === 1 ? '' : 's'} warping in — ${secs}s`}
               data-testid="warp-warning"
-              data-warning-id={w.id}
-              data-warning-count={w.count}
-              data-warning-secs={secs}
-              data-warning-relation={w.relation}
-            >
-              {`⚠ ${w.count} × ${w.label}${w.count === 1 ? '' : 's'} warping in — ${secs}s`}
-            </Alert>
+              dataAttrs={{ 'warning-id': w.id, 'warning-count': w.count, 'warning-secs': secs, 'warning-relation': w.relation }}
+            />
           );
         })
       )}
-    </Box>
+    </EqxPromptStack>
   );
 }
