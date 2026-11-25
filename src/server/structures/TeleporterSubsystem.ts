@@ -316,7 +316,7 @@ export class TeleporterSubsystem {
         rec.tpPartner = twin;
         this.h.onChanged();
       }
-      // "When a ship boards": how long a ship has sat on the pad.
+      // "When a ship boards": how long a ship has sat on the pad (the test cycleScale shortens the dwell too).
       if (this.h.shipsOnPad(rec) > 0) rec.tpBoardedSinceMs ??= nowMs;
       else delete rec.tpBoardedSinceMs;
       const rules = rec.tpRules ?? DEFAULT_TELEPORT_RULES;
@@ -324,7 +324,7 @@ export class TeleporterSubsystem {
       const pad = rec.padHold;
       const fireNow = rulesSayFire(rules, {
         charged: this.isCharged(rec) && (isFreeTeleporterKind(rec.kind) || this.h.isPowered(rec)),
-        boardedForMs: rec.tpBoardedSinceMs === undefined ? 0 : nowMs - rec.tpBoardedSinceMs,
+        boardedForMs: rec.tpBoardedSinceMs === undefined ? 0 : (nowMs - rec.tpBoardedSinceMs) / this.h.cycleScale(),
         padGoods: pad?.goods ?? EMPTY_GOODS,
         padWeight: pad === undefined ? 0 : holdWeight(pad),
       });
