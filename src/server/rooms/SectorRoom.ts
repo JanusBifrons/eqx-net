@@ -188,6 +188,7 @@ import { FleetRoomHooks } from './features/fleetRoomHooks.js';
 import { PilotSwap } from './features/pilotSwap.js';
 import { RoomRayHits, playerHitscanDist, swarmRayHit } from './features/rayHits.js';
 import { RoomWreckSpawns } from './features/wreckSpawns.js';
+import { structureSpillPoint } from './features/structureSpill.js';
 import { FireControlLocks } from './features/fireControlLocks.js';
 import { swarmLockId } from './lockSalvage.js';
 import { transitHostRoom } from './features/transitMessages.js';
@@ -3155,21 +3156,23 @@ export class SectorRoom extends Room<SectorState> {
     // was already removed (e.g. by placement.remove / deconstruction).
     if (this.structureRegistry.has(rec.id)) {
       // Living World P1a-2 — a storage structure leaving the world (razed OR
-      // deconstructed) spills its whole payload where it stood.
+      // deconstructed) spills its whole payload where it stood, or just clear
+      // of its wreck pieces when it broke up (structureSpill.ts).
       const srec = this.structureRegistry.get(rec.id);
       if (srec) {
+        const at = structureSpillPoint(srec, opts.emitDestroyed && opts.vaporised !== true && this.wreckSpawns.structureWreckSourceOf(rec.id) !== null);
         const payload = this.storage.takeForSpill(srec);
-        if (payload !== null) this.loot.drop(payload, srec.x, srec.y, 0, 0, { cause: opts.emitDestroyed ? 'razed' : 'removed' });
+        if (payload !== null) this.loot.drop(payload, at.x, at.y, 0, 0, { cause: opts.emitDestroyed ? 'razed' : 'removed' });
         // P2b — a processor's (unbound) blueprint spills too.
         const slot = this.storage.takeSlotForSpill(srec);
-        if (slot !== null) this.loot.drop(slot, srec.x, srec.y, 0, 0, { cause: opts.emitDestroyed ? 'razed' : 'removed' });
+        if (slot !== null) this.loot.drop(slot, at.x, at.y, 0, 0, { cause: opts.emitDestroyed ? 'razed' : 'removed' });
         // v4 T1 — a teleporter's pad hold spills, and its partner is unpaired.
         const pad = this.storage.takePadForSpill(srec);
-        if (pad !== null) this.loot.drop(pad, srec.x, srec.y, 0, 0, { cause: opts.emitDestroyed ? 'razed' : 'removed' });
+        if (pad !== null) this.loot.drop(pad, at.x, at.y, 0, 0, { cause: opts.emitDestroyed ? 'razed' : 'removed' });
         this.teleporters.onRemoved(srec);
         // Economy v2 W3 — a lab's running job spills its blueprints too.
         const labSpill = this.researchLabs.onRemoved(srec);
-        if (labSpill !== null) this.loot.drop(labSpill, srec.x, srec.y, 0, 0, { cause: opts.emitDestroyed ? 'razed' : 'removed' });
+        if (labSpill !== null) this.loot.drop(labSpill, at.x, at.y, 0, 0, { cause: opts.emitDestroyed ? 'razed' : 'removed' });
       }
       this.structureRegistry.remove(rec.id);
       this.structureAttackAuditAtMs.delete(rec.id);
