@@ -166,6 +166,8 @@ export async function bootSectorTestServer(opts: {
   sectorKey?: string;
   droneCount?: number;
   testMode?: boolean;
+  /** Base-platforms prototype room flag (`state.deck`, testMode only). */
+  deck?: boolean;
   /** GEP P4 — deterministic structure placement (kind=2 swarm entities, seeded
    *  into swarmHealth so they're damageable). testMode-only; forwarded to the
    *  `structurePoses` room option. */
@@ -306,6 +308,7 @@ export async function bootSectorTestServer(opts: {
     sectorKey: opts.sectorKey,
     droneCount: opts.droneCount ?? 0,
     testMode: opts.testMode ?? true,
+    deck: opts.deck,
     structurePoses: opts.structurePoses,
     dronePoses: opts.dronePoses,
     prebuiltStructures: opts.prebuiltStructures,

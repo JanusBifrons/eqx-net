@@ -18,6 +18,9 @@ import type { RecipeId } from '../../shared-types/recipes.js';
 
 export interface SectorRoomOptions {
   testMode?: boolean;
+  /** Base-platforms prototype: the room builds on hex deck plates
+   *  (`state.deck`). Honoured only with testMode; default false. `?room=deck`. */
+  deck?: boolean;
   asteroidConfig?: ReadonlyArray<AsteroidSpec>;
   /** P2c (testMode) — sector features for a non-galaxy room (asteroid mix,
    *  nebula for Gas Collectors). Galaxy rooms use their sector's features. */

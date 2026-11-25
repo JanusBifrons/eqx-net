@@ -150,6 +150,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   shipCount: 0,
   swarmCount: 0,
   clockRate: 1.0,
+  deck: false,
   serverTickHz: 60,
   devData: { rtt: 0, drift: 0, angleDrift: 0, lerping: false, snapshotIntervalMs: 0, ticksAhead: 0, snapshotCount: 0, significantCorrectionCount: 0, significantAngleCorrectionCount: 0, maxDriftUnits: 0, maxAngleDriftRad: 0, ackedTick: 0, inputTick: 0, serverTick: 0, serverX: 0, serverY: 0, beforeX: 0, beforeY: 0, afterX: 0, afterY: 0 },
   healthStats: { serverGc: { count30s: 0, maxMs30s: 0 }, longtask: { count30s: 0, maxMs30s: 0 } },
@@ -266,6 +267,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   setShipCount: (n) => { if (get().shipCount !== n) set({ shipCount: n }); }, // per-snapshot: unchanged = no notify
   setSwarmCount: (n) => { if (get().swarmCount !== n) set({ swarmCount: n }); },
   setClockRate: (n) => { if (get().clockRate !== n) set({ clockRate: n }); },
+  setDeck: (on) => { if (get().deck !== on) set({ deck: on }); },
   setServerTickHz: (n) => { if (get().serverTickHz !== n) set({ serverTickHz: n }); },
   setDevData: (d) => set({
     devData: d,

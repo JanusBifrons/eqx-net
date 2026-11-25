@@ -42,6 +42,25 @@ export const BASE_BUILD_TEST_OPTS = {
   maxClients: 4,
 };
 
+/**
+ * `?room=deck` (base-platforms prototype): `base-build-test`'s setup with the
+ * `deck` flag on (`state.deck`). The first pilot to join adopts a Capital and
+ * ONE Connector at the world origin, the first plate's anchor; the pair keeps
+ * the proven Capital → north-Connector offset so they auto-connect.
+ */
+export const DECK_TEST_OPTS = {
+  ...BASE_BUILD_TEST_OPTS,
+  sectorKey: 'deck',
+  deck: true,
+  prebuiltStructures: [
+    { kind: 'capital' as const, x: 0, y: -SCENARIO.connectorN.y, rot: SCENARIO.capital.rot },
+    { kind: 'connector' as const, x: 0, y: 0 },
+  ],
+  scenarioAsteroids: [],
+  defaultSpawnX: -1000,
+  defaultSpawnY: 150 - SCENARIO.connectorN.y,
+};
+
 /** Registers this group's rooms. Called from `index.ts` inside the
  *  `shouldRegisterTestRooms()` gate; `define` order is the order here. */
 export function defineEngineeringRooms(gameServer: Server): void {
@@ -451,4 +470,5 @@ export function defineEngineeringRooms(gameServer: Server): void {
     })
     .filterBy(['testId']);
   gameServer.define('base-build-test', SectorRoom, { ...BASE_BUILD_TEST_OPTS }).filterBy(['testId']);
+  gameServer.define('deck', SectorRoom, { ...DECK_TEST_OPTS }).filterBy(['testId']);
 }
