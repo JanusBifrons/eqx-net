@@ -32,6 +32,15 @@ describe('AppHeader (U2-8b)', () => {
     expect(useUIStore.getState().drawerTab).toBe('settings');
   });
 
+  it('reserves its band only while mounted (U5-3: the game has no top bar)', () => {
+    const root = document.documentElement.classList;
+    expect(root.contains('eqx-app-bar')).toBe(false);
+    const view = render(<AppHeader onLoginClick={() => {}} />);
+    expect(root.contains('eqx-app-bar')).toBe(true);
+    view.unmount();
+    expect(root.contains('eqx-app-bar')).toBe(false);
+  });
+
   it('logged out: Login instead of the avatar', () => {
     useAuthStore.setState({ token: null, user: null });
     render(<AppHeader onLoginClick={() => {}} />);

@@ -1,15 +1,16 @@
 /**
  * Per-phase content composition for the App's phase machine.
  *
- * Each phase renders a different shell (AppHeader + body + modal
- * pair). The 'game' phase mounts GameSurface; 'local' mounts the
+ * Each phase renders a different shell (body + cog panel; the homepage
+ * and sign-in add the desktop AppHeader, the game has none). The 'game' phase mounts GameSurface; 'local' mounts the
  * diagnostic LocalSurface; 'auth' is the login flow; 'galaxy-map'
  * (default) is the homepage for every visitor (the hex map), with a
  * transient 'connecting' beat that paints a black background while
  * the global WarpScreen overlay does the show.
  *
- * The cog panel (settings + Profile) is mounted in every phase shell so the
- * AppHeader's avatar / gear icon open it uniformly (U2-8b).
+ * The cog panel (settings + Profile) is mounted in every phase shell: the
+ * AppHeader's avatar / gear open it outside the game, the right rail's cog in
+ * it (U2-8b, U5-3). In game the first tap asks for full screen (U5-3).
  */
 
 import { Box } from '@mui/material';
@@ -17,6 +18,7 @@ import { AppHeader } from '../components/AppHeader';
 import { LoginPage } from '../components/LoginPage';
 import { LocalSurface } from '../components/LocalSurface';
 import { MobileAvatarBadge } from '../layout/MobileAvatarBadge';
+import { useFirstTapFullscreen } from '../layout/useFirstTapFullscreen';
 import { CogPanel } from '../panels/CogPanel';
 import type { Phase } from '../state/storeTypes';
 
@@ -43,13 +45,14 @@ export function PhaseRouter(props: PhaseRouterProps): JSX.Element {
     phase, setPhase, gameSurface, onAuthSuccess, onContinueAsGuest,
   } = props;
 
+  useFirstTapFullscreen(phase === 'game');
   const headerWithLogin = <AppHeader onLoginClick={() => setPhase('auth')} />;
   const cog = <CogPanel />;
 
   if (phase === 'game') {
+    // No top bar in game (UI plan U5-3): the rail's cog holds settings and account.
     return (
       <>
-        {headerWithLogin}
         {gameSurface}
         {cog}
       </>
