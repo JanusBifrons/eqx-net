@@ -30,7 +30,7 @@ import {
   CAPITAL_STARTING_MINERALS,
 } from '../../core/structures/structureGridConstants.js';
 import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
-import { placementRejection, placementRejectionNotice } from '../../core/structures/placementRules.js';
+import { placementRejection, placementRejectionNotice, type PlacementDeck } from '../../core/structures/placementRules.js';
 import { StructureRegistry, type StructureRecord } from './StructureRegistry.js';
 import { autoConnectStructure, linkReachBox } from './structureGridView.js';
 import { STARTER_STRUCTURE_KINDS, needsPackedCrate } from '../../shared-types/blueprints.js';
@@ -107,6 +107,8 @@ export interface StructurePlacementHooks {
 export class StructurePlacementSubsystem {
   /** Scratch for `linkReachBox` (auto-connect's `near` box). */
   private readonly linkBox: ObstacleBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  /** Scratch deck context for a player's placement on a deck room (#14). */
+  private readonly deckScratch: PlacementDeck = { plates: { plateAtWorld: () => false }, owner: '' };
   /** Why the last `place` was refused (an overlap, or a kind rule via
    *  `placementRefusal`), for the room's notice; null when it wasn't (or it
    *  succeeded). */
@@ -121,13 +123,17 @@ export class StructurePlacementSubsystem {
    * `skipAutoConnect` — a generated base (or a scale lattice) supplies its own
    * intended connection graph via `connectExplicit`; greedy auto-connect would
    * link e.g. gate pylons and close a gate. Players never pass it.
+   *
+   * `deck` — base platforms: the room's deck flag is on and this is a
+   * PLAYER's placement (`place_structure`): the centre must be on the owner's
+   * deck (`off-deck` otherwise). System placements never pass it.
    */
   place(
     owner: string,
     kindId: string,
     x: number,
     y: number,
-    opts?: { skipAutoConnect?: boolean; rot?: number; mirror?: boolean; requirePacked?: boolean },
+    opts?: { skipAutoConnect?: boolean; rot?: number; mirror?: boolean; requirePacked?: boolean; deck?: boolean },
   ): string | null {
     this.lastRefusal = null;
     if (!isStructureKindId(kindId)) return null;
@@ -143,7 +149,13 @@ export class StructurePlacementSubsystem {
     // the auto-connect LOS check already uses). Shared pure predicate so the
     // client ghost can validate identically.
     const near = { x0: pos.x - hw, y0: pos.y - hh, x1: pos.x + hw, y1: pos.y + hh };
-    const rejection = placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), this.hooks.getObstacles?.(near, true), rot, mirror);
+    let deck: PlacementDeck | null = null;
+    if (opts?.deck === true) {
+      deck = this.deckScratch;
+      deck.plates = this.hooks.registry.plates;
+      deck.owner = owner;
+    }
+    const rejection = placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), this.hooks.getObstacles?.(near, true), rot, mirror, deck);
     if (rejection !== null) {
       this.lastRefusal = placementRejectionNotice(rejection);
       return null;

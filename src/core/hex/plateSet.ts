@@ -144,6 +144,19 @@ export class PlateSet<K = string> {
     for (let n = 0; n < list.length; n++) visit(unpackI(list[n]!), unpackJ(list[n]!));
   }
 
+  /**
+   * Write `owner`'s plates into `out` as flat (i, j) pairs (cleared first);
+   * the wire copy the worker renderer's {@link OwnerPlateList} reads.
+   * Allocation-free once `out` has grown.
+   */
+  platesInto(owner: string, out: number[]): number[] {
+    out.length = 0;
+    const list = this.owners.get(owner)?.list;
+    if (!list) return out;
+    for (let n = 0; n < list.length; n++) out.push(unpackI(list[n]!), unpackJ(list[n]!));
+    return out;
+  }
+
   private retain(owner: string, key: number): void {
     let op = this.owners.get(owner);
     if (!op) {
@@ -171,5 +184,32 @@ export class PlateSet<K = string> {
       op.at.set(last, idx);
     }
     if (op.list.length === 0) this.owners.delete(owner);
+  }
+}
+
+/**
+ * One owner's plates as a flat (i, j) pair list ({@link PlateSet.platesInto}):
+ * the renderer (possibly in a worker, with no `PlateSet`) answers the same
+ * {@link PlateSet.plateAtWorld} query from the copy the placement preview
+ * carries. A view of the set, not a second one: few plates, linear scan,
+ * allocation-free.
+ */
+export class OwnerPlateList {
+  owner = '';
+  pairs: readonly number[] = [];
+
+  set(owner: string, pairs: readonly number[]): this {
+    this.owner = owner;
+    this.pairs = pairs;
+    return this;
+  }
+
+  plateAtWorld(owner: string, x: number, y: number): boolean {
+    if (owner !== this.owner) return false;
+    pixelToAxialInto(x, y, DECK_HEX_SIZE, HEX);
+    plateOfHexInto(HEX.q, HEX.r, PLATE);
+    const p = this.pairs;
+    for (let n = 0; n + 1 < p.length; n += 2) if (p[n] === PLATE.i && p[n + 1] === PLATE.j) return true;
+    return false;
   }
 }

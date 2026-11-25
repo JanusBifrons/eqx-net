@@ -242,8 +242,11 @@ export interface RenderMirror {
    * Structured-cloneable (plain object) so it crosses the worker boundary.
    * `deck` = the room's base-platforms flag: the live ghost snaps to its
    * kind's deck slot (`snapPlacementToDeck`, same as the server).
+   * `deckOwner` / `deckPlates` (deck rooms only): the local player and their
+   * plates as flat (i, j) pairs (`PlateSet.platesInto`), so the ghost runs
+   * the server's `off-deck` rule (`placementRejection`'s deck context).
    */
-  pendingPlacementPreview?: { kind: string; x: number; y: number; angle: number; mirror?: boolean; pending?: boolean; held?: boolean; deck?: boolean } | null;
+  pendingPlacementPreview?: { kind: string; x: number; y: number; angle: number; mirror?: boolean; pending?: boolean; held?: boolean; deck?: boolean; deckOwner?: string; deckPlates?: number[] } | null;
   /**
    * Helm move marker (owner 2026-11-12): the local pilot's active helm course
    * point, GAME-space, while they fly a capital under a helm order (never for

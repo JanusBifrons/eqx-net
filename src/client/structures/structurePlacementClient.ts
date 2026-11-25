@@ -104,6 +104,31 @@ export interface PlacementPreview {
   held?: boolean;
   /** Room flag `deck` (base platforms): the live ghost snaps to its deck slot. */
   deck?: boolean;
+  /** Deck rooms only: the local player (whose deck the ghost must stand on)… */
+  deckOwner?: string;
+  /** …and their plates, flat (i, j) pairs ({@link writePreviewDeck}). */
+  deckPlates?: number[];
+}
+
+/** The plate source the preview copies from (`ColyseusClient.plates`). */
+export interface PreviewPlateSource {
+  platesInto(owner: string, out: number[]): number[];
+}
+
+/**
+ * Base platforms: stamp the room's deck flag and, on a deck room, the local
+ * player's plates onto the preview, so the (possibly worker) renderer's ghost
+ * runs the same `off-deck` rule as the server. Reuses the preview's array (#14).
+ */
+export function writePreviewDeck(out: PlacementPreview, deck: boolean, plates: PreviewPlateSource | null, owner: string | null): void {
+  out.deck = deck;
+  if (!deck || plates === null) {
+    out.deckOwner = undefined;
+    if (out.deckPlates) out.deckPlates.length = 0;
+    return;
+  }
+  out.deckOwner = owner ?? '';
+  out.deckPlates = plates.platesInto(out.deckOwner, out.deckPlates ?? []);
 }
 
 /**

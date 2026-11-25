@@ -13,6 +13,7 @@ import { StructurePlacementSubsystem } from '../../src/server/structures/Structu
 import { StructureRegistry } from '../../src/server/structures/StructureRegistry.js';
 import { snapGhostToDeck } from '../../src/client/render/pixi/placementDeckSnap.js';
 import { getStructureKind } from '../../src/shared-types/structureKinds.js';
+import { plateCentreWorldInto } from '../../src/core/hex/plates.js';
 
 function rig(deck: boolean) {
   const registry = new StructureRegistry();
@@ -38,6 +39,15 @@ function rig(deck: boolean) {
     logger: { warn: () => {} },
   } as unknown as StructureMessageHost;
   registerStructureMessages(host);
+  // The off-deck rule needs player-1 to have deck under every test point:
+  // seed plates (derived-set anchors only, no structures to overlap).
+  if (deck) {
+    const c = { x: 0, y: 0 };
+    for (let i = -4; i <= 4; i++) for (let j = -4; j <= 4; j++) {
+      plateCentreWorldInto(i, j, c);
+      registry.plates.upsert(`seed-${i},${j}`, 'player-1', 'connector', c.x, c.y);
+    }
+  }
   const client = { sessionId: 's1' } as Client;
   /** Send place_structure; returns the placed record's centre (or null). */
   const place = (kind: string, x: number, y: number): { x: number; y: number } | null => {
