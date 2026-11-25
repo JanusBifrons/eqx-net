@@ -55,6 +55,39 @@ describe('SectorRoom integration — transit pads (W1b)', () => {
     expect(Math.hypot(after.x - far.x, after.y - far.y)).toBeLessThan(1500);
   });
 
+  it('a ship that just arrived does not count as boarding: the far pad stays idle', { timeout: 40_000 }, async () => {
+    const pair = pocketPadPair('sol-prime')!;
+    harness = await bootSectorTestServer({
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, asteroidConfig: [],
+      galaxyBases: false, alienGates: false, solarSectors: true, pocketPads: true,
+      teleportCycleScale: 0.01,
+    } as never);
+    await harness.connectActive(PILOT, { shipKind: 'fighter', spawnX: pair.ax, spawnY: pair.ay });
+    const internals = harness.getServerRoom()!._internals;
+    const pads = [...internals.structureRegistry.all()].filter((r) => r.kind === 'pocket_pad');
+    const home = pads.find((r) => Math.hypot(r.x - pair.ax, r.y - pair.ay) < 3000)!;
+    const far = pads.find((r) => r !== home)!;
+    const step = async (i: number): Promise<void> => {
+      if (i % 10 === 0) internals.pulseStructureGrid();
+      internals.tickStructureTurrets();
+      await harness.advance(30);
+    };
+    // Ride home -> far, then let the cycle finish.
+    let i = 0;
+    for (; i < 400 && (internals.playerPose(PILOT)!.poseEpoch === 0 || (home.tpPhase ?? 0) !== 0); i++) await step(i);
+    expect(internals.playerPose(PILOT)!.poseEpoch).toBe(1);
+    expect(home.tpPhase ?? 0).toBe(0);
+    const landed = internals.playerPose(PILOT)!;
+    expect(Math.hypot(landed.x - far.x, landed.y - far.y)).toBeLessThan(320); // sitting on the far pad
+    // Sit there well past the boarding dwell (3 s x 0.01): the arrival must
+    // not re-arm the far pad and ride straight back.
+    for (let k = 0; k < 25; k++, i++) {
+      await step(i);
+      expect(far.tpPhase ?? 0).toBe(0);
+    }
+    expect(internals.playerPose(PILOT)!.poseEpoch).toBe(1);
+  });
+
   it('seeds nothing in a system without a pair', { timeout: 20_000 }, async () => {
     harness = await bootSectorTestServer({
       sectorKey: 'vega-reach', droneCount: 0, testMode: true, asteroidConfig: [],

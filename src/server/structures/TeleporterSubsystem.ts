@@ -41,7 +41,7 @@ import {
 } from '../../shared-types/teleport.js';
 import { DEFAULT_TELEPORT_RULES } from '../../shared-types/teleport.js';
 import { holdWeight } from '../../core/cargo/hold.js';
-import { armCycle, rulesSayFire, stepCycle, type CycleDoors, type CycleState } from '../../core/structures/teleportCycle.js';
+import { armCycle, rulesSayFire, stepCycle, trackBoarding, type CycleDoors, type CycleState } from '../../core/structures/teleportCycle.js';
 import type { DoorSegment } from '../../core/structures/doorMotion.js';
 import type { PadDoorDriver } from './padDoorDriver.js';
 import type { StorageService } from '../cargo/StorageService.js';
@@ -301,7 +301,10 @@ export class TeleporterSubsystem {
       // Redesign T2: keep the doors heading for their phase's pose (a power
       // change mid-travel re-segments; a re-segment re-syncs the row).
       if (isPadChamberKind(rec.kind) && this.h.padDoors?.drive(rec, !doorsShutFor(rec.tpPhase ?? TP_PHASE.IDLE)) === true) this.h.onChanged();
-      if (this.busy(rec)) {
+      const busy = this.busy(rec);
+      // "When a ship boards": arrivals and riders are not boarders (the test cycleScale shortens the dwell too).
+      if (!isAlienGateKind(rec.kind)) trackBoarding(rec, this.h.shipsOnPad(rec), busy, nowMs);
+      if (busy) {
         if (rec.tpInitiator === true) this.advance(rec, nowMs);
         continue;
       }
@@ -316,9 +319,6 @@ export class TeleporterSubsystem {
         rec.tpPartner = twin;
         this.h.onChanged();
       }
-      // "When a ship boards": how long a ship has sat on the pad (the test cycleScale shortens the dwell too).
-      if (this.h.shipsOnPad(rec) > 0) rec.tpBoardedSinceMs ??= nowMs;
-      else delete rec.tpBoardedSinceMs;
       const rules = rec.tpRules ?? DEFAULT_TELEPORT_RULES;
       if (!rules.whenCharged && !rules.shipBoards && rules.loaded === null) continue;
       const pad = rec.padHold;

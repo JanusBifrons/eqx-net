@@ -93,3 +93,28 @@ export function rulesSayFire(rules: TeleportRules, inp: RuleInputs): boolean {
   }
   return false;
 }
+
+/** A pad's "when a ship boards" bookkeeping (on the structure record). */
+export interface BoardingState {
+  /** When a boarder first sat on the pad (ms; absent: no boarder). */
+  tpBoardedSinceMs?: number;
+  /** Ships left on the pad by the last cycle (arrivals, or ones that stayed
+   *  on a cancelled jump): they are not boarders. */
+  tpAboardAfterCycle?: number;
+}
+
+/**
+ * Track "a ship boarded" from the number of ships on the pad. While a cycle
+ * runs (`busy`), everyone on the pad is a rider or an arrival: they become
+ * the baseline, and no boarding clock runs. Idle, the baseline only shrinks
+ * (as those ships fly off); a count above it is a ship that flew ONTO the
+ * pad, which starts the clock. So a ship that just arrived never sends the
+ * pad straight back. Alloc-free.
+ */
+export function trackBoarding(s: BoardingState, shipsOnPad: number, busy: boolean, nowMs: number): void {
+  const base = busy ? shipsOnPad : Math.min(s.tpAboardAfterCycle ?? 0, shipsOnPad);
+  if (base > 0) s.tpAboardAfterCycle = base;
+  else delete s.tpAboardAfterCycle;
+  if (!busy && shipsOnPad > base) s.tpBoardedSinceMs ??= nowMs;
+  else delete s.tpBoardedSinceMs;
+}

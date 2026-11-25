@@ -29,7 +29,7 @@ A jump needs `jumpCharge(distance) = 600 + 0.15 × distance` (`shared-types/tele
 
 The inspector's **Fire** button fires now (needs a full charge and both pads idle). Rules fire on their own, and the first rule met fires:
 - **when charged:** a shuttle that keeps going;
-- **when a ship boards:** a ship has sat on the pad for 3 s (`SHIP_BOARD_DWELL_MS`);
+- **when a ship boards:** a ship that flew onto the pad has sat there for 3 s (`SHIP_BOARD_DWELL_MS`). Ships left on the pad by the last jump (arrivals, or riders of a cancelled jump) are not boarders, so an arrival never sends the pad straight back (`trackBoarding`);
 - **when loaded:** the pad holds at least N of a good, or N total weight (set from the server rules; the panel shows the first two today).
 
 ## The jump cycle
@@ -113,7 +113,7 @@ It is separate from base storage, so production never draws from it.
 
 Style C (`structureStyleC.transport.chamber.ts`, one drawer for all three chambers): a plated floor deck, armoured walls along the collider's wall boxes, chamfered corner towers each with a violet charge coil, entry chevrons at each doorway. The blast doors are the `tp-doors` / `tp-doors-large` rig's slide leaves wearing the gatehouse door-leaf art.
 
-- **Floor lights** follow the phase: green idle or open, flashing amber armed or closing, red sealed.
+- **Floor lights** follow the phase and the doors: green idle or open once the doors are fully open, flashing amber armed or closing, red sealed or while the doors are still shut or opening (an arriving pad just after the swap).
 - **Coils** fill with the banked charge.
 - **No power:** a built teleporter with no power goes dark (its coils still show the charge, dimly). The Transit Pad needs no grid, so it stays lit.
 
