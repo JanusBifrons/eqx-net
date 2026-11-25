@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useLayoutEffect } from 'react';
 import AppBar from '@mui/material/AppBar';
 import Toolbar from '@mui/material/Toolbar';
 import Typography from '@mui/material/Typography';
@@ -18,9 +18,20 @@ interface Props {
 /** The gear opens the cog panel's main page (the `rightPanel` flag). */
 const openCogSettings = (): void => useUIStore.getState().setDrawerTab('settings');
 
-/** Desktop top bar. The gear and the avatar both open the cog panel (U2-8b). */
+/** While the header is mounted it reserves its band: `--app-bar-h` is 48px (index.html). */
+const APP_BAR_CLASS = 'eqx-app-bar';
+
+/**
+ * Desktop top bar on the homepage and sign-in only; the game has none (UI plan U5-3).
+ * The gear and the avatar both open the cog panel (U2-8b).
+ */
 export function AppHeader({ onLoginClick }: Props) {
   const { user } = useAuthStore();
+  useLayoutEffect(() => {
+    const root = document.documentElement.classList;
+    root.add(APP_BAR_CLASS);
+    return () => root.remove(APP_BAR_CLASS);
+  }, []);
   // The join loading screen (sector briefing) owns the screen: no top bar over it.
   const loadingScreen = useShowLoadingScreen();
   if (loadingScreen) return null;
@@ -33,8 +44,8 @@ export function AppHeader({ onLoginClick }: Props) {
       sx={{
         // Hidden on touch devices (`pointer: coarse`). Phones in landscape
         // are 667+ px wide — too wide for a `max-width` breakpoint to catch
-        // — so we use the input-mode media query instead. Settings, profile,
-        // galaxy actions all live in the AdvancedDrawer on touch.
+        // — so we use the input-mode media query instead. Settings and profile
+        // live in the cog panel on touch.
         display: 'flex',
         '@media (pointer: coarse)': { display: 'none' },
         // NOTE: backdropFilter REMOVED 2026-05-13. Stacked over the

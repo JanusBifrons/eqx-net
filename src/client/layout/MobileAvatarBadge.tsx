@@ -6,7 +6,7 @@ import { Slot } from './Slot';
 /**
  * Floating avatar pip for the galaxy map (the homepage) on mobile.
  *
- * Desktop surfaces auth state via the persistent `AppHeader` avatar. On touch
+ * Desktop surfaces auth state via the homepage `AppHeader` avatar. On touch
  * the AppBar is hidden, so without this badge the player has no at-a-glance
  * signal that they're logged in on the galaxy map. Only mounted on the
  * galaxy-map phase — in game the rail's cog reaches the same Profile page.
@@ -22,7 +22,7 @@ export function MobileAvatarBadge(): JSX.Element | null {
   if (!user) return null;
   if (!isTouchDevice()) return null;
 
-  // Slotted into top-right at order=1 beside the toolbar's FullscreenToggle.
+  // Slotted into top-right at order=1.
   // It only renders on the galaxy-map phase.
   return (
     <Slot anchor="top-right" order={1}>

@@ -335,7 +335,7 @@ describe('tp-doors (teleporter chamber)', () => {
   it("gates still rest shut, and the Ancients' gate has no doors", () => {
     expect(doorRestPos('shield_gate')).toBe(0);
     expect(doorRestPos('shield_airlock')).toBe(0);
-    expect(rigForStructureKind('alien_gate')).toBeNull();
+    expect(rigForStructureKind('alien_gate')?.id).toBe('alien-astrolabe'); // rings only, no door clip
     expect(doorLeafCount('alien_gate')).toBe(0);
     expect(doorRestPos('alien_gate')).toBe(0);
   });
