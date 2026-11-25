@@ -10,7 +10,7 @@
  *   of the open item, ✕ or Esc clears it. Renders the panels the flag opens:
  *   Galaxy (`panels/GalaxyPanel.tsx`), the Trade drill-down (`panels/TradePanel.tsx`),
  *   Jobs (`panels/JobsPanel.tsx`), Faction (`panels/FactionPanel.tsx`), Contacts
- *   (`panels/ContactsPanel.tsx`; the O key too) and the
+ *   (`panels/ContactsPanel.tsx`; the O key too), Orders (`panels/OrdersPanel.tsx`; the rail's Fleet item in Command and the fleet strip's ⚙) and the
  *   selection's Details panel (opened from the left strip's ⚙, not a rail item).
  *   The Build panel (`build`) is mounted by GameHud (BuildSidebarHost) and opens
  *   on the same flag; the cog panel (`panels/CogPanel.tsx`) is mounted by
@@ -25,7 +25,7 @@ import { HoldPanel } from '../panels/HoldPanel';
 import { TradePanel } from '../panels/TradePanel';
 import { JobsPanel } from '../panels/JobsPanel';
 import { GalaxyPanel } from '../panels/GalaxyPanel';
-import { FleetRailPanel } from '../panels/FleetPanel';
+import { OrdersPanel } from '../panels/OrdersPanel';
 import { DetailsPanel } from '../panels/DetailsPanel';
 import { FactionPanel } from '../panels/FactionPanel';
 import { ContactsPanel, type ContactsPanelProps } from '../panels/ContactsPanel';
@@ -81,7 +81,7 @@ export function RightPanelHost({ rendererRef }: Pick<ContactsPanelProps, 'render
       <TradePanel />
       <JobsPanel />
       <HoldPanel />
-      <FleetRailPanel />
+      <OrdersPanel />
       <DetailsPanel />
       <FactionPanel />
       <ContactsPanel rendererRef={rendererRef} />

@@ -15,7 +15,7 @@ describe('escClearsStrip', () => {
     expect(escClearsStrip(esc(), base())).toBe(true);
   });
   it('an open panel closes first (the strip stays)', () => {
-    expect(escClearsStrip(esc(), { ...base(), rightPanel: 'fleet' })).toBe(false);
+    expect(escClearsStrip(esc(), { ...base(), rightPanel: 'orders' })).toBe(false);
     expect(escClearsStrip(esc(), { ...base(), rightPanel: 'build' })).toBe(false); // Build panel open
   });
   it('a press someone else already handled (placement, fleet pick) does nothing more', () => {

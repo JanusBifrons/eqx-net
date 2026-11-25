@@ -7,8 +7,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
 
 vi.mock('../panels/HoldPanel', () => ({ HoldPanel: () => null }));
-vi.mock('../components/FleetPanel', () => ({ FleetPanel: () => <div data-testid="fleet-orders" /> }));
-vi.mock('../components/FleetStrip', () => ({ FleetStrip: () => null }));
 
 import { useUIStore } from '../state/store';
 import { LayoutProvider } from './LayoutProvider';
@@ -42,8 +40,8 @@ describe('railItems per mode', () => {
     expect(railItemsFor('fly').map((i) => i.id)).toEqual(['hold', 'contacts', 'galaxy', 'jobs', 'trade', 'faction', 'cog']);
   });
   it('Command: Fleet first', () => {
-    expect(railTools('command').map((i) => i.id)).toEqual(['fleet']);
-    expect(railItemsFor('command').map((i) => i.id)).toEqual(['fleet', 'contacts', 'galaxy', 'jobs', 'trade', 'faction', 'cog']);
+    expect(railTools('command').map((i) => i.id)).toEqual(['orders']);
+    expect(railItemsFor('command').map((i) => i.id)).toEqual(['orders', 'contacts', 'galaxy', 'jobs', 'trade', 'faction', 'cog']);
   });
   it('Build: Build first', () => {
     expect(railItemsFor('build').map((i) => i.id)).toEqual(['build', 'contacts', 'galaxy', 'jobs', 'trade', 'faction', 'cog']);
@@ -74,24 +72,24 @@ describe('RightPanelHost', () => {
 
   it('rail icon -> flag set -> the host shows that panel; ✕ clears it', () => {
     mount();
-    fireEvent.click(screen.getByTestId('right-rail-fleet'));
-    expect(useUIStore.getState().rightPanel).toBe('fleet');
-    expect(screen.getByTestId('fleet-orders')).toBeTruthy();
-    fireEvent.click(screen.getByTestId('rail-panel-fleet-close'));
+    fireEvent.click(screen.getByTestId('right-rail-orders'));
+    expect(useUIStore.getState().rightPanel).toBe('orders');
+    expect(screen.getByTestId('orders-panel')).toBeTruthy();
+    fireEvent.click(screen.getByTestId('orders-panel-close'));
     expect(useUIStore.getState().rightPanel).toBeNull();
   });
 
   it('Esc clears the flag', () => {
     mount();
-    fireEvent.click(screen.getByTestId('right-rail-fleet'));
+    fireEvent.click(screen.getByTestId('right-rail-orders'));
     act(() => { fireEvent.keyDown(window, { key: 'Escape' }); });
     expect(useUIStore.getState().rightPanel).toBeNull();
   });
 
   it('a second tap on the open item closes it', () => {
     mount();
-    fireEvent.click(screen.getByTestId('right-rail-fleet'));
-    fireEvent.click(screen.getByTestId('right-rail-fleet'));
+    fireEvent.click(screen.getByTestId('right-rail-orders'));
+    fireEvent.click(screen.getByTestId('right-rail-orders'));
     expect(useUIStore.getState().rightPanel).toBeNull();
   });
 
@@ -100,12 +98,12 @@ describe('RightPanelHost', () => {
     mount();
     expect(screen.getByTestId('right-rail-contacts')).toBeTruthy();
     expect(screen.getByTestId('right-rail-hold')).toBeTruthy();
-    expect(screen.queryByTestId('right-rail-fleet')).toBeNull();
+    expect(screen.queryByTestId('right-rail-orders')).toBeNull();
   });
 
   it('Command and Build rails show Contacts too, and it opens the Contacts panel', () => {
     mount(); // spectator = Command
-    expect(screen.getByTestId('right-rail-fleet')).toBeTruthy();
+    expect(screen.getByTestId('right-rail-orders')).toBeTruthy();
     fireEvent.click(screen.getByTestId('right-rail-contacts'));
     expect(useUIStore.getState().rightPanel).toBe('contacts');
     expect(screen.getByTestId('contacts-panel')).toBeVisible();

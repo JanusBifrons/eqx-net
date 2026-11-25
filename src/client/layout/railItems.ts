@@ -34,7 +34,7 @@ export interface RailItemSpec {
 
 const CONTACTS: RailItemSpec = { id: 'contacts', icon: 'contacts', tooltip: 'Contacts', open: { kind: 'panel' } };
 const HOLD: RailItemSpec = { id: 'hold', icon: 'hold', tooltip: 'Hold', open: { kind: 'panel' } };
-const FLEET: RailItemSpec = { id: 'fleet', icon: 'fleet', tooltip: 'Fleet', open: { kind: 'panel' } };
+const FLEET: RailItemSpec = { id: 'orders', icon: 'fleet', tooltip: 'Fleet orders', open: { kind: 'panel' } };
 const BUILD: RailItemSpec = { id: 'build', icon: 'build', tooltip: 'Build', open: { kind: 'panel' } };
 
 /** In every mode, below the mode's tools. */

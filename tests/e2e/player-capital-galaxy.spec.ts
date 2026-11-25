@@ -38,7 +38,7 @@ test('a fresh player spawns a battleship in a galaxy sector and flies it by hand
       undefined,
       { timeout: 15_000 },
     );
-    await expect(page.getByTestId('helm-panel'), 'Fly shows no speed telegraph').toHaveCount(0);
+    await expect(page.getByTestId('helm-speed'), 'Fly shows no speed telegraph').toHaveCount(0);
     const start = await shipPos(page);
     await page.keyboard.down('w');
     try {

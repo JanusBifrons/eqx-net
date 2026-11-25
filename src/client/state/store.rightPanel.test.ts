@@ -30,7 +30,7 @@ describe('rightPanel flag', () => {
   });
 
   it('a non-drawer panel (orders, details, contacts) does not show the drawer', () => {
-    for (const p of ['orders', 'details', 'contacts', 'hold', 'fleet', 'build'] as const) {
+    for (const p of ['orders', 'details', 'contacts', 'hold', 'build'] as const) {
       useUIStore.getState().setRightPanel(p);
       expect(selectDrawerOpen(useUIStore.getState())).toBe(false);
     }
