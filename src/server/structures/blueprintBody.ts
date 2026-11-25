@@ -21,6 +21,7 @@
  */
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 import { isStructureBodySolid } from '../../core/structures/structureBody.js';
+import { isFlatDeckKind } from '../../shared-types/structureKinds.js';
 
 /** A ship hull as a circle (`SectorObstacles.hullCircles`). */
 export interface HullCircle { x: number; y: number; r: number }
@@ -58,9 +59,11 @@ export function shipInsideFootprint(rec: FootprintBox, hooks: Pick<BlueprintBody
 /**
  * Turn `rec`'s blueprint body solid if no ship is inside it. Returns true when
  * the body is solid (already was, or just turned), false while it must wait.
+ * A flat deck tile (road) never turns solid: ships fly over it for good, so it
+ * counts as settled while its body stays a hologram.
  */
 export function settleBlueprintBody(rec: StructureRecord, hooks: BlueprintBodyHooks): boolean {
-  if (isStructureBodySolid(rec)) return true;
+  if (isStructureBodySolid(rec) || isFlatDeckKind(rec.kind)) return true;
   if (shipInsideFootprint(rec, hooks)) return false;
   rec.ghostBody = false;
   hooks.solidify?.(rec.id);

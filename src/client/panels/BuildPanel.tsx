@@ -29,14 +29,14 @@
  * (layout/placingStripItems.tsx) show the picked building; its icon reopens
  * this panel, and a pick here folds back to the strip with the new kind.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Box } from '@mui/material';
 import type { StructureKindId } from '@shared-types/structureKinds';
 import { buildEntry } from '@shared-types/packedStock';
 import { HUD } from '../hud/tokens';
 import { useUIStore } from '../state/store';
 import { usePackedStock } from '../structures/usePackedStock';
-import { BUILD_CATEGORIES, CATEGORY_ICON, categoryById, type BuildCategoryId } from '../components/buildCategories';
+import { BUILD_CATEGORIES, CATEGORY_ICON, buildableKinds, categoryById, type BuildCategoryId } from '../components/buildCategories';
 import { BuildKindDetails, BuildKindTile } from '../components/BuildKindTile';
 import { BUILD_PANEL_SIZE, SidePanel } from '../components/SidePanel';
 import { WINDOW_ROOT_SX } from '../components/GameWindow';
@@ -69,8 +69,10 @@ export function BuildPanel({ open, onClose, onPick }: BuildPanelProps): JSX.Elem
   const packedStock = usePackedStock(open || placing);
   const inSector = useUIStore((s) => s.currentSectorKey !== null); // no sector = no crate rule
   const [shown, setShown] = useState<StructureKindId | null>(null);
+  const deck = useUIStore((s) => s.deck); // a deck-only kind (road) shows on a deck room only
   const cat = categoryById(category);
-  const shownKind = shown !== null && cat.kinds.includes(shown) ? shown : null;
+  const kinds = useMemo(() => buildableKinds(cat, deck), [cat, deck]);
+  const shownKind = shown !== null && kinds.includes(shown) ? shown : null;
   // 1–9 / Q / E while open (see the header): the old hotbar's number-key path.
   useEffect(() => {
     if (!open) return;
@@ -83,14 +85,14 @@ export function BuildPanel({ open, onClose, onPick }: BuildPanelProps): JSX.Elem
         setCategory(stepCategory(CATEGORY_IDS, category, a.delta));
         return;
       }
-      const k = cat.kinds[a.index];
+      const k = kinds[a.index];
       if (k === undefined) return;
       setShown(k);
       if (!buildEntry(k, packedStock, inSector).locked) onPick(k);
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, category, cat, packedStock, inSector, onPick]);
+  }, [open, category, kinds, packedStock, inSector, onPick]);
   return (
     <SidePanel open={open} onClose={onClose} testId="build-sidebar" size={BUILD_PANEL_SIZE} closeOnEscape
       paperAttrs={{ 'data-open': open ? '1' : '0', 'data-mode': 'full' }} title="Build" headerTestId="build-sidebar-head"
@@ -111,7 +113,7 @@ export function BuildPanel({ open, onClose, onPick }: BuildPanelProps): JSX.Elem
               <Box sx={KINDS_SX} data-testid="build-kinds" data-category={category}>
                 <Box sx={CAT_LABEL_SX}>{cat.label}</Box>
                 <Box sx={GRID_SX}>
-                  {cat.kinds.map((k) => (
+                  {kinds.map((k) => (
                     <BuildKindTile key={k} kindId={k} entry={buildEntry(k, packedStock, inSector)} onPick={onPick}
                       onShow={setShown} selected={k === shownKind} />
                   ))}

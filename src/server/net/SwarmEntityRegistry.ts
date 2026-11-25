@@ -41,7 +41,7 @@ export function fieldRockOnWire(rec: { fieldAwake?: boolean; fieldMoved?: boolea
 }
 
 /** A loot pod (the shared predicate): nobody's shot lands on it. */
-export { isLootPod } from '../../shared-types/swarmWireFormat.js';
+export { isLootPod, isWeaponTransparent } from '../../shared-types/swarmWireFormat.js';
 
 export interface SwarmEntityRecord {
   id: string;

@@ -42,7 +42,7 @@
 import { shipSplashRadius, shipSweepHit } from '../../core/combat/shipHitShape.js';
 import { wreckSweepHit } from '../../core/destruction/wreckHits.js';
 import { ProjectileBroadphase } from './ProjectileBroadphase.js';
-import { isLootPod } from '../net/SwarmEntityRegistry.js';
+import { isWeaponTransparent } from '../net/SwarmEntityRegistry.js';
 import { projectileSweepCircle, projectileSweepBox } from '../../core/combat/Weapons.js';
 import {
   SLOT_X_OFF,
@@ -507,7 +507,8 @@ export class ProjectilePipeline {
     if (rec.id === proj.ownerId) return false;
     // No weapon ever touches a cargo pod (owner 2026-11-17): every shot from
     // anyone passes over it, so a pod is never destroyed and never a shield.
-    if (isLootPod(rec)) return false;
+    // A flat deck tile (a road) lies under the shot the same way.
+    if (isWeaponTransparent(rec)) return false;
     // A pass-through slug ignores debris (wreck pieces) and its own victims.
     if (proj.pass === true && (rec.kind === 4 || ProjectilePipeline.passed(proj, rec.id))) return false;
     // Friendly fire (owner decision 2026-11-10): no allegiance filter. A

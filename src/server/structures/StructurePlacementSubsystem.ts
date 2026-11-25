@@ -19,6 +19,7 @@
  */
 import {
   getStructureKind,
+  isFlatDeckKind,
   isStructureKindId,
   structureKindToIndex,
   type StructureKindId,
@@ -206,7 +207,8 @@ export class StructurePlacementSubsystem {
     // Hologram pass-through: a body turns solid only round no ship. A
     // blueprint always starts as one; a pre-built kind (the Capital) only when
     // a ship is inside its footprint (the grid pulse settles it once clear).
-    const ghost = !preBuilt || shipInsideFootprint({ x: pos.x, y: pos.y, radius: kind.radius, halfW: hw, halfH: hh }, this.hooks);
+    // A flat deck tile (road) is a hologram for good (`settleBlueprintBody`).
+    const ghost = isFlatDeckKind(kindId) || !preBuilt || shipInsideFootprint({ x: pos.x, y: pos.y, radius: kind.radius, halfW: hw, halfH: hh }, this.hooks);
     const hp = preBuilt
       ? kind.maxHealth
       : Math.max(1, Math.floor(kind.maxHealth * SCAFFOLDING_HP_FRACTION));

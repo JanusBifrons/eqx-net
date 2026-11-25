@@ -9,7 +9,7 @@
  * (`features/npcLineOfFire.ts`) and the fire resolvers use them too.
  */
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
-import { isLootPod, isWreckPiece } from '../../net/SwarmEntityRegistry.js';
+import { isWeaponTransparent, isWreckPiece } from '../../net/SwarmEntityRegistry.js';
 import type { ShipPhysicsState } from '../../../core/physics/World.js';
 import type { ShipState } from '../schema/SectorState.js';
 import type { AiFireTargetShape } from '../AiFireResolver.js';
@@ -116,7 +116,7 @@ export class RoomRayHits {
     for (const rec of h.swarmRegistry.all()) {
       if (rec.id === skipId) continue;
       // Nobody fights a loot pod (owner 2026-11-13): AI and turret beams pass it.
-      if (isLootPod(rec)) continue;
+      if (isWeaponTransparent(rec)) continue; // ...nor a flat deck tile (a road)
       const b = slotBase(rec.slot);
       const d = swarmRayHit(
         rec, fx, fy, dx, dy, best,

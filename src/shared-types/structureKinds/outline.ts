@@ -70,6 +70,7 @@ export const STRUCTURE_OUTLINE_FAMILY: Readonly<Record<StructureKindId, Structur
     coastal_lindemann: 'chamfer',
     siege_gun_80cm: 'chamfer',
     territory_lock: 'chamfer',
+    road: 'hex',
   });
 
 /** FNV-1a 32-bit: a stable seed from the kind + style ids. */

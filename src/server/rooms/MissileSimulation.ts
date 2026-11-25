@@ -69,6 +69,7 @@ import type {
 } from '../../shared-types/messages/missileMessages.js';
 import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { isTerrainLockKind } from '../../core/combat/lockState.js';
+import { isFlatDeckKind } from '../../shared-types/structureKinds.js';
 
 /** Maximum simultaneous in-flight missiles per sector. 256 = ~4× the
  *  steady-state ceiling under saturation (8 frigates × 3 mounts ×
@@ -764,6 +765,7 @@ export class MissileSimulation {
     // home on rock, you just can't fly through it).
     for (const rec of this.deps.swarmRegistry.all()) {
       if (rec.id === m.ownerId) continue;
+      if (rec.kind === 2 && isFlatDeckKind(rec.shipKind)) continue; // a road (flat deck tile): flown over (`isWeaponTransparent`)
       const b = slotBase(rec.slot);
       const cx = this.deps.sabF32[b + SLOT_X_OFF]!;
       const cy = this.deps.sabF32[b + SLOT_Y_OFF]!;

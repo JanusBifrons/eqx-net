@@ -15,7 +15,7 @@ import type { StorageService } from '../../cargo/StorageService.js';
 import type { SectorPersistence } from '../SectorPersistence.js';
 import { auditEvent } from '../../audit/GameplayAuditLog.js';
 import { parsedMessage, type ParsedMessageHost, type RoomFeature } from './parsedMessage.js';
-import { getStructureKind, isBuildableStructureKind, snapPlayerStructureRotation } from '../../../shared-types/structureKinds.js';
+import { getStructureKind, isBuildableStructureKind, isDeckOnlyStructureKind, snapPlayerStructureRotation } from '../../../shared-types/structureKinds.js';
 import { needsPackedCrate, productName } from '../../../shared-types/blueprints.js';
 import { snapPlacementToDeck } from '../../../core/structures/deckPlacement.js';
 import type { DeckSnap } from '../../../core/hex/deckSnap.js';
@@ -57,6 +57,8 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
     if (!owner) return;
     // v4 A — nobody builds an alien gate.
     if (!isBuildableStructureKind(msg.kind)) return;
+    // A deck tile (road) exists only on a deck room.
+    if (isDeckOnlyStructureKind(msg.kind) && !h.deck()) return;
     // Base platforms: on a deck room the PLAYER's point snaps to its kind's
     // deck slot (the client ghost runs the same core snap) and must stand on
     // the owner's deck (`off-deck`, same core rule). place() never snaps.

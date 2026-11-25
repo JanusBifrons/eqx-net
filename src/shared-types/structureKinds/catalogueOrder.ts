@@ -11,6 +11,7 @@ import {
   COASTAL_LINDEMANN, SIEGE_GUN_80CM,
 } from './coastal.js';
 import { TERRITORY_LOCK } from '../territoryLock.js';
+import { ROAD } from './deckTiles.js';
 
 /**
  * Canonical catalogue order = wire subtype-byte index. APPEND-ONLY (invariant
@@ -76,4 +77,6 @@ export const STRUCTURE_KINDS_LIST: readonly StructureKind[] = Object.freeze([
   SIEGE_GUN_80CM,
   // Sector control — APPENDED. Never reorder.
   TERRITORY_LOCK,
+  // Base platforms deck tiles — APPENDED. Never reorder.
+  ROAD,
 ]);

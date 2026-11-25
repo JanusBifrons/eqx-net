@@ -129,6 +129,8 @@ export const STARTER_STRUCTURE_KINDS: readonly string[] = [
   'capital', 'connector', 'solar', 'battery', 'miner', 'cargo_bay', 'turret', 'shield_pylon', 'shield_gate',
   // Sector control: a lock builds from minerals (its 20k cost), never packed.
   'territory_lock',
+  // Base platforms: the road deck tile, a cheap paving slab.
+  'road',
 ];
 /** Playable base loop — the ONE kind a player can only place from its packed
  *  crate (`structure:capital`, in the hold or storage). Every other kind
