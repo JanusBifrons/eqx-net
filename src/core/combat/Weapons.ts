@@ -1,6 +1,7 @@
 import type { PhysicsWorld } from '../physics/World.js';
 import type { Vec2 } from '../swarm/asteroidShape.js';
 import { getWeapon } from './WeaponCatalogue.js';
+import { structureTurnedBoxInto } from '../../shared-types/structureKinds/geometry.js';
 import type { HitscanWeaponDef, ProjectileWeaponDef, WeaponDef } from './WeaponCatalogue.js';
 
 const _hitscan = getWeapon('hitscan') as HitscanWeaponDef;
@@ -124,13 +125,17 @@ export function segmentNearCircle(
   return px * px + py * py <= r * r;
 }
 
+const turnScratch = { hw: 0, hh: 0, cos: 1, sin: 0 };
+
 /**
- * Ray vs an axis-aligned box centred on (cx, cy) with half extents (hw, hh) —
- * structure footprints (phase V; rotations are quarter turns, so a structure
- * is an axis-aligned box in world space). Slab clip. Returns the distance to
- * the entry point (0 when the ray starts inside), or null on a miss.
- * Allocation-free.
- * TODO(bp-16): oriented box — a 30° deck turn is still hit as this axis box.
+ * Ray vs a structure footprint centred on (cx, cy): (hw, hh) is the stored
+ * NEAREST-QUARTER box (`structureHalfExtents`). `rotDeg` (degrees; absent or
+ * a quarter turn ⇒ that axis box, byte-identical) at a 30° deck step hits the
+ * REAL turned box (`structureTurnedBoxInto`): the ray is taken into the box's
+ * frame (a turn keeps distances). `boxes` (a gate's parts) wins over both;
+ * those kinds turn only in quarters (`isStructureQuarterTurnOnly`). Slab clip.
+ * Returns the distance to the entry point (0 when the ray starts inside), or
+ * null on a miss. Allocation-free.
  */
 export function rayHitsBox(
   fromX: number, fromY: number,
@@ -142,8 +147,18 @@ export function rayHitsBox(
   /** A wide beam's half-width (`beamHalfWidth`): the box is hit on its
    *  outline rounded by it (exact, round corners). 0 ⇒ the thin ray. */
   halfWidth = 0,
+  /** The structure's turn in degrees (30° steps); absent ⇒ the axis box. */
+  rotDeg?: number,
 ): number | null {
   if (boxes) return rayHitsBoxParts(fromX, fromY, dirX, dirY, maxDist, cx, cy, boxes, 0, halfWidth);
+  if (rotDeg !== undefined && structureTurnedBoxInto(hw, hh, rotDeg, turnScratch)) {
+    const c = turnScratch.cos, s = turnScratch.sin, ox = fromX - cx, oy = fromY - cy;
+    const lfx = ox * c + oy * s, lfy = -ox * s + oy * c;
+    const ldx = dirX * c + dirY * s, ldy = -dirX * s + dirY * c;
+    return halfWidth > 0
+      ? capsuleHitsAabb(lfx, lfy, ldx, ldy, maxDist, 0, 0, turnScratch.hw, turnScratch.hh, halfWidth)
+      : rayHitsAabb(lfx, lfy, ldx, ldy, maxDist, 0, 0, turnScratch.hw, turnScratch.hh);
+  }
   return halfWidth > 0
     ? capsuleHitsAabb(fromX, fromY, dirX, dirY, maxDist, cx, cy, hw, hh, halfWidth)
     : rayHitsAabb(fromX, fromY, dirX, dirY, maxDist, cx, cy, hw, hh);
@@ -320,14 +335,26 @@ export function projectileSweepBox(
   cx: number, cy: number,
   hw: number, hh: number,
   boxes?: Float32Array,
+  /** The structure's turn in degrees (see `rayHitsBox`); absent ⇒ axis box. */
+  rotDeg?: number,
 ): { entry: number; hitX: number; hitY: number } | null {
   const segLen = Math.hypot(stepX, stepY);
   if (segLen < 1e-6) return null;
   const dirX = stepX / segLen;
   const dirY = stepY / segLen;
-  const entry = boxes
-    ? rayHitsBoxParts(fromX, fromY, dirX, dirY, segLen, cx, cy, boxes, projRadius)
-    : rayHitsAabb(fromX, fromY, dirX, dirY, segLen, cx, cy, hw + projRadius, hh + projRadius);
+  let entry: number | null;
+  if (boxes) {
+    entry = rayHitsBoxParts(fromX, fromY, dirX, dirY, segLen, cx, cy, boxes, projRadius);
+  } else if (rotDeg !== undefined && structureTurnedBoxInto(hw, hh, rotDeg, turnScratch)) {
+    // The real turned box: the step in the box's frame (a turn keeps distances).
+    const c = turnScratch.cos, s = turnScratch.sin, ox = fromX - cx, oy = fromY - cy;
+    entry = rayHitsAabb(
+      ox * c + oy * s, -ox * s + oy * c, dirX * c + dirY * s, -dirX * s + dirY * c,
+      segLen, 0, 0, turnScratch.hw + projRadius, turnScratch.hh + projRadius,
+    );
+  } else {
+    entry = rayHitsAabb(fromX, fromY, dirX, dirY, segLen, cx, cy, hw + projRadius, hh + projRadius);
+  }
   if (entry === null) return null;
   return { entry, hitX: fromX + dirX * entry, hitY: fromY + dirY * entry };
 }

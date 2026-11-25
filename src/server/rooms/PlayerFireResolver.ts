@@ -80,9 +80,9 @@ export interface SwarmHitTarget {
   entityId: number;
   radius: number;
   vertices?: ReadonlyArray<Vec2> | undefined;
-  /** Structures (phase V): footprint half extents for the box hit test. */
-  halfW?: number;
-  halfH?: number;
+  /** Structures (phase V): footprint half extents (nearest quarter) and the
+   *  30° step turn in degrees, for the box hit test (`rayHitsBox`). */
+  halfW?: number; halfH?: number; turnDeg?: number;
   /** Gates: the solid parts' world-axis boxes (see SwarmEntityRecord.boxes). */
   boxes?: Float32Array;
   /** Capital wreck pieces (kind 4): convex parts, body-local. */
@@ -676,7 +676,7 @@ export class PlayerFireResolver implements WeaponFireSink {
       } else if (rec.kind === 0 && rec.vertices) {
         dist = rayHitsConvexPolygon(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, ca, rec.vertices, hw);
       } else if (rec.halfW !== undefined && rec.halfH !== undefined) { // structures: the footprint box
-        dist = rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.halfW, rec.halfH, rec.boxes, hw);
+        dist = rayHitsBox(rayFromX, rayFromY, ndx, ndy, rayRange, cx, cy, rec.halfW, rec.halfH, rec.boxes, hw, rec.turnDeg);
       } else if (rec.kind === 1 && rec.shipKind) {
         // A ship: the same shape as if a player flew it (`shipHitShape.ts`,
         // owner's rule 2026-11-13; the room's `playerHitscanDist` twin).

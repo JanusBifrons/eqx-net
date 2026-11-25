@@ -185,7 +185,8 @@ export function structureMirrorToGridNode(
   out.radius = kind.radius;
   // Phase V — the rotated footprint box (the structure's swarm angle carries
   // its quarter-turn rotation). Must match the server's structureToGridNode.
-  // TODO(bp-16): oriented box — axis-aligned at an odd-30° turn.
+  // The NEAREST-QUARTER box, as the server's node keeps; at a 30° step the
+  // connection rules turn it back by `rot` (core `gridNodeBox.ts`).
   const ext = structureHalfExtents(swarmEntry.shipKind, (swarmEntry.angle * 180) / Math.PI);
   out.halfW = ext.hw;
   out.halfH = ext.hh;
@@ -240,7 +241,7 @@ export function ghostToGridNode(
   out.rot = preview.angle ?? 0;
   out.mirror = preview.mirror === true; // build mirror (4B): the ghost's choice
   out.radius = kind.radius;
-  // TODO(bp-16): oriented box — axis-aligned at an odd-30° turn.
+  // The nearest-quarter box; `rot` turns it at a 30° step (`gridNodeBox.ts`).
   const ext = structureHalfExtents(preview.kind, ((preview.angle ?? 0) * 180) / Math.PI);
   out.halfW = ext.hw;
   out.halfH = ext.hh;
