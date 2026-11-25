@@ -1,6 +1,7 @@
 /**
  * Test-only message handlers (`test_aggro`, `test_reload_turrets`,
- * `test_kill_capitals`, `test_fleet_warp`, `test_tractor`, `test_drop_pods`): cues integration and E2E tests
+ * `test_kill_capitals`, `test_fleet_warp`, `test_tractor`, `test_drop_pods`,
+ * `test_gate_seal`): cues integration and E2E tests
  * send to skip a long setup. Every handler is gated on the room's testMode
  * (or `EQX_ALLOW_DEV_OVERRIDES=1`); a production client's message is ignored.
  *
@@ -19,6 +20,7 @@ import {
   TestFleetWarpSchema,
   TestTractorSchema,
   TestDropPodsSchema,
+  TestGateSealSchema,
 } from '../../shared-types/messages.js';
 import { isCapitalKindId } from '../../core/combat/capitalHits.js';
 import type { SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
@@ -42,6 +44,8 @@ export interface TestMessageHandlersDeps {
   testTractor: (playerId: string, entityId: number, ticks: number) => void;
   /** Drop one loot pod per size class beside the player's ship. */
   dropTestPods: (playerId: string) => void;
+  /** Hold every Ancients' gate in the room SEALED (true) or IDLE (false). */
+  sealAlienGates: (sealed: boolean) => void;
 }
 
 export class TestMessageHandlers {
@@ -145,5 +149,18 @@ export class TestMessageHandlers {
       return;
     }
     d.dropTestPods(playerId);
+  }
+
+  /** Teleporter redesign A3 — `test_gate_seal`: hold the room's Ancients'
+   *  gates SEALED (outer ring solid) or IDLE, without the timetable. */
+  gateSeal(client: Client, raw: unknown): void {
+    const d = this.deps;
+    if (!(d.testMode || d.allowDevOverrides)) return;
+    const parsed = TestGateSealSchema.safeParse(raw);
+    if (!parsed.success) {
+      d.malformed.record(client.sessionId, 'test_gate_seal');
+      return;
+    }
+    d.sealAlienGates(parsed.data.sealed);
   }
 }

@@ -183,7 +183,7 @@ import { FleetCommandSubsystem } from '../fleet/FleetCommandSubsystem.js';
 import { LeaveHandler } from './LeaveHandler.js';
 import { JoinHandler } from './join/JoinHandler.js';
 import { TeleportTolls } from './features/teleportTolls.js';
-import { TeleportPadRiders, buildTeleporters } from './features/teleportMessages.js';
+import { TeleportPadRiders, buildTeleporters, holdAlienGatesSealed } from './features/teleportMessages.js';
 import { WingmanPilots } from './features/wingmanPilots.js';
 import { FleetRoomHooks } from './features/fleetRoomHooks.js';
 import { PilotSwap } from './features/pilotSwap.js';
@@ -2481,6 +2481,7 @@ export class SectorRoom extends Room<SectorState> {
           if (m && t) this.forceFields.renewTractor(pid, { ...m, weaponId: 'tractor' }, t.id, ticks);
         },
         dropTestPods: (pid) => { const p = this.shipPoseCache.get(pid); if (p) dropTestPodRow(this.loot, p.x, p.y); },
+        sealAlienGates: (sealed) => holdAlienGatesSealed(this.structureRegistry, this.teleporters, sealed),
       },
       onMessage: (type, handler) => this.onMessage(type, handler),
       nav: this.nav,

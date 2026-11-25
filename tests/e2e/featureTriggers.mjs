@@ -126,8 +126,9 @@ export const FEATURE_TRIGGERS = [
   },
   {
     area: 'teleporters and trade',
-    paths: ['src/server/structures/TeleporterSubsystem', 'src/client/components/TeleporterPanel', 'src/server/economy/', 'src/client/layout/Drawer/tabs/TradeTab'],
-    specs: ['teleporter', 'trade-tab', 'break-in'],
+    paths: ['src/server/structures/TeleporterSubsystem', 'src/client/components/TeleporterPanel', 'src/server/economy/', 'src/client/layout/Drawer/tabs/TradeTab',
+      'src/shared-types/alienGateSeal', 'src/server/rooms/features/teleportMessages'],
+    specs: ['teleporter', 'trade-tab', 'break-in', 'alien-gate'],
   },
 ];
 

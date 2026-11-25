@@ -33,6 +33,7 @@ import { getSector } from '../../../core/galaxy/galaxy.js';
 import { getStructureKind } from '../../../shared-types/structureKinds.js';
 import { isNpcOwner, relationOf, type RelationContext } from '../../../shared-types/relations.js';
 import {
+  isAlienGateKind,
   isFreeTeleporterKind,
   isPadChamberKind,
   isRoundPadKind,
@@ -54,6 +55,7 @@ import {
   TeleportPairSchema,
   TeleportUnpairSchema,
   TollAnswerSchema,
+  TP_PHASE,
   type PairRequestPrompt,
   type TeleporterKind,
   type TollAnswer,
@@ -523,4 +525,14 @@ export function buildTeleporters(h: TeleporterBuildHost): { teleporters: Telepor
   };
   if (sectorKey !== null) getTeleportBroker().register(teleportRoom);
   return { teleporters, teleportRoom };
+}
+
+/** Test cue (`test_gate_seal`, teleporter redesign A3): hold every Ancients'
+ *  gate in the room SEALED (its outer ring solid) or IDLE. The gate is not
+ *  its cycle's initiator, so `update` leaves the held phase alone. */
+export function holdAlienGatesSealed(reg: StructureRegistry, tp: TeleporterSubsystem, sealed: boolean): void {
+  for (const rec of reg.all()) {
+    if (!isAlienGateKind(rec.kind) || rec.tpInitiator === true) continue;
+    tp.setPhase(rec, sealed ? TP_PHASE.SEALED : TP_PHASE.IDLE, 0);
+  }
 }
