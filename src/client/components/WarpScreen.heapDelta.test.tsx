@@ -69,7 +69,7 @@ describe('WarpScreen — zero JS animation overhead', () => {
     expect(rafCallCount, 'WarpScreen must not schedule any RAF — the ellipsis animation is pure CSS').toBe(0);
   });
 
-  it('renders the progress bar and radar with no text (motion is CSS only)', () => {
+  it('renders the progress bar, the still emblem and the quips with motion in CSS only', () => {
     render(
       <LayoutContext.Provider value={{ fullscreen: host }}>
         <WarpScreen />
@@ -78,8 +78,8 @@ describe('WarpScreen — zero JS animation overhead', () => {
     const bar = host.querySelector('[data-testid="warp-screen-progress"]');
     expect(bar).not.toBeNull();
     expect(bar?.textContent).toBe('');
-    const radar = host.querySelector('[data-testid="warp-briefing-radar"]');
-    expect(radar?.querySelector('.eqx-radar-sweep')).not.toBeNull();
-    expect(radar?.textContent).toBe('');
+    expect(host.querySelector('[data-testid="warp-briefing-radar"]')).toBeNull();
+    expect(host.querySelector('[data-testid="warp-briefing-emblem"]')).not.toBeNull();
+    expect(host.querySelector('[data-testid="warp-quips"]')).not.toBeNull();
   });
 });

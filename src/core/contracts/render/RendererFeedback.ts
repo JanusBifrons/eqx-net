@@ -72,6 +72,11 @@ export interface RendererFeedback {
    * broken texture can never hold the loading screen.
    */
   artReady: boolean;
+  /** Of the art handles on screen this frame, how many are no longer pending
+   *  (ready or failed), and how many there are: the loading screen's
+   *  "Baking ship textures" percentage. Both 0 when the Machined look is off. */
+  artBakeDone: number;
+  artBakeTotal: number;
   /**
    * World-space origin of the local player's first live hitscan beam as
    * ACTUALLY DRAWN this frame (the `BeamSpritePool` sprite transform),

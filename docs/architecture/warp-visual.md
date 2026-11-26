@@ -39,27 +39,35 @@ stack, zoom-blur, burst ripple and white arrival flash on `app.stage`) is
   facts — Pilots, Structures, Threat (hostile drones / flagship / elite /
   "Quiet") from the last `/galaxy/snapshot` poll (`galaxyStats`, via the
   shared `buildSectorTooltip`), and Rock field from the static galaxy
-  graph (`asteroidConfigKey` + the `asteroid` feature). Under them a slim
-  bar fills one step per REAL join gate (`joinGatesDone`, the nine
-  `computeGameReadyFromState` gates; never a timer). Under the bar, the
-  **step breakdown**: `joinGateSteps` groups the nine gates into six
-  ordered steps, each with a playful name and a plain-English explainer
-  (`JOIN_STEP_TEXT`, pure data) — connect (connected), ship (ship id),
-  sector (first snapshot), draw (first frame + the minimum-display floor,
-  folded in so the timer never reads as a step of its own), place (pose
-  resolved + `client_ready` sent), arrive (arrival tick received + acked).
-  A shipless spectator has the ship id and pose gates done. The status
-  label names the current step (the first not done; WARP COMPLETE once
-  all are), with a "Step N of 6" count (the current step, 1-based; "6 of
-  6" when done), the current step's explainer, and
-  the list marking each step done / current / waiting. `joinGatesDone`
-  counts from `joinGateSteps`, so the bar and the list never disagree.
-  Right: a CSS-only radar
-  sweep (off under `prefers-reduced-motion`) whose only blips are the
-  player's own roster hulls in that sector. The briefing is mounted only
+  graph (`asteroidConfigKey` + the `asteroid` feature). Under them ONE
+  fun line (`LOADING_QUIPS`) cycles in one fixed spot by CSS keyframe, so
+  something always moves (proof the game has not frozen); it says nothing
+  about progress. Then a bar showing the real overall percentage
+  (`joinOverallPct`, the mean of the step percentages; never a timer)
+  and the **step list**: `joinGateSteps` groups the ten join gates into
+  seven ordered steps, each named for what the game is really doing
+  (`JOIN_STEP_TEXT`, pure data) and showing its own percentage — connect
+  (connected), ship (ship id), sector (first snapshot), draw (first
+  frame), bake (every on-screen Machined art handle ready or failed; done
+  once `client_ready` went out), place (pose resolved + the
+  minimum-display floor + `client_ready` sent), arrive (arrival tick
+  received + acked). A multi-gate step's percentage is its share of gates
+  done; the bake's is the real share of on-screen art handles no longer
+  pending (`RendererFeedback.artBakeDone/artBakeTotal` → the `artBake`
+  store slice via `syncArtBake` in `gameRafLoop`, written on change only,
+  monotone within a join, capped at 99 until `artReady`, re-armed with the
+  other join gates). The bake is what used to sit silent for many seconds
+  on a slow phone. A shipless spectator has the ship id and pose gates
+  done. The status label names the current step (the first not done;
+  WARP COMPLETE once all are); each row shows done (green ✓) / current /
+  waiting. Right: the pilot's own faction sigil (`LoadingSigil`, the
+  mark their ships wear, rasterised once per look into a data URL), still,
+  with a CSS shimmer masked to its shape (off under
+  `prefers-reduced-motion`); it replaced an animated radar that hitched on
+  phones. The briefing is mounted only
   while the screen is visible: once loading lifts (or during a trip) only
   the aria-hidden WARP COMPLETE status label stays, so no stale briefing
-  text, store subscription or sweep lingers in play. The
+  text, store subscription or animation lingers in play. The
   sector shown is the stalled trip's target, else the join's room name
   (`sectorKeyFromRoomName`) before `welcome`, else `currentSectorKey`. A
   stall (20 s; 45 s on a trip) adds "Still loading…" and Cancel. No
@@ -276,8 +284,9 @@ the markers to confirm, not a license to lighten the chain blind.
 | WarpScreen re-show on consecutive transits (Phase G) | `src/client/components/WarpScreen.transit.test.tsx` |
 | Transit reset group: prediction + UI (Phase G) | `src/client/net/ColyseusClient.transitRearmReadiness.test.ts` |
 | Orchestration: a trip raises no curtain, first join does | `src/client/App.warpOrchestration.test.tsx` |
-| Sector briefing: facts, gate progress, no raw ids | `src/client/components/WarpScreen.briefing.test.tsx` |
-| Loading steps: order, current step, bar agrees, spectator | `src/client/components/WarpScreen.steps.test.tsx` |
+| Sector briefing: facts, overall %, sigil, no raw ids | `src/client/components/WarpScreen.briefing.test.tsx` |
+| Loading steps: order, current step, per-step and bake %, spectator | `src/client/components/WarpScreen.steps.test.tsx` |
+| Bake % slice: monotone, 99 cap, on-change, re-arm | `src/client/state/artBakeUi.test.ts` |
 | Stall: Cancel + "Still loading…" only | `src/client/components/WarpScreen.stall.test.tsx` |
 | Warp-screen lifecycle (E2E) | `tests/e2e/join-warp-screen.spec.ts` |
 

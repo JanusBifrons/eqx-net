@@ -4,7 +4,7 @@ import { useIsLoadingActive, useUIStore } from '../state/store';
 import { Slot } from '../layout/Slot';
 import { logEvent } from '../debug/ClientLogger';
 import { WarpBriefing, WARP_STATUS_SX } from './WarpBriefing';
-import { currentJoinStepIndex, joinGatesDone, joinGateSteps, type JoinGateState } from './sectorBriefing';
+import { currentJoinStepIndex, joinGateSteps, joinOverallPct, type JoinGateState } from './sectorBriefing';
 
 /**
  * Thin in-game-language HUD over the Pixi canvas. NOT an overlay
@@ -14,12 +14,12 @@ import { currentJoinStepIndex, joinGatesDone, joinGateSteps, type JoinGateState 
  * Visible when `useIsLoadingActive()` is true (curtain up — initial
  * join / respawn). While visible it shows the "sector briefing"
  * (`WarpBriefing`): where you are arriving, who holds it, four live
- * facts the client already has (galaxy snapshot + roster polls), a
- * slim bar filled one step per REAL join gate, and a CSS radar sweep.
- * Under the bar, a status label naming the loading step in progress
- * (`joinGateSteps`: six named steps over the nine gates; WARP COMPLETE
- * once all are done), its plain-English explainer, an "N of 6" count
- * and the step list (done / current / waiting).
+ * facts the client already has (galaxy snapshot poll), one cycling fun line
+ * (so something always moves), a bar of the whole load in %, the status
+ * label naming the step in progress (`joinGateSteps`: seven plainly named
+ * steps over ten gates; WARP COMPLETE once all are done), the step list with
+ * a % per step (the art bake counts real textures), and the pilot's faction
+ * sigil with a CSS shimmer.
  *
  * Stall escape hatch: if the curtain stays up for 20 s, surfaces a
  * Cancel button that routes back to galaxy-map with a toast.
@@ -119,15 +119,18 @@ export function WarpScreen({ targetSectorKey = null }: WarpScreenProps = {}): JS
   const transitTargetSectorKey = useUIStore((s) => s.transitTargetSectorKey);
   const pilotMode = useUIStore((s) => s.pilotMode);
   const localPoseResolved = useUIStore((s) => s.localPoseResolved);
+  const artBakeReady = useUIStore((s) => s.artBakeReady);
+  const artBakePct = useUIStore((s) => s.artBakePct);
   // The step list and the bar come from ONE function over the gate flags
   // already subscribed above (render-only, on gate flips; no per-frame work).
   const gateState: JoinGateState = {
     connectionStatus, localShipInstanceId, rendererFirstFrameRendered, firstSnapshotApplied,
     joinMinimumElapsed, localPoseResolved, clientReadySent, arrivalTickFromServer, arrivalAcked, pilotMode,
+    artBakeReady, artBakePct,
   };
   const steps = joinGateSteps(gateState);
   const currentStep = currentJoinStepIndex(steps);
-  const gatesDone = joinGatesDone(gateState);
+  const overallPct = joinOverallPct(steps);
 
   // Plan: crispy-kazoo, Commit 8 — stall detection. After
   // LOADING_STALL_TIMEOUT_MS of continuous loading-active, surface the
@@ -158,6 +161,7 @@ export function WarpScreen({ targetSectorKey = null }: WarpScreenProps = {}): JS
           : !s.rendererFirstFrameRendered ? 'first-frame'
           : !s.firstSnapshotApplied ? 'first-snapshot'
           : !s.joinMinimumElapsed ? 'min-display'
+          : !s.artBakeReady ? `art-bake-${s.artBakePct}`
           : !s.clientReadySent ? 'client-ready'
           : s.arrivalTickFromServer === null ? 'warp-in-broadcast'
           : !s.arrivalAcked ? 'arrival-tick-reached'
@@ -183,10 +187,10 @@ export function WarpScreen({ targetSectorKey = null }: WarpScreenProps = {}): JS
     window.setTimeout(() => ui.setSectorAlert(null), 4000);
   };
 
-  // The status label names the step in progress (its playful name; the
-  // plain explainer and the full step list sit under it in WarpBriefing).
-  // The nine gates are grouped into six steps (`joinGateSteps`) so no step
-  // is a 30-100 ms flash on its own; the display floor folds into drawing.
+  // The status label names the step in progress (what the game is really
+  // doing; the full step list with per-step % sits under it in WarpBriefing).
+  // The ten gates are grouped into seven steps (`joinGateSteps`); the
+  // display floor folds into placing the ship.
   // Terminal (curtain mid-fade / hidden): WARP COMPLETE.
   const statusText = currentStep >= 0 ? steps[currentStep]!.name : 'WARP COMPLETE';
 
@@ -204,7 +208,7 @@ export function WarpScreen({ targetSectorKey = null }: WarpScreenProps = {}): JS
     : preWelcome ? (targetSectorKey ?? currentSectorKey)
     : (currentSectorKey ?? targetSectorKey);
 
-  // The progress bar fills one step per REAL join gate done (never a timer).
+  // The progress bar is the mean of the steps' % (gates + real bake count; never a timer).
   // The old `WARP STABILISATION X%` RAF counter and the 3-dot ellipsis are
   // gone; everything that moves is CSS (see WarpBriefing).
 
@@ -231,7 +235,7 @@ export function WarpScreen({ targetSectorKey = null }: WarpScreenProps = {}): JS
         {visible ? (
         <WarpBriefing
           sectorKey={briefingKey}
-          gatesDone={gatesDone}
+          overallPct={overallPct}
           steps={steps}
           currentStep={currentStep}
           status={status}
