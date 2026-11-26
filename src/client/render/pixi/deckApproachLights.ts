@@ -13,7 +13,7 @@
  * lamps {@link APPROACH_LAMP_SPACING} apart from {@link APPROACH_LAMP_START}
  * off the seam. A white "rabbit" strobe walks lamp by lamp TOWARD the gate
  * every {@link APPROACH_PERIOD_MS} of effect time (`fxNow`, invariant 20);
- * between pulses each lamp is a steady amber glow. Two edge rows flank the
+ * between pulses each lamp is a steady white lamp. Two edge rows flank the
  * centre line like an airfield's side lights, in navigation colours for a ship
  * flying IN: red to port (its left), green to starboard (owner: "red and green
  * for starboard and port"). A gate with plates on
@@ -51,8 +51,9 @@ export const APPROACH_LAMP_Z = -1.03125;
 
 /** Lamp look (world units). */
 export const LAMP_HOUSING = 0x1a1d22;
-export const LAMP_AMBER = 0xffc060;
-export const LAMP_BASE_ALPHA = 0.95;
+/** Centre line: white, like a runway centreline (owner 2026-11-26). */
+export const LAMP_CENTRE = 0xeef2ff;
+export const LAMP_BASE_ALPHA = 0.8;
 export const LAMP_FLASH = 0xffffff;
 /** Edge rows: lateral offset from the centre line (world units; inside the gate opening, ~±370) and colours. */
 export const APPROACH_EDGE_OFFSET = 300;
@@ -113,14 +114,12 @@ let flashCtx: GraphicsContext | undefined;
 let portCtx: GraphicsContext | undefined;
 let starCtx: GraphicsContext | undefined;
 
-/** A steady coloured lamp: soft halo, housing, bright lens. */
+/** A steady coloured lamp: a faint halo, housing, a modest lens (owner: round 2 was far too bright). */
 function steadyLamp(color: number): GraphicsContext {
   return new GraphicsContext()
-    .circle(0, 0, 70).fill({ color, alpha: 0.12 })
-    .circle(0, 0, 42).fill({ color, alpha: 0.22 })
-    .circle(0, 0, 24).fill({ color: LAMP_HOUSING })
-    .circle(0, 0, 16).fill({ color, alpha: LAMP_BASE_ALPHA })
-    .circle(0, 0, 7).fill({ color: 0xffffff, alpha: 0.7 });
+    .circle(0, 0, 32).fill({ color, alpha: 0.07 })
+    .circle(0, 0, 18).fill({ color: LAMP_HOUSING })
+    .circle(0, 0, 11).fill({ color, alpha: LAMP_BASE_ALPHA });
 }
 
 /** The shared edge lamps (built once): red to port, green to starboard. */
@@ -129,10 +128,10 @@ export function approachEdgeContext(port: boolean): GraphicsContext {
   return (starCtx ??= steadyLamp(LAMP_STARBOARD));
 }
 
-/** The shared steady centre lamp: amber, glowing (built once). */
+/** The shared steady centre lamp: white (built once). */
 export function approachBaseContext(): GraphicsContext {
   if (baseCtx === undefined) {
-    baseCtx = steadyLamp(LAMP_AMBER);
+    baseCtx = steadyLamp(LAMP_CENTRE);
   }
   return baseCtx;
 }
@@ -141,9 +140,9 @@ export function approachBaseContext(): GraphicsContext {
 export function approachFlashContext(): GraphicsContext {
   if (flashCtx === undefined) {
     flashCtx = new GraphicsContext()
-      .circle(0, 0, 130).fill({ color: LAMP_FLASH, alpha: 0.12 })
-      .circle(0, 0, 70).fill({ color: LAMP_FLASH, alpha: 0.3 })
-      .circle(0, 0, 26).fill({ color: LAMP_FLASH, alpha: 1 });
+      .circle(0, 0, 50).fill({ color: LAMP_FLASH, alpha: 0.08 })
+      .circle(0, 0, 26).fill({ color: LAMP_FLASH, alpha: 0.2 })
+      .circle(0, 0, 13).fill({ color: LAMP_FLASH, alpha: 0.85 });
   }
   return flashCtx;
 }
