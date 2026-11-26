@@ -7,7 +7,9 @@ import type { Server } from 'colyseus';
 import { SectorRoom } from '../SectorRoom.js';
 import { BASE_BUILD_PREBUILT, GATE_TEST_PREBUILT, PREBUILT_ADOPT_OWNER, RIG_SANDBOX_E2E_SCENE, RIG_SANDBOX_PREBUILT, RIG_HOME, RIG_UNLOAD, rigSandboxScene, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../scenarioLayouts.js';
 import { SHOWCASE_PILOT_ID } from '../showcaseRooms.js';
-import { deckHexCentreInto, plateCentreWorldInto } from '../../../core/hex/plates.js';
+import { DECK_HEX_SIZE, deckHexCentreInto, plateCentreWorldInto } from '../../../core/hex/plates.js';
+import { hexCornerInto } from '../../../core/hex/hex.js';
+import { snapPlacementToDeck } from '../../../core/structures/deckPlacement.js';
 
 /**
  * `?room=base-build-test` (Sunday base loop): stills and films of building.
@@ -72,6 +74,23 @@ const hexAt = (q: number, r: number, ox = 0, oy = 0): { x: number; y: number } =
   return { x: p.x + ox, y: p.y + oy };
 };
 const DECK_SHOW_P2 = plateCentreWorldInto(1, 0, { x: 0, y: 0 });
+/** A fence ring round plate 2's middle hex: a shield pylon on each corner, and a
+ *  gate on the east seam where a road tile (on the east hex) meets it. Positions
+ *  and the gate's turn come from the player's deck snap, so they sit exactly
+ *  where a player would put them. */
+const DECK_SHOW_FENCE = ((): Array<{ kind: 'shield_pylon' | 'shield_gate' | 'road'; x: number; y: number; rot?: number }> => {
+  const out: Array<{ kind: 'shield_pylon' | 'shield_gate' | 'road'; x: number; y: number; rot?: number }> = [];
+  const c = { x: 0, y: 0 };
+  for (let i = 0; i < 6; i++) {
+    hexCornerInto(DECK_SHOW_P2.x, DECK_SHOW_P2.y, DECK_HEX_SIZE, i, c);
+    out.push({ kind: 'shield_pylon', x: c.x, y: c.y });
+  }
+  const road = hexAt(1, 0, DECK_SHOW_P2.x, DECK_SHOW_P2.y);
+  const gate = snapPlacementToDeck('shield_gate', (DECK_SHOW_P2.x + road.x) / 2, (DECK_SHOW_P2.y + road.y) / 2, { x: 0, y: 0, q: 0, r: 0, rhombus: -1, rot: -1, slot: 'edge' });
+  out.push({ kind: 'road', ...road, rot: 30 });
+  out.push({ kind: 'shield_gate', x: gate.x, y: gate.y, rot: gate.rot });
+  return out;
+})();
 export const DECK_SHOW_OPTS = {
   ...DECK_TEST_OPTS,
   prebuiltStructures: [
@@ -82,6 +101,7 @@ export const DECK_SHOW_OPTS = {
     { kind: 'refinery' as const, ...hexAt(0, -1) },
     { kind: 'connector' as const, x: DECK_SHOW_P2.x, y: DECK_SHOW_P2.y },
     { kind: 'solar' as const, ...hexAt(0, 1, DECK_SHOW_P2.x, DECK_SHOW_P2.y) },
+    ...DECK_SHOW_FENCE,
   ],
 };
 
