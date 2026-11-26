@@ -11,10 +11,11 @@ import { placementRejection, type PlacementFootprint } from '../structures/place
 import { snapPlacementToDeck } from '../structures/deckPlacement.js';
 import { isShieldEmitterKind } from '../structures/gateGeometry.js';
 import { PlateSet, plateCentreAtWorldInto } from '../hex/plateSet.js';
-import { PLATE_DIRS } from '../hex/plates.js';
+import { DECK_HEX_SIZE, PLATE_DIRS, isPlateCentreHex, plateOfHexInto } from '../hex/plates.js';
 import type { DeckSnap } from '../hex/deckSnap.js';
+import { pixelToAxialInto } from '../hex/hex.js';
 import { BASE_GROWTH_VERSION, growBase, type GrownBase } from './growBase.js';
-import { deckBaseOriginInto } from './growDeck.js';
+import { DECK_HEXES_PER_PLATE, deckBaseOriginInto } from './growDeck.js';
 import type { BaseProfile, BaseRole, BaseTier } from './baseProfile.js';
 
 function profile(tier: BaseTier, role: BaseRole, fenced = true): BaseProfile {
@@ -90,7 +91,7 @@ function verifyDeck(b: GrownBase): { plates: PlateSet<number>; reached: number }
 
 describe('growBase deck option (base platforms 23)', () => {
   it('bumps the growth version', () => {
-    expect(BASE_GROWTH_VERSION).toBe(24);
+    expect(BASE_GROWTH_VERSION).toBe(25);
   });
 
   it('flag off: output byte-identical to before the slice (default and explicit false)', () => {
@@ -138,6 +139,32 @@ describe('growBase deck option (base platforms 23)', () => {
       const bought = (g: GrownBase) => g.placements.filter((p) => !isConnectorKind(p.kind) && p.kind !== 'shield_pylon' && p.kind !== 'shield_gate').length;
       expect(bought(b)).toBeGreaterThanOrEqual(bought(flat) - 2);
       expect(b.netPower).toBeGreaterThanOrEqual(0);
+    });
+  }
+
+  // Slice 24 — space is cheap: a plate builds on at most DECK_HEXES_PER_PLATE
+  // of its 6 outer hexes, so at least half of all outer hexes are open floor.
+  for (const [tier, role, fenced, seed] of CASES) {
+    it(`${tier} ${role}: mostly empty deck (≥ half of every plate's outer hexes open)`, () => {
+      const b = growBase(profile(tier, role, fenced), seed, [...FEATURES], { deck: true });
+      const anchors = new Set<string>();
+      const usedPerPlate = new Map<string, Set<string>>();
+      const PI = { i: 0, j: 0 };
+      const h = { q: 0, r: 0 };
+      for (const p of b.placements) {
+        if (isConnectorKind(p.kind) && plateCentreAtWorldInto(p.x, p.y, PI)) { anchors.add(`${PI.i},${PI.j}`); continue; }
+        // A small kind sits on a rhombus of its hex: that hex is the one used.
+        pixelToAxialInto(p.x, p.y, DECK_HEX_SIZE, h);
+        expect(isPlateCentreHex(h.q, h.r), `${p.kind} off the anchor's yard`).toBe(false);
+        plateOfHexInto(h.q, h.r, PI);
+        const pk = `${PI.i},${PI.j}`;
+        (usedPerPlate.get(pk) ?? usedPerPlate.set(pk, new Set()).get(pk)!).add(`${h.q},${h.r}`);
+      }
+      let used = 0;
+      for (const s of usedPerPlate.values()) { expect(s.size).toBeLessThanOrEqual(DECK_HEXES_PER_PLATE); used += s.size; }
+      const outer = anchors.size * 6;
+      console.log(`${tier} ${role}: ${anchors.size} plates, ${b.placements.length - anchors.size} buildings on ${used}/${outer} outer hexes`);
+      expect(used * 2).toBeLessThanOrEqual(outer);
     });
   }
 

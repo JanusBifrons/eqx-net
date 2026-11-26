@@ -8,9 +8,11 @@
  *     plate (a system placement, like the `?room=deck` test room's prebuilt
  *     anchor: there is no deck to stand on yet).
  *  2. The Capital, then each building biggest first, takes the first free slot on a laid plate
- *     (plates in lay order, then the plate's 6 outer hexes in `HEX_DIRS`
- *     order; the middle hex is the anchor's yard): a `'hex'` kind the hex
- *     centre, a `'small'` kind one of its three rhombi. Every point goes
+ *     (plates in lay order, then the plate's outer hexes in `RING_ORDER`,
+ *     every other hex first; the middle hex is the anchor's yard): a `'hex'`
+ *     kind the hex centre, a `'small'` kind one of its three rhombi. Space is
+ *     cheap (slice 24): a plate takes buildings on at most
+ *     `DECK_HEXES_PER_PLATE` of its 6 outer hexes, so most deck is open floor. Every point goes
  *     through the player's own snap (`snapPlacementToDeck`), so position and
  *     turn are exactly where a player's ghost would put it, and links to its
  *     plate's anchor (the deck on-plate link).
@@ -21,9 +23,11 @@
  * the base's own plate set: on its deck; a new plate borders it and is
  * clear) and every link the deck `canConnect` rule, through `Builder`.
  *
+ * The seeder sites the base by its plate extent (`deckExtent`) on a plate
+ * centre (`chooseBaseSite` with `deck`), so the whole deck is clear of rock.
+ *
  * Not yet (later slices): the fence (deck fences run along seams with road
- * gates), "mostly empty" spread and plate extent into `chooseBaseSite`
- * (slice 24), dense asteroid-field bases (slice 25). A fenced profile's guns
+ * gates), dense asteroid-field bases (slice 25). A fenced profile's guns
  * stand on the deck like any building.
  */
 import { getStructureKind } from '../../shared-types/structureKinds.js';
@@ -46,6 +50,13 @@ export const DECK_MAX_PLATES = 96;
 /** Turns tried for a `'hex'`-slot building (the snap rounds each to the
  *  kind's own rule); a `'small'` slot's turn is the rhombus's. */
 const HEX_TURNS = [0, 90, 180, 270, 30, 60, 120, 150, 210, 240, 300, 330] as const;
+/** "Mostly empty" (plan: space is cheap): the most outer hexes of one plate
+ *  that hold buildings (small kinds share a hex). 3 of 6 leaves every other
+ *  hex open floor; 6 packs a plate full (the dense variant, slice 25). */
+export const DECK_HEXES_PER_PLATE = 3;
+/** Outer-hex fill order, as indices into `HEX_DIRS`: every other hex first,
+ *  so the hexes a plate leaves empty are spread round it. */
+const RING_ORDER = [0, 2, 4, 1, 3, 5] as const;
 
 const snap: DeckSnap = { x: 0, y: 0, q: 0, r: 0, rhombus: -1, rot: -1, slot: 'hex' };
 const pt: HexPoint = { x: 0, y: 0 };
@@ -91,6 +102,8 @@ class DeckLayout {
   /** Hexes holding a `'hex'` building; per hex, the rhombi held (bit mask). */
   private readonly hexFull = new Set<string>();
   private readonly smallHeld = new Map<string, number>();
+  /** Per laid plate (index into `laid`), outer hexes holding a building. */
+  private readonly used: number[] = [];
 
   /** Lay plate (i, j): a connector snapped to its centre, linked to every
    *  laid neighbour's anchor. Returns false (nothing left) when refused. */
@@ -107,6 +120,7 @@ class DeckLayout {
     if (!linked) { this.B.undoLast(); return false; }
     plateCentreHexInto(i, j, hex);
     this.laid.push({ i, j, anchor: a, q: hex.q, r: hex.r });
+    this.used.push(0);
     return true;
   }
 
@@ -126,11 +140,14 @@ class DeckLayout {
     const small = getStructureKind(w.kind).deckSlot === 'small';
     for (let n = fromPlate; n < this.laid.length; n++) {
       const l = this.laid[n]!;
-      for (const d of HEX_DIRS) {
+      for (const k of RING_ORDER) {
+        const d = HEX_DIRS[k]!;
         const q = l.q + d.q, r = l.r + d.r, key = `${q},${r}`;
         if (this.hexFull.has(key)) continue;
         const held = this.smallHeld.get(key) ?? 0;
         if (!small && held !== 0) continue;
+        // An empty hex on a plate at its cap stays open floor.
+        if (held === 0 && this.used[n]! >= DECK_HEXES_PER_PLATE) continue;
         deckHexCentreInto(q, r, pt);
         const cx = pt.x, cy = pt.y;
         for (let s = 0; s < (small ? 3 : HEX_TURNS.length); s++) {
@@ -138,6 +155,7 @@ class DeckLayout {
           if (small) rhombusCentroidInto(cx, cy, s, pt);
           const li = this.tryAt(w, small ? pt.x : cx, small ? pt.y : cy, small ? 0 : HEX_TURNS[s]!, l.anchor);
           if (li < 0) continue;
+          if (held === 0) this.used[n] = this.used[n]! + 1;
           if (small) this.smallHeld.set(key, held | (1 << s));
           else this.hexFull.add(key);
           return li;

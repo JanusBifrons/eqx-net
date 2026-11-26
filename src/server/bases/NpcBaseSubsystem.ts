@@ -39,7 +39,7 @@ import { fallenBaseOrigins } from '../structures/ownerlessBase.js';
 import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
 import type { StructureRecord, StructureRegistry } from '../structures/StructureRegistry.js';
 import type { Logger } from 'pino';
-import { chooseBaseSite, grownExtent, type SiteBox, type SiteCircle } from '../../core/bases/baseSite.js';
+import { chooseBaseSite, deckExtent, grownExtent, type SiteBox, type SiteCircle } from '../../core/bases/baseSite.js';
 import { galaxyBasePlan, type GalaxyBasePlan } from '../../core/bases/galaxyBases.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
 import { pocketClearing, sectorSites } from '../../core/galaxy/sectorSites.js';
@@ -133,7 +133,9 @@ export class NpcBaseSubsystem {
     const grown = grownIn ?? this.grow(spec);
     const owner = npcOwner(profile.ownerFaction, spec.baseId);
     // A deck base is grown round its origin plate: seed it on the nearest
-    // plate centre, so its plates sit on the world's deck lattice.
+    // plate centre, so its plates sit on the world's deck lattice. A galaxy
+    // site is already a plate centre (`chooseBaseSite` with `deck`): this
+    // returns it unchanged; it only moves a hand-placed spec (test rooms).
     const at = this.h.registry.deck ? deckBaseOriginInto(spec.x, spec.y, { x: 0, y: 0 }) : spec;
 
     const ids: Array<string | null> = [];
@@ -330,7 +332,10 @@ function seedOneGalaxyBase(
     rocks.push(rec);
     soft.push({ x: h.sabF32()[b + SLOT_X_OFF]!, y: h.sabF32()[b + SLOT_Y_OFF]!, r: rec.radius });
   }
-  const ext = grownExtent(grown.placements);
+  // A deck base reserves its whole deck (empty plates' floor too) and sits
+  // on a plate centre (base platforms 24).
+  const deck = h.structureRegistry.deck;
+  const ext = deck ? deckExtent(grown.placements) : grownExtent(grown.placements);
   // In a cut field the base also stays inside its pocket's rock-free
   // clearing (the square's corners reach past the outer pocket's rim).
   const clearing = pocketClearing(sectorKey, SOLAR_SECTORS, at?.x ?? 0, at?.y ?? 0);
@@ -340,6 +345,7 @@ function seedOneGalaxyBase(
     halfExtent: HOME_POCKET_HALF_EXTENT, margin: 250, step: sectorSpace(250), seed,
     ...(at ? { centreX: at.x, centreY: at.y } : {}),
     ...(clearing ? { within: clearing } : {}),
+    ...(deck ? { deck: true } : {}),
   });
   if (site === null) {
     h.logger.warn({ sectorKey, baseId: plan.baseId, tier: profile.tier, role: profile.role }, 'npc base: no site fits; base skipped');
