@@ -9,9 +9,12 @@
  *
  * The plates arrive on the render mirror (`RenderMirror.deckPlates`, written
  * by `StructureRowSync` from the derived `PlateSet`) as (i, j) pairs plus a
- * version. One shared `GraphicsContext` holds a plate's art (7 hexes, opaque
+ * version. A shared `GraphicsContext` holds a plate's art (7 hexes, opaque
  * dark fill, hex seams, a stronger outer outline: the approved wireframe
  * look, neutral steel); each plate is ONE `Graphics` on it, only positioned.
+ * The floor's plating texture (`?deckTex=`, `structureDeckTexture.ts`) is
+ * painted into that same context: a few seeded contexts per look, and each
+ * plate picks one and a 60° turn by its (i, j) (`plain` = one context, no turn).
  * Graphics are added / removed only when the version changes; an unchanged
  * frame compares one number and does nothing (invariant #14).
  */
@@ -20,6 +23,7 @@ import type { DeckPlatesMirror } from '../../../core/contracts/IRenderer.js';
 import { HEX_DIRS, type HexPoint } from '../../../core/hex/hex.js';
 import { DECK_HEX_SIZE, deckHexCentreInto, plateCentreWorldInto } from '../../../core/hex/plates.js';
 import { RIG_UNDER_Z } from './structureRigs.js';
+import { DEFAULT_DECK_TEX, deckPlatePick, drawDeckHexTexture, type DeckTex } from './structureDeckTexture.js';
 
 /** zIndex of the deck floor: the bottom of the structure under band. */
 export const DECK_UNDER_Z = RIG_UNDER_Z - 0.5;
@@ -32,12 +36,15 @@ export const DECK_OUTLINE = 0x0b0e13;
 export const DECK_SEAM_WIDTH = 28;
 export const DECK_OUTLINE_WIDTH = 70;
 
-let plateContext: GraphicsContext | null = null;
+/** Built plate contexts, keyed `<look>:<variant>` (build time only). */
+const plateContexts = new Map<string, GraphicsContext>();
 
-/** The shared art of one plate, in its own Pixi frame (centre hex at the
- *  origin, Y down). Built once on first use. */
-export function deckPlateContext(): GraphicsContext {
-  if (plateContext !== null) return plateContext;
+/** The shared art of one plate in look `tex` (seeded `variant`), in its own
+ *  Pixi frame (centre hex at the origin, Y down). Built once on first use. */
+export function deckPlateContext(tex: DeckTex = 'plain', variant = 0): GraphicsContext {
+  const key = tex === 'plain' ? 'plain' : `${tex}:${variant}`;
+  const cached = plateContexts.get(key);
+  if (cached !== undefined) return cached;
   const ctx = new GraphicsContext();
   // Centre hex (0, 0) and its ring, in game space relative to the centre hex.
   const hexes: Array<{ q: number; r: number }> = [{ q: 0, r: 0 }];
@@ -50,10 +57,14 @@ export function deckPlateContext(): GraphicsContext {
     for (let k = 0; k < 6; k++) pts.push(...corner(cx, cy, Math.PI / 6 + (k * Math.PI) / 3));
     return pts;
   };
-  // Opaque fill + inner seams along every hex edge.
+  // Opaque fill (flat, or the plating texture) + inner seams along every hex edge.
   for (const h of hexes) {
     deckHexCentreInto(h.q, h.r, c);
-    ctx.poly(hexPoly(c.x, c.y), true).fill({ color: DECK_FILL });
+    const pts = hexPoly(c.x, c.y);
+    if (tex === 'plain') { ctx.poly(pts, true).fill({ color: DECK_FILL }); continue; }
+    const cs: Array<[number, number]> = [];
+    for (let k = 0; k < 6; k++) cs.push([pts[2 * k]!, pts[2 * k + 1]!]);
+    drawDeckHexTexture(ctx, tex, variant, [c.x, -c.y], cs, DECK_HEX_SIZE, h.q, h.r, DECK_FILL);
   }
   for (const h of hexes) {
     deckHexCentreInto(h.q, h.r, c);
@@ -74,7 +85,7 @@ export function deckPlateContext(): GraphicsContext {
     }
   }
   ctx.stroke({ color: DECK_OUTLINE, width: DECK_OUTLINE_WIDTH, cap: 'round', join: 'round' });
-  plateContext = ctx;
+  plateContexts.set(key, ctx);
   return ctx;
 }
 
@@ -100,7 +111,8 @@ export class StructureDeckPlates {
     this.graphics.delete(key);
   };
 
-  constructor(private readonly shipContainer: Container) {}
+  /** `tex`: the floor look (`readDeckTex`, `?deckTex=`). */
+  constructor(private readonly shipContainer: Container, private readonly tex: DeckTex = DEFAULT_DECK_TEX) {}
 
   /** Live plate Graphics (tests, stats): one per plate. */
   get size(): number { return this.graphics.size; }
@@ -118,7 +130,13 @@ export class StructureDeckPlates {
       const key = plateKey(i, j);
       this.seen.add(key);
       if (this.graphics.has(key)) continue;
-      const g = new Graphics(deckPlateContext());
+      let g: Graphics;
+      if (this.tex === 'plain') g = new Graphics(deckPlateContext());
+      else {
+        const pick = deckPlatePick(i, j);
+        g = new Graphics(deckPlateContext(this.tex, pick.variant));
+        g.rotation = (pick.turns * Math.PI) / 3; // the 7-hex plate maps onto itself
+      }
       g.label = 'deckPlate';
       g.zIndex = DECK_UNDER_Z;
       plateCentreWorldInto(i, j, this.pt);

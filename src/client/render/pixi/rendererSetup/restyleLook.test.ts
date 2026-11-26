@@ -22,6 +22,7 @@ function bootFrom(art: ArtOptions): BootMsg {
     type: 'BOOT', canvas: {} as unknown as OffscreenCanvas, width: 800, height: 600, dpr: 1, artMode: art.mode,
     ...(art.lineLook !== undefined ? { lineLook: art.lineLook } : {}),
     ...(art.rigs !== undefined ? { rigs: art.rigs } : {}),
+    ...(art.deckTex !== undefined ? { deckTex: art.deckTex } : {}),
   };
 }
 
@@ -59,8 +60,15 @@ describe('structure restyle on the worker renderer', () => {
     expect(workerScene('?lineLook=pipe').conn.lineLook).toBe('pipe');
   });
 
+  it('?deckTex= rides BOOT to the worker (plain = the flat floor)', () => {
+    const art: ArtOptions = { mode: 'machined', ...readRestyleLook('?deckTex=plain') };
+    const [, workerArt] = rendererArgsFromBoot(structuredClone(bootFrom(art)));
+    expect(resolveRestyleLook(workerArt, null).deckTex).toBe('plain');
+    expect(resolveRestyleLook({ mode: 'machined', ...readRestyleLook('?deckTex=b') }, null).deckTex).toBe('b');
+  });
+
   it('a worker renderer booted without the fields falls back to the defaults (on)', () => {
-    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true });
+    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a' });
   });
 });
 

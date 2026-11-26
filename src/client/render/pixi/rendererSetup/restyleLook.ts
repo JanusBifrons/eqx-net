@@ -13,25 +13,29 @@ import type { ArtOptions } from '../../art/artMode.js';
 import { DEFAULT_LINE_LOOK, readLineLook, type LineLook } from '../connectorLineLooks.js';
 import { readRigsFlag, StructureRigs } from '../structureRigs.js';
 import { StructureDeckPlates } from '../structureDeckPlates.js';
+import { DEFAULT_DECK_TEX, readDeckTex, type DeckTex } from '../structureDeckTexture.js';
 
 export interface RestyleLook {
   /** Grid line look; null = the pre-restyle thin line. */
   lineLook: LineLook | null;
   /** Draw structure rig parts (pad, crane, hatches). */
   rigs: boolean;
+  /** Deck floor look (`?deckTex=plain|a|b`, base platforms). */
+  deckTex: DeckTex;
 }
 
 /** The restyle scene options from a URL query string. */
 export function readRestyleLook(search: string): RestyleLook {
-  return { lineLook: readLineLook(search), rigs: readRigsFlag(search) };
+  return { lineLook: readLineLook(search), rigs: readRigsFlag(search), deckTex: readDeckTex(search) };
 }
 
 /** What a renderer draws: `ArtOptions` first, else the URL (`search`, null in a worker), else the defaults. */
 export function resolveRestyleLook(art: ArtOptions, search: string | null): RestyleLook {
-  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true };
+  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX };
   return {
     lineLook: art.lineLook !== undefined ? art.lineLook : fromUrl.lineLook,
     rigs: art.rigs ?? fromUrl.rigs,
+    deckTex: art.deckTex ?? fromUrl.deckTex,
   };
 }
 
@@ -52,6 +56,6 @@ export function applyRestyleLook(
   swarmUpdaterCtx.socketNubs = art.fx === true;
   if (look.rigs) swarmUpdaterCtx.structureRigs = new StructureRigs(shipContainer);
   // Base platforms: the deck floor (drawn only while the room's deck flag is on).
-  swarmUpdaterCtx.deckPlates = new StructureDeckPlates(shipContainer);
+  swarmUpdaterCtx.deckPlates = new StructureDeckPlates(shipContainer, look.deckTex);
   return look;
 }

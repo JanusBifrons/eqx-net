@@ -59,6 +59,8 @@ export interface BootMsg {
   lineLook?: import('../../pixi/connectorLineLooks.js').LineLook | null;
   /** Restyle rig parts (`?rigs=0` = false). Absent = on. */
   rigs?: boolean;
+  /** Deck floor look (`?deckTex=`). Absent = the default. */
+  deckTex?: import('../../pixi/structureDeckTexture.js').DeckTex;
   /** Cut-field ore look (`?ore=`, F1c trial); absent = off. */
   ore?: import('../../art/artMode.js').FieldOreLook;
   /** Graphics quality (`?aa=` / `?renderscale=` / `?texsoft=`), plain data; absent = today's look. */
