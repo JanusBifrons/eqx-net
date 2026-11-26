@@ -8,9 +8,11 @@ import { describe, expect, it } from 'vitest';
 import { npcOwner } from '../../shared-types/relations.js';
 import { StructureRegistry } from '../structures/StructureRegistry.js';
 import { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
-import { NpcBaseSubsystem } from './NpcBaseSubsystem.js';
+import { GALAXY_SECTORS } from '../../core/galaxy/galaxy.js';
+import { isConnectorKind } from '../../shared-types/structureKinds.js';
+import { NpcBaseSubsystem, galaxyBaseClearing, type NpcBaseSpec } from './NpcBaseSubsystem.js';
 
-function seedOn(deck: boolean) {
+function seedOn(deck: boolean, dense = false) {
   const registry = new StructureRegistry();
   registry.deck = deck;
   let n = 0;
@@ -28,7 +30,8 @@ function seedOn(deck: boolean) {
     place: (owner, kind, x, y, rot) => placement.place(owner, kind, x, y, { skipAutoConnect: true, rot }),
     setHealth: () => undefined,
   });
-  const r = sub.seed({ baseId: 'b0', role: 'refinery', tier: 'settlement', seed: 7, x: 4321, y: -2100, side: 'traders', features: ['minerals'] });
+  const spec: NpcBaseSpec = { baseId: 'b0', role: 'refinery', tier: 'settlement', seed: 7, x: 4321, y: -2100, side: 'traders', features: ['minerals'] };
+  const r = sub.seed(spec, dense ? sub.grow(spec, true) : undefined);
   return { registry, r };
 }
 
@@ -51,5 +54,30 @@ describe('NPC base on a deck room (base platforms 23)', () => {
     expect(r.rejectedPlace).toBe(0);
     expect(r.grown.fencePylons).toBeGreaterThan(0);
     expect([...registry.all()].some((s) => s.kind === 'capital' && s.x === 4321 && s.y === -2100)).toBe(true);
+  });
+});
+
+describe('dense deck bases in asteroid fields (base platforms 25)', () => {
+  const plates = (g: { placements: ReadonlyArray<{ kind: string }> }): number => g.placements.filter((p) => isConnectorKind(p.kind)).length;
+
+  it('the field signal: a home pocket in an asteroid sector sits in a clearing (dense), elsewhere none (sparse)', () => {
+    const field = GALAXY_SECTORS.find((s) => s.features.includes('asteroid') && galaxyBaseClearing(s.key, null, true) !== null);
+    const open = GALAXY_SECTORS.find((s) => !s.features.includes('asteroid'));
+    expect(field, 'an asteroid sector with a home clearing').toBeDefined();
+    expect(open).toBeDefined();
+    expect(galaxyBaseClearing(open!.key, null, true)).toBeNull();
+    // Solar-system sectors off: no cut field, so no clearing and no dense base.
+    expect(galaxyBaseClearing(field!.key, null, false)).toBeNull();
+  });
+
+  it('a dense deck base seeds cleanly on fewer plates; dense is ignored off the deck', () => {
+    const sparse = seedOn(true), dense = seedOn(true, true);
+    expect(dense.r.rejectedPlace).toBe(0);
+    expect(dense.r.rejectedEdge).toBe(0);
+    const owner = npcOwner('traders', 'b0');
+    expect(dense.registry.plates.plateCount(owner)).toBeLessThan(sparse.registry.plates.plateCount(owner));
+    expect(plates(dense.r.grown)).toBe(dense.registry.plates.plateCount(owner));
+    const rowsDense = seedOn(false, true), rows = seedOn(false);
+    expect(rowsDense.r.grown).toEqual(rows.r.grown);
   });
 });

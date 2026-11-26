@@ -104,6 +104,25 @@ describe('chooseBaseSite deck option (base platforms 24)', () => {
     for (const s of sites) expect(s).not.toBeNull();
     expect(sites.map((s) => fnv(JSON.stringify(s)))).toEqual(FINGERPRINTS);
   });
+
+  // Slice 25: a dense (asteroid-field) base reserves a smaller deck, so the
+  // same site in the same field clears fewer rocks.
+  it('a dense base is sited by its smaller dense deck and clears no more rock', () => {
+    const dense = growBase(PROFILE, 7, [], { deck: true, dense: true });
+    const area = (e: { x0: number; x1: number; y0: number; y1: number }): number => (e.x1 - e.x0) * (e.y1 - e.y0);
+    const de = deckExtent(dense.placements), se = deckExtent(grown.placements);
+    expect(area(de)).toBeLessThan(area(se));
+    const soft = rockField();
+    const within = { x: 0, y: 0, r: 12_000 };
+    const ds = chooseBaseSite(de, [], soft, { ...OPTS, within, deck: true });
+    const ss = chooseBaseSite(se, [], soft, { ...OPTS, within, deck: true });
+    expect(ds).not.toBeNull();
+    expect(ss).not.toBeNull();
+    const PI = { i: 0, j: 0 };
+    expect(plateCentreAtWorldInto(ds!.x, ds!.y, PI)).toBe(true);
+    console.log(`dense deck ${Math.round(area(de) / 1e6)} Mu² clears ${ds!.overlapped.length} rocks; sparse ${Math.round(area(se) / 1e6)} Mu² clears ${ss!.overlapped.length}`);
+    expect(ds!.overlapped.length).toBeLessThanOrEqual(ss!.overlapped.length);
+  });
 });
 
 /** Taken with the spike tip's `baseSite.ts` before slice 24. */

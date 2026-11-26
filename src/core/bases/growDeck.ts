@@ -26,8 +26,13 @@
  * The seeder sites the base by its plate extent (`deckExtent`) on a plate
  * centre (`chooseBaseSite` with `deck`), so the whole deck is clear of rock.
  *
+ * Dense (slice 25): a base in an asteroid-field clearing (growth option
+ * `dense`, the seeder's field signal) fills all `DECK_HEXES_PER_PLATE_DENSE`
+ * outer hexes of a plate, so it lays fewer plates and clears less rock; the
+ * same layout, only the per-plate cap differs.
+ *
  * Not yet (later slices): the fence (deck fences run along seams with road
- * gates), dense asteroid-field bases (slice 25). A fenced profile's guns
+ * gates). A fenced profile's guns
  * stand on the deck like any building.
  */
 import { getStructureKind } from '../../shared-types/structureKinds.js';
@@ -43,6 +48,9 @@ import type { Want } from './roleUnits.js';
 export interface GrowBaseOptions {
   /** Base platforms: lay the base on the hex deck (the room's `deck` flag). */
   deck?: boolean;
+  /** With `deck`: a dense base (asteroid-field clearing) fills every outer
+   *  hex of a plate (`DECK_HEXES_PER_PLATE_DENSE`) instead of the sparse cap. */
+  dense?: boolean;
 }
 
 /** Most plates a generated base lays (a citadel needs well under this). */
@@ -54,6 +62,13 @@ const HEX_TURNS = [0, 90, 180, 270, 30, 60, 120, 150, 210, 240, 300, 330] as con
  *  that hold buildings (small kinds share a hex). 3 of 6 leaves every other
  *  hex open floor; 6 packs a plate full (the dense variant, slice 25). */
 export const DECK_HEXES_PER_PLATE = 3;
+/** A dense (asteroid-field) deck base's cap: every outer hex (slice 25). */
+export const DECK_HEXES_PER_PLATE_DENSE = 6;
+
+/** The per-plate outer-hex cap the growth options ask for. */
+export function deckHexesPerPlate(opts: GrowBaseOptions): number {
+  return opts.dense === true ? DECK_HEXES_PER_PLATE_DENSE : DECK_HEXES_PER_PLATE;
+}
 /** Outer-hex fill order, as indices into `HEX_DIRS`: every other hex first,
  *  so the hexes a plate leaves empty are spread round it. */
 const RING_ORDER = [0, 2, 4, 1, 3, 5] as const;
@@ -105,6 +120,8 @@ class DeckLayout {
   /** Per laid plate (index into `laid`), outer hexes holding a building. */
   private readonly used: number[] = [];
 
+  constructor(private readonly perPlate: number) {}
+
   /** Lay plate (i, j): a connector snapped to its centre, linked to every
    *  laid neighbour's anchor. Returns false (nothing left) when refused. */
   layPlate(i: number, j: number): boolean {
@@ -147,7 +164,7 @@ class DeckLayout {
         const held = this.smallHeld.get(key) ?? 0;
         if (!small && held !== 0) continue;
         // An empty hex on a plate at its cap stays open floor.
-        if (held === 0 && this.used[n]! >= DECK_HEXES_PER_PLATE) continue;
+        if (held === 0 && this.used[n]! >= this.perPlate) continue;
         deckHexCentreInto(q, r, pt);
         const cx = pt.x, cy = pt.y;
         for (let s = 0; s < (small ? 3 : HEX_TURNS.length); s++) {
@@ -182,11 +199,12 @@ class DeckLayout {
 /**
  * Lay a planned base on the deck (see the header). `wants` is everything the
  * base bought plus its power, in any order; the Capital is added. Returns the
- * filled `Builder` (index 0 is the origin plate's anchor); a building that
+ * filled `Builder` (index 0 is the origin plate's anchor); `hexesPerPlate`
+ * caps the outer hexes holding buildings per plate; a building that
  * fits neither a laid plate nor one fresh plate is left out.
  */
-export function layDeckBase(wants: readonly Want[]): Builder {
-  const L = new DeckLayout();
+export function layDeckBase(wants: readonly Want[], hexesPerPlate: number = DECK_HEXES_PER_PLATE): Builder {
+  const L = new DeckLayout(hexesPerPlate);
   if (!L.layPlate(0, 0)) return L.B;
   // The Capital first, then the rest biggest first (they need the room).
   const area = (w: Want): number => (w.kind === 'capital' ? Infinity : getStructureKind(w.kind).footprint.w * getStructureKind(w.kind).footprint.h);

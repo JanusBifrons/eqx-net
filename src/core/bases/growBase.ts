@@ -29,7 +29,7 @@ import { keepClearBox } from '../structures/placementRules.js';
 import { MIN_CABLE_LENGTH } from '../structures/structureGridConstants.js';
 import { Builder, leafReach, linkGap, RELAY_SPAN, tallestFrom, upDownGunReach, type GrownPlacement } from './growBuilder.js';
 import { expectedDraw, summariseGrown, type GrownBase } from './grownSummary.js';
-import { layDeckBase, type GrowBaseOptions } from './growDeck.js';
+import { deckHexesPerPlate, layDeckBase, type GrowBaseOptions } from './growDeck.js';
 import { powerShareCost } from './powerShareCost.js';
 import { roleUnits, type Want } from './roleUnits.js';
 import { seededRandom, type BaseProfile, type BaseTier } from './baseProfile.js';
@@ -68,8 +68,9 @@ export type { GrowBaseOptions } from './growDeck.js';
  *  21→22: one cable per connector socket (max 6): leaf gaps fit the face turned at the leaf; a bastion steps off a fence post on its line.
  *  22→23: cables a body width apart (fan-outs too), min cable 67 u box edge to edge; relays a cable length clear.
  *  23→24 (base platforms 23): growth option `deck` lays the base on plates (`growDeck.ts`); without it the output is unchanged.
- *  24→25 (base platforms 24): a deck plate holds buildings on at most `DECK_HEXES_PER_PLATE` (3) outer hexes, every other hex first (mostly empty deck); rows unchanged. */
-export const BASE_GROWTH_VERSION = 25;
+ *  24→25 (base platforms 24): a deck plate holds buildings on at most `DECK_HEXES_PER_PLATE` (3) outer hexes, every other hex first (mostly empty deck); rows unchanged.
+ *  25→26 (base platforms 25): growth option `dense` (a base in an asteroid-field clearing) fills all 6 outer hexes (`DECK_HEXES_PER_PLATE_DENSE`); sparse decks and rows unchanged. */
+export const BASE_GROWTH_VERSION = 26;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -236,7 +237,8 @@ export function growBase(profile: BaseProfile, seed: number, features: readonly 
   // then lay out again with enough Solars. Converges in a few passes.
   // A base that comes out over its tier's budget spends less and regrows.
   let p = profile;
-  const deck = opts.deck === true;
+  // Outer hexes per plate on a deck (dense field bases use all 6); 0 = rows.
+  const deck = opts.deck === true ? deckHexesPerPlate(opts) : 0;
   let out = balanced(p, seed, features, deck);
   for (let pass = 0; pass < 8 && out.placements.length > TIER_MAX_STRUCTURES[profile.tier]; pass++) {
     p = { ...p, wealth: Math.floor(p.wealth * 0.85) };
@@ -245,7 +247,7 @@ export function growBase(profile: BaseProfile, seed: number, features: readonly 
   return out;
 }
 
-function balanced(profile: BaseProfile, seed: number, features: readonly SectorFeature[], deck: boolean): GrownBase {
+function balanced(profile: BaseProfile, seed: number, features: readonly SectorFeature[], deck: number): GrownBase {
   let extra = 0;
   let out = growOnce(profile, seed, features, extra, deck);
   for (let pass = 0; pass < 6 && out.netPower < 0; pass++) {
@@ -255,7 +257,7 @@ function balanced(profile: BaseProfile, seed: number, features: readonly SectorF
   return out;
 }
 
-function growOnce(profile: BaseProfile, seed: number, features: readonly SectorFeature[], extraSolars: number, deck: boolean): GrownBase {
+function growOnce(profile: BaseProfile, seed: number, features: readonly SectorFeature[], extraSolars: number, deck: number): GrownBase {
   const rnd = seededRandom(seed ^ 0x5bd1e995);
   const { wants, spent } = planBuild(profile, features, rnd, seededRandom(seed ^ DEFENCE_STREAM));
   // v4 H — one teleporter per transit link this base ends (outside the budget:
@@ -289,7 +291,7 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
   if (batteries >= 5) normal.push({ kind: 'battery_bank' });
   else for (let b = 0; b < batteries; b++) normal.push({ kind: 'battery' });
   // Base platforms: on a deck the base stands on plates (no fence yet: its guns stand on the deck).
-  if (deck) return summariseGrown(layDeckBase([...normal, ...huge, ...posts]), profile, rnd, spent, 0, 0);
+  if (deck > 0) return summariseGrown(layDeckBase([...normal, ...huge, ...posts], deck), profile, rnd, spent, 0, 0);
 
   // A row gap fits the tallest leaves facing in: on the inner row's side (`${row}:${side}`), or still to place.
   const reach = Math.max(0, ...normal.map((w) => leafReach(w.kind)));

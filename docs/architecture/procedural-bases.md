@@ -94,7 +94,7 @@ The design research behind the original plan is kept in
 - **Not persisted:** NPC structures aren't saved (B2); a restart regenerates them from the seed.
 - **Galaxy sectors (T1):** `galaxyBases` (set by `resolveSectorConfig`) → `seedGalaxyBase`, run AFTER `hydrateFromSnapshot`.
   - **Order matters.** Seeding before the restore would make saved player structures fail their overlap check and be lost. Keep it after.
-  - **Site.** The site comes from `chooseBaseSite`: player structures and parked hulls are hard blockers. Asteroids under the footprint are evicted quietly. In a deck room the footprint is the base's whole plate extent (`deckExtent`) and the site is a plate centre (`deck` option).
+  - **Site.** The site comes from `chooseBaseSite`: player structures and parked hulls are hard blockers. Asteroids under the footprint are evicted quietly. In a deck room the footprint is the base's whole plate extent (`deckExtent`) and the site is a plate centre (`deck` option). A base whose pocket is a cut field's clearing (`galaxyBaseClearing`) grows dense (all 6 outer hexes per plate), so it is sited by its smaller dense deck and clears less rock.
   - **Spawns** are nudged out of every structure box (`nearestClearPoint` in `onJoin`).
   - **Several bases:** `galaxyBasePlan` gives a sector one to three bases (each its own owner, a different role, big bases alone, within `NPC_STRUCTURES_PER_SECTOR_MAX`), each seeded with `NPC_BASE_GAP` from the earlier ones. A base that finds no site is skipped and logged.
   - **Kill switch:** `EQX_DISABLE_NPC_BASES=1`. Lock: `galaxyBases.test.ts`.
