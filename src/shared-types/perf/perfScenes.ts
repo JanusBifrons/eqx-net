@@ -43,8 +43,10 @@ export interface PerfScene {
    *  A/B's no-field arm). */
   galaxyField?: string;
   /** A prebuilt base from `scenarioLayouts.ts` (test layouts live only there):
-   *  its structures and rocks join the room options. */
-  prebuiltLayout?: 'base-flow' | 'base-loop';
+   *  its structures and rocks join the room options. `deck-bases`: the
+   *  `?room=deck-bases` NPC base pair (`testRooms/deckBasesRoom.ts`) without
+   *  its deck flag, which the scene's `room.deck` sets. */
+  prebuiltLayout?: 'base-flow' | 'base-loop' | 'deck-bases';
   /** A moving director camera instead of the held `camera`: cinema holds,
    *  each eased in over `smoothMs` from its `atMs` (ms after the window
    *  starts). `scale` is the ABSOLUTE camera scale (screen px per world unit),
@@ -80,6 +82,27 @@ export const ROCK_FIELD_FIGHT = 4000;
  *  no ships but the pilot), layout seed `a`. `persistSector: false`, so a run
  *  never inherits a touched hull from the one before. `EQX_SCENE_WRECK_FIELD=0`
  *  leaves the field out (the A/B's no-field arm, `perfRoomOptions`). */
+/** Base platforms: the `deck-bases` pair (sparse at the origin, dense to the
+ *  east; Traders refinery settlements, seed 7, both fenced) on a deck
+ *  (`deck: true`: hex plates and the hex-edge fence ring) or off it (the old
+ *  straight-row fence). The same camera on both: zoom 0.25 over the dense
+ *  base's north-west fence at (10 800, 3 200), where a sideways phone sees 19
+ *  ring pylons and gates on the deck and 13 row ones off it (whole pair: 103 vs
+ *  56). The pilot idles in the gap (the `DECK_BASES_OPTS` default spawn). */
+const deckBasesScene = (deck: boolean): PerfScene => ({
+  id: deck ? 'deck-bases' : 'deck-bases-rows',
+  title: deck
+    ? 'Two fenced NPC bases on hex decks: plates and the hex-edge fence ring'
+    : 'The same two fenced NPC bases off the deck: straight-row fence (comparison arm)',
+  room: { deck, sceneScript: [{ atMs: 20_000, action: 'end' }] },
+  prebuiltLayout: 'deck-bases',
+  spawn: { x: 6175, y: 0 },
+  camera: { x: 10_800, y: 3200, zoom: 0.25 },
+  durationMs: 20_000,
+  minSwarm: 0,
+  soak: true,
+});
+
 const WRECK_FIELD_ROOM: PerfScene['room'] = {
   droneCount: 0, asteroidConfig: [], persistSector: false,
   wreckField: { seed: 'thornfield', x: 0, y: 0, sides: ['ashen-league', 'vel-concord'] },
@@ -262,6 +285,8 @@ export const PERF_SCENES: readonly PerfScene[] = [
     durationMs: 30_000,
     minSwarm: 14,
   },
+  deckBasesScene(true),
+  deckBasesScene(false),
   {
     id: 'wide-view',
     title: 'Fleet fight seen from the zoom-out floor',

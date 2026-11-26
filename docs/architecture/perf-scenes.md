@@ -282,6 +282,14 @@ pnpm perf:scenes --scenes base-loop --head-only --reps 4 --device phone-proxy --
 
 Within budget. Ledger: `perf/ledger/2026-11-21T09-50-14-654Z-5c526aade-phone-proxy.json`. A real phone reading is still owed.
 
+## The deck-bases scenes (`deck-bases`, `deck-bases-rows`, base platforms)
+
+The cost of the hex-edge fence ring on NPC deck bases (about twice the pylons of the old straight-row fence). Both scenes take the `?room=deck-bases` pair (`testRooms/deckBasesRoom.ts`: two Traders refinery settlements, seed 7, sparse at the origin and dense to the east, both fenced) through `prebuiltLayout: 'deck-bases'`, which leaves the deck flag out. `deck-bases` sets `room.deck` (hex plates and the ring; the flag is honoured only in testMode, which every perf room has); `deck-bases-rows` does not (the comparison arm: the same bases with the straight-row fence). Both hold zoom 0.25 over the dense base's north-west fence at (10 800, 3 200) for 20 s: a sideways phone sees 19 ring pylons and gates there on the deck and 13 row ones off it (whole pair: 103 vs 56). The pilot idles in the gap between the bases. `soak` scenes, so name them; compare the two heads, not a base and head:
+
+```
+pnpm perf:scenes --scenes deck-bases,deck-bases-rows --head-only --reps 4 --device phone-proxy
+```
+
 ## Adding a scene
 
 Add one entry to `PERF_SCENES` with:
