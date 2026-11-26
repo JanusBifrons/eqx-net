@@ -19,6 +19,7 @@ import { STRUCTURE_KINDS_LIST } from '../../src/shared-types/structureKinds/cata
 import { deckHexCentreInto, isPlateCentreHex, plateCentreWorldInto } from '../../src/core/hex/plates.js';
 import { rhombusCentroidInto } from '../../src/core/hex/deckSnap.js';
 import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from '../../src/core/structures/deckLinks.js';
+import { roadTurnDeg } from '../../src/core/structures/deckPlacement.js';
 
 function rig(deck: boolean) {
   const registry = new StructureRegistry();
@@ -116,6 +117,25 @@ describe('deck placement snap parity (client ghost == server placed point)', () 
       }
       // Each rhombus has its own facing (the player's turn changes nothing).
       expect(seen.size, kind).toBe(3);
+    }
+  });
+
+  it('road: the placed turn is the ghost turn, a 30° + 60°·k step whose carriageway runs edge-mid to edge-mid', () => {
+    const hexC = deckHexCentreInto(2, 1, { x: 0, y: 0 });
+    for (const playerRot of [0, 15, 29, 31, 60, 95, 150, 181, 240, 299, 330, 359]) {
+      const r = rig(true);
+      const ghost = snapGhostToDeck({ kind: 'road', x: 0, y: 0, angle: (playerRot * Math.PI) / 180, deck: true }, hexC.x + 40, hexC.y - 25);
+      const gx = ghost!.x, gy = ghost!.y, grot = ghost!.rot;
+      const placed = r.place('road', hexC.x + 40, hexC.y - 25, playerRot);
+      expect(placed, `road at ${playerRot}`).not.toBeNull();
+      expect([placed!.x, placed!.y, placed!.rot]).toEqual([gx, gy, grot]);
+      expect([gx, gy]).toEqual([hexC.x, hexC.y]);
+      expect(((grot % 60) + 60) % 60).toBe(30);
+      expect(grot, `nearest step to ${playerRot}`).toBe(roadTurnDeg(playerRot));
+      const off = Math.abs(((((playerRot - grot) % 360) + 540) % 360) - 180);
+      expect(off).toBeLessThanOrEqual(30);
+      // The carriageway (the tile's local y) points at game angle rot − 90°: an edge midpoint (60°·i).
+      expect((((grot - 90) % 60) + 60) % 60).toBe(0);
     }
   });
 

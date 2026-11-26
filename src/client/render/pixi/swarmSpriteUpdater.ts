@@ -31,7 +31,7 @@ import { isSpriteInView } from '../spriteUpdateDecisions.js';
 import type { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind, type WeaponMount } from '../../../shared-types/shipKinds';
-import { getStructureKind } from '../../../shared-types/structureKinds';
+import { getStructureKind, isFlatDeckKind } from '../../../shared-types/structureKinds';
 import { wrapPi, rotateMountToward } from '../../../core/ai/WeaponMountController';
 import {
   DAMAGE_FLASH_COLOR,
@@ -79,6 +79,7 @@ import type { SpriteBuildSig, SwarmSpriteCtx } from './swarmSpriteCtx.js';
 import { RIG_TICKS_PER_SEC, RIG_UNDER_Z, type StructureRigView } from './structureRigs.js';
 import { isPadChamberKind } from '../../../shared-types/teleport.js';
 import { hasBodyStatus, updateSocketNubs } from './structureSocketNubs.js';
+import { syncRoadJoins } from './roadJoins.js';
 import { syncStructureHologram } from './structureHologram.js';
 export type { SpriteBuildSig, SwarmSpriteCtx };
 
@@ -125,6 +126,8 @@ export function scrapHeatTint(ageMs: number): number | undefined {
 export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): void {
   // Base platforms: the deck floor follows the plate set (one version compare per frame).
   ctx.deckPlates?.sync(mirror.deckPlates);
+  // Slice 31: road joins, rebuilt only when a road or gate changed.
+  if (mirror.deckPlates?.deck === true && ctx.socketNubs === true) syncRoadJoins(mirror.structures, mirror.swarm);
   if (!mirror.swarm) return;
   const now = performance.now();
   // Pose-ring arrivals are main-thread stamps: interpolate on that clock.
@@ -262,7 +265,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         sprite = buildArtShipSprite(artHandle, () => buildStructureGfx(stKind, stRadius, 1, ctx.art.structStyle));
         // A teleporter chamber is a deck ships fly into: the pad-deck band (the
         // dock apron's), under every hull whatever the add order.
-        if (isPadChamberKind(stKind)) sprite.zIndex = RIG_UNDER_Z;
+        if (isPadChamberKind(stKind) || isFlatDeckKind(stKind)) sprite.zIndex = RIG_UNDER_Z; // a road too (flat deck tile)
         // WS-4 Phase 5 (R2.16) — a Miner shows a faint dashed mining-range ring
         // at its `miningRange` radius. Built HERE (the once-per-sprite create
         // path, invariant #14 — never per-frame) and parented to the body so it
@@ -417,7 +420,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         } else rigs.hide(spriteKey);
       }
       // 0d slice 10: socket nubs, redrawn only when the used sockets change.
-      if (ctx.socketNubs === true && sprite.visible) updateSocketNubs(sprite, entry.shipKind, mirror.structures?.get(entityId), rigTick);
+      if (ctx.socketNubs === true && sprite.visible) updateSocketNubs(sprite, entry.shipKind, mirror.structures?.get(entityId), rigTick, entityId);
       // Structures (turret 'barrel' / miner 'drill') carry a mounts entry in
       // the catalogue but NO mountAngles on any wire — the snapshot
       // `structures[]` slice ships only turretTargetId / miningTargetId. So

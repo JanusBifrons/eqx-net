@@ -27,11 +27,27 @@
  * A fence gate (slice 21): a shield gate snaps to the nearest hex EDGE
  * midpoint (`'edge'`), turned to lie along that seam (30° / 90° / 150°, past
  * the gate's quarter-turn rule: the seam decides the turn, R does nothing).
+ *
+ * A road (slice 31): a whole-hex tile whose carriageway runs from one hex edge
+ * midpoint to the opposite one. Its flat-top outline lines up with the
+ * pointy-top deck cells only at 30° + 60°·k, and there its carriageway (local
+ * y) runs edge-mid to edge-mid, so the player's turn snaps to the nearest
+ * of those six ({@link roadTurnDeg}); R steps it round the hex.
  */
 import { getStructureKind, isConnectorKind, snapPlayerStructureRotation } from '../../shared-types/structureKinds.js';
 import { snapToDeckSlot, type DeckSnap } from '../hex/deckSnap.js';
 import { isPlateCentreHex } from '../hex/plates.js';
 import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from './deckLinks.js';
+import { DECK_ROAD_KIND } from './deckGateRoad.js';
+
+/** A road's turn (degrees): the nearest 30° + 60°·k to the player's `deg`
+ *  (0..330; an exact tie, e.g. 0 or 60, goes up). The input is rounded to
+ *  1e-6° first: the ghost passes its turn through radians, the server gets
+ *  degrees, and a tie must snap the same way on both sides. Pure. */
+export function roadTurnDeg(deg: number): number {
+  const d = Number.isFinite(deg) ? Math.round(deg * 1e6) / 1e6 : 0;
+  return ((((Math.round((d - 30) / 60) * 60 + 30) % 360) + 360) % 360) + 0;
+}
 
 /** Allocation-free: snap a player's requested point for `kind` to the centre
  *  of its deck slot (`kind.deckSlot`, or the plate centre for a connector in
@@ -41,6 +57,7 @@ export function snapPlacementToDeck(kind: string, x: number, y: number, out: Dec
   const k = getStructureKind(kind);
   snapToDeckSlot(kind === DECK_FENCE_POST_KIND ? 'corner' : kind === DECK_FENCE_GATE_KIND ? 'edge' : k.deckSlot, x, y, out);
   if (out.slot === 'edge') return out; // the seam's turn, a 30° step already
+  if (kind === DECK_ROAD_KIND) { out.rot = roadTurnDeg(rotDeg); return out; }
   if (out.slot !== 'plate' && isConnectorKind(kind) && isPlateCentreHex(out.q, out.r)) snapToDeckSlot('plate', x, y, out);
   const faced = out.rot >= 0 ? out.rot + (k.footprint.h > k.footprint.w ? 90 : 0) : rotDeg;
   out.rot = snapPlayerStructureRotation(faced, true, kind);
