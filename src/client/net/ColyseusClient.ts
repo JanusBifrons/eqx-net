@@ -1114,7 +1114,7 @@ export class ColyseusGameClient {
     serverTickAtWelcome: (): number => this.serverTickAtWelcome,
     welcomePerfNow: (): number => this.welcomePerfNow,
     isTravelling: (): boolean => this.isTravelling(),
-    beginTravel: (): void => this.beginTravel(),
+    beginTravel: (mode?: 'trip' | 'hold'): void => this.beginTravel(mode),
     travelOutRemainingMs: (): number => this.travelOutRemainingMs(),
     setFleetArrival: (w: FleetArrivalWatch | null): void => { this._fleetArrival = w; },
     resetPredictionState: (): void => this.resetPredictionState(),
@@ -2875,20 +2875,21 @@ export class ColyseusGameClient {
   /** ms until the ship has flown out of the old sector (the room swap waits
    *  for this, so the old sector never vanishes in view). */
   travelOutRemainingMs(): number {
-    if (this._travel === null) return 0;
+    if (this._travel === null || this._travel.hold) return 0;
     return Math.max(0, TRAVEL_OUT_S * 1000 + 300 - (this.clock.now() - this._travel.startMs));
   }
 
   /** Start the trip: the local ship flies on along its heading at warp speed
-   *  until `endTravel` (the destination has loaded). */
-  beginTravel(): void {
+   *  until `endTravel` (the destination has loaded). `hold`: a teleport; the
+   *  ship stays put, then lands on the far pad (no flight). */
+  beginTravel(mode: 'trip' | 'hold' = 'trip'): void {
     const id = this.mirror.localPlayerId;
     const e = id !== null ? this.mirror.ships.get(id) : undefined;
     if (!e) return;
     const now = this.clock.now();
     this._travel = {
       x: e.x, y: e.y, dx: -Math.sin(e.angle), dy: Math.cos(e.angle), angle: e.angle, lastMs: now, startMs: now,
-      phase: 'out', inStartMs: 0, ax: 0, ay: 0, landed: false,
+      phase: 'out', inStartMs: 0, ax: 0, ay: 0, landed: false, hold: mode === 'hold',
     };
     this.mirror.travelling = true;
   }

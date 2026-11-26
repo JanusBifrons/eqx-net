@@ -97,3 +97,36 @@ describe('the trip between sectors', () => {
     }
   });
 });
+
+describe('a teleport to another sector (gate or paired teleporter)', () => {
+  beforeEach(() => { useUIStore.setState({ firstSnapshotApplied: false, joinMinimumElapsed: false, travelling: true }); });
+
+  it('holds the ship still where it sealed, then puts it straight on the far pad: no fly-out, no warp run, no 25 s trip', async () => {
+    // Film 2026-11-26: riding the Sol Prime gate flew the ship off at warp
+    // speed for a whole sector trip, instead of swapping it like a teleporter.
+    const c = new ColyseusGameClient() as unknown as Internals & { beginTravel(mode?: 'trip' | 'hold'): void; travelOutRemainingMs(): number };
+    let t = 1000;
+    c.clock = { now: () => t };
+    c.mirror.localPlayerId = 'me';
+    c.mirror.ships.set('me', { x: 100, y: 50, vx: 0, vy: 0, angle: -Math.PI / 2 });
+    c.beginTravel('hold');
+    expect(c.travelOutRemainingMs()).toBe(0);
+    const e = c.mirror.ships.get('me')!;
+
+    t += 2000; c.updateMirror(t);
+    expect(e.x).toBe(100);
+    expect(e.y).toBe(50);
+    expect(e.warp).toBeUndefined();
+    expect(c.mirror.travelDeep).toBe(false);
+
+    c.predWorld = await PhysicsWorld.create();
+    c.predWorld.spawnShip('me', 5000, 7000, 'fighter');
+    useUIStore.setState({ firstSnapshotApplied: true });
+    t += 50; c.updateMirror(t);
+    expect(e.x).toBeCloseTo(5000, 1);
+    expect(e.y).toBeCloseTo(7000, 1);
+    expect(c.mirror.travelJumpX).toBeCloseTo(4900, 1);
+    expect(e.warp).toBeUndefined();
+    expect(useUIStore.getState().joinMinimumElapsed).toBe(true);
+  });
+});

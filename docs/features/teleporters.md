@@ -88,7 +88,7 @@ It is separate from base storage, so production never draws from it.
 **At the swap:**
 - **Pad holds** trade places in one atomic group (`StorageService.padSwapAcross`; the hold store is process-wide).
 - **Riders on both pads are collected first, then sent,** so nobody rides twice:
-  - **Pilots** leave by an instant transit (`TransitOrchestrator.teleportOut`): no neighbour check and no spool, but the same seat reservation and roster re-home as a warp. They land on the far pad at the same offset.
+  - **Pilots** leave by an instant transit (`TransitOrchestrator.teleportOut`): no neighbour check and no spool, but the same seat reservation and roster re-home as a warp. They land on the far pad at the same offset. The transit is marked `teleport`, so the client swaps the ship in place with no sector trip ([travel-state](../architecture/travel-state.md#sector-to-sector-shipped)).
   - **Parked hulls,** a disconnected pilot's hull included, are rebuilt in the far room. Their roster row moves sector, and their hold travels with them (keyed by the hull's id).
   - **NPC bots** move through their director (`LivingWorldDirector.teleportBot`), so its records stay right. An NPC no director owns (a trade hauler, a scenario drone) stays behind.
 

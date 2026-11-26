@@ -294,6 +294,30 @@ describe('TransitOrchestrator', () => {
       expect(orch.isInFlight('p1')).toBe(false);
     });
 
+    it('a teleport hop tells the pilot it is a teleport (no trip) and flashes no warp-out for onlookers', async () => {
+      // Film 2026-11-26: riding the Sol Prime gate played a whole warp trip.
+      const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
+      const { orch, sent, broadcasts } = withFakeReserve(reserve);
+      expect(orch.teleportOut('p1', 'vega-reach', { x: 10, y: 20 })).toBe(true);
+      await vi.runAllTimersAsync();
+      const inTransit = sent.find((s) => (s.msg as { state?: string }).state === 'IN_TRANSIT');
+      expect((inTransit?.msg as { teleport?: boolean }).teleport).toBe(true);
+      const ready = sent.find((s) => s.channel === 'transit_ready');
+      expect((ready?.msg as { teleport?: boolean }).teleport).toBe(true);
+      expect(broadcasts.some((b) => b.type === 'warp_out')).toBe(false);
+    });
+
+    it('a warp is not marked as a teleport', async () => {
+      const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
+      const { orch, sent, broadcasts } = withFakeReserve(reserve);
+      orch.beginTransit('p1', 'cygnus-arm');
+      vi.advanceTimersByTime(SPOOL_DURATION_MS);
+      await vi.runAllTimersAsync();
+      const ready = sent.find((s) => s.channel === 'transit_ready');
+      expect((ready?.msg as { teleport?: boolean }).teleport).toBeUndefined();
+      expect(broadcasts.some((b) => b.type === 'warp_out')).toBe(true);
+    });
+
     it('reserves the seat for the destination galaxy room (threading the active shipId)', async () => {
       const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
       const { orch } = withFakeReserve(reserve);
