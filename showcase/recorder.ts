@@ -14,12 +14,15 @@ import type { CameraCue } from '../src/core/contracts/cameraScript.js';
 import type { HudMode, Shot, ShotContext, ShotTarget, ShotViewport } from './types.js';
 import { browserPid, sleep, trackPid } from './tools.js';
 import { hudTopInFrame } from './captionPlacement.js';
+import { captureCrop, type CaptureCrop } from './captureCrop.js';
 
 export interface FrameIndex {
   /** Frame files relative to the clip dir, with capture time (ms, monotonic). */
   frames: Array<{ file: string; t: number }>;
   startT: number;
   endT: number;
+  /** Set when Chrome captured a surface bigger than the page (see captureCrop.ts). */
+  crop?: CaptureCrop;
 }
 
 export interface RecordResult {
@@ -184,10 +187,21 @@ export class Recorder {
     let n = 0;
     let writing = Promise.resolve();
     let stopped = false;
-    cdp.on('Page.screencastFrame', (f: { data: string; sessionId: number; metadata: { timestamp?: number } }) => {
+    cdp.on('Page.screencastFrame', (f: { data: string; sessionId: number; metadata: { timestamp?: number; deviceWidth?: number; deviceHeight?: number } }) => {
       // A frame that arrives after the take ended would keep an absolute
       // time (the rebase below has run) and wreck the encode timeline.
       if (stopped) { void cdp.send('Page.screencastFrameAck', { sessionId: f.sessionId }).catch(() => {}); return; }
+      if (index.crop === undefined && f.metadata.deviceWidth && f.metadata.deviceHeight) {
+        const crop = captureCrop(
+          { deviceWidth: f.metadata.deviceWidth, deviceHeight: f.metadata.deviceHeight },
+          page.viewportSize() ?? this.capture,
+          screencastSize(viewport, this.capture),
+        );
+        if (crop) {
+          index.crop = crop;
+          this.log(`  capture surface ${f.metadata.deviceWidth}×${f.metadata.deviceHeight} is bigger than the page: cropping frames to ${crop.w}×${crop.h}`);
+        }
+      }
       const t = (f.metadata.timestamp ?? Date.now() / 1000) * 1000;
       const file = `frames/${String(n++).padStart(6, '0')}.jpg`;
       index.frames.push({ file, t });

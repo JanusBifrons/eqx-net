@@ -3429,3 +3429,7 @@ least `MENU_ARM_MS` after opening (touch; a mouse opens on release), then its cl
 ## 2026-11-25 — Playwright 1.49 hangs forever under Node 24.14 on Windows, even `--list`
 
 Running the e2e CLI (`pnpm exec playwright test …`, even `--list`) under Node 24.14 on Windows never returns: a module-loader deadlock between Node's main thread and its loader thread. It is not the game, the server or the port. Run the Playwright CLI with Node 22 (what CI uses, `node-version: '22.x'`): `<node22> node_modules/@playwright/test/cli.js test …`, where `<node22>` is a Node 22 binary on the box.
+
+## 2026-11-26 — Showcase: a phone take can come back as a black frame with the game in its top-left quarter
+
+Chrome's screencast sometimes reports a capture surface twice the page (`deviceWidth` 1688×780 for an 844×390 page at 2× DPR) while the page itself still reads 844×390 at DPR 2. The game paints only the top-left quarter and the rest of every frame is black. It hit every take of the Sol Prime alien-gate shot; a bare test page never shows it. The recorder now reads the first frame's metadata and stores a crop in `frames.json` (`showcase/captureCrop.ts`); the encode crops each frame back to the page. Check a take's raw frame size against its `deviceWidth` before you blame the camera or the shot.
