@@ -4,11 +4,11 @@ Plan `soft-leaping-truffle` v4. T1 (this page's first section) is the structure,
 
 ## What a teleporter is
 
-A **Teleporter** is a large open pad ringed by solid posts:
-- **Small:** 800 × 800 u, pad radius 320. It fits a squad of small ships plus one medium or large hull squeezed in.
-- **Large:** 2120 × 2120 u, pad radius 900. It is sized for capital ships to come.
+A **Teleporter** is a walled chamber (teleporter redesign, the "Through-pass" look): a square floor deck with a tower at each corner, solid side walls, and a doorway at each end closed by a pair of sliding blast doors. Ships fly in and out through the doorways only.
+- **Small:** 800 × 800 u, pad (floor) radius 320, four towers, doorways 320 wide. It fits a squad of small ships plus one medium or large hull squeezed in.
+- **Large:** 2120 × 2120 u, pad radius 900, eight towers (the corners plus two along each side wall), doorways 900 wide. It is sized for capital ships to come.
 
-Ships enter between the posts; only the posts are solid. Both sizes are player-buildable from a packed item (`pack_teleporter` on a Fabricator, `pack_teleporter_large` on an Assembly Plant) and appear under **Build ▸ Transport**.
+A doorway is half the floor's side (`padDoorwayHalf`), so each open door leaf slides wholly into the wall beside it. The doors stand open between jumps. The Transit Pad ([warp-to](warp-to.md#transit-pads-rare)) is the same 800 chamber. Both sizes are player-buildable from a packed item (`pack_teleporter` on a Fabricator, `pack_teleporter_large` on an Assembly Plant) and appear under **Build ▸ Transport**.
 
 ## Pairing
 
@@ -29,7 +29,7 @@ A jump needs `jumpCharge(distance) = 600 + 0.15 × distance` (`shared-types/tele
 
 The inspector's **Fire** button fires now (needs a full charge and both pads idle). Rules fire on their own, and the first rule met fires:
 - **when charged:** a shuttle that keeps going;
-- **when a ship boards:** a ship has sat on the pad for 3 s;
+- **when a ship boards:** a ship that flew onto the pad has sat there for 3 s (`SHIP_BOARD_DWELL_MS`). Ships left on the pad by the last jump (arrivals, or riders of a cancelled jump) are not boarders, so an arrival never sends the pad straight back (`trackBoarding`);
 - **when loaded:** the pad holds at least N of a good, or N total weight (set from the server rules; the panel shows the first two today).
 
 ## The jump cycle
@@ -39,10 +39,12 @@ Both pads run it together, like train doors closing:
 | Phase | Length | What happens |
 |---|---|---|
 | Armed | 5 s | Everyone on either pad is warned |
-| Doors closing | 4 s | A shield iris closes round the edge (T2: it gently pushes straddlers fully in or out) |
-| Sealed | 3 s | The barrier is solid and the pad charges up |
+| Doors closing | until shut | Both doorways' blast doors slide shut; a gentle push moves anyone straddling a doorway fully in or out |
+| Sealed | 3 s | The doors are shut and the pad charges up |
 | Swap | — | Both pads trade contents |
-| Open | 2 s | The iris opens again |
+| Open | 2 s | The doors slide open again |
+
+**Doors follow power,** like the gatehouse doors: at full power a door takes `DOOR_TRAVEL_S` (3 s) to cross; on a weak grid it moves slower, and a moving door draws full power. Closing ends only when BOTH pads' doors are fully shut, so the swap waits on the slower end. If a pad loses all power mid-close, the jump is cancelled and both pads reopen (no swap, no charge spent). A free pad with no grid (the Transit Pad) always runs at full speed. The Ancients' gate has no doors: its closing phase is timed and its inner ring seals instead ([alien-gates](alien-gates.md)).
 
 The inspector shows the phase. Room state carries it (`tpPhase`), so a late joiner sees a jump in progress.
 
@@ -62,18 +64,18 @@ It is separate from base storage, so production never draws from it.
 
 ## Riding the jump (T2)
 
-**Who rides.** At the swap, everything on either pad trades places, each at the same offset from its pad's centre. That means active pilots, parked (lingering) hulls, NPC ships and scrap. **Everyone rides, strangers and enemies included** (your ruling): defend your pads. The pad is the open square inside the posts (`onPad`); on the Ancients' gate it is the disc inside its sealed outer ring ([alien-gates](alien-gates.md)).
+**Who rides.** At the swap, everything on either pad trades places, each at the same offset from its pad's centre. That means active pilots, parked (lingering) hulls, NPC ships and scrap. **Everyone rides, strangers and enemies included** (your ruling): defend your pads. The pad is the floor square inside the walls (`onPad`, rotation-aware); on the Ancients' gate it is the green light pool inside its sealed inner ring ([alien-gates](alien-gates.md)).
 
 **The doors.**
-- **Closing:** a gentle push moves any ship straddling the pad edge fully in, or fully out, whichever side its centre is on (`padPushDir`, ~90 u/s²).
-- **Sealed:** a chamber's blast doors are shut; the Ancients' gate's outer ring turns into a solid circle of iris spans. No one can fly in or out at the last moment.
+- **Closing:** a gentle push moves any ship straddling a doorway fully in, or fully out, whichever side its centre is on (`padPushDir`, ~90 u/s²). On a chamber it pushes along the doorway axis only; on the Ancients' gate, along the radius.
+- **Sealed:** a chamber's blast doors are shut; the Ancients' gate's inner ring turns into a solid circle of iris spans. No one can fly in or out at the last moment.
 - **Both sides agree.** The server worker and your client's prediction world run the same push and the same walls from the room-state phase (#15), so your ship doesn't judder at the doors.
 
 **The warning.** A pilot whose ship is on a pad sees a top-centre banner while its cycle runs: "Teleport departing. Stay on the pad to ride, or fly off now.", then "Doors closing.", then "Sealed. Charging up…". It is worked out on the client from room state; no message is sent.
 
 **Your view after the jump.** A teleported ship's `poseEpoch` goes up. On the change your client re-seeds its prediction at the new authoritative pose, a snap rather than a long correction slide, and the camera follows.
 
-**Spawning on a pad works:** spawn clearance treats a pad as open (only the posts are solid).
+**Spawning on a pad works:** spawn clearance treats the floor as open (only the towers and walls are solid).
 
 ## Across sectors (T3)
 
@@ -86,7 +88,7 @@ It is separate from base storage, so production never draws from it.
 **At the swap:**
 - **Pad holds** trade places in one atomic group (`StorageService.padSwapAcross`; the hold store is process-wide).
 - **Riders on both pads are collected first, then sent,** so nobody rides twice:
-  - **Pilots** leave by an instant transit (`TransitOrchestrator.teleportOut`): no neighbour check and no spool, but the same seat reservation and roster re-home as a warp. They land on the far pad at the same offset.
+  - **Pilots** leave by an instant transit (`TransitOrchestrator.teleportOut`): no neighbour check and no spool, but the same seat reservation and roster re-home as a warp. They land on the far pad at the same offset. The transit is marked `teleport`, so the client swaps the ship in place with no sector trip ([travel-state](../architecture/travel-state.md#sector-to-sector-shipped)).
   - **Parked hulls,** a disconnected pilot's hull included, are rebuilt in the far room. Their roster row moves sector, and their hold travels with them (keyed by the hull's id).
   - **NPC bots** move through their director (`LivingWorldDirector.teleportBot`), so its records stay right. An NPC no director owns (a trade hauler, a scenario drone) stays behind.
 
@@ -107,6 +109,14 @@ It is separate from base storage, so production never draws from it.
 
 **Pairing with someone else's teleporter.** Select another owner's built teleporter to see **Ask to pair**, which lists your own teleporters in any sector. Choosing one sends the owner a request (`teleport_pair_request`), and they see an Accept / Decline card. Only that owner can accept. On Accept the two are paired like any other pair, and either owner can unpair. A request expires after 10 minutes.
 
+## How it looks
+
+Style C (`structureStyleC.transport.chamber.ts`, one drawer for all three chambers): a plated floor deck, armoured walls along the collider's wall boxes, chamfered corner towers each with a violet charge coil, entry chevrons at each doorway. The blast doors are the `tp-doors` / `tp-doors-large` rig's slide leaves wearing the gatehouse door-leaf art.
+
+- **Floor lights** follow the phase and the doors: green idle or open once the doors are fully open, flashing amber armed or closing, red sealed or while the doors are still shut or opening (an arriving pad just after the swap).
+- **Coils** fill with the banked charge.
+- **No power:** a built teleporter with no power goes dark (its coils still show the charge, dimly). The Transit Pad needs no grid, so it stays lit.
+
 ## Testing
 
 | Layer | File |
@@ -120,6 +130,7 @@ It is separate from base storage, so production never draws from it.
 | T3 unit | `LivingWorldDirector.teleportBot.test.ts`, `tests/unit/teleportClientWireParity.test.ts` |
 | T4 integration | `teleporter.test.ts` (pay, don't pay → standing, always remembered); `teleporterAcross.test.ts` (a stranger can't accept a pair request; the owner's accept pairs both rooms) |
 | T4 unit | `EconomyStore.test.ts` (toll preferences, treasuries); `teleportClientWireParity.test.ts` (toll and pairing senders) |
+| Chamber (unit) | `src/shared-types/teleport.test.ts` (doorway, rotated `onPad`, doorway push), `src/core/articulation/rigDoors.test.ts` (`tp-doors` rests open, shuts both doorways), `src/server/structures/padDoors.test.ts` (door speed from power, stall), `teleportCycle.test.ts` (CLOSING waits on both pads' doors, a stall cancels), `structureStyleC.transport.chamber.test.ts` (lights by phase, coils, dark unpowered) |
 | T4 E2E | `teleporter.spec.ts` (`teleport-toll-test` room, half-speed cycle): the owner sets a toll from the inspector, a rider on the pad gets the prompt, pays, and their wallet goes down |
 
 There is no cross-sector browser test yet: the pilot's hop is the existing warp flow (`transit_ready`), checked here at the integration level.
@@ -134,7 +145,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 
 - **`components/TeleporterPanel.tsx`** mounts in the inspector for your own built teleporter. It reads the room-state row decoded into `StructureRenderState.teleport` from the mirror at 4 Hz (no Zustand). It lists pairing candidates by kind and distance, never ids. Senders live in `structureActionsClient.ts`.
 - **T2 — on-pad prediction.**
-  - **Walls:** `visitDerivedWalls` emits each teleporter's iris spans (blocking only while SEALED, keys from `-2e9`), so prediction and drawing follow the server walls.
+  - **Walls:** a chamber's walls and towers are static colliders (`gateColliderBoxes`), its blast doors rig leaves posed from the decoded door row, like a gatehouse. `visitDerivedWalls` emits iris spans only for the Ancients' gate (blocking only while SEALED, keys from `-2e9`), so prediction and drawing follow the server walls.
   - **Push:** `syncForceFields` sets each pad's closing push (a `pad` force field) in predWorld from the room-state phase.
   - **Re-seed:** an own-ship `poseEpoch` change makes `handleSnapshot` re-seed the local body at the snapshot pose with a fresh `Reconciler`, and that snapshot skips the reconcile (a snap, not a slide). `_localPoseEpoch` resets to -1 on sector handoff.
   - **Warning:** `TeleportWarning` (top-centre) is derived from room state + the mirror, never a message.
@@ -154,10 +165,10 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 - **Persisted:** partner, rules and charge go in the sector snapshot `teleport` block (rules re-validated on restore).
 - **Pairing (T1):** same sector, same owner.
 - **T2 — the doors and the ride:**
-  - **Phase effects:** `applyPhaseEffects` turns the pad's force field on while CLOSING (through `ForceFieldSubsystem`, `SET_FORCE_FIELD`; [physics-worker](../architecture/physics-worker.md#force-fields)) and the iris walls solid while SEALED (`tpiris-<id>-<i>`, spawned once, inactive).
+  - **Phase effects:** `applyPhaseEffects` turns the pad's force field on while CLOSING (through `ForceFieldSubsystem`, `SET_FORCE_FIELD`; [physics-worker](../architecture/physics-worker.md#force-fields)). A chamber's doors are driven shut for CLOSING and SEALED and open otherwise (`padDoors.ts`: the gatehouse `DoorTrack` machinery, speed from `doorLevelFromSupply`, leaf boxes via `writeDoorLeafBoxes`, the door row via `writePadDoorRow`; never saved, it follows `tpPhase`). Only the Ancients' gate has iris walls, solid while SEALED (`tpiris-<id>-<i>`, spawned once, inactive).
   - **The swap:** `SectorRoom.swapPadShips` collects riders by liveness class (#17: ACTIVE alive players, LINGERING hulls, swarm kinds 1 and 3), then moves them all (SAB + `SET_POSITION` + pose caches).
   - **Riders' clients:** an active rider's `ShipState.poseEpoch` bumps and rides the own-ship snapshot entry (#16), and the broadcast grace is extended.
-  - **Spawn clearance** treats a pad as its posts (`pushSolidBoxes`).
+  - **Spawn clearance** treats a pad as its towers and walls (`pushSolidBoxes`).
 - **T3 — across sectors.**
   - **Links:** a partner is a `PartnerLink` (local, or remote via `TeleportBroker.find`). The initiator drives both rooms' phases (`setPhase` on the far subsystem). Charge counts hops (`hopsToSector`; test rooms outside the galaxy graph count 1).
   - **The swap:** `swapAcross` trades the pad holds (`padSwapAcross`, one group), then collects BOTH pads' riders before dispatching either:
@@ -184,3 +195,6 @@ The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wor
 - **Alien gates** are unbuildable and invulnerable; pair a gate only through `findAlienTwin`, never a pre-computed uid. `evictSwarmEntity` must `forget` the ship; the disable runs through the shared `gateDisabledInput` (#15). Locks: `AlienGateGuard.test.ts`, `disableParity.test.ts`, `alienGates.test.ts`.
 - Detail: [teleporters.md](../../docs/features/teleporters.md#server-implementation-notes), [alien-gates.md](../../docs/features/alien-gates.md#server-implementation-notes).
 
+## History
+
+- **Teleporter redesign (2026-11-25):** the pad used to be an open square ringed by posts, and a dashed shield iris closed round its edge on a fixed 4 s timer. Now the Teleporter, Large Teleporter and Transit Pad are walled chambers with blast doors at each end on the gatehouse door machinery (T1–T3), so closing follows power and waits for both pads' doors; the chamber got its style C art (T4–T5). The Ancients' gate became the Astrolabe and seals with its inner ring ([alien-gates](alien-gates.md#history)).

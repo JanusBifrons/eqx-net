@@ -119,7 +119,7 @@ import { applySnapshotPerfStats } from './snapshotPerfStats.js';
 import { noteSnapshotArrival } from './snapshotArrivalStats.js';
 import { syncTidiFromRoom } from './tidiSync.js';
 import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
-import { stepTravel, TRAVEL_OUT_S, type TravelTrip } from './mirror/travelPass.js';
+import { stepTravel, TRAVEL_OUT_S, holdingPicture, noteSwarmPacket, type TravelTrip } from './mirror/travelPass.js';
 import { DisplayPoseHitscan } from '../combat/displayPoseHitscan.js';
 import { preResetRemoteShips, applyRemoteShipInputs, type RemoteInput, type PreResetEntry, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyShipWarp, applyActivatedMounts, applyParkedHullShieldDown, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
 import { computeRemoteLerpOffsets, type RemoteShipOffset } from './remoteLerpOffsets.js';
@@ -1114,7 +1114,7 @@ export class ColyseusGameClient {
     serverTickAtWelcome: (): number => this.serverTickAtWelcome,
     welcomePerfNow: (): number => this.welcomePerfNow,
     isTravelling: (): boolean => this.isTravelling(),
-    beginTravel: (): void => this.beginTravel(),
+    beginTravel: (mode?: 'trip' | 'hold'): void => this.beginTravel(mode),
     travelOutRemainingMs: (): number => this.travelOutRemainingMs(),
     setFleetArrival: (w: FleetArrivalWatch | null): void => { this._fleetArrival = w; },
     resetPredictionState: (): void => this.resetPredictionState(),
@@ -1410,10 +1410,10 @@ export class ColyseusGameClient {
       const decodeStartMs = performance.now();
       if (raw instanceof ArrayBuffer) {
         if (bw) { bw.swarmBytes += raw.byteLength; bw.swarmPackets += 1; }
-        decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._shellTiming);
+        noteSwarmPacket(this._travel, decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._shellTiming));
       } else if (ArrayBuffer.isView(raw)) {
         if (bw) { bw.swarmBytes += raw.byteLength; bw.swarmPackets += 1; }
-        decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._shellTiming);
+        noteSwarmPacket(this._travel, decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._shellTiming));
       }
       this.syncSwarmIntoPredWorld();
       const decodeMs = performance.now() - decodeStartMs;
@@ -2877,23 +2877,28 @@ export class ColyseusGameClient {
   /** ms until the ship has flown out of the old sector (the room swap waits
    *  for this, so the old sector never vanishes in view). */
   travelOutRemainingMs(): number {
-    if (this._travel === null) return 0;
+    if (this._travel === null || this._travel.hold) return 0;
     return Math.max(0, TRAVEL_OUT_S * 1000 + 300 - (this.clock.now() - this._travel.startMs));
   }
 
   /** Start the trip: the local ship flies on along its heading at warp speed
-   *  until `endTravel` (the destination has loaded). */
-  beginTravel(): void {
+   *  until `endTravel` (the destination has loaded). `hold`: a teleport; the
+   *  ship stays put, then lands on the far pad (no flight). */
+  beginTravel(mode: 'trip' | 'hold' = 'trip'): void {
     const id = this.mirror.localPlayerId;
     const e = id !== null ? this.mirror.ships.get(id) : undefined;
     if (!e) return;
     const now = this.clock.now();
     this._travel = {
       x: e.x, y: e.y, dx: -Math.sin(e.angle), dy: Math.cos(e.angle), angle: e.angle, lastMs: now, startMs: now,
-      phase: 'out', inStartMs: 0, ax: 0, ay: 0, landed: false,
+      phase: 'out', inStartMs: 0, ax: 0, ay: 0, landed: false, hold: mode === 'hold',
+      joinGen: useUIStore.getState().joinGeneration,
     };
     this.mirror.travelling = true;
   }
+
+  /** A teleport mid-swap: the renderer holds the picture (`travelPass.holdingPicture`). */
+  holdingPicture(): boolean { return holdingPicture(this._travel); }
 
   /** End the trip: the local ship drops in at its real (predicted) pose. */
   endTravel(): void {

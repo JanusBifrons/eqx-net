@@ -132,7 +132,9 @@ export function SectorChip({ size = 9 }: { size?: number }): JSX.Element {
       const c = getGameClient();
       const id = c?.mirror.localPlayerId;
       const ship = id ? c?.mirror.ships.get(id) : null;
-      const s = ship ? `${Math.round(ship.x / GRID_CELL)},${Math.round(ship.y / GRID_CELL)}` : '—';
+      // A gate swap holds the old room's picture (and the ship's old pose)
+      // after the new sector's name arrives: no grid square until it lands.
+      const s = ship && c?.holdingPicture() !== true ? `${Math.round(ship.x / GRID_CELL)},${Math.round(ship.y / GRID_CELL)}` : '—';
       if (s !== last && gridRef.current) {
         last = s;
         gridRef.current.textContent = s;
@@ -141,7 +143,7 @@ export function SectorChip({ size = 9 }: { size?: number }): JSX.Element {
     tick();
     const h = window.setInterval(tick, 250);
     return () => window.clearInterval(h);
-  }, []);
+  }, [sectorName]); // re-read at once on a sector change, not up to 250 ms later
 
   const name = sectorName !== '' ? sectorName : sectorKey === null ? 'Test arena' : '—';
   return (

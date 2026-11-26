@@ -39,6 +39,7 @@ const storeState = vi.hoisted(() => ({
   arrivalTickFromServer: 123 as number | null,
   arrivalAcked: true,
   setSelection: vi.fn(),
+  setArtBake: vi.fn(),
 }));
 
 vi.mock('../state/store.js', () => ({
@@ -101,6 +102,7 @@ const fakeArtReady = { value: true };
 
 function buildLoop(fake: Fake): { loop: (now: number) => void; animFrameRef: { current: number } } {
   const mockClient = {
+    holdingPicture: () => false,
     tickPhysics: fake.tickPhysics,
     tickInbound: fake.tickInbound,
     updateMirror: fake.updateMirror,

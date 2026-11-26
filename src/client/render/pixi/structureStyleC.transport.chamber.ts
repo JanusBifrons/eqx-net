@@ -19,8 +19,8 @@
  *
  * Live state rides the existing body-status hook (`BodyStatusHook`, the
  * gatehouse deck light's): the floor lights and chevrons follow the jump
- * phase (`teleport.phase`: green idle / open, amber flashing armed /
- * closing, red sealed), the coils fill with the banked charge
+ * phase (`teleport.phase`: green idle / open once the doors are fully
+ * open, amber flashing armed / closing, red sealed or doors not yet open), the coils fill with the banked charge
  * (`teleport.chargePct`), and the door strips follow the decoded door
  * segment exactly as the gatehouse's do (`deckEndState`).
  */
@@ -285,10 +285,13 @@ export function chamberCode(kind: StructureKindId, st: StructureRenderState | un
   return DARK_CODES + 1 + door + 3 * (b + 2 * (p + 5 * q));
 }
 
-/** The floor light colour of a phase (`flashOff`: the amber flash's off beat). */
-export function phaseLightColor(phase: number, flashOff: boolean): number {
+/** The floor light colour of a phase (`flashOff`: the amber flash's off
+ *  beat; `door`: the doors' DECK_END_* state). Green says "open", so it
+ *  waits for the doors: idle / open with the doors shut or still sliding
+ *  (an arriving pad just after the swap) stays red, like the door strips. */
+export function phaseLightColor(phase: number, flashOff: boolean, door: number): number {
   if (phase === TP_PHASE.ARMED || phase === TP_PHASE.CLOSING) return flashOff ? TP_AMBER_OFF : TP_AMBER;
-  return phase === TP_PHASE.SEALED ? DECK_LIGHT_SHUT : DECK_LIGHT_OPEN;
+  return phase === TP_PHASE.SEALED || door !== DECK_END_OPEN ? DECK_LIGHT_SHUT : DECK_LIGHT_OPEN;
 }
 
 const _fill = { color: 0, alpha: 1 };
@@ -311,8 +314,8 @@ function drawChamber(g: GraphicsContext, code: number, kind: StructureKindId): v
     flashOff = v % 2 === 1; v = Math.floor(v / 2);
     phase = v % 5; q = Math.floor(v / 5);
   }
-  const col = lit ? phaseLightColor(phase, flashOff) : DECK_LIGHT_DEAD;
-  const idle = phase === TP_PHASE.IDLE || phase === TP_PHASE.OPEN;
+  const col = lit ? phaseLightColor(phase, flashOff, door) : DECK_LIGHT_DEAD;
+  const idle = (phase === TP_PHASE.IDLE || phase === TP_PHASE.OPEN) && door === DECK_END_OPEN;
   for (const seg of geo.ring) fillPts(g, seg, col, lit ? (idle ? 0.6 : 0.95) : 1);
   for (const ch of geo.chevrons) fillPts(g, ch, col, lit ? 0.9 : 0.6);
   for (const s of geo.wallStrips) fillPts(g, s, col, lit ? 0.85 : 1);

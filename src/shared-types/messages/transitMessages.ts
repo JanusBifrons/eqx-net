@@ -24,6 +24,9 @@ export interface TransitStateMessage {
   targetSectorKey?: string;
   /** When the state collapses to DOCKED via cancellation, why. */
   reason?: TransitCancelReason;
+  /** A teleport (Ancients' gate or paired teleporter), not a warp: the client
+   *  holds the ship still and puts it on the far pad, with no sector trip. */
+  teleport?: true;
 }
 
 /**
@@ -40,6 +43,8 @@ export interface TransitReadyMessage {
    *  (shipInstanceIds, unchanged across the hand-off): the client re-selects
    *  them on arrival and glides the camera to them. Absent on a pilot transit. */
   shipIds?: readonly string[];
+  /** A teleport, not a warp (see `TransitStateMessage.teleport`). */
+  teleport?: true;
 }
 
 /** Client-side parse of `transit_ready.shipIds` (#3: never trust the wire):

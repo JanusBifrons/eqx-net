@@ -114,7 +114,7 @@ const AIRLOCK_BOXES: readonly LocalBox[] = Object.freeze([
  *  (`isPadChamberKind`, `padChamberWalls`) also has solid walls, all but the
  *  two doorways. The Ancients' gate has no posts (redesign A3): an EMPTY list,
  *  so nothing at it is solid (its body has no collider, `createObstacleBody`)
- *  until its outer ring seals as iris walls (`padIrisSpanLocal`). */
+ *  until its inner ring seals as iris walls (`padIrisSpanLocal`). */
 const PAD_BOXES: Readonly<Record<string, readonly LocalBox[]>> = Object.freeze(
   Object.fromEntries(
     TELEPORTER_KINDS.map((k) => {

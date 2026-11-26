@@ -566,7 +566,14 @@ that poses the drawn leaves and the prediction colliders on `mirror.rigTick`.
 The deck light (`structureStyleC.fences.gate.ts` `deckLightCode`) is per end:
 GREEN only when fully open, RED when shut or moving, DARK with no power or
 stalled mid-travel at level 0. `structures/derivedWalls.ts` derives fence walls
-(and teleporter irises) only — no gate spans.
+(and the Ancients' gate's iris) only — no gate spans.
+
+**Teleporter chambers.** The Teleporter, Large Teleporter and Transit Pad
+(`isPadChamberKind`) reuse this door machinery without being a gate type (no
+gate access, no shield emitter): towers and wall boxes in `PAD_BOXES` /
+`padChamberWalls`, blast doors on the `tp-doors` / `tp-doors-large` rig
+(rest open), driven from the jump cycle by `padDoors.ts` (shut for CLOSING and
+SEALED; never saved). Story: [teleporters](../features/teleporters.md).
 
 **Persistence.** The sector snapshot saves an optional `doorPos` / `doorClip`
 per gate (`savedDoorOf`); a restored door starts still at that position with
@@ -709,7 +716,7 @@ Moved verbatim from `src/client/CLAUDE.md`, which keeps the short form of each r
 
 ### Shield walls are DERIVED, not read per pylon (gates, plan soft-leaping-truffle v2)
 
-- `structures/derivedWalls.ts` `visitDerivedWalls` is the ONE place the client works out shield walls: fence walls between any two connected built emitters (pylons + gates, anchored on the nearest gate post), blocking per `wallActive`, plus teleporter irises. Gates have no shield span: their gap is closed by solid rig door leaves (see [Gates](#gates)).
+- `structures/derivedWalls.ts` `visitDerivedWalls` is the ONE place the client works out shield walls: fence walls between any two connected built emitters (pylons + gates, anchored on the nearest gate post), blocking per `wallActive`, plus the Ancients' gate's iris (chamber teleporters have none: their blast doors are rig leaves). Gates have no shield span: their gap is closed by solid rig door leaves (see [Gates](#gates)).
 - Both `ConnectorRenderer` (draws) and `ColyseusClient.syncPredWalls` (prediction colliders: spawned once, toggled as they block, swept by generation stamp) use it. Don't read `shieldWallTo` for walls again: it only names a pylon's FIRST wall.
 - Gate door leaves are drawn by the rig from the scrubbed door clip; the deck lights are live (`deckLightCode`: green fully open, red shut/moving, dark unpowered). The inspector shows **OPENS FOR** and owners cycle it (`sendSetGateAccess`).
 

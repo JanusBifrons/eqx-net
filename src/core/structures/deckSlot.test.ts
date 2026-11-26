@@ -19,11 +19,11 @@
  * rhombus.
  */
 import { describe, expect, it } from 'vitest';
-import { STRUCTURE_KINDS_LIST } from './catalogueOrder.js';
-import type { StructureKind } from './types.js';
-import { snapPlacementToDeck } from '../../core/structures/deckPlacement.js';
-import { deckSlotOutline, rhombusCentroidInto, type DeckSnap } from '../../core/hex/deckSnap.js';
-import { deckHexCentreInto, isPlateCentreHex } from '../../core/hex/plates.js';
+import { STRUCTURE_KINDS_LIST } from '../../shared-types/structureKinds/catalogueOrder.js';
+import type { StructureKind } from '../../shared-types/structureKinds/types.js';
+import { snapPlacementToDeck } from './deckPlacement.js';
+import { deckSlotOutline, rhombusCentroidInto, type DeckSnap } from '../hex/deckSnap.js';
+import { deckHexCentreInto, isPlateCentreHex } from '../hex/plates.js';
 
 type P = readonly [number, number];
 type Slot = StructureKind['deckSlot'];

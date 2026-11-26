@@ -267,9 +267,12 @@ export const PERF_SCENES: readonly PerfScene[] = [
     // Shipyard building an Interceptor (40 s cycle, so the build animates the
     // whole window), Refinery, Cargo Bay, Turret, two Shield Pylons and their
     // wall; a Mining Skiff and two Interceptors of the pilot's parked beside it.
+    // Teleporter redesign T6: a powered Teleporter pair and an Ancients' gate
+    // east of the Shipyard; the camera sits 1,100 u further east than before so
+    // the gate is on a sideways phone's screen too.
     // The no-field arm: `--base HEAD --base-env EQX_SCENE_GALAXY_FIELD=0`.
     id: 'base-loop',
-    title: 'The Sunday-loop base in an asteroid sector: Shipyard building, shield wall up',
+    title: 'The Sunday-loop base in an asteroid sector: Shipyard building, shield wall up, teleporters by a gate',
     room: {
       droneCount: 0, asteroidConfig: [], sectorFeatures: [],
       sceneScript: [
@@ -281,7 +284,7 @@ export const PERF_SCENES: readonly PerfScene[] = [
     prebuiltLayout: 'base-loop',
     galaxyField: 'sol-prime',
     spawn: { x: 95_600, y: 80_600 },
-    camera: { x: 96_926, y: 80_099, zoom: 0.32 },
+    camera: { x: 98_026, y: 80_199, zoom: 0.32 },
     durationMs: 30_000,
     minSwarm: 14,
   },

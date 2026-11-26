@@ -85,6 +85,8 @@ export interface StructureRecord {
   tpInitiator?: boolean;
   /** When a ship first sat on the pad (for "when a ship boards"). */
   tpBoardedSinceMs?: number;
+  /** Ships left on the pad by the last cycle (not boarders; `trackBoarding`). */
+  tpAboardAfterCycle?: number;
   /** Goods just arrived on the pad: unload them into storage next pulse. */
   tpArrived?: boolean;
   /** v4 A — an alien gate's next timetabled jump (ms since epoch). */

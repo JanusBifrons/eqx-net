@@ -91,7 +91,7 @@ export const StructureKindSchema = z
      *  a 7-hex leaf, centred on its middle hex (only the large teleporter and
      *  the Ancients' gate). Each kind takes the smallest slot its footprint
      *  fits, at its best quarter-turn, with ≥ 130 u room to the slot edge
-     *  (`deckSlot.test.ts`; the 800 u teleporter pads are the known short
+     *  (`core/structures/deckSlot.test.ts`; the 800 u teleporter pads are the known short
      *  fit). */
     deckSlot: z.enum(['small', 'hex', 'plate']),
     /** Optional KEEP-CLEAR box beside the footprint, in the kind's local frame

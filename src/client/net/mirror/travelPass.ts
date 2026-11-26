@@ -47,6 +47,36 @@ export interface TravelCtx {
 export interface TravelTrip {
   x: number; y: number; dx: number; dy: number; angle: number; lastMs: number; startMs: number;
   phase: 'out' | 'cruise' | 'in'; inStartMs: number; ax: number; ay: number; landed: boolean;
+  /** A teleport (gate or paired teleporter): no flight at all. The ship holds
+   *  still where it sealed, then is put straight on the far pad. */
+  hold: boolean;
+  /** The store's `joinGeneration` when the trip began: a hold lands only after
+   *  the room swap re-arms join readiness (the source room's body and first
+   *  snapshot are still there while the gate seals). */
+  joinGen: number;
+  /** A hold: the far room's FULL swarm packet has been decoded (every
+   *  structure in view, the far gate too; a sleeping structure rides only a
+   *  full packet). */
+  farFull?: boolean;
+  /** A hold: when the far room's first snapshot was first seen (-1 before). */
+  farSeenMs?: number;
+}
+
+/** A hold lands without a full far packet after this long past the far
+ *  room's first snapshot (a sector with no swarm sends none). Just over the
+ *  server's full-packet period (60 ticks). */
+const HOLD_FAR_WAIT_MS = 1200;
+
+/** True from the room swap until the hold lands: the old sector is gone from
+ *  the mirror and the far one is not all there yet, so the picture holds what
+ *  is on screen (the sealed gate) and swaps in one frame at landing. */
+export function holdingPicture(t: TravelTrip | null): boolean {
+  return t !== null && t.hold && !t.landed && useUIStore.getState().joinGeneration !== t.joinGen;
+}
+
+/** The swarm handler, per packet: note the far room's first full packet. */
+export function noteSwarmPacket(t: TravelTrip | null, full: boolean): void {
+  if (full && t !== null && t.hold && !t.landed && useUIStore.getState().joinGeneration !== t.joinGen) t.farFull = true;
 }
 
 /**
@@ -63,6 +93,7 @@ export interface TravelTrip {
  *    done: the minimum-display gate opens and the ship arrives for everyone.
  */
 export function stepTravel(ctx: TravelCtx, t: TravelTrip, e: ShipRenderState, localId: string): void {
+  if (t.hold) { stepHold(ctx, t, e, localId); return; }
   const now = ctx.clock.now();
   const dt = Math.min(0.1, Math.max(0, (now - t.lastMs) / 1000));
   t.lastMs = now;
@@ -103,4 +134,34 @@ export function stepTravel(ctx: TravelCtx, t: TravelTrip, e: ShipRenderState, lo
   // the arrival handshake finishes).
   const w = t.landed ? undefined : 2;
   if (e.warp !== w) e.warp = w;
+}
+
+/**
+ * A teleport's "trip": the ship sits still in the sealed pad or gate while the
+ * far sector loads, then is put on its arrival point (the far pad) in one
+ * step, like a same-sector swap. The jump is recorded for the sky. No warp
+ * run is drawn: a teleport is not a warp.
+ */
+function stepHold(ctx: TravelCtx, t: TravelTrip, e: ShipRenderState, localId: string): void {
+  const now = ctx.clock.now();
+  t.lastMs = now;
+  if (!t.landed) {
+    const arrival = ctx.predWorld?.getShipState(localId);
+    const ui = useUIStore.getState();
+    const farIn = ui.joinGeneration !== t.joinGen && ui.firstSnapshotApplied;
+    if (farIn && (t.farSeenMs ?? -1) < 0) t.farSeenMs = now;
+    // Land only once the far scene is all there (its full swarm packet), so
+    // the held picture swaps straight to a complete far side.
+    const farReady = farIn && (t.farFull === true || now - (t.farSeenMs ?? now) >= HOLD_FAR_WAIT_MS);
+    if (arrival && farReady) {
+      ctx.mirror.travelJumpX = (ctx.mirror.travelJumpX ?? 0) + (arrival.x - t.x);
+      ctx.mirror.travelJumpY = (ctx.mirror.travelJumpY ?? 0) + (arrival.y - t.y);
+      t.x = arrival.x; t.y = arrival.y; t.angle = arrival.angle;
+      t.landed = true;
+      if (!ui.joinMinimumElapsed) ui.setJoinMinimumElapsed(true);
+    }
+  }
+  ctx.mirror.travelDeep = false;
+  e.x = t.x; e.y = t.y; e.angle = t.angle; e.vx = 0; e.vy = 0;
+  if (e.warp !== undefined) e.warp = undefined;
 }

@@ -31,7 +31,7 @@ import { isSpriteInView } from '../spriteUpdateDecisions.js';
 import type { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind, type WeaponMount } from '../../../shared-types/shipKinds';
-import { getStructureKind, isFlatDeckKind } from '../../../shared-types/structureKinds';
+import { getStructureKind } from '../../../shared-types/structureKinds';
 import { wrapPi, rotateMountToward } from '../../../core/ai/WeaponMountController';
 import {
   DAMAGE_FLASH_COLOR,
@@ -76,9 +76,8 @@ import { placedRockMeshData } from '../field/placedRockMesh.js';
 const NO_WRECKS: ReadonlyMap<number, unknown> = new Map();
 
 import type { SpriteBuildSig, SwarmSpriteCtx } from './swarmSpriteCtx.js';
-import { RIG_TICKS_PER_SEC, RIG_UNDER_Z, type StructureRigView } from './structureRigs.js';
-import { ROAD_UNDER_Z } from './structureDeckZones.js';
-import { isPadChamberKind } from '../../../shared-types/teleport.js';
+import { RIG_TICKS_PER_SEC, type StructureRigView } from './structureRigs.js';
+import { underZForStructure } from './structureDeckZones.js';
 import { hasBodyStatus, updateSocketNubs } from './structureSocketNubs.js';
 import { syncRoadJoins } from './roadJoins.js';
 import { syncStructureHologram } from './structureHologram.js';
@@ -264,10 +263,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         // the shared shipKind byte (structures plan, Phase 2).
         const stKind = entry.shipKind, stRadius = entry.radius;
         sprite = buildArtShipSprite(artHandle, () => buildStructureGfx(stKind, stRadius, 1, ctx.art.structStyle));
-        // A teleporter chamber is a deck ships fly into: the pad-deck band (the
-        // dock apron's), under every hull whatever the add order.
-        if (isPadChamberKind(stKind)) sprite.zIndex = RIG_UNDER_Z;
-        else if (isFlatDeckKind(stKind)) sprite.zIndex = ROAD_UNDER_Z; // a road: over the cables (ducted under it), under the pads
+        // Decks ships fly over (pad chambers, the gate's light pool, roads) sit in a floor band.
+        const underZ = underZForStructure(stKind);
+        if (underZ !== null) sprite.zIndex = underZ;
         // WS-4 Phase 5 (R2.16) — a Miner shows a faint dashed mining-range ring
         // at its `miningRange` radius. Built HERE (the once-per-sprite create
         // path, invariant #14 — never per-frame) and parented to the body so it

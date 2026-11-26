@@ -209,6 +209,13 @@ describe('decodeSwarmPacket', () => {
     expect(mirror.swarm!.has(1)).toBe(false);
   });
 
+  it('says whether a packet was FULL (a teleport hold lands on the far room\'s first full packet)', () => {
+    const mirror = makeMirror();
+    const rec = { entityId: 0, kind: 0, recFlags: 0, x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0, radius: 32 };
+    expect(decodeSwarmPacket(buildPacket(61, false, [rec]), mirror)).toBe(false);
+    expect(decodeSwarmPacket(buildPacket(120, true, [rec]), mirror)).toBe(true);
+  });
+
   it('delta packet does NOT remove entities the server is silently keeping at last pose', () => {
     const mirror = makeMirror();
     decodeSwarmPacket(buildPacket(60, true, [

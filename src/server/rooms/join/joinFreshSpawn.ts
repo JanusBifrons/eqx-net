@@ -198,7 +198,12 @@ export function joinFreshSpawn(
   // and a ship dropped on top of parked hulls is shoved away by the physics
   // (phone run 2026-11-07: "I arrived inside the base"). Only trip arrivals:
   // other joins keep their exact placement (tests set up collisions).
-  if (transitToken !== undefined) {
+  // A teleport (gate or paired teleporter) swaps in place: the rider keeps its
+  // exact spot on the far pad, inside the gate, like a same-sector pad swap.
+  const teleport = transitToken !== undefined && parsed.success && parsed.data.teleport === true;
+  if (teleport) {
+    // Exact placement: the source room put it on the far pad.
+  } else if (transitToken !== undefined) {
     const clear = d.landingPoint(playerId, spawnX, spawnY, chosenKind);
     spawnX = clear.x;
     spawnY = clear.y;
@@ -471,6 +476,13 @@ export function joinFreshSpawn(
   // spawned worker body (no-op when un-upgraded) so the very first applyInput
   // tick scales movement by the upgraded factors, identically to the client.
   d.applyStatMulToWorker(playerId, ship.statAlloc);
+  // SPAWN builds the body at angle 0 and the worker then overwrites the SAB
+  // angle written above, so a restored hull (a sector-trip or teleport
+  // arrival, a roster resume) gets its stored heading back here, as the
+  // snapshot restore does. Velocity stays 0: an arrival lands at rest.
+  if (resumedFromStore && resumedAngle !== 0) {
+    d.postToWorker({ type: 'SET_POSITION', entityId: playerId, x: spawnX, y: spawnY, angle: resumedAngle, vx: 0, vy: 0, angvel: 0 });
+  }
 
   // Test-only initialAngle: SPAWN creates the body at angle 0; force
   // the requested heading immediately via SET_POSITION so the spec
@@ -565,6 +577,7 @@ export function joinFreshSpawn(
     spawnY,
     sessionId: client.sessionId,
     ...(resumedInWorld ? { inWorld: true } : {}),
+    ...(teleport ? { teleport: true as const } : {}),
   });
   serverLogEvent('pending_join_registered', {
     playerId,

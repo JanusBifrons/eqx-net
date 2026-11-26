@@ -22,6 +22,8 @@ import { getShipKind, type WeaponMount } from '@shared-types/shipKinds';
 import { rotateMountToward, wrapPi } from '@core/ai/WeaponMountController';
 import type { FcGroupSummary } from '../state/storeTypes';
 
+const NO_LOCKS: ReadonlyArray<{ t: string; s: number; p: number }> = [];
+
 /** What fire control reads from / does through its `ColyseusClient` (built once). */
 export interface FireControlHost {
   room(): Room | null;
@@ -63,6 +65,8 @@ export class FireControlClient {
   private _fcGroups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number; c?: number; f?: number }> }> = [];
   /** Hash of the HUD-visible group summary; the store is written on change only. */
   private _fcSummarySig = -1;
+  /** The groups are held (no locks) while the own hull is pending a sector swap. */
+  private _fcGroupsHeld = false;
   /** Group the pilot is holding to fire (manual mode), or null. */
   private _fcHeld: string | null = null;
   private readonly _fcLastFireMs = new Map<string, number>();
@@ -317,6 +321,17 @@ export class FireControlClient {
 
   /** Apply the own-ship snapshot's groups (#16). Store write only on change. */
   applyFcGroups(groups: ReadonlyArray<{ id: string; m: number; l: ReadonlyArray<{ t: string; s: number; p: number; r?: number; c?: number; f?: number }> }> | undefined): void {
+    if (groups === undefined && this.mirror.ships.get(this.mirror.localPlayerId ?? '')?.isActive === false) {
+      // Own hull pending (sector swap, until client_ready): the slice leaves
+      // the groups out, but they are the ship's, not the room's. Keep them on
+      // screen without the old sector's locks; the first real slice replaces
+      // them. Allocates once per swap, never per snapshot.
+      if (this._fcGroupsHeld) return;
+      this._fcGroupsHeld = true;
+      groups = this._fcGroups.map((g) => ({ id: g.id, m: g.m, l: NO_LOCKS }));
+    } else {
+      this._fcGroupsHeld = false;
+    }
     this._fcGroups = groups ?? [];
     this.mirror.localGroups = this._fcGroups;
     // Cheap change signature over ids / modes / lock targets / stages.

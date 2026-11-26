@@ -67,9 +67,10 @@ test('an alien gate disables a pilot who fires in its zone', async ({ page }) =>
  */
 const LANE_X = -230;
 const SPAWN_Y = -1150;
-/** Well inside the ring: on x = −230 that is also north of the old post
+/** Well inside the seal, on the light pool (the ride area, inside the inner
+ *  ring; owner 2026-11-26). On x = −230 that is also north of the old post
  *  line (y −690). */
-const INSIDE_R = 600;
+const INSIDE_R = ALIEN_GATE_SEAL_APOTHEM - 100;
 
 type GateWindow = {
   __eqxClient?: {
@@ -156,7 +157,7 @@ test('an unsealed Ancients’ gate lets a ship fly through its ring', async ({ p
   await startOutside(page);
   await setSealed(page, false);
   await expect.poll(() => gatePhase(page), { timeout: 5_000 }).toBe(TP_PHASE.IDLE);
-  const minR = await flyNorth(page, 6_000);
+  const minR = await flyNorth(page, 8_000);
   console.log(`unsealed gate: closest r=${minR.toFixed(0)}`);
   expect(minR, 'the ship crossed the ring and the old post line').toBeLessThan(INSIDE_R);
 });
@@ -167,7 +168,7 @@ test('a sealed Ancients’ gate stops a ship at its ring', async ({ page }) => {
   await setSealed(page, true);
   await expect.poll(() => gatePhase(page), { timeout: 5_000 }).toBe(TP_PHASE.SEALED);
   // The same thrust that carries an unsealed ship through (above), held on.
-  const minR = await flyNorth(page, 4_000);
+  const minR = await flyNorth(page, 6_000);
   console.log(`sealed gate: closest r=${minR.toFixed(0)} (seal apothem ${ALIEN_GATE_SEAL_APOTHEM.toFixed(0)})`);
   expect(minR, 'the ship reached the ring').toBeLessThan(ALIEN_GATE_SEAL_APOTHEM + 150);
   expect(minR, 'the sealed ring kept the ship outside').toBeGreaterThan(ALIEN_GATE_SEAL_APOTHEM);

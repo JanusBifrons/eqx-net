@@ -262,7 +262,7 @@ A real phone timing is still owed before the stream's PR.
 
 ## The base-loop scene (`base-loop`, Sunday base loop)
 
-The base a player builds in the Sunday loop, owned by the pilot (the first joiner adopts it, `PREBUILT_ADOPT_OWNER`), in sol-prime's belt clearing (`galaxyField`, so the cut field streams around it): a Capital, 3 Solars, 4 connectors, a Shipyard building an Interceptor, a Refinery, a Cargo Bay, a Turret and two Shield Pylons with their wall up (`scenarioLayouts.BASE_LOOP_OPTS`). The pilot's Mining Skiff and two Interceptors are parked beside it (scene `fleet` steps, hold fire). A prebuilt entry's `recipe` puts a processor on that recipe with a junk blueprint copy in its slot, so the Shipyard is building from the start (a 40-pulse cycle, longer than the 30 s window). `tests/integration/sectorRoom/baseLoopScene.test.ts` checks the scene really stages all that. The no-field arm: `--base HEAD --base-env EQX_SCENE_GALAXY_FIELD=0`.
+The base a player builds in the Sunday loop, owned by the pilot (the first joiner adopts it, `PREBUILT_ADOPT_OWNER`), in sol-prime's belt clearing (`galaxyField`, so the cut field streams around it): a Capital, 3 Solars, 4 connectors, a Shipyard building an Interceptor, a Refinery, a Cargo Bay, a Turret and two Shield Pylons with their wall up (`scenarioLayouts.BASE_LOOP_OPTS`). The pilot's Mining Skiff and two Interceptors are parked beside it (scene `fleet` steps, hold fire). A prebuilt entry's `recipe` puts a processor on that recipe with a junk blueprint copy in its slot, so the Shipyard is building from the start (a 40-pulse cycle, longer than the 30 s window). Since teleporter redesign T6 (2026-11-25) it also has a powered, paired Teleporter pair on a relay east of the Shipyard and an Ancients' gate beyond them (room option `testAlienGate`), and the camera sits 1,100 u further east so the gate is on a sideways phone's screen. `tests/integration/sectorRoom/baseLoopScene.test.ts` checks the scene really stages all that. The no-field arm: `--base HEAD --base-env EQX_SCENE_GALAXY_FIELD=0`. Readings before T6 are of the old layout and camera, so they do not compare with later ones.
 
 ```
 pnpm perf:scenes --scenes base-loop --head-only --reps 4 --device phone-proxy --cpu-rate 2
@@ -281,6 +281,8 @@ pnpm perf:scenes --scenes base-loop --head-only --reps 4 --device phone-proxy --
 | rx | 14.8 KB/s | |
 
 Within budget. Ledger: `perf/ledger/2026-11-21T09-50-14-654Z-5c526aade-phone-proxy.json`. A real phone reading is still owed.
+
+**Teleporter redesign T6 A/B (2026-11-25, phone-proxy, 16 reps per arm, `--no-load-gate`: the phone-host game server was busy).** Base = origin/main b75c96589 plus this layout (5809ce3b1); head = the T2–A3 stack plus the layout (11a840871), so both arms play the same pads and gate and only their looks differ. **GREEN**: frame p95 16.7 → 16.8 ms, hitches 4.9 → 5.9 a minute (×1.21, p = 0.48), render p95 1.35 → 1.3 ms, tick p95 0.43 → 0.44 ms, tick p99 0.59 → 0.68 ms, display objects 1,492 → 1,255. The first 8 reps alone were INCONCLUSIVE on hitches (host-noise reps on both arms); 8 more appended settled it. Ledger: `perf/ledger/2026-11-25T18-41-40-765Z-11a840871-phone-proxy.json`.
 
 ## The deck-bases scenes (`deck-bases`, `deck-bases-rows`, base platforms)
 

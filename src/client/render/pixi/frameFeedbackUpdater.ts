@@ -26,6 +26,8 @@ export function createRendererFeedback(): RendererFeedback {
     shieldRingVisibleCount: 0,
     firstFrameRendered: false,
     artReady: false,
+    artBakeDone: 0,
+    artBakeTotal: 0,
     liveBeamRenderedFromX: null,
     liveBeamRenderedFromY: null,
     placementScreenX: null,
@@ -125,10 +127,14 @@ export function writeFrameFeedback(mirror: RenderMirror, ctx: RendererFrameCtx):
   // Pre-bound callback + a field flag, so no per-frame allocation (#14).
   if (r.artCtx.art === null) {
     r.feedback.artReady = true;
+    r.feedback.artBakeDone = 0;
+    r.feedback.artBakeTotal = 0;
   } else {
-    ctx.artPendingSeen = false;
+    ctx.artPendingCount = 0;
     r.artCtx.handles.forEach(ctx.noteArtPending);
-    r.feedback.artReady = r.feedback.firstFrameRendered && !ctx.artPendingSeen;
+    r.feedback.artBakeTotal = r.artCtx.handles.size;
+    r.feedback.artBakeDone = r.artCtx.handles.size - ctx.artPendingCount;
+    r.feedback.artReady = r.feedback.firstFrameRendered && ctx.artPendingCount === 0;
     // The pilot's own ship bakes first (once per handle).
     const own = mirror.localPlayerId ? r.artCtx.handles.get(mirror.localPlayerId) : undefined;
     if (own && own.state === 'pending' && own.key !== ctx.prioritizedArtKey) {

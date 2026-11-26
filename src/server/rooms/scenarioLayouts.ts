@@ -27,13 +27,13 @@
  * (`seedScenarioScrap`) and the pre-A2 structure row test view
  * (`structureRowsForTests`). The room's boot-time swarm seed
  * (`seedRoomStartup`) lives in `roomStartupSeed.ts`.
+ * The `base-loop` perf layout lives next door in `baseLoopLayout.ts` (size cap).
  */
 
 import type { GoodId } from '../../shared-types/goods.js';
 import { starterJunkCopies } from '../economy/starterGrant.js';
 import { makeBlueprint } from '../../shared-types/blueprints.js';
 import { RECIPES, blueprintProductFor, type RecipeId } from '../../shared-types/recipes.js';
-import { CAPITAL_STARTING_MINERALS } from '../../core/structures/structureGridConstants.js';
 import { gateAccessIndex, GATE_ACCESS_IDS, type GateAccess } from '../../shared-types/gateAccess.js';
 import { type ShipKindId } from '../../shared-types/shipKinds.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
@@ -574,23 +574,4 @@ export const BASE_FLOW_OPTS = {
     { x: -750, y: 1100, radius: 40 }, { x: 750, y: 1100, radius: 40 },
     { x: -750, y: -1100, radius: 40 }, { x: 750, y: -1100, radius: 40 },
   ],
-};
-
-/** Perf scene `base-loop`: the Sunday-loop base in sol-prime's belt clearing
- *  (r 4900; no rock inside). Capital (pad west) + 3 Solars, a Shipyard building an
- *  Interceptor (east), Refinery and Cargo Bay (south), a Turret and two Shield
- *  Pylons with their wall. 410 power for 280 used. The first joiner adopts it. */
-export const BASE_LOOP_AT = { x: 96_626, y: 80_499 } as const;
-const loop = (kind: string, x: number, y: number, more?: { rot?: number; recipe?: RecipeId }) =>
-  ({ kind, x: BASE_LOOP_AT.x + x, y: BASE_LOOP_AT.y + y, ...more });
-export const BASE_LOOP_OPTS = {
-  prebuiltStructures: [
-    loop('capital', 0, 0, { rot: 90 }), loop('connector', 0, 380), loop('connector', 0, -380), loop('connector', 420, 0),
-    loop('solar', 450, 500), loop('solar', -450, 500), loop('solar', 450, -500),
-    loop('shipyard', 1000, 0, { recipe: 'build_interceptor' }),
-    loop('refinery', -450, -600), loop('connector', 0, -950), loop('cargo_bay', -400, -1100),
-    loop('turret', 300, -1100), loop('shield_pylon', -350, -1450), loop('shield_pylon', 350, -1450),
-  ],
-  prebuiltStructuresOwner: PREBUILT_ADOPT_OWNER,
-  prebuiltCapitalMinerals: CAPITAL_STARTING_MINERALS,
 };

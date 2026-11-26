@@ -6,7 +6,8 @@
 import type { Server } from 'colyseus';
 import { PERF_SCENES, type PerfScene } from '../../shared-types/perf/perfScenes.js';
 import { resolveSectorConfig } from '../galaxy/GalaxyRegistry.js';
-import { BASE_FLOW_OPTS, BASE_LOOP_OPTS } from './scenarioLayouts.js';
+import { BASE_FLOW_OPTS } from './scenarioLayouts.js';
+import { BASE_LOOP_OPTS } from './baseLoopLayout.js';
 import { DECK_BASES_OPTS } from './testRooms/deckBasesRoom.js';
 
 /** The `?room=deck-bases` pair's world, less the deck flag (the scene's

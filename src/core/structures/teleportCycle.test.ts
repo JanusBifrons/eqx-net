@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { armCycle, rulesSayFire, stepCycle, type CycleState } from './teleportCycle.js';
+import { armCycle, rulesSayFire, stepCycle, trackBoarding, type BoardingState, type CycleState } from './teleportCycle.js';
 import { DEFAULT_TELEPORT_RULES, SHIP_BOARD_DWELL_MS, TP_PHASE, TP_PHASE_MS, jumpCharge, jumpDistance, TELEPORT_HOP_DISTANCE_U } from '../../shared-types/teleport.js';
 
 describe('teleport cycle', () => {
@@ -89,5 +89,39 @@ describe('chamber doors gate CLOSING (redesign T2)', () => {
   it('doors are ignored outside CLOSING', () => {
     const s: CycleState = { phase: TP_PHASE.SEALED, phaseEndsAtMs: 100 };
     expect(stepCycle(s, 100, 1, { shut: false, stalled: true })).toBe('swap');
+  });
+});
+
+describe('trackBoarding (when a ship boards)', () => {
+  it('a ship flying onto an idle pad starts the clock; leaving clears it', () => {
+    const s: BoardingState = {};
+    trackBoarding(s, 1, false, 100);
+    expect(s.tpBoardedSinceMs).toBe(100);
+    trackBoarding(s, 1, false, 200);
+    expect(s.tpBoardedSinceMs).toBe(100);
+    trackBoarding(s, 0, false, 300);
+    expect(s.tpBoardedSinceMs).toBeUndefined();
+  });
+
+  it('ships on the pad through a cycle (arrivals) are not boarders', () => {
+    const s: BoardingState = { tpBoardedSinceMs: 50 };
+    trackBoarding(s, 1, true, 100); // mid-cycle: the arrival is a rider
+    expect(s.tpBoardedSinceMs).toBeUndefined();
+    trackBoarding(s, 1, false, 200); // idle again, the arrival sits there
+    trackBoarding(s, 1, false, 200 + SHIP_BOARD_DWELL_MS * 2);
+    expect(s.tpBoardedSinceMs).toBeUndefined();
+  });
+
+  it('a new ship flying on beside an arrival boards; once the arrival leaves, a re-entry boards', () => {
+    const s: BoardingState = {};
+    trackBoarding(s, 1, true, 0);
+    trackBoarding(s, 2, false, 100);
+    expect(s.tpBoardedSinceMs).toBe(100);
+    const t: BoardingState = {};
+    trackBoarding(t, 1, true, 0);
+    trackBoarding(t, 0, false, 100); // the arrival flew off
+    expect(t.tpAboardAfterCycle).toBeUndefined();
+    trackBoarding(t, 1, false, 200); // and came back: that is boarding
+    expect(t.tpBoardedSinceMs).toBe(200);
   });
 });

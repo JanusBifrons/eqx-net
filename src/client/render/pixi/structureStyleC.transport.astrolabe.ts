@@ -5,15 +5,19 @@
  *
  * - The static base (`alienGate`, the baked body): the hex light pool at
  *   the centre and the floating crystal over it. No pylons (owner,
- *   2026-11-25: the gate is the rings round the crystal; the seal runs round
- *   the outer ring). Nothing is drawn in the ring band: the rings are rig
- *   parts on the `under` layer, BELOW the body sprite, so anything baked
- *   there would cover them.
+ *   2026-11-25: the gate is the rings round the crystal). The pool fills to
+ *   the inner ring, where the seal closes: only the pool rides (owner
+ *   2026-11-26). The body is a floor, drawn under every hull (pad-deck band);
+ *   nothing is baked in the ring band: the rings are rig parts on the `over`
+ *   layer, ABOVE the ships (arches they fly under).
  * - The three rings (`alien-astrolabe` rig, `ALIEN_GATE_ASTROLABE_DEF`): each
  *   ring part's art (`astrolabePartContext`) is dark stone in three arc
  *   segments with three lane gaps and dim teal edge lines and glyph ticks;
  *   its lit overlay (`astrolabeLitContext`) brightens the same teal as the
  *   lanes line up (`RigDrawHook.spinClock` writes `litAlpha` from `settle`).
+ * - The gate's light (lane beams, pool waves, crystal glow, jump flash):
+ *   light-only parts of the same rig, faded per frame from the timetable
+ *   (`structureStyleC.transport.astrolabeFx.ts`).
  * - The rings' clock (`astrolabeSpinClock`): set every frame from the jump
  *   timetable (`astrolabePoseAt`), never from frame time, so the lanes line
  *   up as the gate fires; the live `tpPhase` holds them in line through the
@@ -24,18 +28,22 @@ import { ASTROLABE_RINGS, astrolabePoseAt, createAstrolabePose, type AstrolabeRi
 import type { Rig } from '../../../core/articulation/rig.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 import { ALIEN_GATE_INTERVAL_MS, TP_PHASE, alienGateOffsetMs } from '../../../shared-types/teleport.js';
+import { ALIEN_GATE_SEAL_RADIUS } from '../../../shared-types/alienGateSeal.js';
 import { alienGateNeighbour } from '../../components/alienGateInfo.js';
 import { SOOT, ngon, poly, strip, type StyleCtx } from './structureStyleKit.js';
 import type { RigClockFrame, RigClockMemo, RigClockTarget, RigDrawHook } from './structureRigLook.js';
+import {
+  ASTROLABE_FX, astrolabeFxAt, astrolabeFxPartContext, astrolabePartShow, clearAstrolabeFx, forEachPoolHex, POOL_HEX,
+} from './structureStyleC.transport.astrolabeFx.js';
 
 /** The Ancients' teal (the mock-up's `C.teal`). */
 export const ANCIENT_TEAL = 0x3fe0c5;
 /** Ring stone (dark basalt). */
 const RING_STONE = 0x2a3339;
 const CRYSTAL = 0x0e1a1b;
-/** The hex light pool's radius (inside the inner ring) and hex cell size. */
-export const LIGHT_POOL_R = 360;
-const HEX = 62;
+/** The hex light pool's radius and hex cell size. The pool fills right up
+ *  to the inner ring: it is the ride area (owner 2026-11-26), the seal's. */
+export const LIGHT_POOL_R = ALIEN_GATE_SEAL_RADIUS;
 /** Lane spacing (rad): three lanes, lane centres at 0, 120°, 240° (A1). */
 const SECTOR = (2 * Math.PI) / 3;
 /** Lit overlay strength at full alignment (taste: subtle). */
@@ -47,18 +55,13 @@ function lightPool(c: StyleCtx): void {
   const R = LIGHT_POOL_R;
   poly(c, ngon(0, 0, R, 48), 0x071012, 'mark', 0, 1);
   poly(c, ngon(0, 0, R * 0.62, 36), 0x0f2a2a, 'mark', 0, 1);
-  const hw = HEX * Math.sqrt(3);
-  for (let row = -6; row <= 6; row++) {
-    for (let col = -4; col <= 4; col++) {
-      const x = col * hw + (row & 1 ? hw / 2 : 0), y = row * HEX * 1.5, d = Math.hypot(x, y);
-      if (d > R - HEX) continue;
-      const a = 0.14 + 0.3 * (1 - d / R);
-      for (let i = 0; i < 6; i++) {
-        const a0 = Math.PI / 6 + (i * Math.PI) / 3, a1 = a0 + Math.PI / 3, r = HEX * 0.92;
-        poly(c, strip([x + Math.cos(a0) * r, y + Math.sin(a0) * r], [x + Math.cos(a1) * r, y + Math.sin(a1) * r], 5), ANCIENT_TEAL, 'glow', -0.8, 1, { alpha: a });
-      }
+  forEachPoolHex((x, y, d) => {
+    const a = 0.14 + 0.3 * (1 - d / R);
+    for (let i = 0; i < 6; i++) {
+      const a0 = Math.PI / 6 + (i * Math.PI) / 3, a1 = a0 + Math.PI / 3, r = POOL_HEX * 0.92;
+      poly(c, strip([x + Math.cos(a0) * r, y + Math.sin(a0) * r], [x + Math.cos(a1) * r, y + Math.sin(a1) * r], 5), ANCIENT_TEAL, 'glow', -0.8, 1, { alpha: a });
     }
-  }
+  });
   for (let i = 0; i < 48; i++) {
     const a0 = (i / 48) * 2 * Math.PI, a1 = ((i + 1) / 48) * 2 * Math.PI;
     poly(c, strip([Math.cos(a0) * R, Math.sin(a0) * R], [Math.cos(a1) * R, Math.sin(a1) * R], 8), ANCIENT_TEAL, 'glow', -0.8, 1, { alpha: 0.35 });
@@ -132,10 +135,11 @@ function ringOf(rig: Rig, i: number): AstrolabeRing | undefined {
   return ASTROLABE_RINGS.find((r) => r.part === id);
 }
 
-/** The astrolabe rig's art for part `i`: a stone ring in three segments. */
+/** The astrolabe rig's art for part `i`: a stone ring in three segments,
+ *  or a light-only part's (`astrolabeFxPartContext`). */
 export function astrolabePartContext(rig: Rig, i: number): GraphicsContext | null {
   const r = ringOf(rig, i);
-  if (r === undefined) return null;
+  if (r === undefined) return astrolabeFxPartContext(rig, i);
   const hit = ringArt.get(r.part);
   if (hit !== undefined) return hit;
   const g = new GraphicsContext();
@@ -191,7 +195,7 @@ export function astrolabeGameNow(memo: RigClockMemo, fxNowMs: number): number {
  * lanes out of line at the next jump. A gate with no known twin runs free.
  */
 export function astrolabeSpinClock(st: StructureRenderState | undefined, f: RigClockFrame, memo: RigClockMemo, view: RigClockTarget): boolean {
-  if (f.sectorKey === null) return false;
+  if (f.sectorKey === null) { clearAstrolabeFx(ASTROLABE_FX); return false; }
   if (memo.sector !== f.sectorKey) {
     // Once per gate (and sector): the pair's place in the minute.
     memo.sector = f.sectorKey;
@@ -199,7 +203,7 @@ export function astrolabeSpinClock(st: StructureRenderState | undefined, f: RigC
     memo.offsetMs = n === null ? Number.NaN : alienGateOffsetMs(f.sectorKey, n);
     memo.lastPhase = -1;
   }
-  if (Number.isNaN(memo.offsetMs)) return false;
+  if (Number.isNaN(memo.offsetMs)) { clearAstrolabeFx(ASTROLABE_FX); return false; }
   let now = astrolabeGameNow(memo, f.fxNowMs);
   const phase = st?.teleport?.phase ?? TP_PHASE.IDLE;
   if (memo.lastPhase === TP_PHASE.IDLE && phase !== TP_PHASE.IDLE) {
@@ -213,6 +217,7 @@ export function astrolabeSpinClock(st: StructureRenderState | undefined, f: RigC
   astrolabePoseAt(POSE, now, memo.offsetMs, phase);
   view.spinClock = POSE.clockTicks;
   view.litAlpha = ASTROLABE_GLOW_MAX * POSE.settle;
+  astrolabeFxAt(ASTROLABE_FX, POSE.sinceFireMs, POSE.settle); // this gate's light, read by its partShow next
   return true;
 }
 
@@ -221,4 +226,5 @@ export const ASTROLABE_RIG_HOOK: RigDrawHook = {
   partArt: astrolabePartContext,
   partLit: astrolabeLitContext,
   spinClock: astrolabeSpinClock,
+  partShow: astrolabePartShow,
 };

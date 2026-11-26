@@ -84,6 +84,7 @@ function makeEmptyRing(): PoseRingEntry[] {
  * a full snapshot must not sweep (a ship whose death is held for its drawn
  * shell, `DrawnShellTiming.swarmKills`; released within the hold's bound),
  * and, with `stampByTick`, any it chooses to `linger` (`SwarmSweepKeep`).
+ * Returns true for a decoded FULL packet (a teleport hold waits for one).
  */
 export function decodeSwarmPacket(
   input: ArrayBuffer | ArrayBufferView,
@@ -91,7 +92,7 @@ export function decodeSwarmPacket(
   nowMs: number = performance.now(),
   stampByTick = false,
   keep?: SwarmSweepKeep,
-): void {
+): boolean {
   // Build a DataView that reads the live bytes regardless of whether the
   // input is a raw ArrayBuffer, a Uint8Array view, or a SharedArrayBuffer-
   // backed view (some ws transports deliver the latter). No copy.
@@ -106,10 +107,10 @@ export function decodeSwarmPacket(
     byteLength = input.byteLength;
   }
 
-  if (byteLength < SWARM_HEADER_BYTES) return;
+  if (byteLength < SWARM_HEADER_BYTES) return false;
 
   const version = view.getUint8(0);
-  if (version !== SWARM_WIRE_VERSION) return;
+  if (version !== SWARM_WIRE_VERSION) return false;
   const flags = view.getUint8(1);
   const count = view.getUint16(2, true);
   const tick = view.getUint32(4, true);
@@ -123,7 +124,7 @@ export function decodeSwarmPacket(
   }
 
   const expectedBytes = SWARM_HEADER_BYTES + count * SWARM_RECORD_BYTES;
-  if (byteLength < expectedBytes) return;
+  if (byteLength < expectedBytes) return false;
   // Off-pilot ring thinning (S5-9): 0 in pilot; off pilot, the least stamp
   // spacing for POSE_RING_DEPTH slots to cover the (up to 4 s) delay.
   const ringSpacingMs = getSwarmRingMinSpacingMs(POSE_RING_DEPTH);
@@ -285,4 +286,5 @@ export function decodeSwarmPacket(
       swarm.delete(id);
     }
   }
+  return isFull;
 }

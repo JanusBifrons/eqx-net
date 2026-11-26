@@ -16,7 +16,8 @@
 import { Graphics, GraphicsContext, type Container } from 'pixi.js';
 import { arcSubpath } from '../arcSubpath.js';
 import { DECK_HEX_SIZE } from '../../../core/hex/plates.js';
-import { getStructureKind } from '../../../shared-types/structureKinds/lookup.js';
+import { getStructureKind, isFlatDeckKind } from '../../../shared-types/structureKinds/lookup.js';
+import { isAlienGateKind, isPadChamberKind } from '../../../shared-types/teleport.js';
 import { structureFamilyOf, type StructureFamilyId } from './structureFamilies.js';
 
 /** `?zones=on|off` (base platforms slice 33); default on (spike). */
@@ -54,6 +55,16 @@ export const DECK_ZONE_Z = -1.25;
 export const CABLE_UNDER_Z = -1.125;
 /** zIndex of a road deck tile (flat deck kind): over the cables, under rig pads. */
 export const ROAD_UNDER_Z = -1.0625;
+
+/** The floor band a structure's body sprite sits in, or null for a normal body.
+ *  A teleporter chamber is a deck ships fly into: the pad-deck band (RIG_UNDER_Z,
+ *  the dock apron's), under every hull whatever the add order. So is the
+ *  Ancients' gate's light pool (its stone rings are the rig's `over` layer).
+ *  A road sits over the cables (ducted under it) and under the pads. */
+export function underZForStructure(kindId: string | undefined): number | null {
+  if (isPadChamberKind(kindId) || isAlienGateKind(kindId)) return -1; // RIG_UNDER_Z
+  return isFlatDeckKind(kindId) ? ROAD_UNDER_Z : null;
+}
 
 /** Paint look (mock-up colours; world units). */
 export const ZONE_RED = 0xd8342c;

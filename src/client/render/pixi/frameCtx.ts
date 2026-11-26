@@ -129,6 +129,10 @@ export interface RendererFrameCtx {
   /** The sprite the camera follows this frame (null: spectator / script),
    *  and the speed-effects sample built from it (`speedFxSampleInto`). */
   speedFollowSprite: { readonly x: number; readonly y: number } | null;
+  /** The travel jump already carried by the camera (`carryCameraAcrossJump`), and its scratch. */
+  lastJumpX: number;
+  lastJumpY: number;
+  readonly jumpCentre: { x: number; y: number };
   readonly speedFollowPose: { x: number; y: number };
   readonly speedSample: SpeedFxSample;
   serverGhost: Graphics | null;
@@ -142,8 +146,9 @@ export interface RendererFrameCtx {
   /** Wall-clock of the last `effects.tick` call. Used to derive dt for the
    *  next call. 0 ⇒ first frame (use a default 16.67 ms to seed). */
   lastEffectsTickNowMs: number;
-  /** Scratch for `feedback.artReady` (see `writeFrameFeedback`). */
-  artPendingSeen: boolean;
+  /** Scratch for `feedback.artReady` / `artBakeDone` (see `writeFrameFeedback`):
+   *  how many on-screen art handles are still pending. */
+  artPendingCount: number;
   /** The own-ship art handle already moved to the front of the bake queue. */
   prioritizedArtKey: string | null;
   readonly noteArtPending: (h: { state: string }) => void;
@@ -162,6 +167,9 @@ export function createRendererFrameCtx(refs: RendererFrameRefs): RendererFrameCt
     explosionSprites: new LegacyExplosionSprites(),
     skyCam: { center: { x: 0, y: 0 }, scale: { x: 1 }, screenWidth: 0, screenHeight: 0 },
     speedFollowSprite: null,
+    lastJumpX: 0,
+    lastJumpY: 0,
+    jumpCentre: { x: 0, y: 0 },
     speedFollowPose: { x: 0, y: 0 },
     speedSample: newSpeedFxSample(),
     serverGhost: null,
@@ -169,11 +177,11 @@ export function createRendererFrameCtx(refs: RendererFrameRefs): RendererFrameCt
     hullBlastsReplaced: 0,
     lastSwarmUpdateNow: 0,
     lastEffectsTickNowMs: 0,
-    artPendingSeen: false,
+    artPendingCount: 0,
     prioritizedArtKey: null,
     // Bound once: no per-frame closure (#14).
     noteArtPending: (h: { state: string }): void => {
-      if (h.state === 'pending') ctx.artPendingSeen = true;
+      if (h.state === 'pending') ctx.artPendingCount++;
     },
     artCollectFrame: 0,
     artInUse: new Set<ArtHandle>(),

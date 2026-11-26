@@ -31,6 +31,7 @@ import {
   computeBootstrapReadyFromState,
   computeIsLoadingActive,
 } from '../state/store.js';
+import { syncArtBake } from '../state/artBakeUi.js';
 import { placementChosen, resetPlacementChosen, writePlacementChosen } from '../structures/placementChosen.js';
 import { updatePlacementHints } from '../structures/placementHints.js';
 import { commitPlacement } from '../structures/placementCancel.js';
@@ -168,6 +169,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // failed): the loading screen lifts after the server's arrival, which
     // waits for `client_ready`, so holding it here keeps the curtain up until
     // the pilot is actually loaded in (smoke test 2026-11-05).
+    if (!ui.clientReadySent) syncArtBake(ui, renderer.getFeedback()); // loading screen bake %, on change only
     if (!ui.clientReadySent && computeBootstrapReadyFromState(ui) && renderer.getFeedback().artReady) {
       gameClient.sendClientReady();
     }
@@ -236,7 +238,9 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     const renderStart = performance.now();
     markLaneLoopPhases(inboundStart, physicsStart, mirrorStart, renderStart);
     const shouldRender = !useWorker || (++workerUpdateCounter % 2) === 0;
-    if (shouldRender) renderer.update(gameClient.mirror);
+    // A teleport mid-swap holds the picture (the old sector is wiped, the far
+    // one not all there yet); it swaps in one frame when the ship lands.
+    if (shouldRender && !gameClient.holdingPicture()) renderer.update(gameClient.mirror);
     const renderEnd = performance.now();
     // plan: imperative-taco — gate the rafWork builder at the call site.
     // `logEvent` has an internal HIGH_VOLUME_TAGS early-return but by then

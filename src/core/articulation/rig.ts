@@ -81,6 +81,11 @@ export interface PartDef {
    *  not drive it; with no clock it sits at rest (the server). Look only,
    *  e.g. a reactor's cooling fan. A full-turn cosmetic hinge, never also `aim`. */
   readonly spin?: number;
+  /** A LIGHT-only cosmetic part: no outline or shape, art drawn by its
+   *  family's hook and faded or scaled per frame by the client (e.g. the
+   *  Ancients' gate's lane beams and jump flash). Still: never also `aim`
+   *  or `spin`. */
+  readonly light?: boolean;
 }
 
 export interface KeyframeDef {
