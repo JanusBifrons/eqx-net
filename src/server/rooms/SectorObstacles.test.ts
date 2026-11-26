@@ -125,13 +125,14 @@ describe('SectorObstacles (navigation slice 2: the one obstacle gatherer)', () =
 });
 
 describe('SectorObstacles: teleporter collider parts (redesign T2)', () => {
-  it('a chamber pad gives its solid walls, turned with the pad; the Ancients\' gate its posts', () => {
+  it('a chamber pad gives its solid walls, turned with the pad; the Ancients\' gate none (A3)', () => {
     const boxesOf = (kind: string, rot: number) => {
       const w = world();
       w.structures.push({ id: 't', kind, x: 1000, y: 0, rot, radius: 300 } as unknown as StructureRecord);
       return w.g.structureBoxes().map((b) => [b.x - 1000, b.y, b.hw, b.hh]);
     };
-    for (const kind of ['teleporter', 'pocket_pad', 'alien_gate']) {
+    expect(boxesOf('alien_gate', 0)).toEqual([]);
+    for (const kind of ['teleporter', 'pocket_pad']) {
       const flat = boxesOf(kind, 0);
       expect(flat.length).toBeGreaterThan(0);
       const turned = boxesOf(kind, 90);

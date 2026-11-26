@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   ALIEN_GATE_INTERVAL_MS, PAD_SPECS, TELEPORTER_KINDS, alienGateOffsetMs, isPadChamberKind, nextAlienGateJumpMs, onPad, padDoorwayHalf,
-  padHalfExtent, padIrisSpanLocal, padPostCenters, padPostSides, padPushDir,
+  padHalfExtent, padIrisSpanCount, padPostCenters, padPostSides, padPushDir,
 } from './teleport.js';
 import { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
 import { tuningFor } from './shipScale/lookup.js';
@@ -26,17 +26,8 @@ describe('pad geometry (v4 T2)', () => {
     }
   });
 
-  it('iris spans close every gap between posts, edge to edge', () => {
-    const s = { ax: 0, ay: 0, bx: 0, by: 0 };
-    for (const k of TELEPORTER_KINDS) {
-      const half = PAD_SPECS[k].post / 2;
-      for (let i = 0; i < PAD_SPECS[k].posts; i++) {
-        padIrisSpanLocal(k, i, s);
-        const [ax, ay] = padPostCenters(k)[i]!;
-        expect(Math.hypot(s.ax - ax, s.ay - ay)).toBeCloseTo(half);
-        expect(Math.hypot(s.bx - s.ax, s.by - s.ay)).toBeGreaterThan(0);
-      }
-    }
+  it('only the Ancients\' gate has an iris (a chamber seals with its doors)', () => {
+    for (const k of TELEPORTER_KINDS) expect(padIrisSpanCount(k) > 0, k).toBe(k === 'alien_gate');
   });
 
   it('a ship on the open pad is on it; one by a post is not', () => {
@@ -146,15 +137,10 @@ describe('teleporter chamber (redesign T1)', () => {
     expect(padPostSides('teleporter')).toEqual([0, 1, 2, 3]);
   });
 
-  it('Ancients\' gate: its ring of 12 posts is unchanged', () => {
-    const h = 690, st = (2 * h) / 3;
-    const want: Array<[number, number]> = [];
-    for (let i = 0; i < 3; i++) want.push([-h + i * st, -h]);
-    for (let i = 0; i < 3; i++) want.push([h, -h + i * st]);
-    for (let i = 0; i < 3; i++) want.push([h - i * st, h]);
-    for (let i = 0; i < 3; i++) want.push([-h, h - i * st]);
-    expect(padPostCenters('alien_gate')).toEqual(want);
-    expect(padPostSides('alien_gate')).toEqual([0, 0, 0, 1, 1, 1, 2, 2, 2, 3, 3, 3]);
+  it('Ancients\' gate: no posts (redesign A3; its outer ring seals it)', () => {
+    expect(PAD_SPECS.alien_gate.posts).toBe(0);
+    expect(padPostCenters('alien_gate')).toEqual([]);
+    expect(padPostSides('alien_gate')).toEqual([]);
   });
 
   it('onPad turns with the chamber (0, 90, 180 degrees); the Ancients\' gate ignores the angle', () => {
@@ -165,7 +151,8 @@ describe('teleporter chamber (redesign T1)', () => {
     // A 45° turn: a point just past the square's edge along the axis is on the turned square's diagonal.
     expect(onPad('teleporter', 0, 0, 330, 0, 0)).toBe(false);
     expect(onPad('teleporter', 0, 0, 330, 0, Math.PI / 4)).toBe(true);
-    expect(onPad('alien_gate', 0, 0, 700, 0, Math.PI / 4)).toBe(false);
+    // The Ancients' gate rides a disc (its seal, redesign A3): any angle.
+    expect(onPad('alien_gate', 0, 0, 700, 0, Math.PI / 4)).toBe(onPad('alien_gate', 0, 0, 700, 0, 0));
   });
 
   it('push runs along the doorway axis only, turned with the chamber, never into a wall', () => {
@@ -192,7 +179,7 @@ describe('teleporter chamber (redesign T1)', () => {
     }
   });
 
-  it('with no doorAngle the push is the old open-pad push (the Ancients\' gate)', () => {
+  it('with no doorAngle and not round the push is the open square-pad push', () => {
     expect(padPushDir(0, 0, 640, 620, 10, 30, out)).toBe(true);
     expect(out).toEqual({ x: -1, y: 0 });
   });

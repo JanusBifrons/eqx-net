@@ -43,6 +43,7 @@ export {
   TestFleetWarpSchema,
   TestTractorSchema,
   TestDropPodsSchema,
+  TestGateSealSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,

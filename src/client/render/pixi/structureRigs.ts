@@ -51,7 +51,8 @@ import { JOINT_LIFT, liftProgress, rigClipIndex, type DrawLayer, type Rig } from
 import { rigForStructureKind } from '../../../core/articulation/rigCatalogue.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 import { BEAMS_OVER_HULL_Z } from './beamsOverHulls.js';
-import { RIG_LOOK_C, rigArmCable, rigPartContext, type RigArmCable, type RigDrawHook, type RigRowClipMemo } from './structureRigLook.js';
+import { RIG_LOOK_C, rigArmCable, rigPartContext, createRigClockMemo, type RigArmCable, type RigClockFrame, type RigClockMemo,
+  type RigDrawHook, type RigRowClipMemo } from './structureRigLook.js';
 import { RIG_DRAW_HOOKS } from './structureStyleC.js';
 import { structureLocalToWorld } from '../../../shared-types/structureKinds/geometry.js';
 
@@ -101,27 +102,8 @@ export const RIG_TICKS_PER_SEC = 60;
 /** Scratch for a clip target's host → world (alloc-free). */
 const HOST_TO_WORLD = { x: 0, y: 0 };
 
-/** A Pixi local transform (caller-owned scratch). */
-export interface PixiXform { x: number; y: number; rotation: number }
-
-/** Part `i`'s transform in the host's local Pixi frame: the Y-flip of its
- *  host-relative game pose. Allocation-free. */
-export function partLocalTransform(pose: RigPose, i: number, out: PixiXform): PixiXform {
-  out.x = pose.x[i]!;
-  out.y = -pose.y[i]!;
-  out.rotation = -pose.angle[i]!;
-  return out;
-}
-
-/** Write a WORLD game point into the host frame of a host at (hx, hy)
- *  facing `ha` (game space), drawn at `scale`. Allocation-free. */
-export function worldToHost(wx: number, wy: number, hx: number, hy: number, ha: number, scale: number, out: { x: number; y: number }): void {
-  const dx = wx - hx, dy = wy - hy;
-  const c = Math.cos(ha), s = Math.sin(ha);
-  const k = scale !== 0 ? 1 / scale : 1;
-  out.x = (dx * c + dy * s) * k;
-  out.y = (-dx * s + dy * c) * k;
-}
+export { partLocalTransform, worldToHost, type PixiXform } from './structureRigXform.js';
+import { partLocalTransform, worldToHost, type PixiXform } from './structureRigXform.js';
 
 // ---------------------------------------------------------------- one structure
 
@@ -187,6 +169,13 @@ export class StructureRigView {
   readonly hasSpin: boolean;
   /** Game ticks the spinning parts have run (advanced only while running). */
   spinClock = 0;
+  /** The clock is set from outside (`RigDrawHook.spinClock`): `update`
+   *  leaves it alone. Lit overlays still follow `running`. */
+  externalClock = false;
+  /** Lit overlay strength (0..1), e.g. `RigDrawHook.spinClock`'s glow. */
+  litAlpha = 1;
+  /** The family's external spin clock (`RigDrawHook.spinClock`). */
+  readonly spinClockOf: RigDrawHook['spinClock'];
   private spinLast = Number.NaN;
   private readonly runningOf: ((st: StructureRenderState | undefined) => boolean) | undefined;
   /** The family's per-frame part presentation (`RigDrawHook.partShow`). */
@@ -242,6 +231,7 @@ export class StructureRigView {
     this.runningOf = hook?.running;
     this.partShowOf = hook?.partShow;
     this.rowClipOf = hook?.rowClip;
+    this.spinClockOf = hook?.spinClock;
     let spin = false;
     for (let i = 0; i < rig.partCount; i++) if (rig.spins[i] !== 0) spin = true;
     this.hasSpin = spin;
@@ -312,7 +302,7 @@ export class StructureRigView {
     // `running`; stopped, the clock holds, so they stop where they are.
     if (this.hasSpin) {
       const dt = nowTick - this.spinLast;
-      if (this.running && dt > 0) this.spinClock += dt;
+      if (this.running && dt > 0 && !this.externalClock) this.spinClock += dt;
       this.spinLast = nowTick;
     }
     // Pixi azimuth -> game angle (y flips), then into the host frame; a
@@ -358,6 +348,7 @@ export class StructureRigView {
         lit.rotation = xf.rotation;
         lit.scale.copyFrom(g.scale);
         lit.visible = g.visible && this.running;
+        lit.alpha = this.litAlpha;
       }
     }
     this.poseCargo(input, nowTick);
@@ -446,6 +437,8 @@ interface GameRigEntry {
   stamp: number;
   /** Scratch for the rig's client-played clip (`RigDrawHook.rowClip`). */
   memo: RigRowClipMemo;
+  /** Scratch for the rig's external spin clock (`RigDrawHook.spinClock`). */
+  clock: RigClockMemo;
 }
 
 /**
@@ -464,6 +457,10 @@ export class StructureRigs {
   /** The sector's sun azimuth (Pixi space, the art light rig's `sunAz`; set
    *  by the caller before `update`): aiming parts face it. Undefined: rest. */
   sunAz: number | undefined = undefined;
+  /** World facts for external spin clocks (`RigDrawHook.spinClock`): the
+   *  caller sets the sector and `fxNow` before `update`; the host position
+   *  is filled per structure. */
+  readonly clockFrame: RigClockFrame = { sectorKey: null, fxNowMs: 0, hostX: 0, hostY: 0 };
   private readonly sweepFn = (e: GameRigEntry, key: string): void => {
     if (e.stamp !== this.stamp) this.drop(key, e);
   };
@@ -502,7 +499,7 @@ export class StructureRigs {
       const view = new StructureRigView(rig);
       this.shipContainer.sortableChildren = true;
       this.shipContainer.addChild(view.under, view.over);
-      e = { view, host: null, stamp: 0, memo: { start: Number.NaN, seen: Number.NaN } };
+      e = { view, host: null, stamp: 0, memo: { start: Number.NaN, seen: Number.NaN }, clock: createRigClockMemo() };
       this.entries.set(spriteKey, e);
     } else if (e.view.rig !== (kindId !== undefined ? rigForStructureKind(kindId) : null)) {
       // A recycled id with another kind: rebuild from scratch next frame.
@@ -555,6 +552,8 @@ export class StructureRigs {
     }
     view.zoom = this.zoom;
     view.setRunningFrom(row);
+    const f = this.clockFrame; f.hostX = hx; f.hostY = hy; // external spin clock (Ancients' gate rings)
+    if (view.spinClockOf !== undefined) view.externalClock = view.spinClockOf(row, f, e.clock, view);
     view.update(input, nowTick, hx, hy, ha, 1, this.sunAz);
     followHost(view.over, sprite);
     followHost(view.under, sprite);

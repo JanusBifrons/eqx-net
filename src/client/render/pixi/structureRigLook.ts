@@ -126,7 +126,29 @@ export interface RigDrawHook {
    *  true, or return false (rest). `memo` is per-structure scratch the
    *  registry keeps. Allocation-free. */
   readonly rowClip?: (st: StructureRenderState | undefined, nowTick: number, memo: RigRowClipMemo, out: { clipId: string; startTick: number }) => boolean;
+  /** Set the rig's spin clock from outside instead of letting it run on
+   *  frame time (the Ancients' gate rings follow the jump timetable): write
+   *  `view.spinClock` (game ticks) and `view.litAlpha` (lit overlay strength,
+   *  0..1) and return true, or return false to let the clock run free.
+   *  `frame` = this frame's world facts, `memo` = per-structure scratch the
+   *  registry keeps. Polled per frame, before the pose; allocation-free. */
+  readonly spinClock?: (st: StructureRenderState | undefined, frame: RigClockFrame, memo: RigClockMemo, view: RigClockTarget) => boolean;
 }
+
+/** World facts a `RigDrawHook.spinClock` reads: the sector, the game-speed
+ *  presentation clock (`fxNow`, ms) and the host's world position. */
+export interface RigClockFrame { sectorKey: string | null; fxNowMs: number; hostX: number; hostY: number }
+
+/** Per-structure scratch for `RigDrawHook.spinClock` (NaN / -1 = unset). */
+export interface RigClockMemo { sector: string | null; offsetMs: number; anchorMs: number; lastPhase: number }
+
+/** A fresh `RigClockMemo` (once per structure). */
+export function createRigClockMemo(): RigClockMemo {
+  return { sector: null, offsetMs: Number.NaN, anchorMs: Number.NaN, lastPhase: -1 };
+}
+
+/** What a `RigDrawHook.spinClock` writes (`StructureRigView`). */
+export interface RigClockTarget { spinClock: number; litAlpha: number }
 
 /** Per-structure scratch for `RigDrawHook.rowClip`: the tick the clip is
  *  anchored to and the row value it was anchored from (NaN = not started). */

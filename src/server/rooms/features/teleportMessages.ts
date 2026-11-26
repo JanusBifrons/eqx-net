@@ -33,11 +33,15 @@ import { getSector } from '../../../core/galaxy/galaxy.js';
 import { getStructureKind } from '../../../shared-types/structureKinds.js';
 import { isNpcOwner, relationOf, type RelationContext } from '../../../shared-types/relations.js';
 import {
+  isAlienGateKind,
   isFreeTeleporterKind,
   isPadChamberKind,
+  isRoundPadKind,
   isTeleporterKind,
   onPad,
+  padIrisSpanCount,
   padIrisSpanLocal,
+  padPushHalf,
   PAD_SPECS,
   SetTeleportRulesSchema,
   SetTeleportTollSchema,
@@ -51,6 +55,7 @@ import {
   TeleportPairSchema,
   TeleportUnpairSchema,
   TollAnswerSchema,
+  TP_PHASE,
   type PairRequestPrompt,
   type TeleporterKind,
   type TollAnswer,
@@ -332,12 +337,14 @@ export class TeleportPadRiders {
   }
 
   /** T2 — call `fn` with each iris span's worker id and its offset from the
-   *  pad centre (the pad is square, so a quarter turn leaves them unchanged).
-   *  Only the Ancients' gate has an iris: a chamber pad (redesign T2) is
-   *  sealed by its blast-door leaves (`padDoors.ts`). */
+   *  pad centre (`padIrisSpanLocal`; the seal is a round polygon of a
+   *  multiple of 4 chords, so a quarter turn leaves it unchanged). Only the
+   *  Ancients' gate has an iris, its sealed outer ring (redesign A3): a
+   *  chamber pad (redesign T2) is sealed by its blast-door leaves
+   *  (`padDoors.ts`). */
   forIrisSpan(rec: StructureRecord, fn: (id: string, s: { ax: number; ay: number; bx: number; by: number }) => void): void {
     if (!isTeleporterKind(rec.kind) || isPadChamberKind(rec.kind)) return;
-    const n = PAD_SPECS[rec.kind].posts;
+    const n = padIrisSpanCount(rec.kind);
     for (let i = 0; i < n; i++) {
       padIrisSpanLocal(rec.kind, i, this._irisSpan);
       fn(`tpiris-${rec.id}-${i}`, this._irisSpan);
@@ -488,7 +495,8 @@ export function buildTeleporters(h: TeleporterBuildHost): { teleporters: Telepor
       if (!isTeleporterKind(rec.kind)) return;
       // A chamber pushes only along its doorway axis (`padPushDir` doorAngle).
       const doorAngle = isPadChamberKind(rec.kind) ? padAngle(rec) : undefined;
-      h.forceFields.set(`tpfield-${rec.id}`, { kind: 'pad', cx: rec.x, cy: rec.y, half: PAD_SPECS[rec.kind].padRadius, active, doorAngle });
+      // The Ancients' gate pushes along the radius at its round seal (A3).
+      h.forceFields.set(`tpfield-${rec.id}`, { kind: 'pad', cx: rec.x, cy: rec.y, half: padPushHalf(rec.kind), active, doorAngle, round: isRoundPadKind(rec.kind) });
     },
   });
   // v4 T3 — the broker reaches this room's teleporters from other sectors.
@@ -517,4 +525,14 @@ export function buildTeleporters(h: TeleporterBuildHost): { teleporters: Telepor
   };
   if (sectorKey !== null) getTeleportBroker().register(teleportRoom);
   return { teleporters, teleportRoom };
+}
+
+/** Test cue (`test_gate_seal`, teleporter redesign A3): hold every Ancients'
+ *  gate in the room SEALED (its outer ring solid) or IDLE. The gate is not
+ *  its cycle's initiator, so `update` leaves the held phase alone. */
+export function holdAlienGatesSealed(reg: StructureRegistry, tp: TeleporterSubsystem, sealed: boolean): void {
+  for (const rec of reg.all()) {
+    if (!isAlienGateKind(rec.kind) || rec.tpInitiator === true) continue;
+    tp.setPhase(rec, sealed ? TP_PHASE.SEALED : TP_PHASE.IDLE, 0);
+  }
 }

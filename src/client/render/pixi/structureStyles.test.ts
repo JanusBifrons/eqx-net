@@ -99,7 +99,9 @@ describe('style A', () => {
       }
       for (const l of v.lights) expect(insidePoly(out, l.x, l.y), id).toBe(true);
       for (const s of v.sigils!) expect(polyEdgeDist(out, s.x, s.y), id).toBeGreaterThan(s.r);
-      expect(v.bands!.length, id).toBeGreaterThan(0);
+      // The Ancients' gate is nobody's plating: no livery bands.
+      if (id === 'alien_gate') expect(v.bands!.length, id).toBe(0);
+      else expect(v.bands!.length, id).toBeGreaterThan(0);
     }
   });
   it('the beacon carries the biggest sigil screen, centred', () => {
@@ -147,7 +149,9 @@ describe('style C (shipyard brutalist, 1f)', () => {
       for (const p of v.polys!) for (const [x, y] of p.pts) expect(polyEdgeDist(out, x, y), `${id} ${x},${y}`).toBeGreaterThan(-0.5);
       for (const l of v.lights) expect(insidePoly(out, l.x, l.y), id).toBe(true);
       for (const s of v.sigils ?? []) expect(polyEdgeDist(out, s.x, s.y), id).toBeGreaterThan(s.r);
-      expect(v.bands!.length, id).toBeGreaterThan(0);
+      // The Ancients' gate is nobody's plating: no livery bands.
+      if (id === 'alien_gate') expect(v.bands!.length, id).toBe(0);
+      else expect(v.bands!.length, id).toBeGreaterThan(0);
     }
     const cap = buildStructureVisual('capital', { accent: 0, style: 'c', livery: true }).sigils!;
     expect(cap.find((s) => s.screen === true)).toMatchObject({ x: 0, y: 0 });

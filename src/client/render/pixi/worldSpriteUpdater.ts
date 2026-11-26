@@ -119,6 +119,7 @@ export function updateEntitySprites(mirror: RenderMirror, ctx: RendererFrameCtx)
   ctx.lastSwarmUpdateNow = swarmNow;
   r.swarmUpdaterCtx.viewBounds = viewBounds;
   r.swarmUpdaterCtx.fxNowMs = r.fxNow(); // wreck glow follows the game speed
+  r.swarmUpdaterCtx.sectorKey = r.sectorKey ?? null; // the Ancients' gate rings' timetable
   r.swarmUpdaterCtx.cameraScale = r.world.scale.x; // wreck-piece far-zoom LOD
   r.swarmUpdaterCtx.wreckFarLayer = r.wreckFarLayer;
   updateSwarmSprites(mirror, r.swarmUpdaterCtx);

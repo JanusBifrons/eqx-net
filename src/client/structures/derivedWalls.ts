@@ -7,7 +7,8 @@
  *   - a FENCE wall between any two connected, built shield emitters (pylons and
  *     gates), anchored on the gate post nearest the far end (`emitterAnchor`).
  *     It blocks while both ends report their walls up (STRUCTURE_FLAG_WALL_ACTIVE).
- *   - the Ancients' gate's iris spans (solid only while SEALED). A chamber
+ *   - the Ancients' gate's iris spans: its outer ring, a closed polygon of
+ *     chords (redesign A3; solid only while SEALED). A chamber
  *     pad (`isPadChamberKind`) has no iris: its blast doors are rig leaves
  *     (teleporter redesign T3), like a gate's.
  *   Gates and airlocks have no shield span across their gap any more: their
@@ -19,7 +20,7 @@
 import type { StructureRenderState, SwarmRenderState } from '../../core/contracts/IRenderer.js';
 import { GATE_SPAN_THICKNESS, emitterAnchor, isShieldEmitterKind } from '../../core/structures/gateGeometry.js';
 import { SHIELD_WALL_THICKNESS } from '../../core/structures/ShieldWall.js';
-import { PAD_SPECS, TP_PHASE, isPadChamberKind, isTeleporterKind, padIrisSpanLocal } from '../../shared-types/teleport.js';
+import { TP_PHASE, isPadChamberKind, isTeleporterKind, padIrisSpanCount, padIrisSpanLocal } from '../../shared-types/teleport.js';
 
 export interface DerivedWallVisitor {
   /** `open`: an unsealed teleporter iris (the Ancients' gate; not blocking by design, as opposed
@@ -30,8 +31,10 @@ export interface DerivedWallVisitor {
 const A = { x: 0, y: 0 };
 const B = { x: 0, y: 0 };
 const IRIS = { ax: 0, ay: 0, bx: 0, by: 0 };
-/** Iris span keys: -(IRIS_KEY_BASE + id * 16 + i + 1). */
+/** Iris span keys: -(IRIS_KEY_BASE + id * IRIS_KEY_STRIDE + i + 1); the
+ *  stride is above any pad's `padIrisSpanCount` (a test locks it). */
 const IRIS_KEY_BASE = 2_000_000_000;
+export const IRIS_KEY_STRIDE = 64;
 
 export function visitDerivedWalls(
   structures: ReadonlyMap<number, StructureRenderState>,
@@ -43,16 +46,16 @@ export function visitDerivedWalls(
     if (!st.built) continue;
     const e = swarm.get(id);
     if (!e) continue;
-    // v4 T2 — the Ancients' gate's iris: the spans between its posts, solid
+    // v4 T2 — the Ancients' gate's iris: its outer ring's seal chords, solid
     // only while SEALED (the server's iris walls, #15). Drawn as open
     // otherwise. A chamber pad has none (redesign T3): its doors are leaves.
     if (isPadChamberKind(e.shipKind)) continue;
     if (st.teleport !== undefined && isTeleporterKind(e.shipKind)) {
       const sealed = st.teleport.phase === TP_PHASE.SEALED;
-      const n = PAD_SPECS[e.shipKind].posts;
+      const n = padIrisSpanCount(e.shipKind);
       for (let i = 0; i < n; i++) {
         padIrisSpanLocal(e.shipKind, i, IRIS);
-        v.wall(-(IRIS_KEY_BASE + id * 16 + i + 1), e.x + IRIS.ax, e.y + IRIS.ay, e.x + IRIS.bx, e.y + IRIS.by, sealed, GATE_SPAN_THICKNESS, !sealed);
+        v.wall(-(IRIS_KEY_BASE + id * IRIS_KEY_STRIDE + i + 1), e.x + IRIS.ax, e.y + IRIS.ay, e.x + IRIS.bx, e.y + IRIS.by, sealed, GATE_SPAN_THICKNESS, !sealed);
       }
       continue;
     }

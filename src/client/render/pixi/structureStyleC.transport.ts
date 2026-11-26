@@ -1,7 +1,7 @@
 /**
  * Style C family "transport" (docs/plans/structure-restyle-stage4.md §4 0a, §6).
  * Transport + docks: teleporter, pocket pad, freight dock; large teleporter + alien gate
- * (parked, large).
+ * (the Ancients' gate Astrolabe: structureStyleC.transport.astrolabe.ts).
  * This family's drawings live only here; `kinds` is spread into `STYLE_C`
  * (structureStyleC.ts). Kind -> family: structureFamilies.ts.
  */
@@ -16,11 +16,12 @@ import type { RigDrawHookTable } from './structureRigLook.js';
 import type { BodyStatusHookTable } from './structureSocketNubs.js';
 import { doorLeafContext } from './structureStyleC.fences.gate.js';
 import { chamber, chamberStatus } from './structureStyleC.transport.chamber.js';
+import { ASTROLABE_RIG_HOOK, alienGate } from './structureStyleC.transport.astrolabe.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
  *  art for this family re-bakes and nothing else does. */
-export const version = 't5b';
+export const version = 't5c';
 
 /** Medium dock (`freight_dock`, 1000 × 400): the loading pad is OUTSIDE the
  *  building (the rig's `lip` apron, past the open -y edge, pixi), so the
@@ -113,6 +114,7 @@ export const kinds: StyleDrawerTable = {
   pocket_pad: chamber,
   // T5: the large teleporter (2120, eight towers) shares the drawer.
   teleporter_large: chamber,
+  alien_gate: alienGate,
 };
 
 /** This family's rig drawing hooks, by rig id (`RigDrawHook`,
@@ -121,6 +123,7 @@ export const rigs: RigDrawHookTable = {
   // The chamber's blast doors wear the gatehouse leaf art.
   'tp-doors': { partArt: doorLeafContext },
   'tp-doors-large': { partArt: doorLeafContext },
+  'alien-astrolabe': ASTROLABE_RIG_HOOK,
 };
 
 /** This family's live body-state hooks (`BodyStatusHook`): the chamber's
