@@ -70,11 +70,17 @@ export function isBuildableStructureKind(id: string): boolean {
 /**
  * Does this kind act as a grid connector (a cable junction the power grid
  * routes through)? The ONE answer to "is this a connector?" for server and
- * client alike: plate buildings (large teleporter, alien gate) will join this
- * set later, so never test `kind === 'connector'` directly.
+ * client alike, so never test `kind === 'connector'` directly.
+ *
+ * Base platforms slice 22: a buildable PLATE building (the Large Teleporter)
+ * is one too. It sits over its plate's centre and builds the connector in, so
+ * it anchors the plate (`isPlateAnchor`), takes the plate's deck links (whose
+ * cap exemption makes its own `maxConnections: 1` no limit there) and relays
+ * power like a connector everywhere. The Ancients' gate (also `deckSlot:
+ * 'plate'`) never joins a network, so it is NOT a connector.
  */
 export function isConnectorKind(kind: string | null | undefined): boolean {
-  return kind === 'connector';
+  return kind === 'connector' || kind === 'teleporter_large';
 }
 
 /**

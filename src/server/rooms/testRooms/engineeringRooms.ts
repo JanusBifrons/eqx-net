@@ -74,6 +74,8 @@ const hexAt = (q: number, r: number, ox = 0, oy = 0): { x: number; y: number } =
   return { x: p.x + ox, y: p.y + oy };
 };
 const DECK_SHOW_P2 = plateCentreWorldInto(1, 0, { x: 0, y: 0 });
+/** Plate 3 (slice 22): anchored by a Large Teleporter, not a connector. */
+const DECK_SHOW_P3 = plateCentreWorldInto(-1, 0, { x: 0, y: 0 });
 /** A fence ring round plate 2's middle hex: a shield pylon on each corner, and a
  *  gate on the east seam where a road tile (on the east hex) meets it. Positions
  *  and the gate's turn come from the player's deck snap, so they sit exactly
@@ -102,6 +104,10 @@ export const DECK_SHOW_OPTS = {
     { kind: 'connector' as const, x: DECK_SHOW_P2.x, y: DECK_SHOW_P2.y },
     { kind: 'solar' as const, ...hexAt(0, 1, DECK_SHOW_P2.x, DECK_SHOW_P2.y) },
     ...DECK_SHOW_FENCE,
+    // Slice 22: a plate building. The Large Teleporter on plate (-1,0)'s
+    // centre IS that plate's connector (it anchors the plate, west of the
+    // spawn, and seam-links to plate (0,0)).
+    { kind: 'teleporter_large' as const, x: DECK_SHOW_P3.x, y: DECK_SHOW_P3.y },
   ],
 };
 
