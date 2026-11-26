@@ -122,7 +122,7 @@ describe('astrolabe rings', () => {
 });
 
 describe('alien gate rig: looks only', () => {
-  it('three cosmetic spinning rings under the ships, no outline, no clips', () => {
+  it('three cosmetic spinning rings OVER the ships (arches they fly under, owner 2026-11-26), no outline, no clips', () => {
     const rig = rigForStructureKind('alien_gate')!;
     expect(rig.id).toBe('alien-astrolabe');
     expect(rig.partCount).toBe(3);
@@ -131,7 +131,7 @@ describe('alien gate rig: looks only', () => {
       const part = rig.parts[i]!;
       expect(part.kind).toBe('cosmetic');
       expect(part.outline).toBeUndefined();
-      expect(part.layer).toBe('under');
+      expect(part.layer).toBe('over');
       expect(rig.spins[i]).not.toBe(0);
     }
   });
@@ -149,10 +149,10 @@ describe('alien gate rig: looks only', () => {
     expect(gateHitBoxes('alien_gate', 0)?.length).toBe(0);
   });
 
-  it('the outer ring is the one its seal closes (redesign A3)', () => {
-    const outer = ASTROLABE_RINGS[0]!;
-    expect(outer.part).toBe('ring-outer');
-    for (const r of ASTROLABE_RINGS) expect(r.radius + r.width / 2).toBeLessThanOrEqual(outer.radius + outer.width / 2);
-    expect(ALIEN_GATE_SEAL_RADIUS).toBe(outer.radius + outer.width / 2);
+  it('the inner ring is the one that seals, at its inner edge round the light pool (owner 2026-11-26)', () => {
+    const inner = ASTROLABE_RINGS[ASTROLABE_RINGS.length - 1]!;
+    expect(inner.part).toBe('ring-inner');
+    for (const r of ASTROLABE_RINGS) expect(r.radius - r.width / 2).toBeGreaterThanOrEqual(inner.radius - inner.width / 2);
+    expect(ALIEN_GATE_SEAL_RADIUS).toBe(inner.radius - inner.width / 2);
   });
 });

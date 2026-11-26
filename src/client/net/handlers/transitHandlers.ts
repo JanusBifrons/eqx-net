@@ -29,7 +29,8 @@ export interface TransitHandlerCtx {
   serverTickAtWelcome(): number;
   welcomePerfNow(): number;
   isTravelling(): boolean;
-  beginTravel(): void;
+  /** `hold`: a teleport (the ship stays put, then lands on the far pad). */
+  beginTravel(mode?: 'trip' | 'hold'): void;
   travelOutRemainingMs(): number;
   /** RTS fleet warp (S8): arm (or clear) the follow-the-fleet arrival watch. */
   setFleetArrival(w: FleetArrivalWatch | null): void;
@@ -178,7 +179,7 @@ export function registerTransitHandlers(room: Room, ctx: TransitHandlerCtx): voi
       // at once instead of sitting still waiting for the swap. Not in
       // Command view: there is no local ship (a fleet warp; S7).
       if (!ctx.isTravelling() && transitStartsLocalTrip(ui.pilotMode)) {
-        ctx.beginTravel();
+        ctx.beginTravel(msg.teleport === true ? 'hold' : 'trip');
         ui.setTravelling(true);
       }
     } else if (msg.state === 'DOCKED') {
@@ -206,7 +207,9 @@ export function registerTransitHandlers(room: Room, ctx: TransitHandlerCtx): voi
     }
   });
 
-  room.onMessage('transit_ready', async (msg: { reservation: unknown; targetSectorKey: string; shipIds?: unknown }) => {
+  room.onMessage('transit_ready', async (msg: { reservation: unknown; targetSectorKey: string; shipIds?: unknown; teleport?: unknown }) => {
+    // A teleport (gate or paired teleporter) holds the ship still; no trip.
+    const travelMode = msg.teleport === true ? 'hold' : 'trip';
     // RTS fleet warp (S7): a commander in Command view follows their fleet
     // on a spectator seat. Same room change as every transit; only the
     // local ship's trip is skipped (there is none), so the load curtain
@@ -223,7 +226,7 @@ export function registerTransitHandlers(room: Room, ctx: TransitHandlerCtx): voi
     // Phase 4 travel state: the old sector stays live (and falls behind) until
     // the ship has flown out of it; only then does the room swap happen.
     if (!commanderFollow && !ctx.isTravelling()) {
-      ctx.beginTravel();
+      ctx.beginTravel(travelMode);
       useUIStore.getState().setTravelling(true);
     }
     const outWait = commanderFollow ? 0 : ctx.travelOutRemainingMs();
@@ -284,7 +287,7 @@ export function registerTransitHandlers(room: Room, ctx: TransitHandlerCtx): voi
     // commander following their fleet has no ship to fly: the curtain
     // rises for the switch instead (a short spinner).
     if (!commanderFollow && !ctx.isTravelling()) {
-      ctx.beginTravel();
+      ctx.beginTravel(travelMode);
       useUIStore.getState().setTravelling(true);
     }
     useUIStore.getState().rearmJoinReadiness();

@@ -12,8 +12,9 @@ import { StructureRigView } from './structureRigs.js';
 import { createRigClockMemo, type RigClockFrame } from './structureRigLook.js';
 import { version } from './structureStyleC.transport.js';
 import {
-  ASTROLABE_GLOW_MAX, alienGate, astrolabeLitContext, astrolabePartContext, astrolabeSpinClock,
+  ASTROLABE_GLOW_MAX, LIGHT_POOL_R, alienGate, astrolabeLitContext, astrolabePartContext, astrolabeSpinClock,
 } from './structureStyleC.transport.astrolabe.js';
+import { ALIEN_GATE_SEAL_RADIUS } from '../../../shared-types/alienGateSeal.js';
 import { rigForStructureKind } from '../../../core/articulation/rigCatalogue.js';
 import { alienGateSites } from '../../../core/galaxy/alienGates.js';
 import { GALAXY_SECTORS } from '../../../core/galaxy/galaxy.js';
@@ -33,16 +34,24 @@ const target = (): { spinClock: number; litAlpha: number } => ({ spinClock: -1, 
 describe('astrolabe: style C alien_gate drawer', () => {
   it('is registered for alien_gate in style C, with the transport art version bumped', () => {
     expect(structureStyleDrawer('c', 'alien_gate')).toBe(alienGate);
-    expect(version).toBe('t5c');
-    expect(structureStyleVersion('c', 'alien_gate')).toBe('t5c');
+    expect(version).toBe('t5d');
+    expect(structureStyleVersion('c', 'alien_gate')).toBe('t5d');
   });
 
   it('bakes no pylons and nothing in the ring band', () => {
     const v = buildStructureVisual('alien_gate', { accent: 0x66ccaa, style: 'c', livery: true, powered: true });
     expect(v.polys.length).toBeGreaterThan(0);
-    // Rings turn under the body sprite at 422..818 from the centre; the body
-    // is only the light pool and crystal (no pylons), all inside the inner ring.
+    // Rings turn over the ships at 422..818 from the centre; the body is only
+    // the light pool and crystal (no pylons), all inside the inner ring.
     for (const p of v.polys) for (const [px, py] of p.pts) expect(Math.hypot(px, py), `${px},${py}`).toBeLessThan(430);
+  });
+
+  it('the green light pool fills right up to the inner ring, the ride area (owner 2026-11-26)', () => {
+    expect(LIGHT_POOL_R).toBe(ALIEN_GATE_SEAL_RADIUS);
+    const v = buildStructureVisual('alien_gate', { accent: 0x66ccaa, style: 'c', livery: true, powered: true });
+    let far = 0;
+    for (const p of v.polys) for (const [px, py] of p.pts) far = Math.max(far, Math.hypot(px, py));
+    expect(far).toBeGreaterThanOrEqual(ALIEN_GATE_SEAL_RADIUS - 1);
   });
 });
 

@@ -233,6 +233,8 @@ export async function bootSectorTestServer(opts: {
   pairTeleporters?: boolean;
   teleportShipBoards?: boolean;
   teleportFullCharge?: boolean;
+  /** v4 A — one Ancients' gate at this site (the room option; testMode). */
+  testAlienGate?: { x: number; y: number; neighbour: string };
   /** Drones never attack (the room option). */
   peacefulDrones?: boolean;
   /** Deaths keep every stack (no coin flip): the room option. Default ON in
@@ -341,6 +343,7 @@ export async function bootSectorTestServer(opts: {
     pairTeleporters: opts.pairTeleporters,
     teleportShipBoards: opts.teleportShipBoards,
     teleportFullCharge: opts.teleportFullCharge,
+    testAlienGate: opts.testAlienGate,
     peacefulDrones: opts.peacefulDrones,
     keepAllOnDeath: opts.keepAllOnDeath ?? true,
     capitalWrecks: opts.capitalWrecks,

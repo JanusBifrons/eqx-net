@@ -122,4 +122,7 @@ export interface PendingJoinRecord {
    *  vanishing and coming back active: their clients move it to its pilot's
    *  key without a flicker. A fresh spawn stays hidden until it arrives. */
   inWorld?: boolean;
+  /** A teleport arrival (gate or paired teleporter): it appears in place,
+   *  with no warp drop-in effect. */
+  teleport?: true;
 }

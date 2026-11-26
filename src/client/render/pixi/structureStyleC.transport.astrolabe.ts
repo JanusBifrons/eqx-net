@@ -5,10 +5,11 @@
  *
  * - The static base (`alienGate`, the baked body): the hex light pool at
  *   the centre and the floating crystal over it. No pylons (owner,
- *   2026-11-25: the gate is the rings round the crystal; the seal runs round
- *   the outer ring). Nothing is drawn in the ring band: the rings are rig
- *   parts on the `under` layer, BELOW the body sprite, so anything baked
- *   there would cover them.
+ *   2026-11-25: the gate is the rings round the crystal). The pool fills to
+ *   the inner ring, where the seal closes: only the pool rides (owner
+ *   2026-11-26). The body is a floor, drawn under every hull (pad-deck band);
+ *   nothing is baked in the ring band: the rings are rig parts on the `over`
+ *   layer, ABOVE the ships (arches they fly under).
  * - The three rings (`alien-astrolabe` rig, `ALIEN_GATE_ASTROLABE_DEF`): each
  *   ring part's art (`astrolabePartContext`) is dark stone in three arc
  *   segments with three lane gaps and dim teal edge lines and glyph ticks;
@@ -24,6 +25,7 @@ import { ASTROLABE_RINGS, astrolabePoseAt, createAstrolabePose, type AstrolabeRi
 import type { Rig } from '../../../core/articulation/rig.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 import { ALIEN_GATE_INTERVAL_MS, TP_PHASE, alienGateOffsetMs } from '../../../shared-types/teleport.js';
+import { ALIEN_GATE_SEAL_RADIUS } from '../../../shared-types/alienGateSeal.js';
 import { alienGateNeighbour } from '../../components/alienGateInfo.js';
 import { SOOT, ngon, poly, strip, type StyleCtx } from './structureStyleKit.js';
 import type { RigClockFrame, RigClockMemo, RigClockTarget, RigDrawHook } from './structureRigLook.js';
@@ -33,8 +35,9 @@ export const ANCIENT_TEAL = 0x3fe0c5;
 /** Ring stone (dark basalt). */
 const RING_STONE = 0x2a3339;
 const CRYSTAL = 0x0e1a1b;
-/** The hex light pool's radius (inside the inner ring) and hex cell size. */
-export const LIGHT_POOL_R = 360;
+/** The hex light pool's radius and hex cell size. The pool fills right up
+ *  to the inner ring: it is the ride area (owner 2026-11-26), the seal's. */
+export const LIGHT_POOL_R = ALIEN_GATE_SEAL_RADIUS;
 const HEX = 62;
 /** Lane spacing (rad): three lanes, lane centres at 0, 120°, 240° (A1). */
 const SECTOR = (2 * Math.PI) / 3;

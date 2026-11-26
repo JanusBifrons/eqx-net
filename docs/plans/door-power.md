@@ -63,13 +63,13 @@ field (gateOpen reused); separate server/client blocking rules (one predicate).
   `encodeConnSock`, same style.
 - Readers to change: ConnectorRenderer.ts:133 static hash (fully-open bits only),
   SectorRoom.ts:2257 gateOpenMask wiring, structuresSlice.ts:196 writer.
-- Teleporter chambers (Astrolabe, Transit Pad; teleporter redesign T2) seal
+- Teleporter chambers (Teleporter, Large Teleporter, Transit Pad; teleporter redesign T2) seal
   with blast doors on this same machinery (`src/server/structures/padDoors.ts`:
   one `DoorTrack` per pad, `doorLevelFromSupply`, `setActive` while moving; a
   free pad with no grid runs at full level). CLOSING has no timer for them: it
   ends when BOTH pads' doors are shut (`stepCycle` `doors`); a pad whose doors
   stall unpowered mid-close cancels the jump and both reopen. The Ancients'
-  gate keeps its fixed-time iris. Door state is not saved: it follows tpPhase.
+  gate (the Astrolabe) keeps its fixed-time iris, round its outer ring (A3). Door state is not saved: it follows tpPhase.
 - CLIENT GAP: the client's single wallActive flag merges "powered" and "not
   stunned". Gate spans must stay up on power loss but fall when stunned, so for
   gate kinds the server writes wallActive = not stunned; otherwise prediction

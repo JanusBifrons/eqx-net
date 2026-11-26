@@ -8,7 +8,7 @@
  */
 import { describe, it, expect, beforeEach } from 'vitest';
 import { ColyseusGameClient } from './ColyseusClient.js';
-import { travelApproach } from './mirror/travelPass.js';
+import { travelApproach, noteSwarmPacket, type TravelTrip } from './mirror/travelPass.js';
 import { WARP_SPEED } from '../../core/physics/warpDrive.js';
 import { PhysicsWorld } from '../../core/physics/World.js';
 import { useUIStore } from '../state/store.js';
@@ -95,5 +95,112 @@ describe('the trip between sectors', () => {
       const [d, v] = travelApproach(tau);
       if (total - d <= 4000) expect(v).toBeLessThanOrEqual(2500 + 1e-6);
     }
+  });
+});
+
+describe('a teleport to another sector (gate or paired teleporter)', () => {
+  beforeEach(() => { useUIStore.setState({ firstSnapshotApplied: false, joinMinimumElapsed: false, travelling: true }); });
+
+  it('holds the ship still where it sealed, then puts it straight on the far pad: no fly-out, no warp run, no 25 s trip', async () => {
+    // Film 2026-11-26: riding the Sol Prime gate flew the ship off at warp
+    // speed for a whole sector trip, instead of swapping it like a teleporter.
+    const c = new ColyseusGameClient() as unknown as Internals & { beginTravel(mode?: 'trip' | 'hold'): void; travelOutRemainingMs(): number };
+    let t = 1000;
+    c.clock = { now: () => t };
+    c.mirror.localPlayerId = 'me';
+    c.mirror.ships.set('me', { x: 100, y: 50, vx: 0, vy: 0, angle: -Math.PI / 2 });
+    // The source room is still loaded as the gate seals: its body and its
+    // first snapshot are there (film take 11: the hold landed on the spot,
+    // so the ship sat in empty Vega Reach sky at its Sol Prime position).
+    c.predWorld = await PhysicsWorld.create();
+    c.predWorld.spawnShip('me', 100, 50, 'fighter');
+    useUIStore.setState({ firstSnapshotApplied: true });
+    c.beginTravel('hold');
+    expect(c.travelOutRemainingMs()).toBe(0);
+    const e = c.mirror.ships.get('me')!;
+
+    t += 2000; c.updateMirror(t);
+    expect(e.x).toBe(100);
+    expect(e.y).toBe(50);
+    expect(e.warp).toBeUndefined();
+    expect(c.mirror.travelDeep).toBe(false);
+    expect(useUIStore.getState().joinMinimumElapsed).toBe(false);
+
+    // The room swap (transit_ready) re-arms join readiness; the far room's
+    // body and first snapshot follow.
+    useUIStore.getState().rearmJoinReadiness();
+    c.predWorld.despawnShip('me');
+    c.predWorld.spawnShip('me', 5000, 7000, 'fighter');
+    t += 50; c.updateMirror(t);
+    expect(e.x).toBe(100);
+    useUIStore.setState({ firstSnapshotApplied: true });
+    noteSwarmPacket((c as unknown as { _travel: TravelTrip | null })._travel, true);
+    t += 50; c.updateMirror(t);
+    expect(e.x).toBeCloseTo(5000, 1);
+    expect(e.y).toBeCloseTo(7000, 1);
+    expect(c.mirror.travelJumpX).toBeCloseTo(4900, 1);
+    expect(e.warp).toBeUndefined();
+    expect(useUIStore.getState().joinMinimumElapsed).toBe(true);
+  });
+
+  it('keeps the old sector on screen until the far sector is all there, then swaps in one frame (the gate never blinks out)', async () => {
+    // Take 14 2026-11-26: for two frames at the swap no gate was drawn. The
+    // old sector was wiped as the room swap began, with the ship still in the
+    // gate, and the far gate (a sleeping structure) only rides a FULL swarm
+    // packet, which can come after the far room's first snapshot.
+    type Hold = Internals & { beginTravel(mode?: 'trip' | 'hold'): void; holdingPicture(): boolean; _travel: TravelTrip | null };
+    const c = new ColyseusGameClient() as unknown as Hold;
+    let t = 1000;
+    c.clock = { now: () => t };
+    c.mirror.localPlayerId = 'me';
+    c.mirror.ships.set('me', { x: 100, y: 50, vx: 0, vy: 0, angle: 0 });
+    c.predWorld = await PhysicsWorld.create();
+    c.predWorld.spawnShip('me', 100, 50, 'fighter');
+    useUIStore.setState({ firstSnapshotApplied: true });
+    c.beginTravel('hold');
+    const e = c.mirror.ships.get('me')!;
+    // Sealing in the source room: the picture is live.
+    t += 50; c.updateMirror(t);
+    expect(c.holdingPicture()).toBe(false);
+
+    // The room swap starts: the old sector is wiped from the mirror, so the
+    // picture holds what is on screen (gate and all).
+    useUIStore.getState().rearmJoinReadiness();
+    expect(c.holdingPicture()).toBe(true);
+    c.predWorld.despawnShip('me');
+    c.predWorld.spawnShip('me', 5000, 7000, 'fighter');
+    // A delta packet from the far room is not the whole scene.
+    noteSwarmPacket(c._travel, false);
+    useUIStore.setState({ firstSnapshotApplied: true });
+    t += 50; c.updateMirror(t);
+    expect(e.x).toBe(100);
+    expect(c.holdingPicture()).toBe(true);
+
+    // The far room's full packet (every structure in view, the far gate too):
+    // the ship lands and the picture goes live in the same frame.
+    noteSwarmPacket(c._travel, true);
+    t += 16; c.updateMirror(t);
+    expect(e.x).toBeCloseTo(5000, 1);
+    expect(c.holdingPicture()).toBe(false);
+  });
+
+  it('a far sector that sends no swarm at all still lands (the hold never sticks)', async () => {
+    type Hold = Internals & { beginTravel(mode?: 'trip' | 'hold'): void; holdingPicture(): boolean };
+    const c = new ColyseusGameClient() as unknown as Hold;
+    let t = 1000;
+    c.clock = { now: () => t };
+    c.mirror.localPlayerId = 'me';
+    c.mirror.ships.set('me', { x: 100, y: 50, vx: 0, vy: 0, angle: 0 });
+    c.predWorld = await PhysicsWorld.create();
+    c.beginTravel('hold');
+    const e = c.mirror.ships.get('me')!;
+    useUIStore.getState().rearmJoinReadiness();
+    c.predWorld.spawnShip('me', 5000, 7000, 'fighter');
+    useUIStore.setState({ firstSnapshotApplied: true });
+    t += 50; c.updateMirror(t);
+    expect(e.x).toBe(100);
+    t += 2000; c.updateMirror(t);
+    expect(e.x).toBeCloseTo(5000, 1);
+    expect(c.holdingPicture()).toBe(false);
   });
 });

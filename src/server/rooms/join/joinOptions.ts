@@ -46,6 +46,11 @@ export const JoinOptionsSchema = z
     /** PR 3a — server-issued single-use transit proof (set by the source
      *  room's TransitOrchestrator in the seat reservation, never by a client). */
     transitToken: z.string().max(64).optional(),
+    /** Set with `transitToken` by the source room when the trip is a teleport
+     *  (gate or paired teleporter): the arrival keeps its exact far-pad spot,
+     *  with no landing nudge and no warp drop-in. A client claiming it only
+     *  skips the nudge for its own (server-placed) arrival. */
+    teleport: z.literal(true).optional(),
     spawnX: z.number().optional(),
     spawnY: z.number().optional(),
     /** Test-only initial hull override. Honoured only when the room has

@@ -21,6 +21,37 @@ import { speedFxFullSpeed } from '../art/fx/depth.js';
 import { updateArtShipLight } from '../art/shipArtSprites.js';
 import type { RendererFrameCtx } from './frameCtx.js';
 
+/** What `carryCameraAcrossJump` reads (the frame ctx satisfies it). */
+export interface JumpCarryCtx {
+  readonly r: {
+    readonly camera: { centerInto(out: { x: number; y: number }): { x: number; y: number }; moveCenter(x: number, y: number): void };
+    readonly spectator: boolean;
+    readonly cameraDirector: { isCameraScripted(): boolean };
+  };
+  lastJumpX: number;
+  lastJumpY: number;
+  readonly jumpCentre: { x: number; y: number };
+}
+
+/**
+ * First frame pass: a travel jump (`mirror.travelJumpX/Y`, a teleport landing
+ * or a trip's approach) moves the following camera by the same amount NOW.
+ * The follow itself lands only in the Pixi ticker after `update()`, so without
+ * this the jump frame culls, draws the grid and places the sky for the old,
+ * empty spot (one blank frame at a gate landing).
+ */
+export function carryCameraAcrossJump(mirror: RenderMirror, ctx: JumpCarryCtx): void {
+  const jx = mirror.travelJumpX ?? 0, jy = mirror.travelJumpY ?? 0;
+  const dx = jx - ctx.lastJumpX, dy = jy - ctx.lastJumpY;
+  if (dx === 0 && dy === 0) return;
+  ctx.lastJumpX = jx;
+  ctx.lastJumpY = jy;
+  const r = ctx.r;
+  if (r.spectator || r.cameraDirector.isCameraScripted()) return;
+  const c = r.camera.centerInto(ctx.jumpCentre);
+  r.camera.moveCenter(c.x + dx, c.y - dy); // game y up, pixi y down
+}
+
 /** Shield frame, beams, camera follow and the placement ghost. */
 export function updateBeamsAndCamera(mirror: RenderMirror, ctx: RendererFrameCtx): void {
   const r = ctx.r;

@@ -146,6 +146,8 @@ interface InFlight {
   commitTimer: GameTimer;
   /** One-shot bus listener — must be unsubscribed on cancel + commit. */
   onShipDestroyed: (evt: { type: 'SHIP_DESTROYED'; targetId: string; shooterId: string }) => void;
+  /** v4 T3 — set by `teleportOut`: a teleport, not a warp (no trip, no warp-out flash). */
+  teleport?: true;
 }
 
 /**
@@ -373,6 +375,7 @@ export class TransitOrchestrator {
       shipId: null,
       commitTimer: this.clock.after(0, () => undefined),
       onShipDestroyed,
+      teleport: true,
     });
     void this.commitTransit(playerId);
     return true;
@@ -778,9 +781,11 @@ export class TransitOrchestrator {
       // Thread the resolved shipId through reserveSeatFor options so the
       // destination's `onJoin` binds the named roster entry via the
       // shipId-restore path (WS-B: this is now the path for ALL transits).
-      const reserveOpts: { playerId: string; transitToken: string; shipId?: string } = {
+      const reserveOpts: { playerId: string; transitToken: string; shipId?: string; teleport?: true } = {
         playerId,
         transitToken: inFlight.transitToken,
+        // A teleport keeps its exact far-pad spot (no landing nudge, no drop-in).
+        ...(inFlight.teleport ? { teleport: true as const } : {}),
       };
       if (shipInstanceId !== null) reserveOpts.shipId = shipInstanceId;
       // PR 3a — the reservation carries no auth token, so register the
@@ -863,6 +868,7 @@ export class TransitOrchestrator {
         type: 'transit_state',
         state: 'IN_TRANSIT',
         targetSectorKey: inFlight.targetSectorKey,
+        ...(inFlight.teleport ? { teleport: true as const } : {}),
       } satisfies TransitStateMessage);
       // Reservation goes on its own channel because the message-handler
       // function on the client uses it as the trigger to swap rooms.
@@ -871,7 +877,8 @@ export class TransitOrchestrator {
         reservation,
         transitToken: inFlight.transitToken,
         targetSectorKey: inFlight.targetSectorKey,
-      });
+        ...(inFlight.teleport ? { teleport: true as const } : {}),
+      } satisfies TransitReadyMessage);
     }
 
     // Broadcast the departure to everyone else in this sector so their
@@ -881,12 +888,15 @@ export class TransitOrchestrator {
     // sequence which produces the full spool → climax → burst envelope.
     // Use the SAB pose (sabX/sabY captured above) — this is where the
     // ship was at commit, which is what observers' snapshots will show
-    // up to the moment the leave fires.
-    this.room.broadcast(
-      'warp_out',
-      { type: 'warp_out', playerId, x: sabX, y: sabY },
-      client ? { except: client } : undefined,
-    );
+    // up to the moment the leave fires. A teleport is not a warp: onlookers
+    // see the ship go with the pad's swap, never a warp-out flash.
+    if (!inFlight.teleport) {
+      this.room.broadcast(
+        'warp_out',
+        { type: 'warp_out', playerId, x: sabX, y: sabY },
+        client ? { except: client } : undefined,
+      );
+    }
 
     inFlight.machine.arrive();
     inFlight.machine.reset();

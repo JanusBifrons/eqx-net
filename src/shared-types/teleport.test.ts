@@ -137,7 +137,7 @@ describe('teleporter chamber (redesign T1)', () => {
     expect(padPostSides('teleporter')).toEqual([0, 1, 2, 3]);
   });
 
-  it('Ancients\' gate: no posts (redesign A3; its outer ring seals it)', () => {
+  it('Ancients\' gate: no posts (redesign A3; its inner ring seals it)', () => {
     expect(PAD_SPECS.alien_gate.posts).toBe(0);
     expect(padPostCenters('alien_gate')).toEqual([]);
     expect(padPostSides('alien_gate')).toEqual([]);

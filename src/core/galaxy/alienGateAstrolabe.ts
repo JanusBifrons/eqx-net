@@ -5,8 +5,8 @@
  * into line before each timetabled jump so the lanes open, hold aligned
  * through the jump cycle, then drift apart again. LOOKS ONLY: the rings are
  * cosmetic spin hinges (`rigs/transport.ts`, `ALIEN_GATE_ASTROLABE_DEF`), so
- * no collider, hit box, nav or physics change; ships fly over them. (The
- * outer ring's seal while SEALED is the gate's iris, not this rig: redesign
+ * no collider, hit box, nav or physics change; ships fly under them (the
+ * rig's `over` layer: stone arches over the lanes). (The inner ring's seal while SEALED is the gate's iris, not this rig: redesign
  * A3, `alienGateSeal.ts`.)
  *
  * One clock drives all three rings: ring i's angle is `spin_i * clock`, so a
@@ -22,7 +22,7 @@
  * allocation per call (#14): the caller owns the `AstrolabePose`.
  */
 import { ALIEN_GATE_CYCLE_SCALE, ALIEN_GATE_INTERVAL_MS, TP_PHASE, TP_PHASE_MS } from '../../shared-types/teleport.js';
-import { ALIEN_GATE_OUTER_RING_RADIUS, ALIEN_GATE_OUTER_RING_WIDTH } from '../../shared-types/alienGateSeal.js';
+import { ALIEN_GATE_INNER_RING_RADIUS, ALIEN_GATE_INNER_RING_WIDTH } from '../../shared-types/alienGateSeal.js';
 
 /** Game ticks per second (the spin clock and the rig's spin rates use ticks). */
 const TICKS_PER_MS = 60 / 1000;
@@ -74,12 +74,13 @@ function ring(part: string, radius: number, width: number, turns: number): Astro
 
 /** Outer, middle, inner (taste: radii/widths from the approved B mock-up;
  *  turns +1 / -2 / +3 so each ring has its own speed and the middle one
- *  runs against the others). The outer ring's size is shared with its seal
- *  (`alienGateSeal.ts`, redesign A3): while SEALED it is a solid circle. */
+ *  runs against the others). The inner ring's size is shared with its seal
+ *  (`alienGateSeal.ts`, redesign A3): while SEALED it is a solid circle round
+ *  the light pool, the ride area. */
 export const ASTROLABE_RINGS: readonly AstrolabeRing[] = [
-  ring('ring-outer', ALIEN_GATE_OUTER_RING_RADIUS, ALIEN_GATE_OUTER_RING_WIDTH, 1),
+  ring('ring-outer', 780, 76, 1),
   ring('ring-mid', 610, 66, -2),
-  ring('ring-inner', 450, 56, 3),
+  ring('ring-inner', ALIEN_GATE_INNER_RING_RADIUS, ALIEN_GATE_INNER_RING_WIDTH, 3),
 ];
 
 /** The rings' pose at a moment (caller-owned scratch, `createAstrolabePose`). */

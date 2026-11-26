@@ -53,7 +53,7 @@ export const PAD_SPECS: Readonly<Record<TeleporterKind, PadSpec>> = Object.freez
   teleporter: { padRadius: 320, padCapacity: 400, post: 80, posts: 4 },
   teleporter_large: { padRadius: 900, padCapacity: 4000, post: 160, posts: 8 },
   // v4 A — bigger than a small pad; no hold (alien gates carry ships only).
-  // Redesign A3 — no posts: its outer ring seals it (`alienGateSeal.ts`).
+  // Redesign A3 — no posts: its inner ring seals it (`alienGateSeal.ts`).
   alien_gate: { padRadius: 640, padCapacity: 0, post: 100, posts: 0 },
   // W1b — a small pad's size; ships only.
   pocket_pad: { padRadius: 320, padCapacity: 0, post: 80, posts: 4 },
@@ -214,7 +214,7 @@ export function padHalfExtent(kind: TeleporterKind): number {
  * towers, solid walls, and a doorway at each local ±y end closed by a pair of
  * blast-door leaves (rig `tp-doors`); ships enter and leave only through the
  * doorways, along local y. The Ancients' gate has no posts (redesign A3): its
- * outer ring closes into a solid circle while SEALED (`alienGateSeal.ts`).
+ * inner ring closes into a solid circle while SEALED (`alienGateSeal.ts`).
  */
 export function isPadChamberKind(kind: string | null | undefined): kind is 'teleporter' | 'teleporter_large' | 'pocket_pad' {
   return kind === 'teleporter' || kind === 'teleporter_large' || kind === 'pocket_pad';
@@ -302,7 +302,7 @@ export function onPad(kind: TeleporterKind, cx: number, cy: number, x: number, y
 }
 
 /** Redesign A3 — a pad whose ride area and seal are round (the Ancients'
- *  gate): the disc inside its sealed outer ring, not a square. */
+ *  gate): the disc inside its sealed inner ring, not a square. */
 export function isRoundPadKind(kind: string | null | undefined): kind is 'alien_gate' {
   return kind === 'alien_gate';
 }
@@ -314,14 +314,14 @@ export function padPushHalf(kind: TeleporterKind): number {
 }
 
 /** How many iris spans a pad has. Only the Ancients' gate has an iris: its
- *  outer ring, sealed as `ALIEN_GATE_SEAL_SPANS` chords. A chamber pad is
+ *  inner ring, sealed as `ALIEN_GATE_SEAL_SPANS` chords. A chamber pad is
  *  sealed by its blast doors (redesign T2). */
 export function padIrisSpanCount(kind: TeleporterKind): number {
   return isRoundPadKind(kind) ? ALIEN_GATE_SEAL_SPANS : 0;
 }
 
 /** Iris span `i` (local frame), `0 ≤ i < padIrisSpanCount(kind)`: one chord of
- *  the Ancients' gate's seal round its outer ring (`alienGateSealSpan`); the
+ *  the Ancients' gate's seal round its inner ring (`alienGateSealSpan`); the
  *  spans close a loop. Solid only while SEALED. The ONE source for the
  *  server's iris walls and the client's derived walls (#15). */
 export function padIrisSpanLocal(kind: TeleporterKind, i: number, out: { ax: number; ay: number; bx: number; by: number }): void {

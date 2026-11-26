@@ -102,6 +102,7 @@ const fakeArtReady = { value: true };
 
 function buildLoop(fake: Fake): { loop: (now: number) => void; animFrameRef: { current: number } } {
   const mockClient = {
+    holdingPicture: () => false,
     tickPhysics: fake.tickPhysics,
     tickInbound: fake.tickInbound,
     updateMirror: fake.updateMirror,

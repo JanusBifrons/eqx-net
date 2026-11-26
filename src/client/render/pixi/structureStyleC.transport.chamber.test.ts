@@ -16,7 +16,8 @@ import { structureStyleDrawer, structureStyleVersion } from './structureStyles.j
 import { artFramePx, insidePoly, polyBounds, polyEdgeDist } from './structureStyleKit.js';
 import { StructureRigView } from './structureRigs.js';
 import { bodyStatusCode, hasBodyStatus, socketNubContext } from './structureSocketNubs.js';
-import { DECK_LIGHT_OPEN, DECK_LIGHT_SHUT, doorLeafContext } from './structureStyleC.fences.gate.js';
+import { DECK_END_DARK, DECK_END_OPEN, DECK_END_SHUT, DECK_LIGHT_OPEN, DECK_LIGHT_SHUT, doorLeafContext } from './structureStyleC.fences.gate.js';
+import { GraphicsContext } from 'pixi.js';
 import { kinds, rigs, status, version } from './structureStyleC.transport.js';
 import {
   AMBER_FLASH_TICKS, COIL_STEPS, TP_AMBER, TP_AMBER_OFF, chamber, chamberCode, chamberStatus, coilStep, phaseLightColor,
@@ -45,7 +46,7 @@ describe('teleporter chamber art (T4)', () => {
       expect(status[id], id).toBe(chamberStatus);
       expect(hasBodyStatus(id), id).toBe(true);
     }
-    expect(version).toBe('t5c');
+    expect(version).toBe('t5d');
     expect(rigs['tp-doors-large']?.partArt).toBe(rigs['tp-doors']?.partArt);
     expect(structureStyleDrawer('c', 'alien_gate')).not.toBe(chamber);
   });
@@ -89,16 +90,34 @@ describe('teleporter chamber art (T4)', () => {
   });
 
   it('floor lights by phase: green idle / open, amber (flashing) armed / closing, red sealed', () => {
-    expect(phaseLightColor(TP_PHASE.IDLE, false)).toBe(DECK_LIGHT_OPEN);
-    expect(phaseLightColor(TP_PHASE.OPEN, false)).toBe(DECK_LIGHT_OPEN);
-    expect(phaseLightColor(TP_PHASE.ARMED, false)).toBe(TP_AMBER);
-    expect(phaseLightColor(TP_PHASE.CLOSING, true)).toBe(TP_AMBER_OFF);
-    expect(phaseLightColor(TP_PHASE.SEALED, false)).toBe(DECK_LIGHT_SHUT);
+    expect(phaseLightColor(TP_PHASE.IDLE, false, DECK_END_OPEN)).toBe(DECK_LIGHT_OPEN);
+    expect(phaseLightColor(TP_PHASE.OPEN, false, DECK_END_OPEN)).toBe(DECK_LIGHT_OPEN);
+    expect(phaseLightColor(TP_PHASE.ARMED, false, DECK_END_OPEN)).toBe(TP_AMBER);
+    expect(phaseLightColor(TP_PHASE.CLOSING, true, DECK_END_SHUT)).toBe(TP_AMBER_OFF);
+    expect(phaseLightColor(TP_PHASE.SEALED, false, DECK_END_SHUT)).toBe(DECK_LIGHT_SHUT);
     // Armed flashes with the rig clock; idle never does.
     const armed = row(TP_PHASE.ARMED, 100);
     expect(chamberCode('teleporter', armed, 0)).not.toBe(chamberCode('teleporter', armed, AMBER_FLASH_TICKS));
     const idle = row(TP_PHASE.IDLE, 100);
     expect(chamberCode('teleporter', idle, 0)).toBe(chamberCode('teleporter', idle, AMBER_FLASH_TICKS));
+  });
+
+  it('green only once the doors are fully open: an arriving pad stays red while its doors are shut or opening', () => {
+    // Just after the swap (OPEN) the doors are still shut, then sliding open.
+    expect(phaseLightColor(TP_PHASE.OPEN, false, DECK_END_SHUT)).toBe(DECK_LIGHT_SHUT);
+    expect(phaseLightColor(TP_PHASE.IDLE, false, DECK_END_SHUT)).toBe(DECK_LIGHT_SHUT);
+    expect(phaseLightColor(TP_PHASE.OPEN, false, DECK_END_DARK)).toBe(DECK_LIGHT_SHUT);
+    // The drawn floor ring follows the door state carried in the code.
+    const ringColour = (open: boolean): number | undefined => {
+      const g = new GraphicsContext();
+      const fills: number[] = [];
+      const real = g.fill.bind(g);
+      (g as unknown as { fill(f: { color: number }): GraphicsContext }).fill = (f) => { fills.push(f.color); return real(f); };
+      chamberStatus.draw(g, chamberCode('teleporter', row(TP_PHASE.OPEN, 100, true, open), 0), 'teleporter');
+      return fills[0]; // the first fill is a floor ring segment
+    };
+    expect(ringColour(false)).toBe(DECK_LIGHT_SHUT);
+    expect(ringColour(true)).toBe(DECK_LIGHT_OPEN);
   });
 
   it('a distinct code per phase, charge step and door state; each draws without throwing', () => {

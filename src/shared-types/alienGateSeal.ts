@@ -1,28 +1,31 @@
 /**
  * Teleporter redesign A3 — the Ancients' gate's seal. The gate has no posts:
- * its outermost Astrolabe ring is the edge. Through the last seconds before a
- * jump (the SEALED phase, the iris's existing timing) that ring closes into a
- * solid circle, so nobody gets in or out; the rest of the time nothing at the
- * gate blocks a ship.
+ * its innermost Astrolabe ring, round the green light pool, is the edge of the
+ * ride (owner 2026-11-26: only the pool rides). Through the last seconds
+ * before a jump (the SEALED phase, the iris's existing timing) that ring
+ * closes into a solid circle, so nobody gets in or out; the rest of the time
+ * nothing at the gate blocks a ship.
  *
  * The circle is a closed polygon of `ALIEN_GATE_SEAL_SPANS` chords whose
- * corners sit on the outer ring's outer edge. This file is the ONE source for
- * the ring's size (the Astrolabe rig reads it, `alienGateAstrolabe.ts`), the
- * seal's iris spans (the server's walls and the client's derived walls,
- * through `padIrisSpanLocal`; #15), the ride area (`onPad`) and the closing
- * push (`padPushDir`). Pure; no allocation after module load (#14).
+ * corners sit on the inner ring's inner edge, the pool's rim. This file is
+ * the ONE source for that ring's size (the Astrolabe rig reads it,
+ * `alienGateAstrolabe.ts`; the pool art fills to it), the seal's iris spans
+ * (the server's walls and the client's derived walls, through
+ * `padIrisSpanLocal`; #15), the ride area (`onPad`) and the closing push
+ * (`padPushDir`). Pure; no allocation after module load (#14).
  */
 
-/** The outer Astrolabe ring's centre-line radius and band width (world units,
+/** The inner Astrolabe ring's centre-line radius and band width (world units,
  *  1600-wide gate; taste from the approved B mock-up). */
-export const ALIEN_GATE_OUTER_RING_RADIUS = 780;
-export const ALIEN_GATE_OUTER_RING_WIDTH = 76;
+export const ALIEN_GATE_INNER_RING_RADIUS = 450;
+export const ALIEN_GATE_INNER_RING_WIDTH = 56;
 
-/** The seal polygon's corners sit on the outer ring's outer edge. */
-export const ALIEN_GATE_SEAL_RADIUS = ALIEN_GATE_OUTER_RING_RADIUS + ALIEN_GATE_OUTER_RING_WIDTH / 2;
+/** The seal polygon's corners sit on the inner ring's inner edge: the light
+ *  pool's rim, so the ride area is exactly the green pool. */
+export const ALIEN_GATE_SEAL_RADIUS = ALIEN_GATE_INNER_RING_RADIUS - ALIEN_GATE_INNER_RING_WIDTH / 2;
 
-/** Chords round the seal: 32 keeps the sag inside the ring under 4 units
- *  (R · (1 − cos(π / 32)) ≈ 3.9) and is a multiple of 4, so a quarter turn
+/** Chords round the seal: 32 keeps the sag inside the ring under 3 units
+ *  (R · (1 − cos(π / 32)) ≈ 2.0) and is a multiple of 4, so a quarter turn
  *  maps the polygon onto itself. */
 export const ALIEN_GATE_SEAL_SPANS = 32;
 

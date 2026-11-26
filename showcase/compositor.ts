@@ -16,6 +16,7 @@ import type { FrameIndex } from './recorder.js';
 import type { ShotViewport } from './types.js';
 import { ffmpeg, ffmpegInfo, probeDurationMs, resolveFfmpeg, run } from './tools.js';
 import { perSecond, slotsKept } from './cadence.js';
+import { cropFilter } from './captureCrop.js';
 
 export interface EncodeOpts {
   fps: number;
@@ -167,12 +168,12 @@ export async function encodeClip(
     args.push('-loop', '1', '-i', opts.device.framePng);
     const fi = next++;
     base =
-      `[0:v]fps=${opts.fps},scale=${s.w}:${s.h}:flags=lanczos:out_range=tv,` +
+      `[0:v]${cropFilter(index.crop)}fps=${opts.fps},scale=${s.w}:${s.h}:flags=lanczos:out_range=tv,` +
       `pad=${W}:${H}:${s.x}:${s.y}:color=${BG},setsar=1[scr];` +
       `[${fi}:v]format=rgba[bez];[scr][bez]overlay=0:0:shortest=1,format=yuv420p,${fades}`;
   } else {
     base =
-      `[0:v]fps=${opts.fps},scale=${W}:${H}:force_original_aspect_ratio=decrease:flags=lanczos:out_range=tv,` +
+      `[0:v]${cropFilter(index.crop)}fps=${opts.fps},scale=${W}:${H}:force_original_aspect_ratio=decrease:flags=lanczos:out_range=tv,` +
       `pad=${W}:${H}:(ow-iw)/2:(oh-ih)/2:color=${BG},setsar=1,format=yuv420p,${fades}`;
   }
   let filter: string;

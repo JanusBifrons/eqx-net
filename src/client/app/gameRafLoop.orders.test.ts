@@ -44,7 +44,7 @@ const fb = {
 
 function buildLoop(): (now: number) => void {
   const client = {
-    tickPhysics: vi.fn(), tickInbound: vi.fn(), updateMirror: vi.fn(), sendClientReady: vi.fn(),
+    holdingPicture: () => false, tickPhysics: vi.fn(), tickInbound: vi.fn(), updateMirror: vi.fn(), sendClientReady: vi.fn(),
     consumePendingCameraGlide: () => null,
     setFieldView: () => {},
     clearHelm: () => {}, // entering Fly drops any helm course (helmModeGate)

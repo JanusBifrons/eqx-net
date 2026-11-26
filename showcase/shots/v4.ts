@@ -1,5 +1,9 @@
-import type { Shot } from '../types.js';
+import type { Shot, ShotContext } from '../types.js';
 import { allGroupsManual, lockAhead } from './_helpers.js';
+import { flyTo, localPose, parkAt } from './_pilot.js';
+import { touch } from '../touch.js';
+import { alienGateOffsetMs, nextAlienGateJumpMs } from '../../src/shared-types/teleport.js';
+import { alienGateSite } from '../../src/core/galaxy/alienGates.js';
 import { SHOWCASE_HUB_PAD, SHOWCASE_PORT_PAD } from '../../src/server/rooms/showcaseRooms.js';
 
 /**
@@ -8,10 +12,50 @@ import { SHOWCASE_HUB_PAD, SHOWCASE_PORT_PAD } from '../../src/server/rooms/show
  * (`src/server/rooms/showcaseRooms.ts`, `alien-gate-test` in `index.ts`).
  */
 
+/** The jump phase (0 idle … 4 open) of the pad / gate of `kind` nearest
+ *  (x, y), as this client decoded it (−1 until its row arrives). */
+async function padPhase(ctx: ShotContext, kind: string, x: number, y: number): Promise<number> {
+  return ctx.page.evaluate(([k, px, py]) => {
+    const m = (window as unknown as {
+      __eqxClient?: { mirror?: {
+        swarm?: Map<number, { shipKind?: string; x: number; y: number }>;
+        structures?: Map<number, { teleport?: { phase?: number } }>;
+      } };
+    }).__eqxClient?.mirror;
+    if (!m?.swarm || !m.structures) return -1;
+    let best = -1, bestD = Infinity;
+    for (const [id, e] of m.swarm) {
+      if (e.shipKind !== k) continue;
+      const d = Math.hypot(e.x - (px as number), e.y - (py as number));
+      if (d < bestD && m.structures.has(id)) { bestD = d; best = m.structures.get(id)?.teleport?.phase ?? 0; }
+    }
+    return best;
+  }, [kind, x, y] as const);
+}
+
+/** Poll until `test` passes or `ms` runs out; true when it passed. */
+async function until(ctx: ShotContext, test: () => Promise<boolean>, ms: number): Promise<boolean> {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (await test()) return true;
+    await ctx.sleep(100);
+  }
+  return false;
+}
+
+/** West / east pads of `showcase-teleport`; each chamber's doorways are at its ±y ends. */
+const TP_WEST = { x: -1300, y: 0 };
+const TP_EAST = { x: 1300, y: 0 };
+
 /**
  * Teleporters (T1/T2) — `showcase-teleport`: two paired pads that fire when a
- * ship boards. The pilot waits on the west pad: warned, the doors close, and
- * the jump lands it on the east pad.
+ * ship boards. The pilot starts outside the west chamber, flies in through
+ * its south doorway and settles on the pad: the departure warning, the blast
+ * doors close, the sealed chamber charges, and the swap lands it on the east
+ * pad, whose doors open (lights red until they are open, then green). It
+ * flies out through the east chamber's north doorway. Filmed on a sideways
+ * phone with the game's follow camera (a camera script needs spectator mode,
+ * and the pilot must stay aboard to ride).
  */
 export const teleporterRide: Shot = {
   id: 'teleporter-ride',
@@ -22,47 +66,111 @@ export const teleporterRide: Shot = {
   docs: ['teleporters'],
   reel: true,
   server: 'lean',
-  // A heavy reads at this zoom; a fighter is a few pixels across.
-  target: { room: 'showcase-teleport', params: { shipKind: 'heavy', spawnX: -1300, spawnY: -60 } },
+  viewport: 'phone-landscape',
+  // Straight below the west chamber's south doorway (chamber y ±400).
+  target: { room: 'showcase-teleport', params: { shipKind: 'heavy', spawnX: TP_WEST.x, spawnY: -1100 } },
   hud: 'minimal',
-  durationMs: 15_000,
-  camera: [{ atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 0, y: -60, zoom: 0.55 } }],
+  durationMs: 25_000,
+  endsWithRun: true,
   async run(ctx) {
-    await ctx.sleep(1200);
-    await ctx.hold(['a'], 350);
+    await ctx.sleep(800);
+    // In through the doorway, and settle on the pad.
+    const parked = await parkAt(ctx, TP_WEST.x, TP_WEST.y, 9000);
+    ctx.log(`teleporter-ride: parked on the west pad: ${parked}`);
+    // Boarded: the cycle runs on its own. Wait for the swap to the east pad.
+    const swapped = await until(ctx, async () => ((await localPose(ctx))?.x ?? -1e9) > 0, 15_000);
+    ctx.log(`teleporter-ride: swapped to the east pad: ${swapped}`);
+    // The east doors open (lights red); fly out once the pad is idle (green).
+    const idle = await until(ctx, async () => (await padPhase(ctx, 'teleporter', TP_EAST.x, TP_EAST.y)) === 0, 5000);
+    ctx.log(`teleporter-ride: east pad idle: ${idle}`);
+    // The lights turn green only once the doors are fully open (5df25fc77),
+    // a beat after the pad goes idle: wait for green before flying out.
+    await ctx.sleep(1800);
+    await flyTo(ctx, TP_EAST.x, 1300, { arrive: 200, passThrough: true, cruise: 220, maxMs: 6000 });
+    await ctx.sleep(1500);
   },
 };
 
+/** Sol Prime's Ancients' gate to Vega Reach (sits at its ideal site). */
+const SOL_GATE = alienGateSite('sol-prime', 'vega-reach') ?? { x: 170_000, y: 0 };
+/** How far into the take the gate's timetabled jump starts (its ARMED). */
+const GATE_JUMP_AT_MS = 11_000;
+
 /**
- * Alien gates (A) — `alien-gate-test`: an Ancients' gate at the origin. The
- * pilot flies up to it and opens fire inside its zone: engines and weapons
- * go offline, and the countdown appears.
+ * Alien gates (A) — the real Ancients' gate in Sol Prime (the one to Vega
+ * Reach), in an ordinary galaxy sector on the solar profile. The pilot flies
+ * toward it from the side and pinches out as a player would, to see the whole
+ * Astrolabe; the take is timed so the gate's own timetable seals it mid-clip.
+ * Filmed on a sideways phone with the game's follow camera.
  */
 export const alienGate: Shot = {
   id: 'alien-gate',
   section: 'mechanics',
   title: 'Alien gates',
-  caption: "Every border has an Ancients' gate. They can't be hurt, and their guns disable anyone who opens fire near one.",
+  caption: "Every border has an Ancients' gate. They jump on a timetable, and their guns disable anyone who opens fire near one.",
   features: ['V4-A'],
   docs: ['alien-gates'],
   reel: true,
-  server: 'lean',
-  // Lock-to-fire: instantLock + MAN — the pilot locks the gate and opens fire on cue.
-  target: { room: 'alien-gate-test', params: { shipKind: 'fighter', instantLock: 1 } },
+  server: 'solar',
+  viewport: 'phone-landscape',
+  // West of the gate and a little south (-y): a sideways phone's wide view takes the
+  // whole ring up and to the right, clear of the rail and the fire button, once
+  // the pilot stops ~200 from its centre, on the light pool (the ride area,
+  // inside the inner ring), under the stone rings it flew beneath.
+  target: { galaxy: 'sol-prime', params: { shipKind: 'fighter', spawnX: SOL_GATE.x - 2400, spawnY: SOL_GATE.y - 150 } },
   hud: 'minimal',
-  durationMs: 10_000,
-  camera: [
-    { atMs: 0, smoothMs: 0, shot: { kind: 'hold', x: 0, y: -700, zoom: 0.38 } },
-    { atMs: 5000, smoothMs: 1200, shot: { kind: 'hold', x: 0, y: -800, zoom: 0.5 } },
-  ],
+  durationMs: 22_000,
+  async prepare(ctx) {
+    // A galaxy join can land in Command view: take the controls as a player does.
+    const toggle = ctx.page.getByTestId('pilot-toggle');
+    if ((await toggle.count()) > 0 && (await toggle.getAttribute('aria-pressed')) === 'false') {
+      await toggle.click();
+      await ctx.sleep(800);
+      const item = ctx.page.locator('[data-testid^="pilot-menu-ship-"]').first();
+      if ((await item.count()) > 0) await item.click();
+      await ctx.sleep(1200);
+      ctx.log('alien-gate: took the controls (Fly)');
+    }
+  },
+  async startWhen(ctx) {
+    // Roll so the gate's timetabled jump lands GATE_JUMP_AT_MS into the take.
+    const offset = alienGateOffsetMs('sol-prime', 'vega-reach');
+    let jump = nextAlienGateJumpMs(Date.now(), offset);
+    if (jump - Date.now() < GATE_JUMP_AT_MS + 500) jump = nextAlienGateJumpMs(jump + 1, offset);
+    const wait = jump - GATE_JUMP_AT_MS - Date.now();
+    ctx.log(`alien-gate: waiting ${Math.round(wait / 1000)} s so the jump falls ${GATE_JUMP_AT_MS / 1000} s in`);
+    await ctx.sleep(Math.max(0, wait));
+  },
   async run(ctx) {
-    await allGroupsManual(ctx);
-    await ctx.sleep(1200);
-    await ctx.hold(['w'], 900);
-    await lockAhead(ctx);
-    await ctx.hold(['Space'], 1600);
-    // Engines are off now: holding thrust does nothing until it wears off.
-    await ctx.hold(['w'], 2000);
+    const pad = await touch(ctx.page, ctx.log);
+    const { width: w, height: h } = ctx.viewport;
+    const pinchOut = async (): Promise<void> => {
+      const a = pad.finger(), b = pad.finger();
+      await a.down(w / 2 - w * 0.3, h / 2); await b.down(w / 2 + w * 0.3, h / 2);
+      await Promise.all([a.dragTo(w / 2 - w * 0.05, h / 2, { ms: 900 }), b.dragTo(w / 2 + w * 0.05, h / 2, { ms: 900 })]);
+      await a.up(); await b.up();
+    };
+    await ctx.sleep(600);
+    // Fly toward the gate, pinching out on the way, under its rings and onto
+    // the light pool, the ride area.
+    const fly = flyTo(ctx, SOL_GATE.x - 150, SOL_GATE.y - 100, { arrive: 100, maxMs: 9000 });
+    await ctx.sleep(1500);
+    await pinchOut();
+    await ctx.sleep(300);
+    await pinchOut();
+    const arrived = await fly;
+    const at = await localPose(ctx);
+    ctx.log(`alien-gate: ${arrived ? "on" : "NOT on"} the pool, ${at ? Math.round(Math.hypot(at.x - SOL_GATE.x, at.y - SOL_GATE.y)) : "?"} from the centre`);
+    // Watch the gate's own cycle (logged so the take says whether it sealed).
+    let last = -2;
+    const end = Date.now() + 13_000;
+    while (Date.now() < end) {
+      const ph = await padPhase(ctx, 'alien_gate', SOL_GATE.x, SOL_GATE.y);
+      if (ph !== last) ctx.log(`alien-gate: gate phase ${ph}`);
+      last = ph;
+      await ctx.sleep(150);
+    }
+    await pad.dispose();
   },
 };
 

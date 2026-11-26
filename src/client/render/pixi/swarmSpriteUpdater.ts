@@ -77,7 +77,7 @@ const NO_WRECKS: ReadonlyMap<number, unknown> = new Map();
 
 import type { SpriteBuildSig, SwarmSpriteCtx } from './swarmSpriteCtx.js';
 import { RIG_TICKS_PER_SEC, RIG_UNDER_Z, type StructureRigView } from './structureRigs.js';
-import { isPadChamberKind } from '../../../shared-types/teleport.js';
+import { isAlienGateKind, isPadChamberKind } from '../../../shared-types/teleport.js';
 import { hasBodyStatus, updateSocketNubs } from './structureSocketNubs.js';
 import { syncStructureHologram } from './structureHologram.js';
 export type { SpriteBuildSig, SwarmSpriteCtx };
@@ -259,8 +259,10 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         const stKind = entry.shipKind, stRadius = entry.radius;
         sprite = buildArtShipSprite(artHandle, () => buildStructureGfx(stKind, stRadius, 1, ctx.art.structStyle));
         // A teleporter chamber is a deck ships fly into: the pad-deck band (the
-        // dock apron's), under every hull whatever the add order.
-        if (isPadChamberKind(stKind)) sprite.zIndex = RIG_UNDER_Z;
+        // dock apron's), under every hull whatever the add order. So is the
+        // Ancients' gate's light pool (its stone rings are the rig's `over`
+        // layer, above the ships).
+        if (isPadChamberKind(stKind) || isAlienGateKind(stKind)) sprite.zIndex = RIG_UNDER_Z;
         // WS-4 Phase 5 (R2.16) — a Miner shows a faint dashed mining-range ring
         // at its `miningRange` radius. Built HERE (the once-per-sprite create
         // path, invariant #14 — never per-frame) and parented to the body so it

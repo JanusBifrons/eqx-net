@@ -2,7 +2,7 @@
  *  into a solid loop of chords while SEALED; no posts, nothing else solid. */
 import { describe, expect, it } from 'vitest';
 import {
-  ALIEN_GATE_OUTER_RING_RADIUS, ALIEN_GATE_OUTER_RING_WIDTH, ALIEN_GATE_SEAL_APOTHEM, ALIEN_GATE_SEAL_RADIUS, ALIEN_GATE_SEAL_SPANS,
+  ALIEN_GATE_INNER_RING_RADIUS, ALIEN_GATE_INNER_RING_WIDTH, ALIEN_GATE_SEAL_APOTHEM, ALIEN_GATE_SEAL_RADIUS, ALIEN_GATE_SEAL_SPANS,
 } from './alienGateSeal.js';
 import { PAD_SPECS, onPad, padIrisSpanCount, padIrisSpanLocal, padPushDir, padPushHalf } from './teleport.js';
 
@@ -13,8 +13,8 @@ const span = (i: number) => {
 };
 
 describe('alien gate seal (redesign A3)', () => {
-  it('sits on the outer ring\'s outer edge', () => {
-    expect(ALIEN_GATE_SEAL_RADIUS).toBe(ALIEN_GATE_OUTER_RING_RADIUS + ALIEN_GATE_OUTER_RING_WIDTH / 2);
+  it('sits on the inner ring\'s inner edge, round the light pool (owner 2026-11-26)', () => {
+    expect(ALIEN_GATE_SEAL_RADIUS).toBe(ALIEN_GATE_INNER_RING_RADIUS - ALIEN_GATE_INNER_RING_WIDTH / 2);
     expect(padIrisSpanCount('alien_gate')).toBe(ALIEN_GATE_SEAL_SPANS);
     for (let i = 0; i < ALIEN_GATE_SEAL_SPANS; i++) {
       const s = span(i);
@@ -69,6 +69,12 @@ describe('alien gate seal (redesign A3)', () => {
     }
     // The old square pad's corner is outside the seal: it no longer rides.
     expect(onPad('alien_gate', 0, 0, 630, 630)).toBe(false);
+  });
+
+  it('only the green light pool rides: a ship among the stone rings stays behind (owner 2026-11-26)', () => {
+    // Between the inner ring and the outer ring (the old outer-ring seal's ride disc).
+    for (const r of [480, 600, 780]) expect(onPad('alien_gate', 0, 0, r, 0), `r ${r}`).toBe(false);
+    expect(onPad('alien_gate', 0, 0, 300, 0)).toBe(true);
   });
 
   it('the closing push runs along the radius at the seal', () => {
