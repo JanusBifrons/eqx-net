@@ -2,28 +2,29 @@
  * Style C family "transport" (docs/plans/structure-restyle-stage4.md §4 0a, §6).
  * Transport + docks: teleporter, pocket pad, freight dock; large teleporter + alien gate
  * (parked, large); the road deck tile (base platforms).
- * (the Ancients' gate Astrolabe: structureStyleC.transport.astrolabe.ts).
+ * (the Ancients' gate Astrolabe: structureStyleC.transport.astrolabe.ts; the road:
+ * structureStyleC.transport.road.ts).
  * This family's drawings live only here; `kinds` is spread into `STYLE_C`
  * (structureStyleC.ts). Kind -> family: structureFamilies.ts.
  */
 import {
   CONTAINERS, CRANE, HAZARD, LAMP_AMBER, LAMP_WHITE, RIVET, SIGN_GLASS, SLAB, SLAB_DARK, SLAB_LIGHT, SOOT,
-  STEEL, chamferBox, chevron, clipHalf, core, deck, glow, grime, lamp, mixColor, ngon, outlinePx, poly, rivets,
+  STEEL, chamferBox, chevron, clipHalf, core, deck, glow, grime, lamp, mixColor, ngon, poly, rivets,
   scaffold, scalePts, stencil, stripe, strut, truss, walkway, weld, wornStripe, type StyleCtx,
   type StyleDrawerTable,
 } from './structureStyleKit.js';
 import { DOCK_CRANE_PIVOT_X, DOCK_CRANE_PIVOT_Y } from '../../../core/articulation/rigCatalogue.js';
 import type { RigDrawHookTable } from './structureRigLook.js';
-import { DECK_FILL, DECK_SEAM } from './structureDeckPlates.js';
 import type { BodyStatusHookTable } from './structureSocketNubs.js';
 import { doorLeafContext } from './structureStyleC.fences.gate.js';
 import { chamber, chamberStatus } from './structureStyleC.transport.chamber.js';
 import { ASTROLABE_RIG_HOOK, alienGate } from './structureStyleC.transport.astrolabe.js';
+import { road, roadStatus } from './structureStyleC.transport.road.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
  *  art for this family re-bakes and nothing else does. */
-export const version = 't5c';
+export const version = 't5d';
 
 /** Medium dock (`freight_dock`, 1000 × 400): the loading pad is OUTSIDE the
  *  building (the rig's `lip` apron, past the open -y edge, pixi), so the
@@ -108,28 +109,6 @@ function dock(c: StyleCtx): void {
   for (const s of [-1, 1]) lamp(c, s * (hw - 34), -hh + 24, 4, LAMP_WHITE);
 }
 
-/** Road deck tile (`road`, flat 800 × 692 hex): flat paving in the deck
- *  plates' own colours (`structureDeckPlates.ts`), so it reads as part of the
- *  floor. A dark seam kerb round the hex, a slightly darker carriageway band
- *  across it, worn livery edge lines with small lit road studs, and a dashed
- *  pale centre line. Every layer sits almost flat (tiny lift): ships fly over
- *  it. */
-function road(c: StyleCtx): void {
-  const out = outlinePx(c.kindId, c.styleId);
-  poly(c, out, DECK_SEAM, 'metal', 0.5, 1);
-  poly(c, scalePts(out, 0.93), DECK_FILL, 'metal', 0.5, 1, { seams: 48, seamAngle: Math.PI / 2 });
-  const lane = mixColor(DECK_FILL, 0x000000, 0.25);
-  const hh = c.H / 2;
-  const bandH = hh * 0.9;
-  poly(c, clipHalf(clipHalf(scalePts(out, 0.93), 0, 1, bandH / 2), 0, -1, bandH / 2), lane, 'metal', 0.6, 0.5);
-  for (const s of [-1, 1]) {
-    wornStripe(c, scalePts(out, 0.93), Math.PI / 2, s * (bandH / 2 - 10), 8, 40 + s);
-    for (let x = -c.W / 2 + 140; x <= c.W / 2 - 140; x += 130) glow(c, ngon(x, s * (bandH / 2 - 24), 4, 6), LAMP_AMBER, 0.7);
-  }
-  const dash = mixColor(LAMP_WHITE, DECK_FILL, 0.45);
-  for (let x = -c.W / 2 + 90; x <= c.W / 2 - 90; x += 110) poly(c, chamferBox(x - 30, -5, 60, 10, 2), dash, 'paint', 0.8, 0.3);
-}
-
 /** This family's style C drawers (kinds not listed keep today's art). */
 export const kinds: StyleDrawerTable = {
   freight_dock: dock,
@@ -157,4 +136,6 @@ export const status: BodyStatusHookTable = {
   teleporter: chamberStatus,
   pocket_pad: chamberStatus,
   teleporter_large: chamberStatus,
+  // Base platforms 31: the road's carriageway, joined to its neighbours.
+  road: roadStatus,
 };

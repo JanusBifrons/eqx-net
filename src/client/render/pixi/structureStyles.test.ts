@@ -142,15 +142,16 @@ describe('style C (shipyard brutalist, 1f)', () => {
     for (const id of C_KINDS) {
       const v = buildStructureVisual(id, { accent: 0x66ccaa, style: 'c', livery: true });
       const a = buildStructureVisual(id, { accent: 0x66ccaa, style: 'a', livery: true });
-      expect(v.polys!.length, id).toBeGreaterThan(3);
+      // The road bakes only its paving: the carriageway is its body-status overlay (slice 31).
+      if (id !== 'road') expect(v.polys!.length, id).toBeGreaterThan(3);
       expect(v.rects, id).toEqual([]);
       expect(v.polys, id).not.toEqual(a.polys);
       const out = artFramePx(id, 'c');
       for (const p of v.polys!) for (const [x, y] of p.pts) expect(polyEdgeDist(out, x, y), `${id} ${x},${y}`).toBeGreaterThan(-0.5);
       for (const l of v.lights) expect(insidePoly(out, l.x, l.y), id).toBe(true);
       for (const s of v.sigils ?? []) expect(polyEdgeDist(out, s.x, s.y), id).toBeGreaterThan(s.r);
-      // The Ancients' gate is nobody's plating: no livery bands.
-      if (id === 'alien_gate') expect(v.bands!.length, id).toBe(0);
+      // The Ancients' gate is nobody's plating: no livery bands (nor is the road's paving).
+      if (id === 'alien_gate' || id === 'road') expect(v.bands!.length, id).toBe(0);
       else expect(v.bands!.length, id).toBeGreaterThan(0);
     }
     const cap = buildStructureVisual('capital', { accent: 0, style: 'c', livery: true }).sigils!;
@@ -181,7 +182,7 @@ describe('style C (shipyard brutalist, 1f)', () => {
       const today = forgeStructure(id, { ppu: 0.5, seed: 1 });
       expect(Buffer.from(c.albedo.buffer).equals(Buffer.from(today.albedo.buffer)), id).toBe(false);
       expect(Buffer.from(c.albedo.buffer).equals(Buffer.from(a.albedo.buffer)), id).toBe(false);
-      expect(c.mat.some((m) => m === MAT.WINDOW), id).toBe(true);
+      if (id !== 'road') expect(c.mat.some((m) => m === MAT.WINDOW), id).toBe(true);
     }
   });
 });
