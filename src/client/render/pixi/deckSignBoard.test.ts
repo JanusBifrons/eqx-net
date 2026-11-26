@@ -8,7 +8,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 vi.mock('pixi.js', () => {
   class Node {
     children: unknown[] = [];
-    visible = true; alpha = 1; x = 0; y = 0; label = '';
+    visible = true; alpha = 1; x = 0; y = 0; rotation = 0; label = '';
     scale = { x: 1, set(v: number): void { this.x = v; } };
     addChild(...c: unknown[]): void { this.children.push(...c); }
     destroy(): void {}
@@ -17,6 +17,7 @@ vi.mock('pixi.js', () => {
     clear(): this { return this; }
     rect(): this { return this; }
     roundRect(): this { return this; }
+    circle(): this { return this; }
     poly(): this { return this; }
     moveTo(): this { return this; }
     lineTo(): this { return this; }
@@ -36,7 +37,7 @@ import { Container } from 'pixi.js';
 import type { RenderMirror, StructureRenderState, SwarmRenderState } from '@core/contracts/IRenderer';
 import { DECK_HEX_FLAT, deckHexCentreInto } from '../../../core/hex/plates.js';
 import type { Camera } from '../worker/Camera.js';
-import { DeckSignBoard, SIGN_CLOSE_RADIUS, SIGN_OPEN_RADIUS, readSignsFlag } from './deckSignBoard.js';
+import { DeckSignBoard, SIGN_CLOSE_RADIUS, SIGN_OPEN_RADIUS, SIGN_SAFE_INSET, readSignsFlag } from './deckSignBoard.js';
 import { resetRoadJoins, syncRoadJoins } from './roadJoins.js';
 
 const Y_ROADS: readonly (readonly [number, number])[] = [[0, 0], [1, 0], [2, 0], [3, 0], [-1, 1], [-2, 2], [0, -1], [0, -2]];
@@ -116,6 +117,18 @@ describe('deck sign board', () => {
     put(mirror, 101, 'smelter', -2, 1); // 1 step down the 120° arm
     tick();
     expect(board.rowCount()).toBe(2);
+  });
+
+  it('keeps the board inside the safe rect when the junction is near the view edge', () => {
+    shipAt(mirror, 0, 0);
+    const edge = new Float64Array([-100, -2000, 4000, 2000]); // junction (0,0) hugs the left edge
+    for (let i = 0; i < 6; i++) tick(50, edge);
+    const a = board.boardAnchor();
+    expect(a.x).toBeGreaterThan(-100 + 4100 * SIGN_SAFE_INSET[0]);
+    expect(a.y).toBeLessThanOrEqual(2000 - 4000 * SIGN_SAFE_INSET[3]);
+    // In the middle of a big view it sits right over the junction.
+    for (let i = 0; i < 2; i++) tick();
+    expect(board.boardAnchor().x).toBe(0);
   });
 
   it('a disabled board never opens', () => {

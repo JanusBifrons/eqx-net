@@ -40,19 +40,27 @@ export const SIGN_CLOSE_RADIUS = 2 * DECK_HEX_FLAT;
 export const SIGN_TWEEN_MS = 180;
 
 const ROWS_MAX = 6;
-const ROW_H = 18;
-const PAD = 7;
-const ARROW_W = 18;
-const SWATCH = 8;
-const GAP = 10;
+/** Board metrics, screen px (sized to read on a phone held sideways). */
+const FONT_PX = 17;
+const ROW_H = 28;
+const PAD = 10;
+const ARROW_W = 26;
+const SWATCH = 12;
+const GAP = 14;
 /** Screen px between the junction centre and the board's bottom edge. */
-const LIFT = 14;
+const LIFT = 26;
+/** The board stays inside the view inset by these fractions (left, top,
+ *  right, bottom): clear of the HUD corners, the right rail and the bottom
+ *  bars. A junction near an edge keeps its board inboard, tied by the stem. */
+export const SIGN_SAFE_INSET = [0.17, 0.17, 0.17, 0.26] as const;
+const STEM_PX = 1.5;
+const PIN_PX = 4;
 const PANEL_FILL = 0x04101a;
 const LED = 0x6ff4ff;
 
 let style: TextStyle | null = null;
 function ledStyle(): TextStyle {
-  style ??= new TextStyle({ fontFamily: 'monospace', fontSize: 11, fontWeight: 'bold', fill: LED, letterSpacing: 1 });
+  style ??= new TextStyle({ fontFamily: 'monospace', fontSize: FONT_PX, fontWeight: 'bold', fill: LED, letterSpacing: 1 });
   return style;
 }
 
@@ -72,7 +80,15 @@ function ease(t: number): number {
 
 export class DeckSignBoard {
   private readonly root = new Container();
+  /** Counter-scaled board, origin at its bottom-centre. */
+  private readonly board = new Container();
   private readonly body = new Container();
+  /** Unit-length line from the junction to the board (scaled per frame). */
+  private readonly stem = new Graphics();
+  /** Dot on the junction itself. */
+  private readonly pin = new Graphics();
+  private boardW = 0;
+  private boardH = 0;
   private readonly panel = new Graphics();
   private readonly glyphs = new Graphics();
   /** Place names, created when a board first needs them (cold), reused. */
@@ -95,7 +111,10 @@ export class DeckSignBoard {
     this.root.visible = false;
     this.root.label = 'deckSignBoard';
     this.body.addChild(this.panel, this.glyphs);
-    this.root.addChild(this.body);
+    this.board.addChild(this.body);
+    this.stem.rect(0, -0.5, 1, 1).fill({ color: LED, alpha: 0.7 });
+    this.pin.circle(0, 0, PIN_PX).fill({ color: LED, alpha: 0.9 });
+    this.root.addChild(this.stem, this.pin, this.board);
     world.addChild(this.root);
   }
 
@@ -122,9 +141,31 @@ export class DeckSignBoard {
     const inv = this.camera.scale.x > 0 ? 1 / this.camera.scale.x : 1;
     this.root.visible = true;
     this.root.alpha = e;
-    this.root.scale.set(inv * (0.5 + 0.5 * e));
-    this.root.x = JUNCTIONS.x[this.shown]!;
-    this.root.y = -JUNCTIONS.y[this.shown]!; // game y up → Pixi y down
+    const k = inv * (0.5 + 0.5 * e);
+    this.board.scale.set(k);
+    const jx = JUNCTIONS.x[this.shown]!, jy = -JUNCTIONS.y[this.shown]!; // game y up → Pixi y down
+    this.pin.x = jx; this.pin.y = jy; this.pin.scale.set(inv);
+    // Board: centred above the junction, then clamped into the safe rect.
+    const w = this.boardW * k, h = this.boardH * k;
+    let bx = jx, by = jy - LIFT * inv; // bottom-centre
+    if (bounds !== undefined) {
+      const vw = bounds[2]! - bounds[0]!, vh = bounds[3]! - bounds[1]!;
+      bx = clampSpan(bx, bounds[0]! + vw * SIGN_SAFE_INSET[0] + w / 2, bounds[2]! - vw * SIGN_SAFE_INSET[2] - w / 2);
+      by = clampSpan(by, bounds[1]! + vh * SIGN_SAFE_INSET[1] + h, bounds[3]! - vh * SIGN_SAFE_INSET[3]);
+    }
+    this.board.x = bx; this.board.y = by;
+    // Stem: junction → the nearest point of the board's rect.
+    const ex = Math.min(Math.max(jx, bx - w / 2), bx + w / 2), ey = Math.min(Math.max(jy, by - h), by);
+    const dx = ex - jx, dy = ey - jy, len = Math.hypot(dx, dy);
+    this.stem.visible = len > 0;
+    this.stem.x = jx; this.stem.y = jy;
+    this.stem.rotation = Math.atan2(dy, dx);
+    this.stem.scale.set(len, STEM_PX * inv);
+  }
+
+  /** Board placement in Pixi space (test hook): bottom-centre x, y. */
+  boardAnchor(): { x: number; y: number } {
+    return { x: this.board.x, y: this.board.y };
   }
 
   /** Visible junction rows (test hook). */
@@ -204,12 +245,12 @@ export class DeckSignBoard {
       if (arm.places.length === 0 || row >= ROWS_MAX) continue;
       const cy = PAD + row * ROW_H + ROW_H / 2;
       drawArrow(g, PAD + ARROW_W / 2, cy, arm.dir, arm.places[0]!.color);
-      let x = PAD + ARROW_W + 6;
+      let x = PAD + ARROW_W + 8;
       for (let p = 0; p < arm.places.length && p < SIGN_PLACES_PER_ARM; p++) {
         const place = arm.places[p]!;
         if (p > 0) x += GAP;
         g.rect(x, cy - SWATCH / 2, SWATCH, SWATCH).fill({ color: place.color });
-        x += SWATCH + 4;
+        x += SWATCH + 6;
         const text = this.textAt(used++);
         const label = place.name.toUpperCase();
         if (text.text !== label) text.text = label;
@@ -227,12 +268,13 @@ export class DeckSignBoard {
     const h = PAD * 2 + row * ROW_H;
     this.panel.clear();
     if (!this.empty) {
-      this.panel.roundRect(0, 0, width, h, 4).fill({ color: PANEL_FILL, alpha: 0.82 }).stroke({ color: LED, alpha: 0.55, width: 1 });
-      // The stem down to the junction.
-      this.panel.moveTo(width / 2, h).lineTo(width / 2, h + LIFT).stroke({ color: LED, alpha: 0.55, width: 1 });
+      this.panel.roundRect(-2, -2, width + 4, h + 4, 7).stroke({ color: LED, alpha: 0.18, width: 4 }); // glow
+      this.panel.roundRect(0, 0, width, h, 5).fill({ color: PANEL_FILL, alpha: 0.86 }).stroke({ color: LED, alpha: 0.8, width: 1.5 });
     }
+    this.boardW = width;
+    this.boardH = h;
     this.body.x = -width / 2;
-    this.body.y = -h - LIFT;
+    this.body.y = -h;
   }
 
   private textAt(k: number): Text {
@@ -253,8 +295,14 @@ function drawArrow(g: Graphics, cx: number, cy: number, dir: number, color: numb
   const a = (-dir * Math.PI) / 3;
   const ux = Math.cos(a), uy = Math.sin(a);
   const len = ARROW_W / 2 - 1;
+  const head = ARROW_W * 0.3, half = ARROW_W * 0.24;
   const tx = cx + ux * len, ty = cy + uy * len;
-  g.moveTo(cx - ux * len, cy - uy * len).lineTo(tx, ty).stroke({ color, width: 2 });
-  const hx = -ux * 5, hy = -uy * 5, px = -uy * 4, py = ux * 4;
+  g.moveTo(cx - ux * len, cy - uy * len).lineTo(tx, ty).stroke({ color, width: 3 });
+  const hx = -ux * head, hy = -uy * head, px = -uy * half, py = ux * half;
   g.poly([tx, ty, tx + hx + px, ty + hy + py, tx + hx - px, ty + hy - py]).fill({ color });
+}
+
+/** `v` clamped to [lo, hi]; the middle when the span is too small. */
+function clampSpan(v: number, lo: number, hi: number): number {
+  return lo > hi ? (lo + hi) / 2 : Math.min(Math.max(v, lo), hi);
 }
