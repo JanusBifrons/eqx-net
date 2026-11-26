@@ -13,6 +13,7 @@ import type { ArtOptions } from '../../art/artMode.js';
 import { DEFAULT_LINE_LOOK, readLineLook, type LineLook } from '../connectorLineLooks.js';
 import { readRigsFlag, StructureRigs } from '../structureRigs.js';
 import { StructureDeckPlates } from '../structureDeckPlates.js';
+import { StructureDeckLit } from '../structureDeckLit.js';
 import { DEFAULT_DECK_TEX, readDeckTex, type DeckTex } from '../structureDeckTexture.js';
 import { DEFAULT_FENCE_LOOK, readFenceLook, type FenceLook } from '../connectorFenceBeam.js';
 import { readZonesFlag } from '../structureDeckZones.js';
@@ -75,7 +76,8 @@ export function applyRestyleLook(
   swarmUpdaterCtx.socketNubs = art.fx === true;
   if (look.rigs) swarmUpdaterCtx.structureRigs = new StructureRigs(shipContainer);
   // Base platforms: the deck floor (drawn only while the room's deck flag is on).
-  swarmUpdaterCtx.deckPlates = new StructureDeckPlates(shipContainer, look.deckTex, look.zones);
+  swarmUpdaterCtx.deckPlates = new StructureDeckPlates(shipContainer, look.deckTex, look.zones,
+    look.deckLit && look.deckTex !== 'plain' ? new StructureDeckLit(shipContainer, look.deckTex) : undefined);
   // Lit deck spike: roads bake their carriageway (`structHandleFor`). Off = untouched.
   if (look.deckLit && swarmUpdaterCtx.art) swarmUpdaterCtx.art.deckLit = true;
   return look;

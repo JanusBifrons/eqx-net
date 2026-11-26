@@ -9,7 +9,7 @@
  * Local space is Pixi-up (ship nose at -y). Heights are in WORLD units.
  */
 import { getShipKind, type ShipKind } from '../../../shared-types/shipKinds.js';
-import { buildStructureVisual, type PolyOp } from '../pixi/structureVisuals.js';
+import { buildStructureVisual, type PolyOp, type StructureVisual } from '../pixi/structureVisuals.js';
 import { polyEdgeDist } from '../pixi/structureStyleKit.js';
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import { boxBlur, distanceInside, gridFor, hashStr, insidePoly, rasterPoly, rng, type Poly } from './raster.js';
@@ -561,6 +561,8 @@ export interface StructureForgeOpts {
   /** Lit deck spike: a road's arm mask (its style bakes the carriageway) and the grid box it needs (the full deck hex). */
   arms?: number;
   box?: { w: number; h: number };
+  /** A ready draw plan (lit deck hex, `deckLitVisual`) instead of the kind's own. */
+  plan?: StructureVisual;
 }
 
 const DECK_HEX = 0x1d2433;
@@ -642,7 +644,7 @@ function stampStylePoly(f: Fields, p: PolyOp): void {
  */
 export function forgeStructure(kindId: string, opts: StructureForgeOpts): Fields {
   const accent = opts.accent ?? (isStructureKindId(kindId) ? getStructureKind(kindId).color : 0x66ccaa);
-  const plan = buildStructureVisual(kindId, { accent, seed: opts.seed ?? 1, omitSpans: true, ...(opts.livery ? { livery: true } : {}), ...(opts.style ? { style: opts.style } : {}), ...(opts.arms !== undefined ? { arms: opts.arms } : {}) });
+  const plan = opts.plan ?? buildStructureVisual(kindId, { accent, seed: opts.seed ?? 1, omitSpans: true, ...(opts.livery ? { livery: true } : {}), ...(opts.style ? { style: opts.style } : {}), ...(opts.arms !== undefined ? { arms: opts.arms } : {}) });
   const fp = plan.footprint, gb = opts.box ?? fp;
   const box: Poly = [[-gb.w / 2, -gb.h / 2], [gb.w / 2, -gb.h / 2], [gb.w / 2, gb.h / 2], [-gb.w / 2, gb.h / 2]];
   const side = Math.max(gb.w, gb.h) + 4;

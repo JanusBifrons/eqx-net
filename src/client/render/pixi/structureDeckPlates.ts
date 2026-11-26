@@ -25,6 +25,8 @@ import { DECK_HEX_SIZE, deckHexCentreInto, plateCentreWorldInto } from '../../..
 import { RIG_UNDER_Z } from './structureRigs.js';
 import { DEFAULT_DECK_TEX, deckPlatePick, drawDeckHexTexture, type DeckTex } from './structureDeckTexture.js';
 import { StructureDeckZones } from './structureDeckZones.js';
+// Type only: the lit layer is handed in (a value import would cycle the art forge through the lit shader).
+import type { DeckLitView, StructureDeckLit } from './structureDeckLit.js';
 
 /** zIndex of the deck floor: the bottom of the structure under band. */
 export const DECK_UNDER_Z = RIG_UNDER_Z - 0.5;
@@ -42,17 +44,46 @@ const plateContexts = new Map<string, GraphicsContext>();
 
 /** The shared art of one plate in look `tex` (seeded `variant`), in its own
  *  Pixi frame (centre hex at the origin, Y down). Built once on first use. */
+/** Centre hex (0, 0) and its ring, in game space relative to the centre hex. */
+const PLATE_HEXES: ReadonlyArray<{ q: number; r: number }> = [{ q: 0, r: 0 }, ...HEX_DIRS.map((d) => ({ q: d.q, r: d.r }))];
+const corner = (cx: number, cy: number, a: number): [number, number] =>
+  [cx + DECK_HEX_SIZE * Math.cos(a), -(cy + DECK_HEX_SIZE * Math.sin(a))];
+
+/** Stroke the plate's outer outline into `ctx`: each hex edge with no plate hex beyond it. */
+function strokePlateOutline(ctx: GraphicsContext): void {
+  const hexes = PLATE_HEXES;
+  const c: HexPoint = { x: 0, y: 0 };
+  const inPlate = (q: number, r: number): boolean => hexes.some((h) => h.q === q && h.r === r);
+  const n: HexPoint = { x: 0, y: 0 };
+  for (const h of hexes) {
+    deckHexCentreInto(h.q, h.r, c);
+    for (const d of HEX_DIRS) {
+      if (inPlate(h.q + d.q, h.r + d.r)) continue;
+      deckHexCentreInto(h.q + d.q, h.r + d.r, n);
+      const a = Math.atan2(n.y - c.y, n.x - c.x);
+      const [ax, ay] = corner(c.x, c.y, a - Math.PI / 6);
+      const [bx, by] = corner(c.x, c.y, a + Math.PI / 6);
+      ctx.moveTo(ax, ay).lineTo(bx, by);
+    }
+  }
+  ctx.stroke({ color: DECK_OUTLINE, width: DECK_OUTLINE_WIDTH, cap: 'round', join: 'round' });
+}
+
+/** The plate's outer outline alone (lit deck: drawn over the lit hexes,
+ *  which would otherwise cover its inner half). Built once. */
+export function deckPlateOutlineContext(): GraphicsContext {
+  let ctx = plateContexts.get('outline');
+  if (ctx === undefined) { ctx = new GraphicsContext(); strokePlateOutline(ctx); plateContexts.set('outline', ctx); }
+  return ctx;
+}
+
 export function deckPlateContext(tex: DeckTex = 'plain', variant = 0): GraphicsContext {
   const key = tex === 'plain' ? 'plain' : `${tex}:${variant}`;
   const cached = plateContexts.get(key);
   if (cached !== undefined) return cached;
   const ctx = new GraphicsContext();
-  // Centre hex (0, 0) and its ring, in game space relative to the centre hex.
-  const hexes: Array<{ q: number; r: number }> = [{ q: 0, r: 0 }];
-  for (const d of HEX_DIRS) hexes.push({ q: d.q, r: d.r });
+  const hexes = PLATE_HEXES;
   const c: HexPoint = { x: 0, y: 0 };
-  const corner = (cx: number, cy: number, a: number): [number, number] =>
-    [cx + DECK_HEX_SIZE * Math.cos(a), -(cy + DECK_HEX_SIZE * Math.sin(a))];
   const hexPoly = (cx: number, cy: number): number[] => {
     const pts: number[] = [];
     for (let k = 0; k < 6; k++) pts.push(...corner(cx, cy, Math.PI / 6 + (k * Math.PI) / 3));
@@ -71,21 +102,8 @@ export function deckPlateContext(tex: DeckTex = 'plain', variant = 0): GraphicsC
     deckHexCentreInto(h.q, h.r, c);
     ctx.poly(hexPoly(c.x, c.y), true).stroke({ color: DECK_SEAM, width: DECK_SEAM_WIDTH, join: 'round' });
   }
-  // The plate's outer outline: each hex edge with no plate hex beyond it.
-  const inPlate = (q: number, r: number): boolean => hexes.some((h) => h.q === q && h.r === r);
-  const n: HexPoint = { x: 0, y: 0 };
-  for (const h of hexes) {
-    deckHexCentreInto(h.q, h.r, c);
-    for (const d of HEX_DIRS) {
-      if (inPlate(h.q + d.q, h.r + d.r)) continue;
-      deckHexCentreInto(h.q + d.q, h.r + d.r, n);
-      const a = Math.atan2(n.y - c.y, n.x - c.x);
-      const [ax, ay] = corner(c.x, c.y, a - Math.PI / 6);
-      const [bx, by] = corner(c.x, c.y, a + Math.PI / 6);
-      ctx.moveTo(ax, ay).lineTo(bx, by);
-    }
-  }
-  ctx.stroke({ color: DECK_OUTLINE, width: DECK_OUTLINE_WIDTH, cap: 'round', join: 'round' });
+  // The plate's outer outline.
+  strokePlateOutline(ctx);
   plateContexts.set(key, ctx);
   return ctx;
 }
@@ -110,27 +128,37 @@ export class StructureDeckPlates {
     g.parent?.removeChild(g);
     g.destroy(); // the shared context survives (a Graphics on a context does not own it)
     this.graphics.delete(key);
+    this.lit?.remove(key);
   };
 
   /** Slice 33: zone markings painted on the floor (`?zones=off` ⇒ none). The
    *  swarm updater notes each structure into it; {@link sync} sweeps it. */
   readonly zones: StructureDeckZones | undefined;
 
-  /** `tex`: the floor look (`readDeckTex`, `?deckTex=`); `zones`: paint zone markings. */
-  constructor(private readonly shipContainer: Container, private readonly tex: DeckTex = DEFAULT_DECK_TEX, zones = true) {
+  /** Lit deck (`?deckLit=on`, textured looks only): the lit plates over the vector ones. */
+  readonly lit: StructureDeckLit | undefined;
+
+  /** `tex`: the floor look (`readDeckTex`, `?deckTex=`); `zones`: paint zone markings;
+   *  `lit`: the lit plates (`?deckLit=on`, `restyleLook`; absent = today's floor exactly). */
+  constructor(private readonly shipContainer: Container, private readonly tex: DeckTex = DEFAULT_DECK_TEX, zones = true, lit?: StructureDeckLit) {
     this.zones = zones ? new StructureDeckZones(shipContainer) : undefined;
+    this.lit = tex !== 'plain' ? lit : undefined;
   }
 
   /** Live plate Graphics (tests, stats): one per plate. */
   get size(): number { return this.graphics.size; }
 
   /** Bring the floor in line with `plates` (absent ⇒ none). Only a new
-   *  version touches the display tree. */
-  sync(plates: DeckPlatesMirror | undefined): void {
+   *  version touches the display tree; `view` (the swarm ctx) drives the lit plates each frame. */
+  sync(plates: DeckPlatesMirror | undefined, view?: DeckLitView): void {
     const v = plates?.version ?? 0;
-    const count = plates?.count ?? 0;
     this.zones?.frame(plates?.deck === true); // last frame's gone structures lose their paint
-    if (v === this.version) return;
+    if (v !== this.version) this.rebuild(plates, v);
+    if (this.lit !== undefined && view !== undefined) this.lit.frame(view);
+  }
+
+  private rebuild(plates: DeckPlatesMirror | undefined, v: number): void {
+    const count = plates?.count ?? 0;
     this.version = v;
     this.seen.clear();
     for (let n = 0; n < count; n++) {
@@ -152,12 +180,14 @@ export class StructureDeckPlates {
       this.shipContainer.sortableChildren = true;
       this.shipContainer.addChild(g);
       this.graphics.set(key, g);
+      this.lit?.add(key, i, j, this.pt.x, -this.pt.y);
     }
     this.graphics.forEach(this.sweepFn);
   }
 
   destroy(): void {
     this.zones?.destroy();
+    this.lit?.destroy();
     this.seen.clear();
     this.graphics.forEach(this.sweepFn);
   }

@@ -18,6 +18,7 @@ import { getShipKind } from '../../../shared-types/shipKinds.js';
 import { shipTuning } from '../../../shared-types/shipScale/tuning.js';
 import { SHIP_SCALE } from '../../../shared-types/shipScale/config.js';
 import { DECK_HEX_FLAT, DECK_HEX_SIZE } from '../../../core/hex/plates.js';
+import { DECK_PLATE_HEX_BOX, DECK_PLATE_LIT_VERSION, deckLitVisual, isDeckLitArtId } from '../pixi/structureDeckLitArt.js';
 
 /** Machined ships keep this many sun azimuths and cross-fade between two. */
 export const SUN_STEPS = 16;
@@ -111,7 +112,7 @@ export function bakeKey(j: BakeJob): string {
   if (j.type === 'fx') return `x:${FX_VERSION}:${j.id}:${j.variant ?? ''}:${j.seed ?? ''}`;
   if (j.type === 'rock') return `r:${j.shapeSeed}:${j.radius}:${j.resource ?? ''}:${quarterTurnsFine(j.rot ?? 0)}`;
   const q = quarterTurns(j.rot ?? 0);
-  return `m:${j.id}:${j.seed}:${j.accent ?? ''}${q ? `:r${q}` : ''}${j.rings ? ':R' : ''}${j.livery ? structLiveryTag(j.livery) : ''}${j.style ? styleTag(j.style, j.id) : ''}${armsTag(j.arms)}`;
+  return `m:${j.id}:${j.seed}:${j.accent ?? ''}${q ? `:r${q}` : ''}${j.rings ? ':R' : ''}${j.livery ? structLiveryTag(j.livery) : ''}${j.style ? styleTag(j.style, j.id) : ''}${armsTag(j)}`;
 }
 
 /** A kind's turret bases (pivot + 1.4 x the larger of ring and cap): what a
@@ -128,8 +129,11 @@ function styleTag(style: string, id: string): string {
   return v ? `:S${style}.${v}` : `:S${style}`;
 }
 
-/** A road arm bake's key suffix (lit deck spike; absent adds nothing). */
-function armsTag(arms: number | undefined): string { return arms === undefined ? '' : `:A${DECK_LIT_VERSION}.${arms}`; }
+/** A lit deck bake's key suffix: a road's arm mask, or a deck hex's drawing version (else nothing). */
+function armsTag(j: { id: string; arms?: number }): string {
+  if (isDeckLitArtId(j.id)) return `:D${DECK_PLATE_LIT_VERSION}`;
+  return j.arms === undefined ? '' : `:A${DECK_LIT_VERSION}.${j.arms}`;
+}
 
 /** A liveried structure's key suffix (on by default, `?structLivery=0` = off; absent adds nothing). */
 function structLiveryTag(l: StructLivery): string { return `:SL${l.team.toString(16)}:${l.sigil.toString(16)}`; }
@@ -140,7 +144,7 @@ function liveryTag(l: Livery): string { return `:L${l.treatment}${l.team.toStrin
 /** A lit job's key (prefixed `L` by bakeKey): no sun, and no turn for
  *  structures and rocks (the mesh turns; the maps don't change). */
 function litKeyBody(j: Exclude<BakeJob, { type: 'fx' }>): string {
-  if (j.type === 'struct') return `m:${j.id}:${j.seed}:${j.accent ?? ''}${j.rings ? ':R' : ''}${j.livery ? structLiveryTag(j.livery) : ''}${j.style ? styleTag(j.style, j.id) : ''}${armsTag(j.arms)}`;
+  if (j.type === 'struct') return `m:${j.id}:${j.seed}:${j.accent ?? ''}${j.rings ? ':R' : ''}${j.livery ? structLiveryTag(j.livery) : ''}${j.style ? styleTag(j.style, j.id) : ''}${armsTag(j)}`;
   if (j.type === 'rock') return `r:${j.shapeSeed}:${j.radius}:${j.resource ?? ''}`;
   return bakeKey({ ...j, lit: false });
 }
@@ -273,7 +277,8 @@ export function runBake(j: BakeJob, rig: LightRig): Baked {
     return { frames, w: f.g.w, h: f.g.h, density: f.g.ppu, nozzles: f.nozzles, navLights: f.navLights, ...(tiles > 1 ? { tiles, tileH: TILE_MAX_SIDE } : {}) };
   }
   const rings = j.rings ? structureTurrets(j.id).map((t) => ({ x: t.px, y: t.py, r: t.ring })) : undefined;
-  const size = j.arms !== undefined ? { ppu: DECK_LIT_PPU, arms: j.arms, box: DECK_HEX_BOX } : { ppu: STRUCT_PPU, maxSide: STRUCT_MAX_SIDE };
+  const size = isDeckLitArtId(j.id) ? { ppu: DECK_LIT_PPU, box: DECK_PLATE_HEX_BOX, plan: deckLitVisual(j.id, j.seed) }
+    : j.arms !== undefined ? { ppu: DECK_LIT_PPU, arms: j.arms, box: DECK_HEX_BOX } : { ppu: STRUCT_PPU, maxSide: STRUCT_MAX_SIDE };
   const f = forgeStructure(j.id, { ...size, seed: j.seed, accent: j.accent, rings, ...(j.livery ? { livery: j.livery } : {}), ...(j.style ? { style: j.style } : {}) });
   if (j.lit) return litBaked(f, Infinity);
   return {
