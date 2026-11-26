@@ -37,6 +37,7 @@ import {
   mixColor, strokeCableSparks, type LinePath,
 } from './connectorLineLooks.js';
 import { CONNECTOR_IDLE_COLOR, type ConnectorFlowMaterial, type ConnectorVisual } from './connectorVisual.js';
+import { isDeckFenceLink } from './connectorFenceBeam.js';
 
 /** Points in a cable polyline. */
 export const CABLE_POINTS = CABLE_CURVE_SEGMENTS + 1;
@@ -151,10 +152,16 @@ export class LinkCableCache {
   private readonly nodeB = blankGridNode();
   /** The room's deck flag (base platforms): deck links flatten to their seam path. */
   deck = false;
+  /** Base platforms slice 30 (`?fenceLook=new`): on a deck, fence links draw
+   *  as a shield beam (`connectorFenceBeam.ts`), not a cable. Set at init. */
+  fenceBeams = false;
   /** Test hook: how many times a curve was flattened. */
   flattens = 0;
 
   get size(): number { return this.map.size; }
+
+  /** Does link a–b draw as a fence beam (the new look on, a deck, a fence link)? */
+  isFenceBeam(a: SwarmRenderState, b: SwarmRenderState): boolean { return this.fenceBeams && this.deck && isDeckFenceLink(a, b); }
 
   /** `ma` / `mb`: each end's build mirror (its structure row's `mirror`). */
   get(key: number, a: SwarmRenderState, sa: number, b: SwarmRenderState, sb: number, ma = false, mb = false): LinkCable {

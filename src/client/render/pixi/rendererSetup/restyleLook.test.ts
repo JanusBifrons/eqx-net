@@ -23,6 +23,7 @@ function bootFrom(art: ArtOptions): BootMsg {
     ...(art.lineLook !== undefined ? { lineLook: art.lineLook } : {}),
     ...(art.rigs !== undefined ? { rigs: art.rigs } : {}),
     ...(art.deckTex !== undefined ? { deckTex: art.deckTex } : {}),
+    ...(art.fenceLook !== undefined ? { fenceLook: art.fenceLook } : {}),
   };
 }
 
@@ -68,7 +69,7 @@ describe('structure restyle on the worker renderer', () => {
   });
 
   it('a worker renderer booted without the fields falls back to the defaults (on)', () => {
-    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a' });
+    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a', fenceLook: 'old' });
   });
 });
 
@@ -110,5 +111,21 @@ describe('socket cables follow the new-effects flag (0d slice 8)', () => {
     expect(ctx.socketNubs).toBe(true);
     applyRestyleLook({ lineLook: null }, ctx, new Container(), { mode: 'machined' }, '');
     expect(ctx.socketNubs).toBe(false);
+  });
+});
+
+describe('deck fence beam look (base platforms slice 30, `?fenceLook=`)', () => {
+  it('defaults to old; new rides BOOT to the worker and turns the cache flag on', () => {
+    expect(readRestyleLook('').fenceLook).toBe('old');
+    expect(readRestyleLook('?fenceLook=bogus').fenceLook).toBe('old');
+    const art: ArtOptions = { mode: 'machined', ...readRestyleLook('?room=sector&fenceLook=new') };
+    const [, workerArt] = rendererArgsFromBoot(structuredClone(bootFrom(art)));
+    const conn = { lineLook: null, cables: { fenceBeams: false } };
+    applyRestyleLook(conn, {}, new Container(), workerArt, null);
+    expect(conn.cables.fenceBeams).toBe(true);
+    applyRestyleLook(conn, {}, new Container(), { mode: 'machined' }, '?fenceLook=old');
+    expect(conn.cables.fenceBeams).toBe(false);
+    applyRestyleLook(conn, {}, new Container(), { mode: 'machined' }, '?fenceLook=new');
+    expect(conn.cables.fenceBeams).toBe(true);
   });
 });
