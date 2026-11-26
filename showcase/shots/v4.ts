@@ -117,7 +117,7 @@ export const alienGate: Shot = {
   // whole ring up and to the right, clear of the rail and the fire button, once
   // the pilot stops ~200 from its centre, on the light pool (the ride area,
   // inside the inner ring), under the stone rings it flew beneath.
-  target: { galaxy: 'sol-prime', params: { shipKind: 'fighter', spawnX: SOL_GATE.x - 3200, spawnY: SOL_GATE.y - 150 } },
+  target: { galaxy: 'sol-prime', params: { shipKind: 'fighter', spawnX: SOL_GATE.x - 2400, spawnY: SOL_GATE.y - 150 } },
   hud: 'minimal',
   durationMs: 22_000,
   async prepare(ctx) {
@@ -158,7 +158,9 @@ export const alienGate: Shot = {
     await pinchOut();
     await ctx.sleep(300);
     await pinchOut();
-    await fly;
+    const arrived = await fly;
+    const at = await localPose(ctx);
+    ctx.log(`alien-gate: ${arrived ? "on" : "NOT on"} the pool, ${at ? Math.round(Math.hypot(at.x - SOL_GATE.x, at.y - SOL_GATE.y)) : "?"} from the centre`);
     // Watch the gate's own cycle (logged so the take says whether it sealed).
     let last = -2;
     const end = Date.now() + 13_000;
