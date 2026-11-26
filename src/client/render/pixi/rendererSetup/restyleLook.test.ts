@@ -71,7 +71,7 @@ describe('structure restyle on the worker renderer', () => {
   });
 
   it('a worker renderer booted without the fields falls back to the defaults (on)', () => {
-    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a', fenceLook: 'old', zones: true });
+    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a', fenceLook: 'new', zones: true });
   });
 });
 
@@ -118,8 +118,8 @@ describe('socket cables follow the new-effects flag (0d slice 8)', () => {
 
 describe('deck fence beam look (base platforms slice 30, `?fenceLook=`)', () => {
   it('defaults to old; new rides BOOT to the worker and turns the cache flag on', () => {
-    expect(readRestyleLook('').fenceLook).toBe('old');
-    expect(readRestyleLook('?fenceLook=bogus').fenceLook).toBe('old');
+    expect(readRestyleLook('').fenceLook).toBe('new');
+    expect(readRestyleLook('?fenceLook=bogus').fenceLook).toBe('new');
     const art: ArtOptions = { mode: 'machined', ...readRestyleLook('?room=sector&fenceLook=new') };
     const [, workerArt] = rendererArgsFromBoot(structuredClone(bootFrom(art)));
     const conn = { lineLook: null, cables: { fenceBeams: false } };

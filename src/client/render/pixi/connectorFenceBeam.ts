@@ -28,7 +28,7 @@ import { SHIELD_WALL_CORE_COLOR, SHIELD_WALL_DOWN_COLOR, SHIELD_WALL_GLOW_COLOR 
 export type FenceLook = 'old' | 'new';
 
 /** What every player sees until the owner approves the new look. */
-export const DEFAULT_FENCE_LOOK: FenceLook = 'old';
+export const DEFAULT_FENCE_LOOK: FenceLook = 'new'; // owner picked the shield beam 2026-11-26
 
 /** `?fenceLook=old|new`; absent or unknown = {@link DEFAULT_FENCE_LOOK}. */
 export function readFenceLook(search: string): FenceLook {

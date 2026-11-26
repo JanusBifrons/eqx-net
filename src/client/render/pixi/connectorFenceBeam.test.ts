@@ -44,13 +44,13 @@ function cache(fenceBeams: boolean, deck = true): LinkCableCache {
 }
 
 describe('?fenceLook= parse', () => {
-  it('old by default; old|new read; anything else = the default', () => {
-    expect(DEFAULT_FENCE_LOOK).toBe('old');
-    expect(readFenceLook('')).toBe('old');
+  it('new by default; old|new read; anything else = the default', () => {
+    expect(DEFAULT_FENCE_LOOK).toBe('new');
+    expect(readFenceLook('')).toBe('new');
     expect(readFenceLook('?room=sector&fenceLook=new')).toBe('new');
     expect(readFenceLook('?fenceLook=old&deckTex=a')).toBe('old');
-    expect(readFenceLook('?fenceLook=newer')).toBe('old');
-    expect(readFenceLook('?xfenceLook=new')).toBe('old');
+    expect(readFenceLook('?fenceLook=newer')).toBe('new');
+    expect(readFenceLook('?xfenceLook=new')).toBe('new');
   });
 });
 
