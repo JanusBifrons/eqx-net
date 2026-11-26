@@ -77,7 +77,7 @@ const NO_WRECKS: ReadonlyMap<number, unknown> = new Map();
 
 import type { SpriteBuildSig, SwarmSpriteCtx } from './swarmSpriteCtx.js';
 import { RIG_TICKS_PER_SEC, type StructureRigView } from './structureRigs.js';
-import { underZForStructure } from './structureDeckZones.js';
+import { cullRadiusForStructure, underZForStructure } from './structureDeckZones.js';
 import { hasBodyStatus, updateSocketNubs } from './structureSocketNubs.js';
 import { syncRoadJoins } from './roadJoins.js';
 import { syncStructureHologram } from './structureHologram.js';
@@ -355,7 +355,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     sprite.y = -lerped.y;
     // A3 — don't draw structures that are off screen (static, so the bounding
     // radius is a safe margin; mount barrels are children and hide with it).
-    if (entry.kind === 2) sprite.visible = isSpriteInView(sprite.x, sprite.y, entry.radius, ctx.viewBounds);
+    if (entry.kind === 2) sprite.visible = isSpriteInView(sprite.x, sprite.y, cullRadiusForStructure(entry.shipKind, entry.radius), ctx.viewBounds);
     // W2a — an NPC on its warp run is out of the world: hidden (WarpFx draws
     // the departure from its spool pose), like a remote pilot's ship.
     else if (entry.kind === 1) sprite.visible = entry.warp !== 2;
