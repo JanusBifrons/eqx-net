@@ -67,6 +67,32 @@ export interface NpcBaseSpec {
   /** T1 — a full profile (a galaxy sector's `baseProfileFor`); overrides the
    *  tier defaults above. */
   profile?: BaseProfile;
+  /** On a deck room: grow dense (every plate packed, as in an asteroid-field
+   *  clearing, slice 25). Test rooms set it (`?room=deck-bases`); galaxy
+   *  seeding passes its field signal to `grow` instead. */
+  dense?: boolean;
+}
+
+/** The profile a spec describes (its `profile`, else the tier defaults). Pure. */
+export function npcBaseProfile(spec: NpcBaseSpec): BaseProfile {
+  if (spec.profile) return spec.profile;
+  const [w0, w1] = TIER_WEALTH[spec.tier];
+  const [, l1] = TIER_LEVEL_CAP[spec.tier];
+  return {
+    tier: spec.tier,
+    role: spec.role,
+    ownerFaction: spec.side ?? 'traders',
+    wealth: spec.wealth ?? Math.round((w0 + w1) / 2),
+    levelCap: l1,
+    fenced: spec.fenced ?? true,
+  };
+}
+
+/** Grow the base a spec describes, on plates when `deck` (pure; nothing
+ *  placed). `dense` (default `spec.dense`) packs every plate. */
+export function growNpcBase(spec: NpcBaseSpec, deck: boolean, dense = spec.dense ?? false): GrownBase {
+  const opts = deck ? (dense ? { deck: true, dense: true } : { deck: true }) : {};
+  return growBase(npcBaseProfile(spec), spec.seed, spec.features ?? [], opts);
 }
 
 export interface NpcBaseHooks {
@@ -107,26 +133,16 @@ export class NpcBaseSubsystem {
 
   /** The profile a spec describes (its `profile`, else the tier defaults). */
   profileOf(spec: NpcBaseSpec): BaseProfile {
-    if (spec.profile) return spec.profile;
-    const [w0, w1] = TIER_WEALTH[spec.tier];
-    const [, l1] = TIER_LEVEL_CAP[spec.tier];
-    return {
-      tier: spec.tier,
-      role: spec.role,
-      ownerFaction: spec.side ?? 'traders',
-      wealth: spec.wealth ?? Math.round((w0 + w1) / 2),
-      levelCap: l1,
-      fenced: spec.fenced ?? true,
-    };
+    return npcBaseProfile(spec);
   }
 
   /** Grow the base a spec describes (pure; nothing placed). Lets a caller
    *  pick a site from its extent before seeding (T1). On a deck room
    *  (`registry.deck`, base platforms) the base is grown on plates; `dense`
-   *  (a base in an asteroid-field clearing, slice 25) packs every plate. */
-  grow(spec: NpcBaseSpec, dense = false): GrownBase {
-    const opts = this.h.registry.deck ? (dense ? { deck: true, dense: true } : { deck: true }) : {};
-    return growBase(this.profileOf(spec), spec.seed, spec.features ?? [], opts);
+   *  (a base in an asteroid-field clearing, slice 25; default `spec.dense`)
+   *  packs every plate. */
+  grow(spec: NpcBaseSpec, dense = spec.dense ?? false): GrownBase {
+    return growNpcBase(spec, this.h.registry.deck, dense);
   }
 
   /** Place a base with its Capital (a deck base: its origin plate) at (spec.x, spec.y). `grown` may come from
