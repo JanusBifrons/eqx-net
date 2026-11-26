@@ -13,6 +13,12 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import type { StructurePlacementSubsystem } from '../../../src/server/structures/StructurePlacementSubsystem.js';
 import { DECK_TEST_OPTS } from '../../../src/server/rooms/testRooms/engineeringRooms.js';
+import { deckHexCentreInto } from '../../../src/core/hex/plates.js';
+
+/** The deck room's plate east outer hex (axial (1, 0)): on the pilot's adopted
+ *  plate (a deck room refuses a player placement off their own deck) and clear
+ *  of the Capital in hex (1, -1). */
+const SOLAR_AT = deckHexCentreInto(1, 0, { x: 0, y: 0 });
 
 function roomOf(roomId: string): SectorRoom {
   return matchMaker.getLocalRoomById(roomId) as unknown as SectorRoom;
@@ -30,7 +36,7 @@ describe('structure rotation in 30° steps (base platforms 15)', () => {
     const cr = await harness.connectActive(pilot);
     const room = roomOf(cr.roomId);
     expect(room.state.deck).toBe(deck);
-    cr.send('place_structure', { type: 'place_structure', kind: 'solar', x: 2600, y: 1500, rot: 30 });
+    cr.send('place_structure', { type: 'place_structure', kind: 'solar', x: SOLAR_AT.x, y: SOLAR_AT.y, rot: 30 });
     await harness.advance(400);
     const internals = room._internals;
     const rec = [...internals.structureRegistry.all()].find((s) => s.owner === pilot && s.kind === 'solar');

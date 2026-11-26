@@ -38,7 +38,9 @@ describe('SectorRoom integration — an NPC base seeded in the cut field (C5f/C5
 
     // The grown layout (pure: the generator, nothing placed).
     const base: Omit<NpcBaseSpec, 'x' | 'y'> = { baseId: 'f1', role: 'refinery', tier: 'settlement', seed: 12, features: ['minerals'] };
-    const grower = new NpcBaseSubsystem({ registry: null as never, place: () => null, setHealth: () => {} });
+    // `grow` reads only the room's deck flag (base platforms: a deck room grows on
+    // plates); this room has no deck.
+    const grower = new NpcBaseSubsystem({ registry: { deck: false } as never, place: () => null, setHealth: () => {} });
     const grown = grower.grow({ ...base, x: 0, y: 0 });
     let ex = 0;
     for (const p of grown.placements) { const { hw, hh } = structureHalfExtents(p.kind, p.rot ?? 0); ex = Math.max(ex, Math.abs(p.x) + hw, Math.abs(p.y) + hh); }
