@@ -57,6 +57,8 @@ export interface ArtOptions {
   deckTex?: import('../pixi/structureDeckTexture.js').DeckTex;
   /** Base platforms deck fence link look (`?fenceLook=old|new`). Absent = the URL / default. */
   fenceLook?: import('../pixi/connectorFenceBeam.js').FenceLook;
+  /** Edge feel P2 mock-ups: fence post + link look (`?edgeLook=a|b|c`). Absent = the URL / off. */
+  edgeLook?: import('../pixi/connectorEdgeLook.js').EdgeLook;
   /** Base platforms deck zone markings (`?zones=on|off`). Absent = the URL / on. */
   zones?: boolean;
   /** Base platforms gate approach lights (`?approach=on|off`). Absent = the URL / off. */

@@ -86,6 +86,7 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
   art.rigs = restyle.rigs;
   art.deckTex = restyle.deckTex;
   art.fenceLook = restyle.fenceLook;
+  art.edgeLook = restyle.edgeLook;
   art.zones = restyle.zones;
   art.approach = restyle.approach;
   art.buildSlots = restyle.buildSlots;

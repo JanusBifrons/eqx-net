@@ -404,7 +404,7 @@ export class ConnectorStaticLayer {
         const b = swarm.get(otherId);
         if (!b) continue;
         // Slice 30: a deck fence link is a shield beam, not a cable (`?fenceLook=new`).
-        if (host.cables.isFenceBeam(a, b)) { drawFenceBeamBody(g, ax, ay, b.x, -b.y, scale, a.radius, b.radius, fenceBeamUp(st, structures.get(otherId))); continue; }
+        if (host.cables.isFenceBeam(a, b)) { drawFenceBeamBody(g, ax, ay, b.x, -b.y, scale, a.radius, b.radius, fenceBeamUp(st, structures.get(otherId)), host.cables.edgeLook); continue; }
         // Cables / idle edges go on the cable band (under roads, pads, bodies).
         if (cables) { drawSocketCableBody(cg, linkCableOf(host.cables, id, st, c, a, b, structures), scale, a.radius, b.radius); continue; }
         if (look) { drawLineLookBody(cg, look, ax, ay, b.x, -b.y, scale, a.radius, b.radius); continue; }

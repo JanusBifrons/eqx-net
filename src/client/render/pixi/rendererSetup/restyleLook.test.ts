@@ -26,6 +26,7 @@ function bootFrom(art: ArtOptions): BootMsg {
     ...(art.rigs !== undefined ? { rigs: art.rigs } : {}),
     ...(art.deckTex !== undefined ? { deckTex: art.deckTex } : {}),
     ...(art.fenceLook !== undefined ? { fenceLook: art.fenceLook } : {}),
+    ...(art.edgeLook !== undefined ? { edgeLook: art.edgeLook } : {}),
     ...(art.zones !== undefined ? { zones: art.zones } : {}),
     ...(art.approach !== undefined ? { approach: art.approach } : {}),
     ...(art.buildSlots !== undefined ? { buildSlots: art.buildSlots } : {}),
@@ -75,7 +76,7 @@ describe('structure restyle on the worker renderer', () => {
   });
 
   it('a worker renderer booted without the fields falls back to the defaults (on)', () => {
-    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a', fenceLook: 'new', zones: true, approach: true, buildSlots: true, buildRing: true });
+    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a', fenceLook: 'new', edgeLook: 'off', zones: true, approach: true, buildSlots: true, buildRing: true });
   });
 });
 

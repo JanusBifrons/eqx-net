@@ -15,6 +15,7 @@ import { readRigsFlag, StructureRigs } from '../structureRigs.js';
 import { StructureDeckPlates } from '../structureDeckPlates.js';
 import { DEFAULT_DECK_TEX, readDeckTex, type DeckTex } from '../structureDeckTexture.js';
 import { DEFAULT_FENCE_LOOK, readFenceLook, type FenceLook } from '../connectorFenceBeam.js';
+import { DEFAULT_EDGE_LOOK, edgePost, readEdgeLook, type EdgeLook } from '../connectorEdgeLook.js';
 import { readZonesFlag } from '../structureDeckZones.js';
 import { readApproachFlag } from '../deckApproachLights.js';
 import { BuildSlotOutlines, readBuildSlotsFlag } from '../buildSlotOutlines.js';
@@ -29,6 +30,8 @@ export interface RestyleLook {
   deckTex: DeckTex;
   /** Deck fence link look (`?fenceLook=old|new`, base platforms slice 30). */
   fenceLook: FenceLook;
+  /** Edge feel P2 mock-ups: fence post + link look (`?edgeLook=a|b|c`, default off = today). */
+  edgeLook: EdgeLook;
   /** Deck zone markings (`?zones=on|off`, base platforms slice 33). */
   zones: boolean;
   /** Runway approach lights outside deck fence gates (`?approach=on|off`, default on). */
@@ -42,19 +45,20 @@ export interface RestyleLook {
 /** The restyle scene options from a URL query string. */
 export function readRestyleLook(search: string): RestyleLook {
   return {
-    lineLook: readLineLook(search), rigs: readRigsFlag(search), deckTex: readDeckTex(search), fenceLook: readFenceLook(search), zones: readZonesFlag(search),
+    lineLook: readLineLook(search), rigs: readRigsFlag(search), deckTex: readDeckTex(search), fenceLook: readFenceLook(search), edgeLook: readEdgeLook(search), zones: readZonesFlag(search),
     approach: readApproachFlag(search), buildSlots: readBuildSlotsFlag(search), buildRing: readBuildRingFlag(search),
   };
 }
 
 /** What a renderer draws: `ArtOptions` first, else the URL (`search`, null in a worker), else the defaults. */
 export function resolveRestyleLook(art: ArtOptions, search: string | null): RestyleLook {
-  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, zones: true, approach: true, buildSlots: true, buildRing: true };
+  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, edgeLook: DEFAULT_EDGE_LOOK, zones: true, approach: true, buildSlots: true, buildRing: true };
   return {
     lineLook: art.lineLook !== undefined ? art.lineLook : fromUrl.lineLook,
     rigs: art.rigs ?? fromUrl.rigs,
     deckTex: art.deckTex ?? fromUrl.deckTex,
     fenceLook: art.fenceLook ?? fromUrl.fenceLook,
+    edgeLook: art.edgeLook ?? fromUrl.edgeLook,
     zones: art.zones ?? fromUrl.zones,
     approach: art.approach ?? fromUrl.approach,
     buildSlots: art.buildSlots ?? fromUrl.buildSlots,
@@ -65,7 +69,7 @@ export function resolveRestyleLook(art: ArtOptions, search: string | null): Rest
 /** Init step (`initSceneAndOverlays`): set the connector line look and build the
  *  one `StructureRigs` the swarm updater poses (and the deck floor), on either renderer path. */
 export function applyRestyleLook(
-  connectorRenderer: { lineLook: LineLook | null; socketCables?: boolean; cables?: { fenceBeams: boolean }; buildRing?: boolean },
+  connectorRenderer: { lineLook: LineLook | null; socketCables?: boolean; cables?: { fenceBeams: boolean; edgeLook?: EdgeLook }; buildRing?: boolean },
   swarmUpdaterCtx: { structureRigs?: StructureRigs; deckPlates?: StructureDeckPlates; socketNubs?: boolean; buildRing?: boolean },
   shipContainer: Container,
   art: ArtOptions,
@@ -78,6 +82,9 @@ export function applyRestyleLook(
   connectorRenderer.socketCables = art.fx === true;
   // Base platforms slice 30: deck fence links as a shield beam (`?fenceLook=new`).
   if (connectorRenderer.cables) connectorRenderer.cables.fenceBeams = look.fenceLook === 'new';
+  // Edge feel P2 mock-ups (`?edgeLook=a|b|c`): the fence beam's look and the posts' emitters.
+  if (connectorRenderer.cables) connectorRenderer.cables.edgeLook = look.edgeLook;
+  edgePost.look = look.edgeLook;
   // 0d slice 10: socket nubs on the structures, same flag.
   swarmUpdaterCtx.socketNubs = art.fx === true;
   // Readable construction: the ring replaces the blueprint fill bar.

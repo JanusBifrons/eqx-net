@@ -31,6 +31,7 @@ export function rendererArgsFromBoot(
       ...(msg.rigs !== undefined ? { rigs: msg.rigs } : {}),
       ...(msg.deckTex !== undefined ? { deckTex: msg.deckTex } : {}),
       ...(msg.fenceLook !== undefined ? { fenceLook: msg.fenceLook } : {}),
+      ...(msg.edgeLook !== undefined ? { edgeLook: msg.edgeLook } : {}),
       ...(msg.zones !== undefined ? { zones: msg.zones } : {}),
       ...(msg.approach !== undefined ? { approach: msg.approach } : {}),
       ...(msg.buildSlots !== undefined ? { buildSlots: msg.buildSlots } : {}),
