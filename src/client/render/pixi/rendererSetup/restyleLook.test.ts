@@ -27,6 +27,7 @@ function bootFrom(art: ArtOptions): BootMsg {
     ...(art.fenceLook !== undefined ? { fenceLook: art.fenceLook } : {}),
     ...(art.zones !== undefined ? { zones: art.zones } : {}),
     ...(art.approach !== undefined ? { approach: art.approach } : {}),
+    ...(art.buildRing !== undefined ? { buildRing: art.buildRing } : {}),
   };
 }
 
@@ -72,7 +73,7 @@ describe('structure restyle on the worker renderer', () => {
   });
 
   it('a worker renderer booted without the fields falls back to the defaults (on)', () => {
-    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a', fenceLook: 'new', zones: true, approach: true });
+    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a', fenceLook: 'new', zones: true, approach: true, buildRing: false });
   });
 });
 
@@ -166,5 +167,30 @@ describe('gate approach lights (`?approach=`)', () => {
     const on: { deckPlates?: StructureDeckPlates } = {};
     applyRestyleLook({ lineLook: null }, on, new Container(), { mode: 'machined' }, '');
     expect(on.deckPlates!.approach).toBeDefined();
+  });
+});
+
+describe('readable construction ring (`?buildRing=`)', () => {
+  it('defaults to off on both paths; on rides BOOT to the worker and reaches the swarm ctx + connector', () => {
+    expect(readRestyleLook('').buildRing).toBe(false);
+    expect(readRestyleLook('?buildRing=bogus').buildRing).toBe(false);
+    expect(readRestyleLook('?room=deck&buildRing=on').buildRing).toBe(true);
+    expect(resolveRestyleLook({ mode: 'machined' }, null).buildRing).toBe(false); // worker, nothing on BOOT
+    const art: ArtOptions = { mode: 'machined', ...readRestyleLook('?room=deck&buildRing=on') };
+    const boot = structuredClone(bootFrom(art));
+    expect(boot.buildRing).toBe(true);
+    const [, workerArt] = rendererArgsFromBoot(boot);
+    expect(workerArt.buildRing).toBe(true);
+    const conn: { lineLook: LineLook | null; buildRing?: boolean } = { lineLook: null };
+    const ctx: { buildRing?: boolean } = {};
+    applyRestyleLook(conn, ctx, new Container(), workerArt, null);
+    expect(ctx.buildRing).toBe(true);
+    expect(conn.buildRing).toBe(true);
+    const offConn: { lineLook: LineLook | null; buildRing?: boolean } = { lineLook: null };
+    const offCtx: { buildRing?: boolean } = {};
+    const [, offArt] = rendererArgsFromBoot(structuredClone(bootFrom({ mode: 'machined', ...readRestyleLook('') })));
+    applyRestyleLook(offConn, offCtx, new Container(), offArt, null);
+    expect(offCtx.buildRing).toBe(false);
+    expect(offConn.buildRing).toBe(false);
   });
 });

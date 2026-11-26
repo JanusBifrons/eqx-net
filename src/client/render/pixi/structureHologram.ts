@@ -30,6 +30,7 @@ import { getStructureKind, isStructureKindId } from '../../../shared-types/struc
 import { interpBuildPct } from './buildBarInterp.js';
 import { CONNECTOR_CONSTRUCTION_COLOR, PREVIEW_BLOCKED_COLOR } from './connectorVisual.js';
 import { deckSlotOutline, type DeckSlot } from '../../../core/hex/deckSnap.js';
+import { BUILD_RING_LABEL, BuildRing } from './buildRing.js';
 
 /** The hologram's cyan: the construction-flow cyan (connectors, build bar). */
 export const HOLOGRAM_COLOR = CONNECTOR_CONSTRUCTION_COLOR;
@@ -52,15 +53,22 @@ const GHOST_PULSE_MS = 1200;
 /** How a hologram is drawn. `blueprint` = an unbuilt structure's overlay
  *  (cyan baked in, faint panels: the solid art fills in behind it).
  *  `ghost` = the placement plan: white (tinted per frame), bright panels and
- *  thick edges so it reads on a phone at zoom ~0.5 over a busy sector. */
-export type HoloLook = 'blueprint' | 'ghost';
-interface LookSpec { color: number; core: number; panel: number; edge: number; edgeW: number; scan: number; scanW: number }
+ *  thick edges so it reads on a phone at zoom ~0.5 over a busy sector.
+ *  `wire` = the blueprint under `?buildRing=on` (readable construction): a
+ *  dimmer ghost, thinner glass, near-empty panels, bold outlines and no scan
+ *  lines (at build zoom the scan lines merged into a solid fill and the plan
+ *  read as finished), drawn at `WIRE_ALPHA`. */
+export type HoloLook = 'blueprint' | 'ghost' | 'wire';
+interface LookSpec { color: number; core: number; backing: number; panel: number; edge: number; edgeW: number; scan: number; scanW: number }
 const LOOKS: Record<HoloLook, LookSpec> = {
-  blueprint: { color: HOLOGRAM_COLOR, core: 0xccffff, panel: 0.14, edge: 0.75, edgeW: 1, scan: 0.22, scanW: 1 },
-  ghost: { color: 0xffffff, core: 0xffffff, panel: 0.32, edge: 1, edgeW: 3, scan: 0.5, scanW: 1.5 },
+  blueprint: { color: HOLOGRAM_COLOR, core: 0xccffff, backing: 0.92, panel: 0.14, edge: 0.75, edgeW: 1, scan: 0.22, scanW: 1 },
+  ghost: { color: 0xffffff, core: 0xffffff, backing: 0.92, panel: 0.32, edge: 1, edgeW: 3, scan: 0.5, scanW: 1.5 },
+  wire: { color: HOLOGRAM_COLOR, core: 0xccffff, backing: 0.8, panel: 0.05, edge: 0.95, edgeW: 4, scan: 0, scanW: 0 },
 };
+/** The `wire` look's overall alpha (the solid art behind the print line is not dimmed). */
+export const WIRE_ALPHA = 0.8;
 
-interface HoloArt { art: GraphicsContext; line: GraphicsContext; mask: GraphicsContext; halfW: number }
+interface HoloArt { art: GraphicsContext; line: GraphicsContext; mask: GraphicsContext; halfW: number; footR: number }
 const artCache = new Map<string, HoloArt>();
 
 /** The overlay's shared art for one kind + style (built once, never freed:
@@ -78,21 +86,23 @@ function holoArtFor(kindId: string | undefined, radius: number, style: string | 
   const halfW = plan.footprint.w / 2, halfH = plan.footprint.h / 2;
   const art = new GraphicsContext();
   // 1. Dark glass backing over every shape (stroked wide to cover a bake's rim).
-  for (const r of plan.rects) art.rect(r.x, r.y, r.w, r.h).fill({ color: HOLOGRAM_BACKING, alpha: 0.92 }).stroke({ color: HOLOGRAM_BACKING, alpha: 0.92, width: PAD });
-  for (const p of plan.polys ?? []) art.poly(p.pts.flat()).fill({ color: HOLOGRAM_BACKING, alpha: 0.92 }).stroke({ color: HOLOGRAM_BACKING, alpha: 0.92, width: PAD });
+  for (const r of plan.rects) art.rect(r.x, r.y, r.w, r.h).fill({ color: HOLOGRAM_BACKING, alpha: L.backing }).stroke({ color: HOLOGRAM_BACKING, alpha: L.backing, width: PAD });
+  for (const p of plan.polys ?? []) art.poly(p.pts.flat()).fill({ color: HOLOGRAM_BACKING, alpha: L.backing }).stroke({ color: HOLOGRAM_BACKING, alpha: L.backing, width: PAD });
   // 2. Translucent cyan panels + wireframe edges.
   for (const r of plan.rects) art.rect(r.x, r.y, r.w, r.h).fill({ color: L.color, alpha: L.panel }).stroke({ color: L.color, alpha: L.edge, width: L.edgeW });
   for (const p of plan.polys ?? []) art.poly(p.pts.flat()).fill({ color: L.color, alpha: L.panel }).stroke({ color: L.color, alpha: L.edge, width: L.edgeW });
   // 3. Scan lines across the footprint.
-  for (let y = -halfH + SCAN_STEP / 2; y < halfH; y += SCAN_STEP) art.moveTo(-halfW, y).lineTo(halfW, y);
-  art.stroke({ color: L.color, alpha: L.scan, width: L.scanW });
+  if (L.scan > 0) {
+    for (let y = -halfH + SCAN_STEP / 2; y < halfH; y += SCAN_STEP) art.moveTo(-halfW, y).lineTo(halfW, y);
+    art.stroke({ color: L.color, alpha: L.scan, width: L.scanW });
+  }
   // The print line (at local x 0; moved per frame): a soft glow + a bright core.
   const line = new GraphicsContext()
     .rect(-3, -halfH - PAD, 6, 2 * (halfH + PAD)).fill({ color: L.color, alpha: 0.25 })
     .rect(-0.75, -halfH - PAD, 1.5, 2 * (halfH + PAD)).fill({ color: L.core, alpha: 0.95 });
   // A unit-wide mask strip from x 0 to 1 (scaled to "line .. right edge").
   const mask = new GraphicsContext().rect(0, -halfH - PAD, 1, 2 * (halfH + PAD)).fill({ color: 0xffffff });
-  a = { art, line, mask, halfW };
+  a = { art, line, mask, halfW, footR: Math.hypot(halfW, halfH) };
   artCache.set(key, a);
   return a;
 }
@@ -130,6 +140,8 @@ export class StructureHologram extends Container {
   readonly line: Graphics;
   readonly clip: Graphics;
   readonly halfW: number;
+  /** The footprint's corner radius (the progress ring sits round it). */
+  readonly footR: number;
   /** Build-fraction anchor: the fraction ramps smoothly between the server's
    *  1 Hz steps (`interpBuildPct`, the build bar's same ramp). */
   private anchorPct = -1;
@@ -143,6 +155,8 @@ export class StructureHologram extends Container {
     this.label = HOLOGRAM_LABEL;
     const a = holoArtFor(kindId, radius, style, look);
     this.halfW = a.halfW;
+    this.footR = a.footR;
+    if (look === 'wire') this.alpha = WIRE_ALPHA;
     this.ahead = new Graphics(a.art);
     this.clip = new Graphics(a.mask);
     this.line = new Graphics(a.line);
@@ -205,21 +219,41 @@ export class StructureHologram extends Container {
   }
 }
 
+/** Out-param of the last `syncStructureHologram` call (scalar, reused: #14):
+ *  the build-ETA label's sprite-local y just above the progress ring, or 0
+ *  when no ring was drawn (the caller keeps the label's usual place). */
+export const holoRingOut = { labelY: 0 };
+/** On-screen gap (CSS px) between the ring and the ETA label above it. */
+const RING_LABEL_GAP_PX = 4;
+
 /**
  * Per frame, per structure sprite: an unbuilt structure carries the hologram
  * (made once on first sight), a built one carries none (dropped once).
+ * `ringZoom` > 0 (`?buildRing=on`; the camera scale this frame) draws the
+ * `wire` look plus a progress ring (buildRing.ts) at the hologram's smoothed
+ * fraction; 0 = today's blueprint look, no ring.
  * Returns true while the sprite is a hologram.
  */
 export function syncStructureHologram(
   sprite: Container, kindId: string | undefined, radius: number, style: string | undefined,
-  st: StructureRenderState | undefined, nowMs: number,
+  st: StructureRenderState | undefined, nowMs: number, ringZoom = 0,
 ): boolean {
+  holoRingOut.labelY = 0;
   let holo = sprite.getChildByLabel(HOLOGRAM_LABEL) as StructureHologram | null;
   if (st === undefined || st.built) {
     if (holo) { sprite.removeChild(holo); holo.destroy({ children: true }); }
     return false;
   }
-  if (!holo) { holo = new StructureHologram(kindId, radius, style); sprite.addChild(holo); }
+  if (!holo) {
+    holo = new StructureHologram(kindId, radius, style, ringZoom > 0 ? 'wire' : 'blueprint');
+    if (ringZoom > 0) holo.addChild(new BuildRing());
+    sprite.addChild(holo);
+  }
   holo.update(st.buildPct, st.etaMs, nowMs);
+  const ring = ringZoom > 0 ? holo.getChildByLabel(BUILD_RING_LABEL) as BuildRing | null : null;
+  if (ring) {
+    ring.update(holo.shownPct, holo.footR, ringZoom, sprite);
+    holoRingOut.labelY = -(ring.localR + RING_LABEL_GAP_PX / (ringZoom * (Math.abs(sprite.scale.y) || 1)));
+  }
   return true;
 }

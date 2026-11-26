@@ -80,7 +80,7 @@ import { RIG_TICKS_PER_SEC, type StructureRigView } from './structureRigs.js';
 import { cullRadiusForStructure, underZForStructure } from './structureDeckZones.js';
 import { hasBodyStatus, updateSocketNubs } from './structureSocketNubs.js';
 import { syncRoadJoins } from './roadJoins.js';
-import { syncStructureHologram } from './structureHologram.js';
+import { holoRingOut, syncStructureHologram } from './structureHologram.js';
 export type { SpriteBuildSig, SwarmSpriteCtx };
 
 /** Module-scope scratch for a structure's per-mount arc-local angles passed
@@ -538,12 +538,12 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     }
     // Base loop 3O — a blueprint (not yet built) draws as a cyan hologram that
     // a print line fills in with its build fraction (structureHologram.ts);
-    // the fill-bar (ConnectorRenderer) still shows the number.
+    // the fill-bar (ConnectorRenderer) shows the number, or `?buildRing=on` a progress ring (buildRing.ts).
     // Off screen (hidden by the A3 view test) none of this shows: skip the
     // hologram and readout child scans until it scrolls back into view.
     if (entry.kind === 2 && sprite.visible) {
       const st = mirror.structures?.get(entityId);
-      syncStructureHologram(sprite, entry.shipKind, entry.radius, ctx.art.structStyle, st, now);
+      syncStructureHologram(sprite, entry.shipKind, entry.radius, ctx.art.structStyle, st, now, ctx.buildRing === true ? ctx.cameraScale ?? 1 : 0);
       // WS-9 (R2.12) — update the Capital's mineral readout on CHANGE only (no
       // per-frame Text re-raster). Tagged child; capitals only, so the lookup is rare.
       if (entry.shipKind === 'capital') {
@@ -565,7 +565,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         // Readable on a phone: a constant on-screen size at any zoom.
         if (nextEta !== '' && ctx.cameraScale !== undefined) fitBuildEtaLabel(etaText, ctx.cameraScale, sprite.scale.y);
         // Upright and above the body on screen, whatever the structure's angle.
-        if (nextEta !== '') uprightReadout(sprite, etaText, buildEtaBaseY(entry.radius));
+        if (nextEta !== '') uprightReadout(sprite, etaText, holoRingOut.labelY < 0 ? holoRingOut.labelY : buildEtaBaseY(entry.radius)); // above the ring, if any
       }
       // Phase-1 issue 7 — a power store's stored-power number (CHANGE-only).
       if ((getStructureKind(entry.shipKind).powerStorageCapacity ?? 0) > 0) {

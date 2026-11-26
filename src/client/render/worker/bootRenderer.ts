@@ -33,6 +33,7 @@ export function rendererArgsFromBoot(
       ...(msg.fenceLook !== undefined ? { fenceLook: msg.fenceLook } : {}),
       ...(msg.zones !== undefined ? { zones: msg.zones } : {}),
       ...(msg.approach !== undefined ? { approach: msg.approach } : {}),
+      ...(msg.buildRing !== undefined ? { buildRing: msg.buildRing } : {}),
       ...(msg.ore ? { ore: msg.ore } : {}),
       ...(msg.quality ? { quality: msg.quality } : {}),
     },

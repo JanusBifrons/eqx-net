@@ -61,6 +61,8 @@ export interface ArtOptions {
   zones?: boolean;
   /** Base platforms gate approach lights (`?approach=on|off`). Absent = the URL / off. */
   approach?: boolean;
+  /** Readable construction ring + wireframe hologram (`?buildRing=on`). Absent = the URL / off. */
+  buildRing?: boolean;
   /** Cut-field ore look (`?ore=off|tint|veins|seams`, F1c); absent = veins (owner's pick). */
   ore?: FieldOreLook;
   /** Graphics quality (edge smoothing, render scale, texture softening);
