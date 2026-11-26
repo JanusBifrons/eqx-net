@@ -2,10 +2,10 @@
  * Base platforms slice 31 — road JOINS (derived, render only). A road deck
  * tile draws a carriageway ARM from its hex centre to each of its six edge
  * midpoints where the hex beyond is a road too, or where a shield gate stands
- * on that seam (`deckGateRoad.ts`). With fewer than two such arms it also
- * draws its own straight (local ±y, edge-mid to edge-mid at its snapped turn,
- * `roadTurnDeg`), so a lone or end tile still shows the player's turn. Three
- * or more arms make a junction.
+ * on that seam (`deckGateRoad.ts`). With no such arm it draws its own straight
+ * (local ±y, edge-mid to edge-mid at its snapped turn, `roadTurnDeg`); with
+ * one, a straight through it (that arm and the opposite edge), so a dead end
+ * never shows a junction. Three or more joins make a junction.
  *
  * The arms are drawn by the road's body-status hook
  * (`structureStyleC.transport.road.ts`, the socket-nub overlay, one shared
@@ -89,12 +89,16 @@ export function roadWorldJoins(roads: readonly RoadPiece[], gates: readonly Gate
   return out;
 }
 
-/** The LOCAL arm mask a road draws: its joins in its own frame, plus its own
- *  straight when it has fewer than two joins. */
+/** The LOCAL arm mask a road draws: no join = its own straight; one join = a
+ *  straight through it (that arm and the opposite one, never a junction);
+ *  two or more = just the joins. */
 export function roadLocalArms(worldJoins: number, rotDeg: number, mirror: boolean): number {
   let m = 0;
   for (let i = 0; i < 6; i++) if ((worldJoins >> i) & 1) m |= 1 << localArmSlot(i, rotDeg, mirror);
-  return armCount(m) < 2 ? m | ROAD_STRAIGHT_MASK : m;
+  const n = armCount(m);
+  if (n === 0) return ROAD_STRAIGHT_MASK;
+  if (n === 1) for (let j = 0; j < 6; j++) if ((m >> j) & 1) return m | (1 << ((j + 3) % 6));
+  return m;
 }
 
 /** Every road's LOCAL arm mask, by entity id (cold path). */

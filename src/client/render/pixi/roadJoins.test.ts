@@ -56,13 +56,18 @@ describe('road joins (derived)', () => {
     expect(local).toBe((1 << localArmSlot(0, 30, false)) | (1 << localArmSlot(1, 30, false)));
   });
 
-  it('one join adds the own straight (an end tile shows its turn)', () => {
-    // A join along the straight is just the straight.
+  it('one join: a straight through it (a dead end, never a junction)', () => {
+    // A join along the own straight is just the straight.
     expect(deriveRoadArms([piece(1, C), piece(2, beyond(2))], [], new Map()).get(1)).toBe(ROAD_STRAIGHT_MASK);
-    // A join off the straight's line: straight + that arm = 3 arms (junction).
-    const m = deriveRoadArms([piece(1, C), piece(2, beyond(0))], [], new Map()).get(1)!;
-    expect(m & ROAD_STRAIGHT_MASK).toBe(ROAD_STRAIGHT_MASK);
-    expect(armCount(m)).toBe(3);
+    // A join off it: that arm and the opposite edge, whatever the turn.
+    for (const rot of [30, 90, 150]) {
+      const m = deriveRoadArms([piece(1, C, rot), piece(2, beyond(0))], [], new Map()).get(1)!;
+      expect(m).toBe((1 << localArmSlot(0, rot, false)) | (1 << localArmSlot(3, rot, false)));
+      expect(armCount(m)).toBe(2);
+      expect(roadOverlayPlan(m).junction).toBe(false);
+    }
+    // A gate seam counts as the one join too.
+    expect(deriveRoadArms([piece(1, C)], [seam(1)], new Map()).get(1)).toBe((1 << localArmSlot(1, 30, false)) | (1 << localArmSlot(4, 30, false)));
   });
 
   it('a shield gate on a seam is an arm for the road beside it', () => {
