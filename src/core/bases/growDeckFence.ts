@@ -27,7 +27,10 @@
  * growth loop (`balanced` in `growBase.ts`) buys Solars for the measured draw.
  * The tier structure cap leaves the deck fence out (`deckFencePieces`).
  * Roads (slice 32, `growDeckRoads.ts`): once the ring is up, roads over open
- * floor join every gate road into one network.
+ * floor join every gate road into one network. A later layout pass keeps an
+ * earlier pass's gate hexes (`preferGates`), so the roads reserved for them
+ * still meet them; the last pass (`joinAll`) lays only the gates the network
+ * can join (no lone gate road).
  */
 import { HEX_DIRS, hexCornerInto, type HexPoint } from '../hex/hex.js';
 import { DECK_HEX_SIZE, deckHexCentreInto, plateHexes, plateOfHexInto, type PlateIndex } from '../hex/plates.js';
@@ -37,7 +40,7 @@ import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND, DECK_LINK_ON_PLATE, deckLin
 import { DECK_ROAD_KIND } from '../structures/deckGateRoad.js';
 import type { GrownPlacement } from './growBuilder.js';
 import type { DeckLayout } from './growDeck.js';
-import { layDeckRoads, planDeckRoads, plannedTurn, type RoadEnd } from './growDeckRoads.js';
+import { joinableEnds, layDeckRoadNetwork, planDeckRoads, plannedTurn, type RoadEnd } from './growDeckRoads.js';
 
 /** Bearings (degrees, from the Capital) a gate is laid toward. */
 const GATE_BEARINGS = [0, 90, 180, 270] as const;
@@ -91,16 +94,19 @@ function boundarySeams(L: DeckLayout): Seam[] {
 }
 
 /** Per bearing, the boundary seam nearest it whose inside hex is open floor
- *  (one gate per hex). */
-function chooseGates(L: DeckLayout, seams: readonly Seam[]): Seam[] {
+ *  (one gate per hex); a seam on a `prefer` hex (an earlier pass's gate)
+ *  first. */
+function chooseGates(L: DeckLayout, seams: readonly Seam[], prefer: ReadonlySet<string>): Seam[] {
   const chosen: Seam[] = [];
   for (const bearing of GATE_BEARINGS) {
-    let best: Seam | null = null, bestOff = GATE_SPREAD;
+    let best: Seam | null = null, bestOff = GATE_SPREAD, bestPref = false;
     for (const s of seams) {
       if (!L.isHexFree(s.q, s.r) || chosen.some((c) => c.q === s.q && c.r === s.r)) continue;
       const deg = (Math.atan2(s.m.y, s.m.x) * 180) / Math.PI;
       const off = Math.abs((((deg - bearing) % 360) + 540) % 360 - 180);
-      if (off < bestOff) { bestOff = off; best = s; }
+      if (off >= GATE_SPREAD) continue;
+      const pref = prefer.has(`${s.q},${s.r}`);
+      if ((pref && !bestPref) || (pref === bestPref && off < bestOff)) { bestOff = off; best = s; bestPref = pref; }
     }
     if (best !== null) chosen.push(best);
   }
@@ -140,18 +146,32 @@ function postFits(L: DeckLayout, p: HexPoint): boolean {
   return true;
 }
 
+/** Fence options: `preferGates` (hex keys "q,r") an earlier pass's gate
+ *  hexes, kept where they are still on the boundary; `joinAll` lays only
+ *  the gates the road network can join. */
+export interface DeckFenceOptions {
+  preferGates?: ReadonlySet<string>;
+  joinAll?: boolean;
+}
+
 /** Ring `L`'s laid plates with a fence (see the header). */
-export function layDeckFence(L: DeckLayout): DeckFence {
+export function layDeckFence(L: DeckLayout, opts: DeckFenceOptions = {}): DeckFence {
+  const prefer = opts.preferGates ?? new Set<string>();
   let seams = clearBoundary(L);
-  let gates = chooseGates(L, seams);
+  let gates = chooseGates(L, seams, prefer);
   if (gates.length === 0 && L.layNext()) {
     seams = clearBoundary(L);
-    gates = chooseGates(L, seams);
+    gates = chooseGates(L, seams, prefer);
+  }
+  // Every gate joined (owner): a gate no free path reaches is not laid.
+  if (opts.joinAll === true) {
+    const keep = new Set(joinableEnds(L, gates));
+    gates = gates.filter((s) => keep.has(s));
   }
   const B = L.B;
   // The road network joining the gates (`growDeckRoads.ts`): planned now so
   // each gate road takes its turn; the rest is laid once the ring is up.
-  let roads = planDeckRoads(L, gates);
+  const roads = planDeckRoads(L, gates);
   // Each gate after its road (the gate needs it); a road whose gate the
   // rules refuse is taken back (its hex stays open floor).
   const gateOn = new Map<Seam, number>();
@@ -186,9 +206,9 @@ export function layDeckFence(L: DeckLayout): DeckFence {
       if (B.tryLink(l.anchor, i)) break;
     }
   }
-  // A gate the rules refused leaves no road to join: plan without it.
-  if (gateOn.size < gates.length) roads = planDeckRoads(L, [...gateOn.keys()]);
-  layDeckRoads(L, roads);
+  // Planned again now the ring is up (a post can refuse a road; a gate the
+  // rules refused leaves no road to join), routed round what is laid.
+  layDeckRoadNetwork(L, [...gateOn.keys()]);
   const blocked = new Set<string>();
   for (const s of gateOn.keys()) {
     plateOfHexInto(s.oq, s.or, plate);

@@ -3,6 +3,8 @@
  * roads into one road network inside the fence (`growDeckRoads.ts`).
  * `growDeck.test.ts` re-checks every placement against the player's deck
  * rules; `growDeckFence.test.ts` the ring and that every road is inside it.
+ * Every gate's road is on the one network (owner: "Join every gate"); the
+ * last two cases each had a lone gate-road stub before (sparse or dense).
  */
 import { describe, expect, it } from 'vitest';
 import { isConnectorKind, structureHalfExtents } from '../../shared-types/structureKinds.js';
@@ -21,6 +23,7 @@ const FEATURES = ['asteroid', 'nebula', 'minerals'] as const;
 const CASES: Array<[BaseTier, BaseRole, number]> = [
   ['outpost', 'mining', 1], ['outpost', 'mining', 99], ['settlement', 'refinery', 7], ['settlement', 'trade', 3],
   ['stronghold', 'military', 42], ['citadel', 'workshop', 1234],
+  ['stronghold', 'trade', 1], ['stronghold', 'workshop', 5],
 ];
 const hk = (q: number, r: number): string => `${q},${r}`;
 const hexKey = (x: number, y: number): string => {
@@ -87,6 +90,8 @@ describe('deck base roads between the gates (base platforms 32)', () => {
       expect(fromGates.size, 'no stray road').toBe(roads.size);
       const joined = gateRoads.length === 0 ? 0 : Math.max(...gateRoads.map((g) => gateRoads.filter((o) => reach(roads, g).has(o)).length));
       console.log(`${label}: ${b.fenceGates} gates, ${roads.size} roads, ${joined} gates on one network`);
+      expect(gateRoads.length, 'a road beside every gate').toBe(b.fenceGates);
+      expect(b.fenceGates, 'gates').toBeGreaterThanOrEqual(2);
       expect(joined, 'every gate on one road network').toBe(gateRoads.length);
     });
   }
