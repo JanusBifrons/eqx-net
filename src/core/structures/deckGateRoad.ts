@@ -1,9 +1,10 @@
 /**
- * Base platforms slice 21 — "gates where a road crosses a fence". On a deck
- * room a player's shield gate stands on a hex seam (`'edge'` deck slot,
- * `deckPlacement.ts`), and only where that seam borders a ROAD tile on either
- * side; elsewhere `placementRejection` refuses it with `'no-road'`. The ghost
- * and the server both run that one rule (invariant 15).
+ * Base platforms slice 21 — gates and roads. On a deck room a shield gate
+ * stands on a hex seam (`'edge'` deck slot, `deckPlacement.ts`). Roads are
+ * optional (owner ruling): a gate needs no road, so placement never checks
+ * one. Generated bases still lay a road on the inside hex of each gate
+ * (`growDeckFence.ts`); {@link isRoadBesideDeckGate} tells whether a road
+ * sits beside a gate's seam (their tests use it).
  *
  * The two hexes of a seam: a gate at the seam's midpoint, turned along the
  * seam (`rotDeg`), has the hex centres one inradius away on its local ±y.

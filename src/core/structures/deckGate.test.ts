@@ -1,8 +1,8 @@
 /**
  * Base platforms slice 21 — "gates where a road crosses a fence". On a deck a
  * shield gate snaps to a hex edge midpoint turned along the seam
- * (`snapPlacementToDeck`, `'edge'` slot), is placed only where the seam
- * borders a road (`placementRejection` `'no-road'`), and its hit boxes follow
+ * (`snapPlacementToDeck`, `'edge'` slot), needs no road (roads are optional,
+ * owner ruling), and its hit boxes follow
  * the 30° seam turn (quarter turns unchanged).
  */
 import { describe, it, expect } from 'vitest';
@@ -75,7 +75,7 @@ describe('deck gate edge snap (slice 21)', () => {
   });
 });
 
-describe("deck gate placement: 'no-road' (slice 21)", () => {
+describe('deck gate placement: roads are optional', () => {
   for (const i of [0, 1, 2]) {
     const e = edge(i);
     const pylons = e.ends.map((c) => fp('shield_pylon', c));
@@ -85,10 +85,10 @@ describe("deck gate placement: 'no-road' (slice 21)", () => {
         expect(placementRejection('shield_gate', e.m.x, e.m.y, [...pylons, fp('road', e.across, roadRot)], null, e.dir, false, deck)).toBeNull();
       });
     }
-    it(`edge ${i}: refused 'no-road' with no road, or a road on another hex`, () => {
-      expect(placementRejection('shield_gate', e.m.x, e.m.y, pylons, null, e.dir, false, deck)).toBe('no-road');
+    it(`edge ${i}: accepted on a fenced seam with NO road, or a road on another hex`, () => {
+      expect(placementRejection('shield_gate', e.m.x, e.m.y, pylons, null, e.dir, false, deck)).toBeNull();
       const far = { x: C.x - 2 * (e.m.x - C.x), y: C.y - 2 * (e.m.y - C.y) };
-      expect(placementRejection('shield_gate', e.m.x, e.m.y, [...pylons, fp('road', far, 30)], null, e.dir, false, deck)).toBe('no-road');
+      expect(placementRejection('shield_gate', e.m.x, e.m.y, [...pylons, fp('road', far, 30)], null, e.dir, false, deck)).toBeNull();
     });
   }
 

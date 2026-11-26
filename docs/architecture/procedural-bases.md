@@ -43,10 +43,18 @@ Each has `filterBy(testId)`, and the pilot spawns south of the fence. Lock:
 `tests/integration/sectorRoom/npcBases.test.ts`. Showcase shot:
 `showcase/shots/proceduralBase.ts`.
 
+## Deck gates and roads
+
+Roads are optional (owner ruling 2026-11-26). A deck gate (`shield_gate` on a
+hex seam between two fence posts) needs no road beside it: `placementRejection`
+never checks for one. Generated bases still lay a road on the inside hex of
+each gate (`growDeckFence.ts`, `growDeckRoads.ts`), and the road join art draws
+an arm to a gate when a road is there (`roadJoins.ts`).
+
 ## Deck gate approach lights (on by default; `?approach=off` hides them)
 
-Outside every deck fence gate (`shield_gate` on a seam, its road running along
-the gate's local ±y) runway lights run out along the road, like the lights off
+Outside every deck fence gate (`shield_gate` on a seam, its road, if any, running
+along the gate's local ±y) runway lights run out along the road, like the lights off
 the end of an airfield. A white centre row of 10 lamps runs down the road's
 middle; red and green rows of 5 sit on the road's exact edges (±175, the road's
 half width), red on the inbound pilot's left, green on the right. The outside is

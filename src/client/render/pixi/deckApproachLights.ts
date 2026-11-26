@@ -3,12 +3,11 @@
  * (owner: "just off the end of a runway where there's blinking lights that
  * sort of guide you in"). Part of the deck floor layer: {@link StructureDeckPlates}
  * owns one of these (like the zone paint, `structureDeckZones.ts`); not a
- * layer of its own. `?approach=on` turns it on; default OFF until the owner
- * signs off the look.
+ * layer of its own. On by default (owner OK); `?approach=off` hides them.
  *
  * A gate (`shield_gate`) stands on a hex seam's midpoint, turned along the
- * seam (`deckGateRoad.ts`): the road through it runs along the gate's local
- * ±y. The lamps run in a straight line down that road on the OUTSIDE of the
+ * seam (`deckGateRoad.ts`): the road through it (if any; roads are optional)
+ * runs along the gate's local ±y. The lamps run in a straight line down that road on the OUTSIDE of the
  * fence (the seam side whose hex is on no deck plate), {@link APPROACH_LAMP_COUNT}
  * lamps {@link APPROACH_LAMP_SPACING} apart from {@link APPROACH_LAMP_START}
  * off the seam. A white "rabbit" strobe walks lamp by lamp TOWARD the gate
