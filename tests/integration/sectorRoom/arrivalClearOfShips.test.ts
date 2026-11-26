@@ -51,6 +51,17 @@ describe('SectorRoom integration — arrivals land clear of other ships', () => 
     expect(Math.hypot(p.x - hull.x, p.y - hull.y)).toBeGreaterThanOrEqual(tuningFor('fighter').spawnClearance);
   });
 
+  it('a teleport arrival keeps its exact far-pad spot (no landing nudge)', { timeout: 30_000 }, async () => {
+    // Take 12 2026-11-26: a gate rider was nudged ~1300 u out of the far gate.
+    // A teleport swaps in place, like a same-sector pad swap.
+    harness = await boot({ sectorKey: 'vega-reach', droneCount: 0, testMode: true, asteroidConfig: [], galaxyBases: false, alienGates: false });
+    const a = randomUUID(), b = randomUUID();
+    await harness.connectActive(a, { spawnX: 0, spawnY: 0, shipKind: 'fighter' });
+    await harness.connectActive(b, { spawnX: 0, spawnY: 30, shipKind: 'fighter', transitToken: ARRIVAL, teleport: true });
+    const server = harness.getServerRoom() as unknown as Server;
+    expect(server.initialSpawnPositions.get(b)).toEqual({ x: 0, y: 30 });
+  });
+
   it('an ordinary join keeps its exact placement (tests stage collisions)', { timeout: 30_000 }, async () => {
     harness = await boot({ sectorKey: 'vega-reach', droneCount: 0, testMode: true, asteroidConfig: [], galaxyBases: false, alienGates: false });
     const a = randomUUID(), b = randomUUID();

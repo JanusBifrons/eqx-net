@@ -781,9 +781,11 @@ export class TransitOrchestrator {
       // Thread the resolved shipId through reserveSeatFor options so the
       // destination's `onJoin` binds the named roster entry via the
       // shipId-restore path (WS-B: this is now the path for ALL transits).
-      const reserveOpts: { playerId: string; transitToken: string; shipId?: string } = {
+      const reserveOpts: { playerId: string; transitToken: string; shipId?: string; teleport?: true } = {
         playerId,
         transitToken: inFlight.transitToken,
+        // A teleport keeps its exact far-pad spot (no landing nudge, no drop-in).
+        ...(inFlight.teleport ? { teleport: true as const } : {}),
       };
       if (shipInstanceId !== null) reserveOpts.shipId = shipInstanceId;
       // PR 3a — the reservation carries no auth token, so register the

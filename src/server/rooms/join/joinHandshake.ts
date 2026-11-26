@@ -99,7 +99,8 @@ export function drainPendingJoin(d: JoinHandlerDeps): void {
         ship.isActive = true;
         // Phase 4: a ship joining the sector drops in with the same arrival
         // effect as a warp (snapshot warp 3, #16); the old shader is gone.
-        d.markWarpArrived(playerId, currentTick);
+        // A teleport is not a warp: it appears in place, with no drop-in.
+        if (!rec.teleport) d.markWarpArrived(playerId, currentTick);
         serverLogEvent('ship_activated', {
           playerId,
           entityId: ship.shipInstanceId,

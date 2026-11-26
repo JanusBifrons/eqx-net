@@ -198,7 +198,12 @@ export function joinFreshSpawn(
   // and a ship dropped on top of parked hulls is shoved away by the physics
   // (phone run 2026-11-07: "I arrived inside the base"). Only trip arrivals:
   // other joins keep their exact placement (tests set up collisions).
-  if (transitToken !== undefined) {
+  // A teleport (gate or paired teleporter) swaps in place: the rider keeps its
+  // exact spot on the far pad, inside the gate, like a same-sector pad swap.
+  const teleport = transitToken !== undefined && parsed.success && parsed.data.teleport === true;
+  if (teleport) {
+    // Exact placement: the source room put it on the far pad.
+  } else if (transitToken !== undefined) {
     const clear = d.landingPoint(playerId, spawnX, spawnY, chosenKind);
     spawnX = clear.x;
     spawnY = clear.y;
@@ -565,6 +570,7 @@ export function joinFreshSpawn(
     spawnY,
     sessionId: client.sessionId,
     ...(resumedInWorld ? { inWorld: true } : {}),
+    ...(teleport ? { teleport: true as const } : {}),
   });
   serverLogEvent('pending_join_registered', {
     playerId,

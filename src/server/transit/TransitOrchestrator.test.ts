@@ -307,6 +307,25 @@ describe('TransitOrchestrator', () => {
       expect(broadcasts.some((b) => b.type === 'warp_out')).toBe(false);
     });
 
+    it('a teleport seat tells the far room it is a teleport (keep the exact far-pad spot)', async () => {
+      // Take 12 2026-11-26: a gate rider landed ~1300 u outside the far gate,
+      // nudged clear of it like a warp arrival.
+      const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
+      const { orch } = withFakeReserve(reserve);
+      orch.teleportOut('p1', 'vega-reach', { x: 10, y: 20 });
+      await vi.runAllTimersAsync();
+      expect(reserve.mock.calls[0]?.[1]).toMatchObject({ teleport: true });
+    });
+
+    it('a warp seat is not marked as a teleport', async () => {
+      const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
+      const { orch } = withFakeReserve(reserve);
+      orch.beginTransit('p1', 'cygnus-arm');
+      vi.advanceTimersByTime(SPOOL_DURATION_MS);
+      await vi.runAllTimersAsync();
+      expect((reserve.mock.calls[0]?.[1] as { teleport?: boolean }).teleport).toBeUndefined();
+    });
+
     it('a warp is not marked as a teleport', async () => {
       const reserve = vi.fn().mockResolvedValue({ sessionId: 'r', room: { roomId: 'x' } });
       const { orch, sent, broadcasts } = withFakeReserve(reserve);
