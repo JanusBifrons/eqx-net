@@ -10,7 +10,7 @@
  *  2. Gates: for each of four bearings from the Capital (0°, 90°, 180°, 270°,
  *     the row base's mid-side gates), the boundary seam nearest it (within
  *     45°) whose inside hex is open floor gets a `road` tile on that hex
- *     (turned 30° to the pointy-top cells) and a `shield_gate` on the seam, so
+ *     (turned along the road network, `growDeckRoads.ts`) and a `shield_gate` on the seam, so
  *     the gate passes the player's `'no-road'` rule. A deck with no open
  *     boundary hex (a dense base packs every one) lays one fresh plate first:
  *     the newest plate is on the outside, all of it open floor.
@@ -26,6 +26,8 @@
  * the generator. Power: the posts and gates draw like the row fence's; the
  * growth loop (`balanced` in `growBase.ts`) buys Solars for the measured draw.
  * The tier structure cap leaves the deck fence out (`deckFencePieces`).
+ * Roads (slice 32, `growDeckRoads.ts`): once the ring is up, roads over open
+ * floor join every gate road into one network.
  */
 import { HEX_DIRS, hexCornerInto, type HexPoint } from '../hex/hex.js';
 import { DECK_HEX_SIZE, deckHexCentreInto, plateHexes, plateOfHexInto, type PlateIndex } from '../hex/plates.js';
@@ -35,13 +37,12 @@ import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND, DECK_LINK_ON_PLATE, deckLin
 import { DECK_ROAD_KIND } from '../structures/deckGateRoad.js';
 import type { GrownPlacement } from './growBuilder.js';
 import type { DeckLayout } from './growDeck.js';
+import { layDeckRoads, planDeckRoads, plannedTurn, type RoadEnd } from './growDeckRoads.js';
 
 /** Bearings (degrees, from the Capital) a gate is laid toward. */
 const GATE_BEARINGS = [0, 90, 180, 270] as const;
 /** A gate is laid only within this many degrees of its bearing. */
 const GATE_SPREAD = 45;
-/** A road lies turned to the deck's pointy-top cells (`deckTiles.ts`). */
-const ROAD_TURN = 30;
 
 /** One boundary seam: the deck hex inside, the hex outside, its two corners
  *  and its midpoint. */
@@ -59,6 +60,8 @@ interface Seam {
 export interface DeckFence {
   pylons: number;
   gates: number;
+  /** Each laid gate's road hex and the hex outside it (`growDeckRoads.ts`). */
+  gateEnds: RoadEnd[];
   /** Is plate (i, j) one a gate opens onto (kept clear of bastions)? */
   blocksBastion: (i: number, j: number) => boolean;
 }
@@ -104,12 +107,6 @@ function chooseGates(L: DeckLayout, seams: readonly Seam[]): Seam[] {
   return chosen;
 }
 
-/** The anchor of the laid plate holding hex (q, r). */
-function anchorOf(L: DeckLayout, q: number, r: number): number {
-  plateOfHexInto(q, r, plate);
-  return L.laid.find((l) => l.i === plate.i && l.j === plate.j)!.anchor;
-}
-
 /** `kind` at the player's snap of (x, y); its index or -1. */
 function placeSnapped(L: DeckLayout, kind: string, x: number, y: number): number {
   snapPlacementToDeck(kind, x, y, snap);
@@ -152,11 +149,14 @@ export function layDeckFence(L: DeckLayout): DeckFence {
     gates = chooseGates(L, seams);
   }
   const B = L.B;
+  // The road network joining the gates (`growDeckRoads.ts`): planned now so
+  // each gate road takes its turn; the rest is laid once the ring is up.
+  let roads = planDeckRoads(L, gates);
   // Each gate after its road (the gate needs it); a road whose gate the
   // rules refuse is taken back (its hex stays open floor).
   const gateOn = new Map<Seam, number>();
   for (const s of gates) {
-    if (L.placeOnHex({ kind: DECK_ROAD_KIND }, s.q, s.r, ROAD_TURN, anchorOf(L, s.q, s.r)) < 0) continue;
+    if (L.placeOnHex({ kind: DECK_ROAD_KIND }, s.q, s.r, plannedTurn(roads, s.q, s.r), L.anchorAt(s.q, s.r)) < 0) continue;
     const g = placeSnapped(L, DECK_FENCE_GATE_KIND, s.m.x, s.m.y);
     if (g >= 0) gateOn.set(s, g);
     else { B.unlinkLast(); B.undoLast(); }
@@ -186,6 +186,9 @@ export function layDeckFence(L: DeckLayout): DeckFence {
       if (B.tryLink(l.anchor, i)) break;
     }
   }
+  // A gate the rules refused leaves no road to join: plan without it.
+  if (gateOn.size < gates.length) roads = planDeckRoads(L, [...gateOn.keys()]);
+  layDeckRoads(L, roads);
   const blocked = new Set<string>();
   for (const s of gateOn.keys()) {
     plateOfHexInto(s.oq, s.or, plate);
@@ -193,5 +196,5 @@ export function layDeckFence(L: DeckLayout): DeckFence {
   }
   let pylons = 0;
   for (const i of posts.values()) if (i >= 0) pylons++;
-  return { pylons, gates: gateOn.size, blocksBastion: (i, j) => blocked.has(plateKey(i, j)) };
+  return { pylons, gates: gateOn.size, gateEnds: [...gateOn.keys()], blocksBastion: (i, j) => blocked.has(plateKey(i, j)) };
 }

@@ -120,7 +120,7 @@ function density(b: GrownBase, cap: number): { plates: number; buildings: number
 
 describe('growBase deck option (base platforms 23)', () => {
   it('bumps the growth version', () => {
-    expect(BASE_GROWTH_VERSION).toBe(27);
+    expect(BASE_GROWTH_VERSION).toBe(28);
   });
 
   it('flag off: output byte-identical to before the slice (default and explicit false)', () => {
