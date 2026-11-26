@@ -38,6 +38,7 @@ import {
 } from './connectorLineLooks.js';
 import { CONNECTOR_IDLE_COLOR, type ConnectorFlowMaterial, type ConnectorVisual } from './connectorVisual.js';
 import { isDeckFenceLink } from './connectorFenceBeam.js';
+import type { EdgeLook } from './connectorEdgeLook.js';
 
 /** Points in a cable polyline. */
 export const CABLE_POINTS = CABLE_CURVE_SEGMENTS + 1;
@@ -155,6 +156,8 @@ export class LinkCableCache {
   /** Base platforms slice 30 (`?fenceLook=new`): on a deck, fence links draw
    *  as a shield beam (`connectorFenceBeam.ts`), not a cable. Set at init. */
   fenceBeams = false;
+  /** Edge feel P2 mock-ups (`?edgeLook=a|b|c`): the fence beam's look; `off` = today. Set at init. */
+  edgeLook: EdgeLook = 'off';
   /** Test hook: how many times a curve was flattened. */
   flattens = 0;
 

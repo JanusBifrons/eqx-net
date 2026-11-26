@@ -294,6 +294,35 @@ function seg(g: LinePath, t: number, a0: number, c0: number, a1: number, c1: num
     .lineTo(px + W.ux * (t + a1) + W.nx * c1, py + W.uy * (t + a1) + W.ny * c1);
 }
 
+/** Cover mask: flat [ax, ay, bx, by, ...] segments (path space) that hide
+ *  cradle and lashing stations within `r` of them. The static layer sets it
+ *  around its draw walk so cable hardware does not poke out from under lit
+ *  fence beams; n = 0 draws every station. Not owned: the caller keeps the
+ *  array alive while the mask is set. */
+let _cover: ArrayLike<number> = [];
+let _coverN = 0;
+let _coverR2 = 0;
+export function setCableCover(segs: ArrayLike<number>, n: number, r: number): void {
+  _cover = segs; _coverN = n; _coverR2 = r * r;
+}
+
+/** True when the path point at arc length `t` lies under a cover segment. */
+function covered(t: number): boolean {
+  if (_coverN === 0) return false;
+  pt(t, 0);
+  const x = W.px, y = W.py;
+  for (let i = 0; i < _coverN; i++) {
+    const ax = _cover[i * 4]!, ay = _cover[i * 4 + 1]!;
+    const dx = _cover[i * 4 + 2]! - ax, dy = _cover[i * 4 + 3]! - ay;
+    const d2 = dx * dx + dy * dy;
+    let u = d2 > 0 ? ((x - ax) * dx + (y - ay) * dy) / d2 : 0;
+    u = u < 0 ? 0 : u > 1 ? 1 : u;
+    const ex = ax + dx * u - x, ey = ay + dy * u - y;
+    if (ex * ex + ey * ey <= _coverR2) return true;
+  }
+  return false;
+}
+
 const ST_CRADLE = 0;
 const ST_LASH = 1;
 const ST_COLLAR = 2;
@@ -313,6 +342,7 @@ function atStations(g: LinePath, kind: number, shape: number, a: number, c: numb
     const st = j === 0 || j === last ? ST_COLLAR : (j & 1) === 1 ? ST_LASH : ST_CRADLE;
     if (st !== kind) continue;
     const t = j === last ? _s1 : _s0 + j * _seg;
+    if (st !== ST_COLLAR && covered(t)) continue;
     if (shape === SH_RAILS) {
       seg(g, t, -a, -c, -a, c, ox, oy);
       seg(g, t, a, -c, a, c, ox, oy);

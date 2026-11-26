@@ -63,6 +63,8 @@ export interface BootMsg {
   deckTex?: import('../../pixi/structureDeckTexture.js').DeckTex;
   /** Deck fence link look (`?fenceLook=`). Absent = the default. */
   fenceLook?: import('../../pixi/connectorFenceBeam.js').FenceLook;
+  /** Fence post + link mock-up look (`?edgeLook=`). Absent = off. */
+  edgeLook?: import('../../pixi/connectorEdgeLook.js').EdgeLook;
   /** Deck zone markings (`?zones=`). Absent = on. */
   zones?: boolean;
   /** Gate approach lights (`?approach=`). Absent = off. */

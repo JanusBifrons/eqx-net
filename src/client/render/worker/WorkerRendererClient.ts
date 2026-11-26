@@ -240,6 +240,7 @@ export class WorkerRendererClient implements IRenderer {
       ...(this._art.rigs !== undefined ? { rigs: this._art.rigs } : {}),
       ...(this._art.deckTex !== undefined ? { deckTex: this._art.deckTex } : {}),
       ...(this._art.fenceLook !== undefined ? { fenceLook: this._art.fenceLook } : {}),
+      ...(this._art.edgeLook !== undefined ? { edgeLook: this._art.edgeLook } : {}),
       ...(this._art.zones !== undefined ? { zones: this._art.zones } : {}), ...(this._art.buildSlots !== undefined ? { buildSlots: this._art.buildSlots } : {}),
       ...(this._art.buildRing !== undefined ? { buildRing: this._art.buildRing } : {}),
       approach: this._art.approach ?? readApproachFlag(typeof window !== 'undefined' ? window.location.search : ''), // main thread reads the URL

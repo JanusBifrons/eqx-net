@@ -22,6 +22,7 @@ import {
   DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND, DECK_LINK_SEAM_FENCE, DECK_LINK_SEAM_GATE, deckLinkKind,
 } from '../../../core/structures/deckLinks.js';
 import { cableLookWidth, type LinePath } from './connectorLineLooks.js';
+import { drawEdgeLinkUp, type EdgeLook } from './connectorEdgeLook.js';
 import { SHIELD_WALL_CORE_COLOR, SHIELD_WALL_DOWN_COLOR, SHIELD_WALL_GLOW_COLOR } from './connectorVisual.js';
 
 /** The deck fence link look: `old` = the power cable, `new` = a shield beam. */
@@ -75,10 +76,11 @@ function stroke(g: LinePath, color: number, alpha: number, width: number): void 
  * One fence beam (pixi space) from post (`ax`, `ay`) to post (`bx`, `by`),
  * stopping just outside each end (`ra` / `rb`: the ends' radii, as the
  * cable's fence-link collars). Up: a cyan glow band and two rails (two
- * strokes). Down: one dim red line (one stroke).
+ * strokes). Down: one dim red line (one stroke). `edge` (`?edgeLook=a|b|c`,
+ * edge feel P2 mock-ups) swaps the lit body for that look; `off` = today.
  */
 export function drawFenceBeamBody(
-  g: LinePath, ax: number, ay: number, bx: number, by: number, scale: number, ra: number, rb: number, up: boolean,
+  g: LinePath, ax: number, ay: number, bx: number, by: number, scale: number, ra: number, rb: number, up: boolean, edge: EdgeLook = 'off',
 ): void {
   const dx = bx - ax, dy = by - ay, len = Math.hypot(dx, dy);
   if (len < 1) return;
@@ -91,6 +93,7 @@ export function drawFenceBeamBody(
     stroke(g, SHIELD_WALL_DOWN_COLOR, 0.6, w * FENCE_BEAM_DOWN);
     return;
   }
+  if (edge !== 'off') { drawEdgeLinkUp(g, edge, ax, ay, bx, by, x0, y0, x1, y1, ux, uy, w, ra, rb); return; }
   g.moveTo(x0, y0); g.lineTo(x1, y1);
   stroke(g, SHIELD_WALL_GLOW_COLOR, 0.3, w * FENCE_BEAM_GLOW);
   const nx = -uy * w * FENCE_BEAM_RAIL_OFFSET, ny = ux * w * FENCE_BEAM_RAIL_OFFSET;

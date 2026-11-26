@@ -14,6 +14,7 @@ import type { RigDrawHookTable } from './structureRigLook.js';
 import type { BodyStatusHook, BodyStatusHookTable } from './structureSocketNubs.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 import { getStructureKind, type StructureKindId } from '../../../shared-types/structureKinds.js';
+import { drawEdgePost, edgeLookIndex, edgeLookOfIndex, edgePost } from './connectorEdgeLook.js';
 import { EMIT, EMIT_DEAD, doorLeafContext, doorStatus, shieldAirlock, shieldGate } from './structureStyleC.fences.gate.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
@@ -180,7 +181,27 @@ function drawLockDark(g: GraphicsContext, code: number, kind: StructureKindId): 
   deadDisc(g, 0, 0, (LOCK_HUB_LENS + 2) * k);
 }
 
-const unpoweredPylon: BodyStatusHook = { code: unpoweredCode, draw: drawPylonDark };
+/** Pylon body code: today's (0 lit / 1 unpowered) under `?edgeLook` off;
+ *  under a P2 mock-up (`connectorEdgeLook.ts`) a built pylon is
+ *  2 + (look − 1) × 2 + unpowered, so its emitter draws over the bake. */
+export function pylonStatusCode(kind: StructureKindId, st: StructureRenderState | undefined): number {
+  const u = unpoweredCode(kind, st);
+  const li = edgeLookIndex(edgePost.look);
+  if (li === 0) return u;
+  return st !== undefined && st.built ? 2 + (li - 1) * 2 + u : 0;
+}
+
+/** Today's dark emitter (code 1), or a P2 mock-up's emitter (codes 2..7). */
+function drawPylonStatus(g: GraphicsContext, code: number, kind: StructureKindId): void {
+  if (code < 2) { drawPylonDark(g, code, kind); return; }
+  const fp = getStructureKind(kind).footprint;
+  const k = Math.min(fp.w, fp.h) / 120;
+  const dead = (code - 2) % 2 === 1;
+  if (dead) drawPylonDark(g, 1, kind);
+  drawEdgePost(g, edgeLookOfIndex(1 + ((code - 2) >> 1)), !dead, k);
+}
+
+const unpoweredPylon: BodyStatusHook = { code: pylonStatusCode, draw: drawPylonStatus };
 const unpoweredLock: BodyStatusHook = { code: unpoweredCode, draw: drawLockDark };
 
 /** This family's live body state (`BodyStatusHook`, drawn on the socket-nub
