@@ -72,7 +72,7 @@ describe('structure restyle on the worker renderer', () => {
   });
 
   it('a worker renderer booted without the fields falls back to the defaults (on)', () => {
-    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a', fenceLook: 'new', zones: true, approach: false });
+    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a', fenceLook: 'new', zones: true, approach: true });
   });
 });
 
@@ -152,19 +152,19 @@ describe('deck zone markings (base platforms slice 33, `?zones=`)', () => {
 });
 
 describe('gate approach lights (`?approach=`)', () => {
-  it('defaults to off; on rides BOOT to the worker and builds the lights', () => {
-    expect(readRestyleLook('').approach).toBe(false);
-    expect(readRestyleLook('?approach=bogus').approach).toBe(false);
+  it('defaults to on; the choice rides BOOT to the worker and builds the lights', () => {
+    expect(readRestyleLook('').approach).toBe(true);
+    expect(readRestyleLook('?approach=bogus').approach).toBe(true);
     expect(readRestyleLook('?room=deck-bases&approach=off').approach).toBe(false);
     expect(readRestyleLook('?room=deck-bases&approach=on').approach).toBe(true);
-    const art: ArtOptions = { mode: 'machined', ...readRestyleLook('?room=deck-bases&approach=on') };
+    const art: ArtOptions = { mode: 'machined', ...readRestyleLook('?room=deck-bases&approach=off') };
     const [, workerArt] = rendererArgsFromBoot(structuredClone(bootFrom(art)));
-    expect(workerArt.approach).toBe(true);
-    const on: { deckPlates?: StructureDeckPlates } = {};
-    applyRestyleLook({ lineLook: null }, on, new Container(), workerArt, null);
-    expect(on.deckPlates!.approach).toBeDefined();
+    expect(workerArt.approach).toBe(false);
     const off: { deckPlates?: StructureDeckPlates } = {};
-    applyRestyleLook({ lineLook: null }, off, new Container(), { mode: 'machined' }, '');
+    applyRestyleLook({ lineLook: null }, off, new Container(), workerArt, null);
     expect(off.deckPlates!.approach).toBeUndefined();
+    const on: { deckPlates?: StructureDeckPlates } = {};
+    applyRestyleLook({ lineLook: null }, on, new Container(), { mode: 'machined' }, '');
+    expect(on.deckPlates!.approach).toBeDefined();
   });
 });

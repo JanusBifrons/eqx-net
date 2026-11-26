@@ -29,9 +29,9 @@ import { DECK_HEX_INRADIUS } from '../../../core/hex/deckCorners.js';
 import { DECK_FENCE_GATE_KIND } from '../../../core/structures/deckLinks.js';
 import { isSpriteInView } from '../spriteUpdateDecisions.js';
 
-/** `?approach=on|off` — default off (taste change pending the owner's OK). */
+/** `?approach=on|off` — default on (owner OK); `?approach=off` hides them. */
 export function readApproachFlag(search: string): boolean {
-  return /[?&]approach=on\b/.test(search);
+  return !/[?&]approach=off\b/.test(search);
 }
 
 /** Centre (white) row: longer than the edge rows, so it reaches out and draws you in. */

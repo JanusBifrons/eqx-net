@@ -29,7 +29,7 @@ export interface RestyleLook {
   fenceLook: FenceLook;
   /** Deck zone markings (`?zones=on|off`, base platforms slice 33). */
   zones: boolean;
-  /** Runway approach lights outside deck fence gates (`?approach=on|off`, default off). */
+  /** Runway approach lights outside deck fence gates (`?approach=on|off`, default on). */
   approach: boolean;
 }
 
@@ -43,7 +43,7 @@ export function readRestyleLook(search: string): RestyleLook {
 
 /** What a renderer draws: `ArtOptions` first, else the URL (`search`, null in a worker), else the defaults. */
 export function resolveRestyleLook(art: ArtOptions, search: string | null): RestyleLook {
-  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, zones: true, approach: false };
+  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, zones: true, approach: true };
   return {
     lineLook: art.lineLook !== undefined ? art.lineLook : fromUrl.lineLook,
     rigs: art.rigs ?? fromUrl.rigs,

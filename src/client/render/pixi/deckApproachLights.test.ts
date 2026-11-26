@@ -18,10 +18,10 @@ import { DECK_FENCE_GATE_KIND } from '../../../core/structures/deckLinks.js';
 const GATE = DECK_FENCE_GATE_KIND;
 
 describe('readApproachFlag', () => {
-  it('is off unless ?approach=on', () => {
-    expect(readApproachFlag('')).toBe(false);
+  it('is on unless ?approach=off', () => {
+    expect(readApproachFlag('')).toBe(true);
     expect(readApproachFlag('?approach=off')).toBe(false);
-    expect(readApproachFlag('?approach=onward')).toBe(false);
+    expect(readApproachFlag('?approach=offset')).toBe(true);
     expect(readApproachFlag('?room=deck-bases&approach=on')).toBe(true);
   });
 });
