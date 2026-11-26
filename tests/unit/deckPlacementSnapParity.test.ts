@@ -18,6 +18,7 @@ import { getStructureKind, isBuildableStructureKind } from '../../src/shared-typ
 import { STRUCTURE_KINDS_LIST } from '../../src/shared-types/structureKinds/catalogueOrder.js';
 import { deckHexCentreInto, isPlateCentreHex, plateCentreWorldInto } from '../../src/core/hex/plates.js';
 import { rhombusCentroidInto } from '../../src/core/hex/deckSnap.js';
+import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from '../../src/core/structures/deckLinks.js';
 
 function rig(deck: boolean) {
   const registry = new StructureRegistry();
@@ -95,8 +96,8 @@ describe('deck placement snap parity (client ghost == server placed point)', () 
     while (isPlateCentreHex(q, 1)) q++; // a connector there lays a plate
     const hexC = deckHexCentreInto(q, 1, { x: 0, y: 0 });
     const p = { x: 0, y: 0 };
-    const small = STRUCTURE_KINDS_LIST.filter((k) => k.deckSlot === 'small' && isBuildableStructureKind(k.id)).map((k) => k.id);
-    expect(small).toContain('shield_gate'); // quarter-turn only: nearest quarter of the facing
+    const small = STRUCTURE_KINDS_LIST.filter((k) => k.deckSlot === 'small' && isBuildableStructureKind(k.id) && k.id !== DECK_FENCE_GATE_KIND && k.id !== DECK_FENCE_POST_KIND).map((k) => k.id);
+    expect(small).toContain('connector'); // fence kinds snap to corners/edges (slice 19/21), not rhombi
     for (const kind of small) {
       expect(getStructureKind(kind).deckSlot).toBe('small');
       const seen = new Set<number>();
