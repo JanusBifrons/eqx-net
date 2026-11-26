@@ -19,6 +19,10 @@
  * straight, an equal-pronged Y, T or cross at a junction, a round cap on the
  * joint). All flat:
  * ships fly over it.
+ *
+ * Lit deck spike (`?deckLit=on`, `StyleCtx.arms` set): the same plan is baked
+ * INTO the road's art instead (`roadLitPolys`, `structureStyleC.transport.roadLit.ts`)
+ * on the full deck hex, and the overlay is skipped for that road.
  */
 import type { GraphicsContext } from 'pixi.js';
 import type { StructureKindId } from '../../../shared-types/structureKinds.js';
@@ -28,12 +32,15 @@ import { LAMP_AMBER, LAMP_WHITE, mixColor, outlinePx, poly, scalePts, type Style
 import { DECK_FILL, DECK_SEAM } from './structureDeckPlates.js';
 import type { BodyStatusHook } from './structureSocketNubs.js';
 import { roadArmsOf } from './roadJoins.js';
+import { roadLitPolys } from './structureStyleC.transport.roadLit.js';
 
-/** Road deck tile bake (`road`, flat 800 × 692 hex): the paving only. */
+/** Road deck tile bake (`road`, flat 800 × 692 hex): the paving only; with
+ *  an arm mask (lit deck spike) the carriageway too, on the full deck hex. */
 export function road(c: StyleCtx): void {
   const out = outlinePx(c.kindId, c.styleId);
   poly(c, out, DECK_SEAM, 'metal', 0.5, 1);
   poly(c, scalePts(out, 0.93), DECK_FILL, 'metal', 0.5, 1, { seams: 48, seamAngle: Math.PI / 2 });
+  if (c.arms !== undefined) roadLitPolys(c, roadOverlayPlan(c.arms));
 }
 
 // ── Overlay geometry (local Pixi frame, world units) ───────────────────────
@@ -51,8 +58,13 @@ const DASH_LEN = 60;
 export const ROAD_DASH_PERIOD = DECK_HEX_INRADIUS / Math.round(DECK_HEX_INRADIUS / 110);
 const DASH_W = 10;
 
-const LANE = mixColor(DECK_FILL, 0x000000, 0.45);
-const EDGE_LINE = mixColor(LAMP_WHITE, DECK_FILL, 0.3);
+/** Carriageway, edge line and dash widths (the lit bake reads them too). */
+export const ROAD_EDGE_W = EDGE_W;
+export const ROAD_DASH_W = DASH_W;
+export const ROAD_LANE = mixColor(DECK_FILL, 0x000000, 0.45);
+export const ROAD_EDGE_LINE = mixColor(LAMP_WHITE, DECK_FILL, 0.3);
+const LANE = ROAD_LANE;
+const EDGE_LINE = ROAD_EDGE_LINE;
 
 const _fill = { color: 0, alpha: 1 };
 const _stroke = { color: 0, alpha: 1, width: 0, cap: 'butt' as const, join: 'miter' as const };
@@ -65,14 +77,14 @@ function strokeNow(g: GraphicsContext, color: number, alpha: number, width: numb
   _stroke.color = color; _stroke.alpha = alpha; _stroke.width = width;
   g.stroke(_stroke);
 }
-function circle(cx: number, cy: number, r: number, n = 16): number[] {
+export function circle(cx: number, cy: number, r: number, n = 16): number[] {
   const out: number[] = [];
   for (let i = 0; i < n; i++) { const a = (i * 2 * Math.PI) / n; out.push(cx + r * Math.cos(a), cy + r * Math.sin(a)); }
   return out;
 }
 
 /** Arm slot `j`'s angle (radians, Pixi local). */
-const armAngle = (j: number): number => ((30 + 60 * j) * Math.PI) / 180;
+export const armAngle = (j: number): number => ((30 + 60 * j) * Math.PI) / 180;
 
 /** Is (x, y) on the carriageway of any arm in `slots` but `skip` (padded)? */
 function onOtherArm(x: number, y: number, slots: readonly number[], skip: number, pad: number): boolean {
@@ -96,6 +108,35 @@ export interface RoadOverlayPlan {
   lamps: number[];
   /** Centre-line dashes as segments (x0, y0, x1, y1). */
   dashes: number[];
+  /** Carriageway pieces the vector overlay fills, in order: one band per arm, then the centre disc. */
+  bands: number[][];
+  /** The carriageway as ONE outline (the union of `bands`; the lit bake's plate, so it never stacks). */
+  lane: number[];
+}
+
+/** The side line between arms `ja` → `jb` (`gap` slots apart), `off` from
+ *  the axes: arm a's end, the inner corner (or the outer arc about the
+ *  centre, `arcK` steps per slot past a straight), arm b's end. Pushed onto `line`. */
+function sideLine(line: number[], ja: number, jb: number, gap: number, off: number, arcK: number): void {
+  const R = ROAD_ARM_LEN;
+  const ta = armAngle(ja), tb = armAngle(jb);
+  const ua = [Math.cos(ta), Math.sin(ta)] as const, ub = [Math.cos(tb), Math.sin(tb)] as const;
+  const pa = [-ua[1], ua[0]] as const; // arm a's side toward b
+  const qb = [ub[1], -ub[0]] as const; // arm b's side toward a
+  line.push(ua[0] * R + pa[0] * off, ua[1] * R + pa[1] * off);
+  const alpha = (gap * Math.PI) / 3;
+  if (gap < 3) {
+    const tc = off / Math.tan(alpha / 2);
+    line.push(ua[0] * tc + pa[0] * off, ua[1] * tc + pa[1] * off);
+  } else if (gap > 3) {
+    // Round the outside of the bend about the centre.
+    const a0 = ta + Math.PI / 2, steps = arcK * (gap - 3);
+    for (let s = 0; s <= steps; s++) {
+      const a = a0 + ((alpha - Math.PI) * s) / steps;
+      line.push(Math.cos(a) * off, Math.sin(a) * off);
+    }
+  }
+  line.push(ub[0] * R + qb[0] * off, ub[1] * R + qb[1] * off);
 }
 
 export function roadOverlayPlan(mask: number): RoadOverlayPlan {
@@ -105,6 +146,7 @@ export function roadOverlayPlan(mask: number): RoadOverlayPlan {
   const edges: number[][] = [];
   const lamps: number[] = [];
   const dashes: number[] = [];
+  const lane: number[] = [];
   const n = slots.length;
   const R = ROAD_ARM_LEN;
   for (let k = 0; k < n; k++) {
@@ -114,21 +156,10 @@ export function roadOverlayPlan(mask: number): RoadOverlayPlan {
     const ua = [Math.cos(ta), Math.sin(ta)] as const, ub = [Math.cos(tb), Math.sin(tb)] as const;
     const pa = [-ua[1], ua[0]] as const; // arm a's side toward b
     const qb = [ub[1], -ub[0]] as const; // arm b's side toward a
-    const line: number[] = [ua[0] * R + pa[0] * EDGE_OFF, ua[1] * R + pa[1] * EDGE_OFF];
-    const alpha = (gap * Math.PI) / 3;
-    if (gap < 3) {
-      const tc = EDGE_OFF / Math.tan(alpha / 2);
-      line.push(ua[0] * tc + pa[0] * EDGE_OFF, ua[1] * tc + pa[1] * EDGE_OFF);
-    } else if (gap > 3) {
-      // Round the outside of the bend about the centre.
-      const a0 = ta + Math.PI / 2, steps = 4 * (gap - 3);
-      for (let s = 0; s <= steps; s++) {
-        const a = a0 + ((alpha - Math.PI) * s) / steps;
-        line.push(Math.cos(a) * EDGE_OFF, Math.sin(a) * EDGE_OFF);
-      }
-    }
-    line.push(ub[0] * R + qb[0] * EDGE_OFF, ub[1] * R + qb[1] * EDGE_OFF);
+    const line: number[] = [];
+    sideLine(line, ja, jb, gap, EDGE_OFF, 4);
     edges.push(line);
+    sideLine(lane, ja, jb, gap, ROAD_HALF_W, 8);
     // Lamps outside this edge: each arm side is in exactly one pair.
     for (const [j, u, p] of [[ja, ua, pa], [jb, ub, qb]] as const) {
       for (let t = 100; t <= R - 50; t += LAMP_STEP) {
@@ -148,19 +179,21 @@ export function roadOverlayPlan(mask: number): RoadOverlayPlan {
       dashes.push(ux * t0, uy * t0, ux * t1, uy * t1);
     }
   }
-  return { slots, junction, edges, lamps, dashes };
+  const bands: number[][] = [];
+  const W = ROAD_HALF_W;
+  for (const j of slots) {
+    const a = armAngle(j), ux = Math.cos(a), uy = Math.sin(a), px = -uy, py = ux;
+    bands.push([px * W, py * W, ux * R + px * W, uy * R + py * W, ux * R - px * W, uy * R - py * W, -px * W, -py * W]);
+  }
+  bands.push(circle(0, 0, W, 24));
+  return { slots, junction, edges, lamps, dashes, bands, lane };
 }
 
 /** Draw the overlay for local arm mask `mask` into `g` (cold: once per mask). */
 export function drawRoadOverlay(g: GraphicsContext, mask: number): void {
   const plan = roadOverlayPlan(mask);
-  const R = ROAD_ARM_LEN, W = ROAD_HALF_W;
   // Carriageway: one band per arm and a centre disc that fills the joint.
-  for (const j of plan.slots) {
-    const a = armAngle(j), ux = Math.cos(a), uy = Math.sin(a), px = -uy, py = ux;
-    fillPoly(g, [px * W, py * W, ux * R + px * W, uy * R + py * W, ux * R - px * W, uy * R - py * W, -px * W, -py * W], LANE, 1);
-  }
-  fillPoly(g, circle(0, 0, W, 24), LANE, 1);
+  for (const b of plan.bands) fillPoly(g, b, LANE, 1);
   for (const line of plan.edges) {
     g.moveTo(line[0]!, line[1]!);
     for (let i = 2; i < line.length; i += 2) g.lineTo(line[i]!, line[i + 1]!);

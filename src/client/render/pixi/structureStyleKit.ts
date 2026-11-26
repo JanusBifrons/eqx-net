@@ -195,6 +195,11 @@ export interface StyleCtx {
   bands: StyleBand[];
   /** Add a lamp (skipped when unpowered). */
   lit(x: number, y: number, r: number, color: number): void;
+  /** Lit deck spike: a road's local arm mask, baked into its art (absent = today's plan). */
+  arms?: number;
+  /** Art frame override for `poly`'s fit check (absent = `artFramePx`); the
+   *  road's lit bake sets the full deck hex, so its arms reach the seams. */
+  frame?: Pts;
 }
 
 export type StyleDrawer = (c: StyleCtx) => void;
@@ -307,7 +312,7 @@ export function rng(seed: number): () => number {
 }
 
 export function poly(c: StyleCtx, pts: Pts, color: number, mat: PolyOp['mat'], lift: number, bevel: number, extra?: Partial<PolyOp>): void {
-  if (pts.length >= 3 && fits(artFramePx(c.kindId, c.styleId), pts, 0)) c.polys.push({ pts, color, mat, lift, bevel, ...extra });
+  if (pts.length >= 3 && fits(c.frame ?? artFramePx(c.kindId, c.styleId), pts, 0)) c.polys.push({ pts, color, mat, lift, bevel, ...extra });
 }
 export function glow(c: StyleCtx, pts: Pts, color: number, alpha = 1): void {
   poly(c, pts, color, 'glow', -0.8, 1, { alpha });

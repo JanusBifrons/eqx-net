@@ -28,22 +28,31 @@ export interface RestyleLook {
   fenceLook: FenceLook;
   /** Deck zone markings (`?zones=on|off`, base platforms slice 33). */
   zones: boolean;
+  /** Lit deck spike (`?deckLit=on`, .resume/deck-lit-plan.md): a road bakes its
+   *  carriageway into its lit art instead of the vector overlay. Off by default. */
+  deckLit: boolean;
+}
+
+/** `?deckLit=on`; anything else, or absent, = off. */
+export function readDeckLitFlag(search: string): boolean {
+  return /[?&]deckLit=on\b/.test(search);
 }
 
 /** The restyle scene options from a URL query string. */
 export function readRestyleLook(search: string): RestyleLook {
-  return { lineLook: readLineLook(search), rigs: readRigsFlag(search), deckTex: readDeckTex(search), fenceLook: readFenceLook(search), zones: readZonesFlag(search) };
+  return { lineLook: readLineLook(search), rigs: readRigsFlag(search), deckTex: readDeckTex(search), fenceLook: readFenceLook(search), zones: readZonesFlag(search), deckLit: readDeckLitFlag(search) };
 }
 
 /** What a renderer draws: `ArtOptions` first, else the URL (`search`, null in a worker), else the defaults. */
 export function resolveRestyleLook(art: ArtOptions, search: string | null): RestyleLook {
-  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, zones: true };
+  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, zones: true, deckLit: false };
   return {
     lineLook: art.lineLook !== undefined ? art.lineLook : fromUrl.lineLook,
     rigs: art.rigs ?? fromUrl.rigs,
     deckTex: art.deckTex ?? fromUrl.deckTex,
     fenceLook: art.fenceLook ?? fromUrl.fenceLook,
     zones: art.zones ?? fromUrl.zones,
+    deckLit: art.deckLit ?? fromUrl.deckLit,
   };
 }
 
@@ -51,7 +60,7 @@ export function resolveRestyleLook(art: ArtOptions, search: string | null): Rest
  *  one `StructureRigs` the swarm updater poses (and the deck floor), on either renderer path. */
 export function applyRestyleLook(
   connectorRenderer: { lineLook: LineLook | null; socketCables?: boolean; cables?: { fenceBeams: boolean } },
-  swarmUpdaterCtx: { structureRigs?: StructureRigs; deckPlates?: StructureDeckPlates; socketNubs?: boolean },
+  swarmUpdaterCtx: { structureRigs?: StructureRigs; deckPlates?: StructureDeckPlates; socketNubs?: boolean; art?: { deckLit?: boolean } },
   shipContainer: Container,
   art: ArtOptions,
   search: string | null,
@@ -67,5 +76,7 @@ export function applyRestyleLook(
   if (look.rigs) swarmUpdaterCtx.structureRigs = new StructureRigs(shipContainer);
   // Base platforms: the deck floor (drawn only while the room's deck flag is on).
   swarmUpdaterCtx.deckPlates = new StructureDeckPlates(shipContainer, look.deckTex, look.zones);
+  // Lit deck spike: roads bake their carriageway (`structHandleFor`). Off = untouched.
+  if (look.deckLit && swarmUpdaterCtx.art) swarmUpdaterCtx.art.deckLit = true;
   return look;
 }

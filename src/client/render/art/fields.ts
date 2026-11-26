@@ -558,6 +558,9 @@ export interface StructureForgeOpts {
   /** Structure style (`?restyle=`, `structureStyles.ts`); absent or
    *  `current` = today's bake, byte for byte. */
   style?: string;
+  /** Lit deck spike: a road's arm mask (its style bakes the carriageway) and the grid box it needs (the full deck hex). */
+  arms?: number;
+  box?: { w: number; h: number };
 }
 
 const DECK_HEX = 0x1d2433;
@@ -639,10 +642,10 @@ function stampStylePoly(f: Fields, p: PolyOp): void {
  */
 export function forgeStructure(kindId: string, opts: StructureForgeOpts): Fields {
   const accent = opts.accent ?? (isStructureKindId(kindId) ? getStructureKind(kindId).color : 0x66ccaa);
-  const plan = buildStructureVisual(kindId, { accent, seed: opts.seed ?? 1, omitSpans: true, ...(opts.livery ? { livery: true } : {}), ...(opts.style ? { style: opts.style } : {}) });
-  const fp = plan.footprint;
-  const box: Poly = [[-fp.w / 2, -fp.h / 2], [fp.w / 2, -fp.h / 2], [fp.w / 2, fp.h / 2], [-fp.w / 2, fp.h / 2]];
-  const side = Math.max(fp.w, fp.h) + 4;
+  const plan = buildStructureVisual(kindId, { accent, seed: opts.seed ?? 1, omitSpans: true, ...(opts.livery ? { livery: true } : {}), ...(opts.style ? { style: opts.style } : {}), ...(opts.arms !== undefined ? { arms: opts.arms } : {}) });
+  const fp = plan.footprint, gb = opts.box ?? fp;
+  const box: Poly = [[-gb.w / 2, -gb.h / 2], [gb.w / 2, -gb.h / 2], [gb.w / 2, gb.h / 2], [-gb.w / 2, gb.h / 2]];
+  const side = Math.max(gb.w, gb.h) + 4;
   const ppu = opts.maxSide ? Math.min(opts.ppu, opts.maxSide / side) : opts.ppu;
   const g = gridFor([box], ppu, 2);
   const f = newFields(g, paintOf(accent));

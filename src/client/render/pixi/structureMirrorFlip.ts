@@ -20,6 +20,11 @@ import type { Container } from 'pixi.js';
  *  and `buildEtaLabel.ts`). */
 const READOUT_LABELS: readonly string[] = ['capitalResource', 'buildEta', 'batteryCharge'];
 
+/** A road's lit deck bake (lit deck spike, `shipArtSprites.buildArtShipSprite`):
+ *  baked in the UNMIRRORED frame (`roadLitArmsOf`) and counter-flipped here,
+ *  so a lit mesh never draws with a negative scale (its light would mirror). */
+export const DECK_LIT_LABEL = 'deckLitArt';
+
 /** Give `c`'s x scale the sign `sign` (keeps its size). */
 function signScaleX(c: Container, sign: number): void {
   const v = sign * Math.abs(c.scale.x);
@@ -47,6 +52,8 @@ export function counterFlipStructureParts(sprite: Container, mountCluster: Conta
     const t = sprite.getChildByLabel(READOUT_LABELS[i]!);
     if (t !== null) signScaleX(t, sign);
   }
+  const lit = sprite.getChildByLabel(DECK_LIT_LABEL);
+  if (lit !== null) signScaleX(lit, sign);
   if (mountCluster === null) return;
   signScaleX(mountCluster, sign);
   // The server puts a mirrored mount at its flipped local point

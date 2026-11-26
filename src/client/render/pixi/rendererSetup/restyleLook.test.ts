@@ -71,7 +71,7 @@ describe('structure restyle on the worker renderer', () => {
   });
 
   it('a worker renderer booted without the fields falls back to the defaults (on)', () => {
-    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a', fenceLook: 'new', zones: true });
+    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a', fenceLook: 'new', zones: true, deckLit: false });
   });
 });
 
