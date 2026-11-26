@@ -76,6 +76,7 @@ export function updateBeamsAndCamera(mirror: RenderMirror, ctx: RendererFrameCtx
   // Structure placement ghost + confirm-UI projection: see pixi/placementGhostUpdater.ts.
   r.placementGhostCtx.spectator = r.spectator;
   r.placementGhostCtx.nowMs = r.fxNow(); // ghost scanner + pulse on the game clock
+  r.placementGhostCtx.scale = r.world.scale.x; // the fence run beams' width
   r.placementGhostCtx.obstacles = r.connectorRenderer._previewObstacles; // gathered by this frame's preview
   updatePlacementGhost(mirror, r.placementGhostCtx);
 }

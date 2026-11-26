@@ -252,7 +252,7 @@ export interface RenderMirror {
    * `run` (fence run): the sent fence posts not yet landed, flat (x, y)
    * corners, a NaN pair between two clicks' paths (`pendingRunGhosts.ts`).
    */
-  pendingPlacementPreview?: { kind: string; x: number; y: number; angle: number; mirror?: boolean; pending?: boolean; held?: boolean; deck?: boolean; deckOwner?: string; deckPlates?: number[]; run?: number[] } | null;
+  pendingPlacementPreview?: { kind: string; x: number; y: number; angle: number; mirror?: boolean; pending?: boolean; held?: boolean; deck?: boolean; deckOwner?: string; deckPlates?: number[]; run?: number[]; runHover?: number[]; runHoverMark?: number[] } | null;
   /**
    * Helm move marker (owner 2026-11-12): the local pilot's active helm course
    * point, GAME-space, while they fly a capital under a helm order (never for

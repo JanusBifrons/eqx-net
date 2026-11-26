@@ -134,6 +134,13 @@ export interface PlacementPreview {
   /** Fence run: the sent posts not yet landed (`PendingPlacement.run`), flat
    *  (x, y) corners, a NaN pair between clicks. Empty when none. */
   run?: number[];
+  /** Fence run hover (`fenceRunHover.ts`): the corners a click at the hovered
+   *  corner would reach, flat (x, y) in path order. Never in `run` (the click
+   *  reads `run` as built). Empty when none. */
+  runHover?: number[];
+  /** One per `runHover` corner: 0 = a post is there (beam only), 1 = a post
+   *  the click would place, 2 = the one it would place but the server refuses. */
+  runHoverMark?: number[];
 }
 
 /** The plate source the preview copies from (`ColyseusClient.plates`). */
