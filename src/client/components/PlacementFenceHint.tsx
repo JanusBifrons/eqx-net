@@ -18,8 +18,9 @@ const HINT_SX = {
   position: 'fixed',
   left: '50%',
   top: '66%',
-  // Just BELOW the anchor point (the ghost), horizontally centred on it.
-  transform: 'translate(-50%, 18px)',
+  // Centred on `left`; `top` is set under the ghost (and under the refusal line
+  // when both show) by `updatePlacementHints`.
+  transform: 'translateX(-50%)',
   zIndex: 1450,
   pointerEvents: 'none',
   px: 0.75,
