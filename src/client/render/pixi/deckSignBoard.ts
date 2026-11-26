@@ -53,6 +53,12 @@ const LIFT = 26;
  *  right, bottom): clear of the HUD corners, the right rail and the bottom
  *  bars. A junction near an edge keeps its board inboard, tied by the stem. */
 export const SIGN_SAFE_INSET = [0.17, 0.17, 0.17, 0.26] as const;
+/** The ship's keep-out round the view centre (the follow camera centres the
+ *  local ship): half width / half height as fractions of the view. */
+export const SIGN_SHIP_KEEPOUT = [0.06, 0.12] as const;
+/** A board moved beside the ship may use the side bands down to this inset
+ *  (the mid-left / mid-right of the view is clear of the HUD corners). */
+const SIDE_INSET = 0.08;
 const STEM_PX = 1.5;
 const PIN_PX = 4;
 const PANEL_FILL = 0x04101a;
@@ -147,12 +153,9 @@ export class DeckSignBoard {
     this.pin.x = jx; this.pin.y = jy; this.pin.scale.set(inv);
     // Board: centred above the junction, then clamped into the safe rect.
     const w = this.boardW * k, h = this.boardH * k;
-    let bx = jx, by = jy - LIFT * inv; // bottom-centre
-    if (bounds !== undefined) {
-      const vw = bounds[2]! - bounds[0]!, vh = bounds[3]! - bounds[1]!;
-      bx = clampSpan(bx, bounds[0]! + vw * SIGN_SAFE_INSET[0] + w / 2, bounds[2]! - vw * SIGN_SAFE_INSET[2] - w / 2);
-      by = clampSpan(by, bounds[1]! + vh * SIGN_SAFE_INSET[1] + h, bounds[3]! - vh * SIGN_SAFE_INSET[3]);
-    }
+    if (bounds !== undefined) placeBoard(jx, jy - LIFT * inv, w, h, jx, bounds, PLACE);
+    else { PLACE[0] = jx; PLACE[1] = jy - LIFT * inv; }
+    const bx = PLACE[0]!, by = PLACE[1]!;
     this.board.x = bx; this.board.y = by;
     // Stem: junction → the nearest point of the board's rect.
     const ex = Math.min(Math.max(jx, bx - w / 2), bx + w / 2), ey = Math.min(Math.max(jy, by - h), by);
@@ -305,4 +308,33 @@ function drawArrow(g: Graphics, cx: number, cy: number, dir: number, color: numb
 /** `v` clamped to [lo, hi]; the middle when the span is too small. */
 function clampSpan(v: number, lo: number, hi: number): number {
   return lo > hi ? (lo + hi) / 2 : Math.min(Math.max(v, lo), hi);
+}
+
+const PLACE = new Float64Array(2);
+
+/** The board's bottom-centre (into `out`): from the wanted (bx, by), clamped
+ *  into the safe rect; if that covers the ship's keep-out round the view
+ *  centre, moved beside it (the junction's side first, then the other, then
+ *  above / below), each try clamped again. Pixi space; pure, alloc-free. */
+export function placeBoard(bx: number, by: number, w: number, h: number, jx: number, b: ArrayLike<number>, out: Float64Array): void {
+  const vw = b[2]! - b[0]!, vh = b[3]! - b[1]!;
+  const x0 = b[0]! + vw * SIGN_SAFE_INSET[0] + w / 2, x1 = b[2]! - vw * SIGN_SAFE_INSET[2] - w / 2;
+  const y0 = b[1]! + vh * SIGN_SAFE_INSET[1] + h, y1 = b[3]! - vh * SIGN_SAFE_INSET[3];
+  const cx = (b[0]! + b[2]!) / 2, cy = (b[1]! + b[3]!) / 2;
+  const kw = vw * SIGN_SHIP_KEEPOUT[0], kh = vh * SIGN_SHIP_KEEPOUT[1];
+  const side = jx < cx ? -1 : 1;
+  for (let k = 0; k < 5; k++) {
+    let x = bx, y = by;
+    if (k === 1) x = cx + side * (kw + w / 2);
+    else if (k === 2) x = cx - side * (kw + w / 2);
+    else if (k === 3) y = cy - kh;
+    else if (k === 4) y = cy + kh + h;
+    const side2 = k === 1 || k === 2;
+    out[0] = side2 ? clampSpan(x, b[0]! + vw * SIDE_INSET + w / 2, b[2]! - vw * SIDE_INSET - w / 2) : clampSpan(x, x0, x1);
+    out[1] = clampSpan(y, y0, y1);
+    const clear = out[0] + w / 2 <= cx - kw || out[0] - w / 2 >= cx + kw || out[1] <= cy - kh || out[1] - h >= cy + kh;
+    if (clear) return;
+  }
+  out[0] = clampSpan(bx, x0, x1); // nowhere clear: the plain clamp
+  out[1] = clampSpan(by, y0, y1);
 }

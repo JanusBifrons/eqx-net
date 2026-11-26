@@ -37,7 +37,7 @@ import { Container } from 'pixi.js';
 import type { RenderMirror, StructureRenderState, SwarmRenderState } from '@core/contracts/IRenderer';
 import { DECK_HEX_FLAT, deckHexCentreInto } from '../../../core/hex/plates.js';
 import type { Camera } from '../worker/Camera.js';
-import { DeckSignBoard, SIGN_CLOSE_RADIUS, SIGN_OPEN_RADIUS, SIGN_SAFE_INSET, readSignsFlag } from './deckSignBoard.js';
+import { DeckSignBoard, SIGN_CLOSE_RADIUS, SIGN_OPEN_RADIUS, SIGN_SAFE_INSET, SIGN_SHIP_KEEPOUT, placeBoard, readSignsFlag } from './deckSignBoard.js';
 import { resetRoadJoins, syncRoadJoins } from './roadJoins.js';
 
 const Y_ROADS: readonly (readonly [number, number])[] = [[0, 0], [1, 0], [2, 0], [3, 0], [-1, 1], [-2, 2], [0, -1], [0, -2]];
@@ -126,9 +126,17 @@ describe('deck sign board', () => {
     const a = board.boardAnchor();
     expect(a.x).toBeGreaterThan(-100 + 4100 * SIGN_SAFE_INSET[0]);
     expect(a.y).toBeLessThanOrEqual(2000 - 4000 * SIGN_SAFE_INSET[3]);
-    // In the middle of a big view it sits right over the junction.
-    for (let i = 0; i < 2; i++) tick();
-    expect(board.boardAnchor().x).toBe(0);
+  });
+
+  it('never covers the ship at the view centre', () => {
+    const b = [0, 0, 1000, 400]; // phone-shaped view, ship at (500, 200)
+    const out = new Float64Array(2);
+    // Junction low and just left of centre: the plain clamp would land on the ship.
+    placeBoard(450, 380, 250, 100, 450, b, out);
+    const kw = 1000 * SIGN_SHIP_KEEPOUT[0], kh = 400 * SIGN_SHIP_KEEPOUT[1];
+    const clear = out[0] + 125 <= 500 - kw || out[0] - 125 >= 500 + kw || out[1] <= 200 - kh || out[1] - 100 >= 200 + kh;
+    expect(clear).toBe(true);
+    expect(out[0]).toBeLessThan(500); // the junction's side
   });
 
   it('a disabled board never opens', () => {
