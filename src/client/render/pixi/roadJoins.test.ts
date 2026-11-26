@@ -11,7 +11,7 @@ import {
   ROAD_STRAIGHT_MASK, armCount, deriveRoadArms, localArmSlot, resetRoadJoins, roadArmsOf, roadWorldJoins, syncRoadJoins,
   type RoadPiece,
 } from './roadJoins.js';
-import { ROAD_ARM_LEN, ROAD_HALF_W, ROAD_JUNCTION_CLEAR, roadOverlayPlan } from './structureStyleC.transport.road.js';
+import { ROAD_ARM_LEN, ROAD_HALF_W, roadOverlayPlan } from './structureStyleC.transport.road.js';
 
 const C = deckHexCentreInto(3, 1, { x: 0, y: 0 });
 /** The centre of the hex beyond world edge `i` of C (game angle 60°·i). */
@@ -133,13 +133,15 @@ describe('road overlay plan', () => {
 });
 
 describe('road junctions', () => {
-  it('centre dashes stop short of a 3+ arm junction (plain road there, no box)', () => {
-    for (const mask of [0b010101, 0b000111, 0b111111]) {
+  it('every arm centre line starts at the junction centre, so they meet', () => {
+    for (const mask of [0b010101, 0b000111, 0b001011, 0b111111]) {
       const plan = roadOverlayPlan(mask);
       expect(plan.junction).toBe(true);
-      for (let i = 0; i < plan.dashes.length; i += 2) {
-        expect(Math.hypot(plan.dashes[i]!, plan.dashes[i + 1]!)).toBeGreaterThanOrEqual(ROAD_JUNCTION_CLEAR - 1e-6);
+      let atCentre = 0;
+      for (let i = 0; i < plan.dashes.length; i += 4) {
+        if (Math.hypot(plan.dashes[i]!, plan.dashes[i + 1]!) < 1e-6) atCentre++;
       }
+      expect(atCentre).toBe(plan.slots.length);
     }
   });
 });

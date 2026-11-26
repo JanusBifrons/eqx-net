@@ -12,8 +12,9 @@
  * edge midpoints at 30° + 60°·j): a dark carriageway arm from the centre to
  * each edge in the mask, pale edge lines along both sides (meeting at bends),
  * an amber dashed centre line, small amber lamps outside the edge lines (soft
- * glow + bright dot). Where 3+ arms meet the junction is plain carriageway:
- * no box, and the centre dashes stop short of it. All flat:
+ * glow + bright dot). Where 3+ arms meet, every arm's centre line starts with a
+ * dash at the centre, so the lines meet there (a Y, a T, a cross… whatever the
+ * mask), with a round amber cap over the joint. All flat:
  * ships fly over it.
  */
 import type { GraphicsContext } from 'pixi.js';
@@ -45,8 +46,6 @@ const LAMP_STEP = 130;
 const DASH_LEN = 60;
 const DASH_GAP = 50;
 const DASH_W = 10;
-/** Where 3+ arms meet, centre dashes start this far out (clear of the junction). */
-export const ROAD_JUNCTION_CLEAR = ROAD_HALF_W + 30;
 
 const LANE = mixColor(DECK_FILL, 0x000000, 0.45);
 const EDGE_LINE = mixColor(LAMP_WHITE, DECK_FILL, 0.3);
@@ -136,7 +135,7 @@ export function roadOverlayPlan(mask: number): RoadOverlayPlan {
       }
     }
   }
-  const t0 = junction ? ROAD_JUNCTION_CLEAR : 25;
+  const t0 = junction ? 0 : 25;
   for (const j of slots) {
     const a = armAngle(j), ux = Math.cos(a), uy = Math.sin(a);
     for (let t = t0; t + DASH_LEN <= R - 20; t += DASH_LEN + DASH_GAP) dashes.push(ux * t, uy * t, ux * (t + DASH_LEN), uy * (t + DASH_LEN));
@@ -162,6 +161,8 @@ export function drawRoadOverlay(g: GraphicsContext, mask: number): void {
   const d = plan.dashes;
   for (let i = 0; i < d.length; i += 4) g.moveTo(d[i]!, d[i + 1]!).lineTo(d[i + 2]!, d[i + 3]!);
   if (d.length > 0) strokeNow(g, LAMP_AMBER, 0.9, DASH_W);
+  // The centre lines meet here: one round cap hides the butt-end notches.
+  if (plan.junction) fillPoly(g, circle(0, 0, DASH_W * 0.75, 12), LAMP_AMBER, 0.9);
   const l = plan.lamps;
   for (let i = 0; i < l.length; i += 2) fillPoly(g, circle(l[i]!, l[i + 1]!, 24), LAMP_AMBER, 0.16);
   for (let i = 0; i < l.length; i += 2) fillPoly(g, circle(l[i]!, l[i + 1]!, 7, 10), LAMP_AMBER, 1);
