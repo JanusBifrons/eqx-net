@@ -25,16 +25,23 @@ describe('astrolabe light timing', () => {
     expect(rising).toBeGreaterThan(0.3);
     expect(peak).toBeGreaterThan(rising);
     expect(peak).toBeGreaterThanOrEqual(0.9);
-    expect(fading).toBeGreaterThan(0.3); // still bright a rider's landing (~0.3 s) later
+    expect(fading).toBeGreaterThan(0.3); // still bright when a rider lands (~1.1 s later)
     expect(fading).toBeLessThan(peak);
     expect(astrolabeFxAt(fx, ASTROLABE_SWAP_MS + FLASH_FADE_MS + 1, 1).flash).toBe(0);
+  });
+
+  it('a rider still lands into the flash (take 20: the held picture lands ~1.1 s after the swap; the flash had gone)', () => {
+    const fx = createAstrolabeFx();
+    expect(astrolabeFxAt(fx, ASTROLABE_SWAP_MS + 1100, 1).flash).toBeGreaterThan(0.4);
+    expect(waveSpread(fx, 0)).toBeLessThan(0.75); // the first light ring is still spreading, not gone
+    expect(waveSpread(fx, 2)).toBeGreaterThan(0);
   });
 
   it('rings of light spread out after the swap, one after another, then stop', () => {
     const fx = createAstrolabeFx();
     astrolabeFxAt(fx, ASTROLABE_SWAP_MS - 10, 1);
     for (let j = 0; j < 3; j++) expect(waveSpread(fx, j)).toBeNaN();
-    astrolabeFxAt(fx, ASTROLABE_SWAP_MS + 300, 1); // a rider lands about now
+    astrolabeFxAt(fx, ASTROLABE_SWAP_MS + 500, 1);
     const a = waveSpread(fx, 0), b = waveSpread(fx, 1);
     expect(a).toBeGreaterThan(0);
     expect(b).toBeGreaterThan(0);

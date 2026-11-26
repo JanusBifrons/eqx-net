@@ -47,12 +47,14 @@ const FLASH_R = 700;
 const WAVE_ART_R = 1000;
 const WAVE_START_R = 80;
 /** The flash builds over this long before the swap and fades over this long
- *  after it (ms; taste: the mock-up's one-second flash). */
+ *  after it (ms). The fade outlasts the held picture: a rider lands about
+ *  1.1 s after the swap (take 20) and must land into the light, not a dark
+ *  pool. */
 export const FLASH_RISE_MS = 400;
-export const FLASH_FADE_MS = 1000;
+export const FLASH_FADE_MS = 2200;
 /** Each light ring runs this long, the next starting this much later (ms). */
-const WAVE_MS = 1100;
-const WAVE_STAGGER_MS = 220;
+const WAVE_MS = 1800;
+const WAVE_STAGGER_MS = 300;
 /** Pool wave length (world units per radian, the mock-up's 95) and angular
  *  speed: a whole number of waves per timetable minute, so the waves run on
  *  unbroken through the minute's wrap. */
