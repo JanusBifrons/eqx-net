@@ -98,7 +98,7 @@ export const deckBasesRoadPhone: Shot = {
   id: 'deck-bases-road-phone',
   section: 'mechanics',
   title: 'Base platforms: following a deck road',
-  caption: 'A fighter at normal zoom follows a base road across the hex deck (review take).',
+  caption: 'A fighter, zoomed in close, follows a base road across the hex deck (review take).',
   features: ['ART'],
   docs: ['procedural-bases'],
   reel: false,
