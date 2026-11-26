@@ -61,6 +61,8 @@ export interface ArtOptions {
   zones?: boolean;
   /** Base platforms gate approach lights (`?approach=on|off`). Absent = the URL / off. */
   approach?: boolean;
+  /** Base platforms free build-slot outlines (`?buildSlots=on`). Absent = the URL / off. */
+  buildSlots?: boolean;
   /** Cut-field ore look (`?ore=off|tint|veins|seams`, F1c); absent = veins (owner's pick). */
   ore?: FieldOreLook;
   /** Graphics quality (edge smoothing, render scale, texture softening);

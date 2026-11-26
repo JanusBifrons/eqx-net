@@ -301,7 +301,7 @@ export function initSceneAndOverlays(s: RendererInitState, h: InitSceneHost, r: 
   if (effects) h.effects = effects;
   // Structure restyle (both renderer paths), on by default: 1g cable line look
   // (`?lineLook=off|pipe|conduit`) and 2c rig parts (`?rigs=0` off).
-  applyRestyleLook(s.connectorRenderer, s.swarmUpdaterCtx, s.shipContainer, h.artOpts, target.isDom ? window.location.search : null);
+  applyRestyleLook(s.connectorRenderer, s.swarmUpdaterCtx, s.shipContainer, h.artOpts, target.isDom ? window.location.search : null, r.placementGhostCtx);
   ({
     fleetOverlay: s.fleetOverlay, labels: s.labels, selectionBracket: s.selectionBracket,
     hoverBracket: s.hoverBracket, aimFeedback: s.aimFeedback,

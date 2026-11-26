@@ -53,6 +53,13 @@ export class PlacementGhostVerdict {
     deck: PlacementDeck | null = null,
   ): PlacementRejection | null {
     if (!isStructureKindId(ghost.kind)) return null;
+    this.prepare(structures, swarm);
+    return this.checkPrepared(ghost, obstacles, deck);
+  }
+
+  /** Load the placed structures once, for many {@link checkPrepared} calls
+   *  against the same set (the build-slot outlines test every free slot). */
+  prepare(structures: ReadonlyMap<number, StructureRenderState> | undefined, swarm: ReadonlyMap<number, SwarmRenderState>): void {
     const fps = this.footprints;
     let n = 0;
     if (structures) {
@@ -79,6 +86,11 @@ export class PlacementGhostVerdict {
       }
     }
     fps.length = n;
-    return placementRejection(ghost.kind, ghost.x, ghost.y, fps, obstacles, normaliseStructureRotation(ghost.angle * RAD_TO_DEG), ghost.mirror === true, deck);
+  }
+
+  /** {@link check} against the set the last {@link prepare} loaded. */
+  checkPrepared(ghost: GhostPose, obstacles: readonly GridObstacle[] | null, deck: PlacementDeck | null = null): PlacementRejection | null {
+    if (!isStructureKindId(ghost.kind)) return null;
+    return placementRejection(ghost.kind, ghost.x, ghost.y, this.footprints, obstacles, normaliseStructureRotation(ghost.angle * RAD_TO_DEG), ghost.mirror === true, deck);
   }
 }

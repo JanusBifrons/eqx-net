@@ -24,6 +24,7 @@ import type { PlacementRejection } from '@core/structures/placementRules';
 import { PlacementGhostVerdict, type GhostPose } from '../../structures/placementGhostVerdict.js';
 import { StructureHologram } from './structureHologram.js';
 import { ghostDeckAngle, ghostDeckContext, snapGhostToDeck } from './placementDeckSnap.js';
+import type { BuildSlotOutlines } from './buildSlotOutlines.js';
 const DEG_TO_RAD = Math.PI / 180;
 
 export interface PlacementGhostCtx {
@@ -49,6 +50,8 @@ export interface PlacementGhostCtx {
   obstacles: readonly GridObstacle[] | null;
   /** The server's overlap rule for the ghost (red / green), and its pose scratch. */
   readonly verdict: PlacementGhostVerdict;
+  /** Free build-slot outlines (`?buildSlots=on`, set in `init` by `applyRestyleLook`); null = off. */
+  slotOutlines: BuildSlotOutlines | null;
   readonly pose: GhostPose;
   readonly isTouch: boolean;
   readonly input: RendererInputController;
@@ -65,7 +68,7 @@ export interface PlacementGhostCtxRefs {
 export function createPlacementGhostCtx(refs: PlacementGhostCtxRefs): PlacementGhostCtx {
   return {
     placementGhost: null, placementGhostKind: null, camera: null, shipContainer: null, spectator: false, nowMs: 0,
-    obstacles: null, verdict: new PlacementGhostVerdict(), pose: { kind: '', x: 0, y: 0, angle: 0 },
+    obstacles: null, verdict: new PlacementGhostVerdict(), slotOutlines: null, pose: { kind: '', x: 0, y: 0, angle: 0 },
     isTouch: refs.isTouch, input: refs.input, feedback: refs.feedback,
   };
 }
@@ -83,6 +86,8 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
   // never steady-state. (Phase-A3: the create/rebuild/hide branching could
   // move to a pure spriteUpdateDecisions helper if a 3rd preview type lands.)
   const preview = mirror.pendingPlacementPreview;
+  // Show where the picked kind can go (deck rooms, `?buildSlots=on`): recomputed on change only.
+  ctx.slotOutlines?.update(preview, mirror);
   // A "pending" preview is the dim post-Confirm ghost (playtest 2026-06-10
   // Issue 7): placement is DONE, so it must NOT capture pointers (the camera
   // pans again) and it draws at the SENT point, dimmer.

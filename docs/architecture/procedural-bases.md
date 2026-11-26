@@ -64,6 +64,27 @@ On by default on both renderer paths (BOOT carries the flag to the worker);
 `?approach=off` turns them off. See them in `?room=deck-bases`: each base
 has at least two gates.
 
+## Free build-slot outlines (off by default; `?buildSlots=on` shows them)
+
+While a kind is picked in build mode on a deck room, a faint cyan outline
+marks every free slot on the local player's own plates: each hex, rhombus,
+plate or corner where the ghost would turn cyan. Hex-edge kinds (a shield
+gate, `'edge'` slot) get none while their placement rule is redesigned.
+Nothing here is a second rule: `buildSlotOutlines.ts` probes each plate hex
+(centre, three rhombi, six corners), snaps every probe through the same
+`snapPlacementToDeck` the ghost and the server run, drops repeats, and keeps
+the poses the ghost's own `PlacementGhostVerdict` (the server's
+`placementRejection`, with the ghost's `off-deck` deck context) accepts. Rocks
+are not tested: the ghost's rock list covers only the area round the ghost.
+The verdict loads the structure set once per recompute (`prepare` /
+`checkPrepared`). One `Graphics` in the deck floor band (over road tiles,
+under the approach lamps), owned by the placement ghost ctx and updated from
+`updatePlacementGhost`. It recomputes only when the kind, held turn, mirror,
+plates or structure set change; a steady frame walks the structure map once
+for its signature and allocates nothing. The flag rides BOOT to the worker
+like `?approach=`. See it in `?room=deck&buildSlots=on`: pick any building;
+the player's plate is centred on the world origin.
+
 ## History: Tier A static geometry (retired in phase E)
 
 The first pass generated **inert scenery**: warehouse walls, racks and
