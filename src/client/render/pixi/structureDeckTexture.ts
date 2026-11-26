@@ -28,7 +28,10 @@
  * material (panels: metal plate with a lift; grooves: lift < 0; bolts; the
  * hazard ring and chevrons: paint; wear: faint marks). The vector painter
  * ({@link drawDeckHexTexture}) fills those polygons flat, in order, exactly
- * as before; the lit bake (`deckHexArt.ts`) stamps the same polygons.
+ * as before; the lit bake (`structureDeckLitArt.ts`) stamps the same
+ * polygons bar the yard paint, which the lit plate draws as crisp vector on
+ * top (`part`, {@link DeckHexPart}): at the bake's ~2.4 u a texel its ends
+ * stair-step.
  */
 import type { GraphicsContext } from 'pixi.js';
 import {
@@ -202,22 +205,32 @@ function yard(c: StyleCtx, o: Pt, cs: Pts, base: number, r: () => number): void 
   }
 }
 
+/** Which polygons {@link deckHexPolys} emits: `all` (the vector plate),
+ *  `floor` (all but the yard paint: the lit bake) or `paint` (the yard's
+ *  hazard ring and chevrons alone: the lit plate's crisp vector overlay).
+ *  `all` is exactly `floor` then `paint`, in order. */
+export type DeckHexPart = 'all' | 'floor' | 'paint';
+
 /**
  * One hex's floor (look `tex`, not `plain`) as kit polygons in `c`:
  * panels in place of the flat fill, then grooves, bolts and wear; the yard
- * markings on the middle hex. `o` = hex centre, `cs` = its six corners
- * (pixi space), `R` = corner radius, (q, r) = its axial offset in the
- * plate, seeding the look. `c.frame` must hold the whole hex.
+ * markings (paint) on the middle hex, last. `o` = hex centre, `cs` = its
+ * six corners (pixi space), `R` = corner radius, (q, r) = its axial offset
+ * in the plate, seeding the look. `c.frame` must hold the whole hex.
+ * `part`: {@link DeckHexPart} (every part makes the same seeded draws).
  */
 export function deckHexPolys(
   c: StyleCtx, tex: Exclude<DeckTex, 'plain'>, variant: number,
-  o: Pt, cs: Pts, R: number, q: number, r: number, base: number,
+  o: Pt, cs: Pts, R: number, q: number, r: number, base: number, part: DeckHexPart = 'all',
 ): void {
   const rand = rng(hash2(q * 31 + variant * 977 + 1, r * 17 + (tex === 'a' ? 3 : 7)));
+  const n0 = c.polys.length;
   if (tex === 'a') plating(c, o, cs, base, rand);
   else planking(c, o, cs, R, base, rand);
   wear(c, o, R, rand);
-  if (q === 0 && r === 0) yard(c, o, cs, base, rand);
+  const n1 = c.polys.length;
+  if (part !== 'floor' && q === 0 && r === 0) yard(c, o, cs, base, rand);
+  if (part === 'paint') c.polys.splice(n0, n1 - n0);
 }
 
 /** A bare style ctx collecting one hex's polygons (cold). `frame`: the fit check's outline. */

@@ -20,12 +20,13 @@ import { MachinedFlatSprite } from '../art/MachinedFlatSprite.js';
 import { DECK_UNDER_Z, StructureDeckPlates, deckPlateContext, deckPlateOutlineContext } from './structureDeckPlates.js';
 import { DECK_ZONE_Z } from './structureDeckZones.js';
 import { DECK_LIT_FAR_SCALE, DECK_LIT_Z, StructureDeckLit, deckLitShown } from './structureDeckLit.js';
-import { DECK_PLATE_HEX_BOX, deckLitArtId, deckLitVisual } from './structureDeckLitArt.js';
-import { deckHexPolys, deckStyleCtx } from './structureDeckTexture.js';
+import { DECK_LIT_FILL, DECK_PLATE_HEX_BOX, deckLitArtId, deckLitPaintContext, deckLitVisual } from './structureDeckLitArt.js';
+import { deckHexPolys, deckPlatePick, deckStyleCtx } from './structureDeckTexture.js';
 import { ngon } from './structureStyleKit.js';
 import { HEX_DIRS } from '../../../core/hex/hex.js';
 import { DECK_HEX_SIZE } from '../../../core/hex/plates.js';
 import { DECK_FILL } from './structureDeckPlates.js';
+import { ROAD_LANE } from './structureStyleC.transport.road.js';
 
 // Compiling the lit GLSL needs a WebGL context (none under Node).
 vi.spyOn(GlProgram, 'from').mockImplementation(() => ({}) as GlProgram);
@@ -65,7 +66,7 @@ describe('lit deck art — one geometry source', () => {
         const cs: Array<[number, number]> = [];
         for (let k = 0; k < 6; k++) { const a = Math.PI / 6 + (k * Math.PI) / 3; cs.push([DECK_HEX_SIZE * Math.cos(a), -DECK_HEX_SIZE * Math.sin(a)]); }
         const d = role === 'yard' ? { q: 0, r: 0 } : HEX_DIRS[0]!;
-        deckHexPolys(c, 'a', v, [0, 0], cs, DECK_HEX_SIZE, d.q, d.r, DECK_FILL);
+        deckHexPolys(c, 'a', v, [0, 0], cs, DECK_HEX_SIZE, d.q, d.r, DECK_LIT_FILL, 'floor');
         const solid = c.polys.filter((p) => (p.alpha ?? 1) >= 1).length;
         expect(plan.polys!.length).toBe(solid + 6);
         expect(plan.polys!.every((p) => (p.alpha ?? 1) >= 1)).toBe(true);
@@ -73,6 +74,47 @@ describe('lit deck art — one geometry source', () => {
         expect(plan.footprint).toEqual({ w: DECK_PLATE_HEX_BOX.w, h: DECK_PLATE_HEX_BOX.h });
       }
     }
+  });
+
+  it('paint stays out of the lit bake: no paint polys, the yard bakes like a plain floor hex', () => {
+    for (let v = 0; v < 3; v++) {
+      for (const role of ['ring', 'yard'] as const) {
+        expect(deckLitVisual(deckLitArtId('a', role), v + 1).polys!.some((p) => p.mat === 'paint')).toBe(false);
+      }
+    }
+  });
+
+  it('one geometry source: all = floor then paint, in order; paint is the yard only', () => {
+    const cs: Array<[number, number]> = [];
+    for (let k = 0; k < 6; k++) { const a = Math.PI / 6 + (k * Math.PI) / 3; cs.push([DECK_HEX_SIZE * Math.cos(a), -DECK_HEX_SIZE * Math.sin(a)]); }
+    for (const tex of ['a', 'b'] as const) {
+      for (const [q, r] of [[0, 0], [1, 0]] as const) {
+        const run = (part: 'all' | 'floor' | 'paint') => {
+          const c = deckStyleCtx(ngon(0, 0, 2000, 6));
+          deckHexPolys(c, tex, 1, [0, 0], cs, DECK_HEX_SIZE, q, r, DECK_FILL, part);
+          return c.polys;
+        };
+        expect(run('all')).toEqual([...run('floor'), ...run('paint')]);
+        expect(run('paint').length > 0).toBe(q === 0 && r === 0);
+        expect(run('floor').some((p) => p.mat === 'paint')).toBe(false);
+      }
+    }
+  });
+
+  it('the paint overlay draws the yard paint polys, crisp vector, one fill each', () => {
+    const cs: Array<[number, number]> = [];
+    for (let k = 0; k < 6; k++) { const a = Math.PI / 6 + (k * Math.PI) / 3; cs.push([DECK_HEX_SIZE * Math.cos(a), -DECK_HEX_SIZE * Math.sin(a)]); }
+    const c = deckStyleCtx(ngon(0, 0, 2000, 6));
+    deckHexPolys(c, 'a', 2, [0, 0], cs, DECK_HEX_SIZE, 0, 0, DECK_FILL, 'paint');
+    const ctx = deckLitPaintContext('a', 2);
+    expect(ctx.instructions.filter((i) => i.action === 'fill')).toHaveLength(c.polys.length);
+    expect(deckLitPaintContext('a', 2)).toBe(ctx); // shared, built once
+  });
+
+  it('the lit deck is lifted: lighter than the old fill, the road lane stays clearly darker', () => {
+    const lum = (c: number): number => 0.2126 * ((c >> 16) & 255) + 0.7152 * ((c >> 8) & 255) + 0.0722 * (c & 255);
+    expect(lum(DECK_LIT_FILL)).toBeGreaterThan(lum(DECK_FILL) * 1.2);
+    expect(lum(ROAD_LANE)).toBeLessThan(lum(DECK_LIT_FILL) * 0.5);
   });
 
   it('the yard (hazard ring) differs from a ring hex', () => {
@@ -85,7 +127,7 @@ describe('lit deck art — one geometry source', () => {
       for (const role of ['ring', 'yard'] as const) {
         for (let seed = 1; seed <= 3; seed++) {
           const k = bakeKey({ type: 'struct', id: deckLitArtId(tex, role), seed, rot: 0, lit: true });
-          expect(k).toContain(':D');
+          expect(k).toContain(':D2');
           keys.add(k);
         }
       }
@@ -152,6 +194,12 @@ describe('StructureDeckPlates — lit layer', () => {
         expect(sp.lit?.selfShadow).toBe(false);
       }
       expect((r.children[7] as Graphics).context).toBe(deckPlateOutlineContext());
+      // The yard's paint rides its hex as crisp vector over the lit art; ring hexes carry none.
+      const paint = r.children[0]!.children.filter((ch) => ch.label === 'deckLitPaint') as Graphics[];
+      expect(paint).toHaveLength(1);
+      expect(r.children[0]!.children.at(-1)).toBe(paint[0]);
+      expect(paint[0]!.context).toBe(deckLitPaintContext('a', deckPlatePick(r === roots[0] ? 0 : 1, 0).variant));
+      for (let k = 1; k < 7; k++) expect(r.children[k]!.children.some((ch) => ch.label === 'deckLitPaint')).toBe(false);
     }
     expect(litPass.count - before).toBe(14);
     // The handles live in the art ctx (collection sees them in use): 2 roles × the variants used.

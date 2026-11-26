@@ -7,7 +7,10 @@
  * where lit hexes meet); over it, one Container per plate at the same pose
  * holds seven `MachinedFlatSprite`s (one per hex: the yard art in the middle,
  * the ring art turned by 60° steps round it, `structureDeckLitArt.ts`) and
- * the plate's outer outline (the lit hexes would cover its inner half).
+ * the plate's outer outline (the lit hexes would cover its inner half). The
+ * yard sprite carries its paint (hazard ring, chevrons) as a crisp vector
+ * child over the lit art (`deckLitPaintContext`, shared per look and variant),
+ * so it sits under the zone paint and every structure like the plate itself.
  *
  * Art comes from the existing `struct` bake through `ArtService.struct()`;
  * the handles live in the art ctx's handle map (so art collection sees them
@@ -31,7 +34,7 @@ import { litPass } from '../art/litPass.js';
 import { isSpriteInView } from '../spriteUpdateDecisions.js';
 import { FAR_ICON } from './FarZoomIcons.js';
 import { RIG_UNDER_Z } from './structureRigs.js';
-import { deckLitArtId } from './structureDeckLitArt.js';
+import { deckLitArtId, deckLitPaintContext } from './structureDeckLitArt.js';
 import { DECK_VARIANTS, deckPlatePick, type DeckTex } from './structureDeckTexture.js';
 import { deckPlateOutlineContext } from './structureDeckPlates.js';
 
@@ -98,7 +101,7 @@ export class StructureDeckLit {
   private readonly pt: HexPoint = { x: 0, y: 0 };
   private readonly plateFn = (p: LitPlate): void => this.framePlate(p);
 
-  constructor(private readonly shipContainer: Container, tex: Exclude<DeckTex, 'plain'>) {
+  constructor(private readonly shipContainer: Container, private readonly tex: Exclude<DeckTex, 'plain'>) {
     for (let v = 0; v < DECK_VARIANTS; v++) {
       for (const role of ['ring', 'yard'] as const) {
         this.ids.push(deckLitArtId(tex, role));
@@ -186,6 +189,11 @@ export class StructureDeckLit {
       sp.position.set(this.pt.x, this.pt.y);
       // The middle hex keeps the vector plate's yard; ring hexes turn for variety (a hex maps onto itself).
       if (k > 0) sp.rotation = (deckPlatePick(p.i * 7 + k, p.j * 13 + k).turns * Math.PI) / 3;
+      else {
+        const paint = new Graphics(deckLitPaintContext(this.tex, p.variant));
+        paint.label = 'deckLitPaint';
+        sp.addChild(paint);
+      }
       p.hx[2 * k] = p.x + c * this.pt.x - s * this.pt.y;
       p.hx[2 * k + 1] = p.y + s * this.pt.x + c * this.pt.y;
       root.addChild(sp);
@@ -204,7 +212,7 @@ export class StructureDeckLit {
   private drop(p: LitPlate): void {
     if (p.root === null) return;
     p.root.parent?.removeChild(p.root);
-    p.root.destroy({ children: true }); // lit meshes leave litPass; atlas textures and the shared outline context survive
+    p.root.destroy({ children: true }); // lit meshes leave litPass; atlas textures and the shared outline / paint contexts survive
     p.root = null;
     p.ringArt = null;
     p.yardArt = null;
