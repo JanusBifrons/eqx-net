@@ -31,9 +31,11 @@
  * outer hexes of a plate, so it lays fewer plates and clears less rock; the
  * same layout, only the per-plate cap differs.
  *
- * Not yet (later slices): the fence (deck fences run along seams with road
- * gates). A fenced profile's guns
- * stand on the deck like any building.
+ * Fenced (slice 26, `growDeckFence.ts`): a fenced profile's deck encloses
+ * itself once its buildings are laid: shield pylons on every corner round the
+ * OUTER boundary of the laid plates, linked seam by seam into a closed ring,
+ * and road gates. Its guns then go OUTSIDE the fence (user ruling: a fence
+ * blocks its own side's shots too) on bastion plates laid past the ring.
  */
 import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { HEX_DIRS, pixelToAxialInto, type AxialHex, type HexPoint } from '../hex/hex.js';
@@ -42,6 +44,7 @@ import { rhombusCentroidInto, type DeckSnap } from '../hex/deckSnap.js';
 import { PlateSet } from '../hex/plateSet.js';
 import { snapPlacementToDeck } from '../structures/deckPlacement.js';
 import { Builder, type GrownPlacement } from './growBuilder.js';
+import { layDeckFence } from './growDeckFence.js';
 import type { Want } from './roleUnits.js';
 
 /** Growth options (`growBase`). Absent / false = today's row layout, unchanged. */
@@ -102,7 +105,7 @@ const PLATE_ORDER: ReadonlyArray<Readonly<PlateIndex>> = (() => {
 })();
 
 /** One laid plate: its anchor's index and centre hex. */
-interface Laid {
+export interface Laid {
   i: number;
   j: number;
   anchor: number;
@@ -110,7 +113,7 @@ interface Laid {
   r: number;
 }
 
-class DeckLayout {
+export class DeckLayout {
   readonly B = new Builder(new PlateSet<number>());
   readonly laid: Laid[] = [];
   private next = 0;
@@ -141,11 +144,13 @@ class DeckLayout {
     return true;
   }
 
-  /** Lay the next plate in `PLATE_ORDER` that the deck rule accepts. */
-  layNext(): boolean {
+  /** Lay the next plate in `PLATE_ORDER` that the deck rule accepts (and
+   *  `skip`, when given, does not pass over for good). */
+  layNext(skip?: (i: number, j: number) => boolean): boolean {
     while (this.laid.length < DECK_MAX_PLATES && this.next < PLATE_ORDER.length) {
       const p = PLATE_ORDER[this.next++]!;
       if (this.laid.some((l) => l.i === p.i && l.j === p.j)) continue;
+      if (skip?.(p.i, p.j) === true) continue;
       if (this.layPlate(p.i, p.j)) return true;
     }
     return false;
@@ -182,6 +187,21 @@ class DeckLayout {
     return -1;
   }
 
+  /** Is deck hex (q, r) free of buildings? */
+  isHexFree(q: number, r: number): boolean {
+    const key = `${q},${r}`;
+    return !this.hexFull.has(key) && (this.smallHeld.get(key) ?? 0) === 0;
+  }
+
+  /** A `'hex'` kind on the centre of hex (q, r), turned `rotDeg`, linked to
+   *  `anchor` (a gate's road). Returns its index or -1. */
+  placeOnHex(w: Want, q: number, r: number, rotDeg: number, anchor: number): number {
+    deckHexCentreInto(q, r, pt);
+    const li = this.tryAt(w, pt.x, pt.y, rotDeg, anchor);
+    if (li >= 0) this.hexFull.add(`${q},${r}`);
+    return li;
+  }
+
   /** `w` at the player's snap of (x, y) turned `rotDeg`, linked to `anchor`. */
   private tryAt(w: Want, x: number, y: number, rotDeg: number, anchor: number): number {
     snapPlacementToDeck(w.kind, x, y, snap, rotDeg);
@@ -202,20 +222,54 @@ class DeckLayout {
  * filled `Builder` (index 0 is the origin plate's anchor); `hexesPerPlate`
  * caps the outer hexes holding buildings per plate; a building that
  * fits neither a laid plate nor one fresh plate is left out.
+ *
+ * `guns` given (null = unfenced) = a fenced base: once `wants` are laid, the
+ * fence rings the deck (`layDeckFence`) and `guns` go on bastion plates laid
+ * outside it, never on a plate inside the ring.
  */
-export function layDeckBase(wants: readonly Want[], hexesPerPlate: number = DECK_HEXES_PER_PLATE): Builder {
+export function layDeckBase(wants: readonly Want[], hexesPerPlate: number = DECK_HEXES_PER_PLATE, guns: readonly Want[] | null = null): DeckBase {
   const L = new DeckLayout(hexesPerPlate);
-  if (!L.layPlate(0, 0)) return L.B;
-  // The Capital first, then the rest biggest first (they need the room).
-  const area = (w: Want): number => (w.kind === 'capital' ? Infinity : getStructureKind(w.kind).footprint.w * getStructureKind(w.kind).footprint.h);
-  const queue = [{ kind: 'capital' } as Want, ...wants].filter((w) => {
+  if (!L.layPlate(0, 0)) return { B: L.B, fencePylons: 0, fenceGates: 0 };
+  const sized = (ws: readonly Want[]): Want[] => ws.filter((w) => {
     const s = getStructureKind(w.kind).deckSlot;
     return s === 'hex' || s === 'small';
   }).sort((a, b) => area(b) - area(a));
-  for (const w of queue) {
+  for (const w of sized([{ kind: 'capital' }, ...wants])) {
     // Past the laid plates, one fresh plate: a building that fits no empty
     // plate never will, so it is left out rather than laying plate after plate.
     if (L.place(w, 0) < 0 && L.layNext()) L.place(w, L.laid.length - 1);
   }
-  return L.B;
+  if (guns === null) return { B: L.B, fencePylons: 0, fenceGates: 0 };
+  const fence = layDeckFence(L);
+  // Bastions: plates laid from here on are outside the ring. A gun takes a
+  // slot on a bastion plate (never an inside one), or one fresh bastion; no
+  // bastion goes on a plate a gate opens onto.
+  const inside = L.laid.length;
+  for (const w of sized(guns)) {
+    if (L.place(w, inside) < 0 && L.layNext(fence.blocksBastion)) L.place(w, L.laid.length - 1);
+  }
+  return { B: L.B, fencePylons: fence.pylons, fenceGates: fence.gates };
+}
+
+/** The Capital first, then the rest biggest first (they need the room). */
+function area(w: Want): number {
+  return w.kind === 'capital' ? Infinity : getStructureKind(w.kind).footprint.w * getStructureKind(w.kind).footprint.h;
+}
+
+/** A laid deck base: its builder and fence tally. */
+export interface DeckBase {
+  B: Builder;
+  fencePylons: number;
+  fenceGates: number;
+}
+
+/** Deck fence pieces in `placements` (posts, gates and gate roads). The tier
+ *  structure cap leaves them out (slice 26): a deck's seam ring runs round
+ *  plates 1300 u a hex, about twice the posts of a row base's rectangle, and
+ *  counting them gutted fenced outposts and settlements (the cap's wealth cut
+ *  ran to its last pass). */
+export function deckFencePieces(placements: readonly GrownPlacement[]): number {
+  let n = 0;
+  for (const p of placements) if (p.kind === 'shield_pylon' || p.kind === 'shield_gate' || p.kind === 'road') n++;
+  return n;
 }

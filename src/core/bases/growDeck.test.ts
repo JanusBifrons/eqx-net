@@ -29,6 +29,9 @@ function fnv(s: string): string {
   return h.toString(16);
 }
 
+/** Fence parts and gate roads (slice 26). */
+const FENCE = new Set(['shield_pylon', 'shield_gate']);
+const POWER = new Set(['solar', 'reactor', 'battery', 'battery_bank']);
 const FEATURES = ['asteroid', 'nebula', 'minerals'] as const;
 const CASES: Array<[BaseTier, BaseRole, boolean, number]> = [
   ['outpost', 'mining', true, 1], ['settlement', 'refinery', true, 7], ['settlement', 'trade', false, 9],
@@ -98,6 +101,8 @@ function density(b: GrownBase, cap: number): { plates: number; buildings: number
   const h = { q: 0, r: 0 };
   for (const p of b.placements) {
     if (isConnectorKind(p.kind) && plateCentreAtWorldInto(p.x, p.y, PI)) { anchors.add(`${PI.i},${PI.j}`); continue; }
+    // The fence stands on seams; a gate's road is open floor (slice 26).
+    if (FENCE.has(p.kind) || p.kind === 'road') continue;
     // A small kind sits on a rhombus of its hex: that hex is the one used.
     pixelToAxialInto(p.x, p.y, DECK_HEX_SIZE, h);
     expect(isPlateCentreHex(h.q, h.r), `${p.kind} off the anchor's yard`).toBe(false);
@@ -107,12 +112,15 @@ function density(b: GrownBase, cap: number): { plates: number; buildings: number
   }
   let used = 0, maxPerPlate = 0;
   for (const s of usedPerPlate.values()) { expect(s.size).toBeLessThanOrEqual(cap); used += s.size; maxPerPlate = Math.max(maxPerPlate, s.size); }
-  return { plates: anchors.size, buildings: b.placements.length - anchors.size, used, maxPerPlate };
+  // Not counted: the fence and its roads, and power (a fence's length, so its
+  // draw, depends on the layout: slice 26).
+  const skip = b.placements.filter((p) => FENCE.has(p.kind) || p.kind === 'road' || POWER.has(p.kind)).length;
+  return { plates: anchors.size, buildings: b.placements.length - anchors.size - skip, used, maxPerPlate };
 }
 
 describe('growBase deck option (base platforms 23)', () => {
   it('bumps the growth version', () => {
-    expect(BASE_GROWTH_VERSION).toBe(26);
+    expect(BASE_GROWTH_VERSION).toBe(27);
   });
 
   it('flag off: output byte-identical to before the slice (default and explicit false)', () => {
@@ -132,7 +140,9 @@ describe('growBase deck option (base platforms 23)', () => {
       const { plates, reached } = verifyDeck(b);
       expect(reached, 'every structure reachable from the Capital').toBe(b.placements.length);
       expect(b.placements.filter((p) => p.kind === 'capital')).toHaveLength(1);
-      expect(b.fencePylons + b.fenceGates).toBe(0);
+      // Slice 26: a fenced deck rings itself (growDeckFence.test.ts checks the ring).
+      if (fenced) expect(b.fencePylons * b.fenceGates).toBeGreaterThan(0);
+      else expect(b.fencePylons + b.fenceGates).toBe(0);
       // Every connector is a plate anchor; one per plate.
       const PI = { i: 0, j: 0 };
       const conns = b.placements.filter((p) => isConnectorKind(p.kind));
@@ -157,7 +167,8 @@ describe('growBase deck option (base platforms 23)', () => {
       // Every building stands on a plate that exists (the deck rule above
       // checks it too), and the base keeps what it bought (bar the fence and
       // its own connectors).
-      for (const p of b.placements) expect(plates.plateAtWorld('o', p.x, p.y), `${p.kind} on a plate`).toBe(true);
+      // (A fence post or gate on the deck's outer seam touches it from outside.)
+      for (const p of b.placements) if (!FENCE.has(p.kind)) expect(plates.plateAtWorld('o', p.x, p.y), `${p.kind} on a plate`).toBe(true);
       const bought = (g: GrownBase) => g.placements.filter((p) => !isConnectorKind(p.kind) && p.kind !== 'shield_pylon' && p.kind !== 'shield_gate').length;
       expect(bought(b)).toBeGreaterThanOrEqual(bought(flat) - 2);
       expect(b.netPower).toBeGreaterThanOrEqual(0);
@@ -183,8 +194,12 @@ describe('growBase deck option (base platforms 23)', () => {
       const sp = density(sparseB, DECK_HEXES_PER_PLATE);
       const dn = density(denseB, DECK_HEXES_PER_PLATE_DENSE);
       console.log(`${tier} ${role}: sparse ${sp.plates} plates ${sp.used}/${sp.plates * 6} hexes; dense ${dn.plates} plates ${dn.used}/${dn.plates * 6} hexes (max ${dn.maxPerPlate}/plate)`);
-      expect(dn.buildings, 'dense keeps every building').toBe(sp.buildings);
-      expect(dn.plates).toBeLessThan(sp.plates);
+      // A fenced sparse deck's longer ring counts toward the tier's structure
+      // cap (fence included), so it may buy less than the dense one (slice 26).
+      if (fenced) expect(dn.buildings, 'dense keeps every building').toBeGreaterThanOrEqual(sp.buildings);
+      else expect(dn.buildings, 'dense keeps every building').toBe(sp.buildings);
+      if (fenced) expect(dn.plates).toBeLessThanOrEqual(sp.plates);
+      else expect(dn.plates).toBeLessThan(sp.plates);
       expect(dn.maxPerPlate).toBeGreaterThan(DECK_HEXES_PER_PLATE);
     });
   }

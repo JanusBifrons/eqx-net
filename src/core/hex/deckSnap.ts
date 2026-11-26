@@ -126,9 +126,19 @@ export function snapToDeckSlot(slot: DeckSlot, x: number, y: number, out: DeckSn
       out.rot = -1;
     }
   }
-  out.x = pointScratch.x;
-  out.y = pointScratch.y;
+  const seam = slot === 'corner' || slot === 'edge';
+  out.x = seam ? onSeamGrid(pointScratch.x) : pointScratch.x;
+  out.y = seam ? onSeamGrid(pointScratch.y) : pointScratch.y;
   return out;
+}
+
+/** A seam point (corner, edge midpoint) is shared by the hexes round it, and
+ *  each computes it a last bit differently, so re-snapping could hop between
+ *  them (base platforms 26). Rounding to a 2⁻²⁴ grid (exact in binary) gives
+ *  one answer, keeping the snap idempotent. */
+const SEAM_GRID = 2 ** 24;
+function onSeamGrid(v: number): number {
+  return Math.round(v * SEAM_GRID) / SEAM_GRID + 0; // + 0: never -0
 }
 
 /**
