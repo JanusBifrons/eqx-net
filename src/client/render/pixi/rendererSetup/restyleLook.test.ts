@@ -9,6 +9,7 @@ import { describe, it, expect } from 'vitest';
 import { Container } from 'pixi.js';
 import { applyRestyleLook, readRestyleLook, resolveRestyleLook } from './restyleLook.js';
 import { StructureRigs } from '../structureRigs.js';
+import { BuildSlotOutlines } from '../buildSlotOutlines.js';
 import type { StructureDeckPlates } from '../structureDeckPlates.js';
 import { rendererArgsFromBoot } from '../../worker/bootRenderer.js';
 import type { MainToWorkerMsg } from '../../worker/protocol.js';
@@ -27,6 +28,7 @@ function bootFrom(art: ArtOptions): BootMsg {
     ...(art.fenceLook !== undefined ? { fenceLook: art.fenceLook } : {}),
     ...(art.zones !== undefined ? { zones: art.zones } : {}),
     ...(art.approach !== undefined ? { approach: art.approach } : {}),
+    ...(art.buildSlots !== undefined ? { buildSlots: art.buildSlots } : {}),
     ...(art.buildRing !== undefined ? { buildRing: art.buildRing } : {}),
   };
 }
@@ -73,7 +75,7 @@ describe('structure restyle on the worker renderer', () => {
   });
 
   it('a worker renderer booted without the fields falls back to the defaults (on)', () => {
-    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a', fenceLook: 'new', zones: true, approach: true, buildRing: true });
+    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a', fenceLook: 'new', zones: true, approach: true, buildSlots: true, buildRing: true });
   });
 });
 
@@ -167,6 +169,25 @@ describe('gate approach lights (`?approach=`)', () => {
     const on: { deckPlates?: StructureDeckPlates } = {};
     applyRestyleLook({ lineLook: null }, on, new Container(), { mode: 'machined' }, '');
     expect(on.deckPlates!.approach).toBeDefined();
+  });
+});
+
+describe('build-slot outlines (`?buildSlots=`)', () => {
+  it('defaults to on (builds the outlines on the ghost ctx); `off` rides BOOT to the worker', () => {
+    expect(readRestyleLook('').buildSlots).toBe(true);
+    expect(resolveRestyleLook({ mode: 'classic' }, null).buildSlots).toBe(true);
+    const art: ArtOptions = { mode: 'machined', ...readRestyleLook('?room=deck') };
+    const [, workerArt] = rendererArgsFromBoot(structuredClone(bootFrom(art)));
+    expect(workerArt.buildSlots).toBe(true);
+    const ghost: { slotOutlines: BuildSlotOutlines | null } = { slotOutlines: null };
+    applyRestyleLook({ lineLook: null }, {}, new Container(), workerArt, null, ghost);
+    expect(ghost.slotOutlines).toBeInstanceOf(BuildSlotOutlines);
+    const offArt: ArtOptions = { mode: 'machined', ...readRestyleLook('?room=deck&buildSlots=off') };
+    const [, offWorker] = rendererArgsFromBoot(structuredClone(bootFrom(offArt)));
+    expect(offWorker.buildSlots).toBe(false);
+    const off: { slotOutlines: BuildSlotOutlines | null } = { slotOutlines: null };
+    applyRestyleLook({ lineLook: null }, {}, new Container(), offWorker, null, off);
+    expect(off.slotOutlines).toBeNull();
   });
 });
 

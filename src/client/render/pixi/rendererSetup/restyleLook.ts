@@ -17,6 +17,7 @@ import { DEFAULT_DECK_TEX, readDeckTex, type DeckTex } from '../structureDeckTex
 import { DEFAULT_FENCE_LOOK, readFenceLook, type FenceLook } from '../connectorFenceBeam.js';
 import { readZonesFlag } from '../structureDeckZones.js';
 import { readApproachFlag } from '../deckApproachLights.js';
+import { BuildSlotOutlines, readBuildSlotsFlag } from '../buildSlotOutlines.js';
 import { readBuildRingFlag } from '../buildRing.js';
 
 export interface RestyleLook {
@@ -32,6 +33,8 @@ export interface RestyleLook {
   zones: boolean;
   /** Runway approach lights outside deck fence gates (`?approach=on|off`, default on). */
   approach: boolean;
+  /** Free build-slot outlines while placing on a deck (default on; `?buildSlots=off` hides). */
+  buildSlots: boolean;
   /** Readable construction: progress ring + wireframe hologram on unbuilt structures (`?buildRing=on|off`, default on). */
   buildRing: boolean;
 }
@@ -40,13 +43,13 @@ export interface RestyleLook {
 export function readRestyleLook(search: string): RestyleLook {
   return {
     lineLook: readLineLook(search), rigs: readRigsFlag(search), deckTex: readDeckTex(search), fenceLook: readFenceLook(search), zones: readZonesFlag(search),
-    approach: readApproachFlag(search), buildRing: readBuildRingFlag(search),
+    approach: readApproachFlag(search), buildSlots: readBuildSlotsFlag(search), buildRing: readBuildRingFlag(search),
   };
 }
 
 /** What a renderer draws: `ArtOptions` first, else the URL (`search`, null in a worker), else the defaults. */
 export function resolveRestyleLook(art: ArtOptions, search: string | null): RestyleLook {
-  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, zones: true, approach: true, buildRing: true };
+  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, zones: true, approach: true, buildSlots: true, buildRing: true };
   return {
     lineLook: art.lineLook !== undefined ? art.lineLook : fromUrl.lineLook,
     rigs: art.rigs ?? fromUrl.rigs,
@@ -54,6 +57,7 @@ export function resolveRestyleLook(art: ArtOptions, search: string | null): Rest
     fenceLook: art.fenceLook ?? fromUrl.fenceLook,
     zones: art.zones ?? fromUrl.zones,
     approach: art.approach ?? fromUrl.approach,
+    buildSlots: art.buildSlots ?? fromUrl.buildSlots,
     buildRing: art.buildRing ?? fromUrl.buildRing,
   };
 }
@@ -66,6 +70,7 @@ export function applyRestyleLook(
   shipContainer: Container,
   art: ArtOptions,
   search: string | null,
+  placementGhostCtx?: { slotOutlines: BuildSlotOutlines | null },
 ): RestyleLook {
   const look = resolveRestyleLook(art, search);
   connectorRenderer.lineLook = look.lineLook;
@@ -81,5 +86,7 @@ export function applyRestyleLook(
   if (look.rigs) swarmUpdaterCtx.structureRigs = new StructureRigs(shipContainer);
   // Base platforms: the deck floor (drawn only while the room's deck flag is on).
   swarmUpdaterCtx.deckPlates = new StructureDeckPlates(shipContainer, look.deckTex, look.zones, look.approach);
+  // Base platforms: outline the free build slots while placing (default on; `?buildSlots=off` hides).
+  if (placementGhostCtx) placementGhostCtx.slotOutlines = look.buildSlots ? new BuildSlotOutlines(shipContainer) : null;
   return look;
 }

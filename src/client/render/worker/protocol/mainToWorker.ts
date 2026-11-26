@@ -67,6 +67,8 @@ export interface BootMsg {
   zones?: boolean;
   /** Gate approach lights (`?approach=`). Absent = off. */
   approach?: boolean;
+  /** Free build-slot outlines (`?buildSlots=`). Absent = on. */
+  buildSlots?: boolean;
   /** Readable construction ring (`?buildRing=on|off`). Absent = on (the worker default). */
   buildRing?: boolean;
   /** Cut-field ore look (`?ore=`, F1c trial); absent = off. */
