@@ -191,6 +191,25 @@ export class DeckLayout {
     return -1;
   }
 
+  /** Lay every unlaid plate holding one of `hexes` (keys "q,r") that
+   *  borders the deck (repeated while one more borders it). */
+  layPlatesUnder(hexes: ReadonlySet<string>): void {
+    const want: PlateIndex[] = [];
+    for (const k of hexes) {
+      const [q, r] = k.split(',').map(Number) as [number, number];
+      plateOfHexInto(q, r, plate);
+      if (!want.some((p) => p.i === plate.i && p.j === plate.j) && !this.laid.some((l) => l.i === plate.i && l.j === plate.j)) want.push({ i: plate.i, j: plate.j });
+    }
+    for (let grew = true; grew && want.length > 0;) {
+      grew = false;
+      for (let n = 0; n < want.length; n++) {
+        if (!this.layPlate(want[n]!.i, want[n]!.j)) continue;
+        want.splice(n--, 1);
+        grew = true;
+      }
+    }
+  }
+
   /** Is deck hex (q, r) free of buildings? */
   isHexFree(q: number, r: number): boolean {
     const key = `${q},${r}`;
@@ -232,26 +251,54 @@ export class DeckLayout {
  * outside it, never on a plate inside the ring.
  */
 export function layDeckBase(wants: readonly Want[], hexesPerPlate: number = DECK_HEXES_PER_PLATE, guns: readonly Want[] | null = null): DeckBase {
-  const a = layDeckOnce(wants, hexesPerPlate, guns, new Set());
+  const a = layDeckOnce(wants, hexesPerPlate, guns, {});
   // Roads (slice 32, `growDeckRoads.ts`): the gates' road network is planned
-  // on this layout and its hexes kept open in a second one. That one is kept
-  // when it loses no building or gate and joins more gates, for at most one
-  // more inside plate (a plate's open floor is every other outer hex, so a
-  // road round its anchor can push a building onto a new plate).
+  // on this layout and its hexes kept open in the next one, which also lays
+  // the plates those roads run over and keeps this layout's gate hexes. While
+  // a gate is still unjoined the network is reserved again on the newest
+  // layout (hexes added up, `DECK_ROAD_PASSES` at most). A layout is a
+  // candidate when it loses no building or gate, for at most two more inside
+  // plates (`DECK_ROAD_EXTRA_PLATES`: a plate's open floor is every other
+  // outer hex, so a road round its anchor can push a building onto a new
+  // plate); the one joining the most gates is kept.
   if (a.fence === null || a.fence.gateEnds.length < 2) return a.base;
-  const reserved = reserveDeckRoads(a.L, a.inside, a.fence.gateEnds);
-  const b = layDeckOnce(wants, hexesPerPlate, guns, reserved);
-  if (b.fence === null || b.inside > a.inside + 1 || b.base.fenceGates < a.base.fenceGates) return a.base;
-  if (deckBuildings(b.base.B) < deckBuildings(a.base.B)) return a.base;
-  const ja = gatesJoined(a.base.B, a.fence.gateEnds), jb = gatesJoined(b.base.B, b.fence.gateEnds);
-  return jb > ja || (jb === ja && b.inside <= a.inside && roads(b.base.B) > roads(a.base.B)) ? b.base : a.base;
+  const reserved = new Set<string>();
+  let best = a, bestJoined = gatesJoined(a.base.B, a.fence.gateEnds), prev = a;
+  for (let n = 0; n < DECK_ROAD_PASSES && bestJoined < best.base.fenceGates; n++) {
+    for (const k of reserveDeckRoads(prev.L, prev.inside, prev.fence!.gateEnds)) reserved.add(k);
+    const opts: PassOptions = { reserved: new Set(reserved), preferGates: new Set(prev.fence!.gateEnds.map((e) => `${e.q},${e.r}`)) };
+    const b = layDeckOnce(wants, hexesPerPlate, guns, opts);
+    if (b.fence === null || b.fence.gateEnds.length === 0) break;
+    prev = b;
+    if (b.inside > a.inside + DECK_ROAD_EXTRA_PLATES || b.base.fenceGates < a.base.fenceGates || deckBuildings(b.base.B) < deckBuildings(a.base.B)) continue;
+    const jb = gatesJoined(b.base.B, b.fence.gateEnds);
+    if (jb > bestJoined || (jb === bestJoined && b.inside <= best.inside && roads(b.base.B) > roads(best.base.B))) { best = b; bestJoined = jb; }
+  }
+  // No lone gate road (owner: "Join every gate"): the kept layout once more,
+  // laying only the gates its network joins.
+  if (bestJoined < best.base.fenceGates) return layDeckOnce(wants, hexesPerPlate, guns, { ...best.opts, joinAll: true }).base;
+  return best.base;
 }
 
-/** One deck layout (see `layDeckBase`), `reserved` hexes kept open. */
-function layDeckOnce(wants: readonly Want[], hexesPerPlate: number, guns: readonly Want[] | null, reserved: ReadonlySet<string>): DeckPass {
+/** Most re-layouts spent joining every gate (`layDeckBase`). */
+const DECK_ROAD_PASSES = 3;
+/** Most extra inside plates a re-layout may lay for its roads. */
+const DECK_ROAD_EXTRA_PLATES = 2;
+
+/** A layout pass's options: `reserved` hexes kept open (their plates laid),
+ *  the fence's `preferGates` and `joinAll` (`layDeckFence`). */
+interface PassOptions {
+  reserved?: ReadonlySet<string>;
+  preferGates?: ReadonlySet<string>;
+  joinAll?: boolean;
+}
+
+/** One deck layout (see `layDeckBase`). */
+function layDeckOnce(wants: readonly Want[], hexesPerPlate: number, guns: readonly Want[] | null, opts: PassOptions): DeckPass {
+  const reserved = opts.reserved ?? new Set<string>();
   const L = new DeckLayout(hexesPerPlate, reserved);
   const pass = (fence: DeckFence | null): DeckPass => ({
-    L, fence, inside: L.laid.length, base: { B: L.B, fencePylons: fence?.pylons ?? 0, fenceGates: fence?.gates ?? 0 },
+    L, fence, opts, inside: L.laid.length, base: { B: L.B, fencePylons: fence?.pylons ?? 0, fenceGates: fence?.gates ?? 0 },
   });
   if (!L.layPlate(0, 0)) return pass(null);
   const sized = (ws: readonly Want[]): Want[] => ws.filter((w) => {
@@ -264,7 +311,9 @@ function layDeckOnce(wants: readonly Want[], hexesPerPlate: number, guns: readon
     if (L.place(w, 0) < 0 && L.layNext()) L.place(w, L.laid.length - 1);
   }
   if (guns === null) return pass(null);
-  const fence = layDeckFence(L);
+  // The plates the reserved roads run over (the earlier layout laid them).
+  L.layPlatesUnder(reserved);
+  const fence = layDeckFence(L, opts);
   const out = pass(fence);
   // Bastions: plates laid from here on are outside the ring. A gun takes a
   // slot on a bastion plate (never an inside one), or one fresh bastion; no
@@ -281,6 +330,7 @@ function layDeckOnce(wants: readonly Want[], hexesPerPlate: number, guns: readon
 interface DeckPass {
   L: DeckLayout;
   fence: DeckFence | null;
+  opts: PassOptions;
   inside: number;
   base: DeckBase;
 }

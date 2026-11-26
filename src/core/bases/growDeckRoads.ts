@@ -11,7 +11,8 @@
  *     network; each round the gate nearest any part of it (shortest path over
  *     open floor, ties by gate order) joins it along that path. A step beside
  *     the Capital costs a little less, so a route passes it when that is
- *     cheap. A gate no path reaches keeps its lone road (never fails the base).
+ *     cheap. Laid road hexes (a re-plan, step 5) are open floor at a token
+ *     cost, so a re-plan reuses them.
  *  3. Turns: the carriageway runs along the road's local x, across its art
  *     hex corner to corner; on the pointy-top deck cells that is one of 30°,
  *     90°, 150°. Each road takes the one best lined up with its links in the
@@ -21,10 +22,20 @@
  *     once THROUGH the first layout's buildings (`reserveDeckRoads`: a
  *     building's hex costs more, the Capital's is never taken), then lays the
  *     base out again with those hexes kept open; the second layout is kept
- *     only when it joins more gates and loses nothing (at most one more
- *     inside plate).
+ *     only when it joins more gates and loses nothing (at most two more
+ *     inside plates, `DECK_ROAD_EXTRA_PLATES`). Every gate is joined (owner: "Join every gate", even if
+ *     that costs more road): the second layout lays the plates the reserved
+ *     roads run over and keeps the first layout's gate hexes, and while a gate
+ *     is still unjoined the network is reserved again on that layout and the
+ *     base laid once more (`DECK_ROAD_PASSES`).
+ *  5. Lay time: a planned road the rules refuse is routed round: the network
+ *     is planned again on what is free (laid roads count as floor) and the
+ *     missing roads laid (`layDeckRoadNetwork`).
+ *  6. No stubs: the kept layout is laid a last time with only the gates its
+ *     network can join (`joinableEnds`); a gate no free path reaches is not
+ *     laid at all rather than left as a lone road.
  * The fence lays the gate roads (each before its gate) at their planned
- * turns, then the rest once the ring is up (`layDeckRoads`). A road takes no
+ * turns, then the rest once the ring is up (`layDeckRoadNetwork`). A road takes no
  * cable: it belongs to the base whose deck it sits on.
  * Deterministic: no random draws; every order is fixed.
  */
@@ -47,6 +58,10 @@ const STEP_BY_CAPITAL = 9;
 /** Reserving (`reserveDeckRoads`): a step onto a building's hex costs
  *  this much more (it moves that building elsewhere). */
 const STEP_MOVES_BUILDING = 30;
+/** A step along a road already laid (a re-plan reuses it). */
+const STEP_ON_ROAD = 1;
+/** Most re-plans at lay time (`layDeckRoadNetwork`). */
+const LAY_REPLANS = 3;
 
 /** A gate's road hex (q, r) and the hex outside its gate (oq, or). */
 export interface RoadEnd {
@@ -82,6 +97,7 @@ export function planDeckRoads(L: DeckLayout, ends: readonly RoadEnd[], through =
   const capital = capitalHex(L);
   const endAt = new Map<string, RoadEnd>();
   for (const e of ends) endAt.set(key(e.q, e.r), e);
+  const laidRoads = roadHexes(L.B);
   const fits = new Map<string, number>();
   /** Mask of `ROAD_TURNS` a road takes on hex (q, r); 0 = not open floor. */
   const fitOf = (q: number, r: number): number => {
@@ -101,8 +117,9 @@ export function planDeckRoads(L: DeckLayout, ends: readonly RoadEnd[], through =
           m |= 1 << t;
         }
       }
-      // A gate's hex is the fence's to judge: it is always on the network.
-      if (m === 0 && endAt.has(k)) m = ALL_TURNS;
+      // A gate's hex is the fence's to judge, a laid road's is already
+      // road: both are always open floor.
+      if (m === 0 && (endAt.has(k) || laidRoads.has(k))) m = ALL_TURNS;
       fits.set(k, m);
     }
     return m;
@@ -110,6 +127,7 @@ export function planDeckRoads(L: DeckLayout, ends: readonly RoadEnd[], through =
   const byCapital = capitalNeighbours(capital);
   const stepCost = (q: number, r: number): number => {
     const k = key(q, r);
+    if (laidRoads.has(k) && !endAt.has(k)) return STEP_ON_ROAD;
     return (byCapital.has(k) ? STEP_BY_CAPITAL : STEP) + (through && !L.isHexFree(q, r) && !endAt.has(k) ? STEP_MOVES_BUILDING : 0);
   };
   const net = new Set<string>();
@@ -148,16 +166,34 @@ export function plannedTurn(plan: readonly PlannedRoad[], q: number, r: number):
 
 /** Lay the planned joining roads (the gate roads are the fence's), each at
  *  its turn or, refused there, another; no cable (a road takes none). A road
- *  the rules refuse is left out. Returns how many were laid. */
+ *  the rules refuse is left out. Returns how many were refused. */
 export function layDeckRoads(L: DeckLayout, plan: readonly PlannedRoad[]): number {
-  let n = 0;
+  let refused = 0;
   for (const p of plan) {
     if (p.gate || !L.isHexFree(p.q, p.r)) continue;
+    let laid = false;
     for (const rot of [p.rot, ...ROAD_TURNS.filter((t) => t !== p.rot)]) {
-      if (L.placeOnHex({ kind: DECK_ROAD_KIND }, p.q, p.r, rot, -1) >= 0) { n++; break; }
+      if (L.placeOnHex({ kind: DECK_ROAD_KIND }, p.q, p.r, rot, -1) >= 0) { laid = true; break; }
     }
+    if (!laid) refused++;
   }
-  return n;
+  return refused;
+}
+
+/** Lay the road network joining `ends` (their gate roads laid): plan, lay,
+ *  and while a planned road was refused, plan again on what is free (laid
+ *  roads count as floor) and lay what is missing (see the header, step 5). */
+export function layDeckRoadNetwork(L: DeckLayout, ends: readonly RoadEnd[]): void {
+  for (let n = 0; n <= LAY_REPLANS; n++) {
+    if (layDeckRoads(L, planDeckRoads(L, ends)) === 0) return;
+  }
+}
+
+/** The gates (of `ends`, in order) the road network can join on `L` as it
+ *  stands: the biggest group the plan links (ties: the earliest gate's). */
+export function joinableEnds(L: DeckLayout, ends: readonly RoadEnd[]): RoadEnd[] {
+  if (ends.length < 2) return [...ends];
+  return largestGroup(new Set(planDeckRoads(L, ends).map((p) => key(p.q, p.r))), ends);
 }
 
 /** The hexes of a road network joining `ends` on a laid-out base, through
@@ -176,8 +212,8 @@ function capitalHex(L: DeckLayout): string {
   return key(h.q, h.r);
 }
 
-/** The most gate roads (of `ends`) on one network of bordering road tiles. */
-export function gatesJoined(B: Builder, ends: readonly RoadEnd[]): number {
+/** Hex keys of the road tiles laid in `B`. */
+function roadHexes(B: Builder): Set<string> {
   const roads = new Set<string>();
   const h: AxialHex = { q: 0, r: 0 };
   for (const p of B.placements) {
@@ -185,7 +221,18 @@ export function gatesJoined(B: Builder, ends: readonly RoadEnd[]): number {
     pixelToAxialInto(p.x, p.y, DECK_HEX_SIZE, h);
     roads.add(key(h.q, h.r));
   }
-  let best = 0;
+  return roads;
+}
+
+/** The most gate roads (of `ends`) on one network of bordering road tiles. */
+export function gatesJoined(B: Builder, ends: readonly RoadEnd[]): number {
+  return largestGroup(roadHexes(B), ends).length;
+}
+
+/** Of `ends`, the most on one network of bordering `roads` hexes (in
+ *  `ends` order; ties: the group of the earliest end). */
+function largestGroup(roads: ReadonlySet<string>, ends: readonly RoadEnd[]): RoadEnd[] {
+  let best: RoadEnd[] = [];
   for (const e of ends) {
     const seen = new Set([key(e.q, e.r)]);
     const open: AxialHex[] = [{ q: e.q, r: e.r }];
@@ -196,7 +243,8 @@ export function gatesJoined(B: Builder, ends: readonly RoadEnd[]): number {
         if (roads.has(k) && !seen.has(k)) { seen.add(k); open.push({ q: at.q + d.q, r: at.r + d.r }); }
       }
     }
-    best = Math.max(best, ends.filter((o) => seen.has(key(o.q, o.r))).length);
+    const group = ends.filter((o) => seen.has(key(o.q, o.r)));
+    if (group.length > best.length) best = group;
   }
   return best;
 }
