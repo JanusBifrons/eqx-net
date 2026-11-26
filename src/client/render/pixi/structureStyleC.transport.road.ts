@@ -12,9 +12,12 @@
  * edge midpoints at 30° + 60°·j): a dark carriageway arm from the centre to
  * each edge in the mask, pale edge lines along both sides (meeting at bends),
  * an amber dashed centre line, small amber lamps outside the edge lines (soft
- * glow + bright dot). Where 3+ arms meet, every arm's centre line starts with a
- * dash at the centre, so the lines meet there (a Y, a T, a cross… whatever the
- * mask), with a round amber cap over the joint. All flat:
+ * glow + bright dot). The dashes repeat a whole number of times per arm
+ * (ROAD_DASH_PERIOD) with a dash centred on both the hex centre and the seam:
+ * each arm ends in a half dash, so a neighbour's half completes it across the
+ * seam, and at the centre the arms' half dashes meet (one dash through a
+ * straight, an equal-pronged Y, T or cross at a junction, a round cap on the
+ * joint). All flat:
  * ships fly over it.
  */
 import type { GraphicsContext } from 'pixi.js';
@@ -44,7 +47,8 @@ const EDGE_W = 10;
 const LAMP_OFF = ROAD_HALF_W + 34;
 const LAMP_STEP = 130;
 const DASH_LEN = 60;
-const DASH_GAP = 50;
+/** Dash repeat along an arm: the arm length split into whole repeats (~110 u). */
+export const ROAD_DASH_PERIOD = DECK_HEX_INRADIUS / Math.round(DECK_HEX_INRADIUS / 110);
 const DASH_W = 10;
 
 const LANE = mixColor(DECK_FILL, 0x000000, 0.45);
@@ -135,10 +139,14 @@ export function roadOverlayPlan(mask: number): RoadOverlayPlan {
       }
     }
   }
-  const t0 = junction ? 0 : 25;
+  const steps = Math.round(R / ROAD_DASH_PERIOD);
   for (const j of slots) {
     const a = armAngle(j), ux = Math.cos(a), uy = Math.sin(a);
-    for (let t = t0; t + DASH_LEN <= R - 20; t += DASH_LEN + DASH_GAP) dashes.push(ux * t, uy * t, ux * (t + DASH_LEN), uy * (t + DASH_LEN));
+    for (let k = 0; k <= steps; k++) {
+      const c = k * ROAD_DASH_PERIOD;
+      const t0 = Math.max(0, c - DASH_LEN / 2), t1 = Math.min(R, c + DASH_LEN / 2);
+      dashes.push(ux * t0, uy * t0, ux * t1, uy * t1);
+    }
   }
   return { slots, junction, edges, lamps, dashes };
 }
@@ -161,8 +169,9 @@ export function drawRoadOverlay(g: GraphicsContext, mask: number): void {
   const d = plan.dashes;
   for (let i = 0; i < d.length; i += 4) g.moveTo(d[i]!, d[i + 1]!).lineTo(d[i + 2]!, d[i + 3]!);
   if (d.length > 0) strokeNow(g, LAMP_AMBER, 0.9, DASH_W);
-  // The centre lines meet here: one round cap hides the butt-end notches.
-  if (plan.junction) fillPoly(g, circle(0, 0, DASH_W * 0.75, 12), LAMP_AMBER, 0.9);
+  // Where arms meet at an angle, a round cap (the dash's own width) fills the
+  // butt-end notch at the joint.
+  if (plan.slots.length >= 2) fillPoly(g, circle(0, 0, DASH_W / 2, 12), LAMP_AMBER, 0.9);
   const l = plan.lamps;
   for (let i = 0; i < l.length; i += 2) fillPoly(g, circle(l[i]!, l[i + 1]!, 24), LAMP_AMBER, 0.16);
   for (let i = 0; i < l.length; i += 2) fillPoly(g, circle(l[i]!, l[i + 1]!, 7, 10), LAMP_AMBER, 1);

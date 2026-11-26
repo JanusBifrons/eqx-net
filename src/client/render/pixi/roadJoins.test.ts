@@ -11,7 +11,7 @@ import {
   ROAD_STRAIGHT_MASK, armCount, deriveRoadArms, localArmSlot, resetRoadJoins, roadArmsOf, roadWorldJoins, syncRoadJoins,
   type RoadPiece,
 } from './roadJoins.js';
-import { ROAD_ARM_LEN, ROAD_HALF_W, roadOverlayPlan } from './structureStyleC.transport.road.js';
+import { ROAD_ARM_LEN, ROAD_HALF_W, ROAD_DASH_PERIOD, roadOverlayPlan } from './structureStyleC.transport.road.js';
 
 const C = deckHexCentreInto(3, 1, { x: 0, y: 0 });
 /** The centre of the hex beyond world edge `i` of C (game angle 60°·i). */
@@ -132,16 +132,41 @@ describe('road overlay plan', () => {
   });
 });
 
-describe('road junctions', () => {
-  it('every arm centre line starts at the junction centre, so they meet', () => {
-    for (const mask of [0b010101, 0b000111, 0b001011, 0b111111]) {
-      const plan = roadOverlayPlan(mask);
-      expect(plan.junction).toBe(true);
-      let atCentre = 0;
+describe('road centre dashes', () => {
+  const MASKS = [ROAD_STRAIGHT_MASK, 0b000011, 0b000101, 0b010101, 0b000111, 0b001011, 0b111111];
+  /** Per arm, its dash intervals along the arm (t0, t1), in order. */
+  function intervals(mask: number): number[][][] {
+    const plan = roadOverlayPlan(mask);
+    return plan.slots.map((j) => {
+      const a = ((30 + 60 * j) * Math.PI) / 180, ux = Math.cos(a), uy = Math.sin(a);
+      const out: number[][] = [];
       for (let i = 0; i < plan.dashes.length; i += 4) {
-        if (Math.hypot(plan.dashes[i]!, plan.dashes[i + 1]!) < 1e-6) atCentre++;
+        const t0 = plan.dashes[i]! * ux + plan.dashes[i + 1]! * uy, t1 = plan.dashes[i + 2]! * ux + plan.dashes[i + 3]! * uy;
+        const lat = Math.abs(-plan.dashes[i + 2]! * uy + plan.dashes[i + 3]! * ux);
+        if (lat < 1e-6 && t1 > 1e-6) out.push([t0, t1]);
       }
-      expect(atCentre).toBe(plan.slots.length);
+      return out.sort((p, q) => p[0]! - q[0]!);
+    });
+  }
+
+  it('the dash repeat fits the arm a whole number of times', () => {
+    const n = ROAD_ARM_LEN / ROAD_DASH_PERIOD;
+    expect(Math.abs(n - Math.round(n))).toBeLessThan(1e-9);
+  });
+
+  it('every arm ends in a half dash at the seam (the neighbour completes it: no seam gap)', () => {
+    for (const mask of MASKS) for (const arm of intervals(mask)) {
+      const last = arm[arm.length - 1]!;
+      expect(last[1]).toBeCloseTo(ROAD_ARM_LEN, 6);
+      expect(last[1]! - last[0]!).toBeCloseTo(30, 6);
+    }
+  });
+
+  it('every arm starts with the same half dash at the centre (equal prongs; gaps even)', () => {
+    for (const mask of MASKS) for (const arm of intervals(mask)) {
+      expect(arm[0]![0]).toBeCloseTo(0, 6);
+      expect(arm[0]![1]).toBeCloseTo(30, 6);
+      for (let i = 1; i < arm.length; i++) expect(arm[i]![0]! - arm[i - 1]![1]!).toBeCloseTo(ROAD_DASH_PERIOD - 60, 6);
     }
   });
 });
