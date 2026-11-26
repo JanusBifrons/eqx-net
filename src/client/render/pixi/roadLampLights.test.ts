@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { LitScene, pickedLight, strongestLightsInto } from '../art/litShipShader.js';
 import { ROAD_STRAIGHT_MASK } from './roadJoins.js';
 import { roadOverlayPlan } from './structureStyleC.transport.road.js';
 import { ROAD_LAMP_CAP, ROAD_LAMP_LIGHT, addRoadLampLights, rebuildRoadLamps, resetRoadLamps, roadLamps } from './roadLampLights.js';
@@ -41,8 +42,18 @@ describe('road lamp lights (lit deck slice 3)', () => {
     const lit = collect(view);
     expect(lit.length).toBe(plan.length / 2); // only the first road is near the view
     for (const [, , i] of lit) expect(i).toBe(ROAD_LAMP_LIGHT.intensity);
-    expect(ROAD_LAMP_LIGHT.intensity).toBeLessThan(0.9); // a shell (0.9) and a blast (3) outrank a lamp
+    expect(ROAD_LAMP_LIGHT.intensity * ROAD_LAMP_LIGHT.rank).toBeLessThan(0.9); // a shell (0.9) and a blast (3) outrank a lamp when picking
     expect(collect(undefined).length).toBe(Math.min(ROAD_LAMP_CAP, roadLamps().count));
     expect(collect(undefined, 3).length).toBe(3);
+  });
+
+  it('a shell beside a lamp wins the only light slot, though the lamp is brighter', () => {
+    const sc = new LitScene();
+    rebuildRoadLamps([{ id: 1, x: 0, y: 0, rotDeg: 0, mirror: false }], new Map([[1, ROAD_STRAIGHT_MASK]]));
+    addRoadLampLights(sc, undefined, 1);
+    const lamp = sc.lights[0]!;
+    sc.addLight(lamp.x + 10, lamp.y, 5, 0xffc070, 0.9, 55); // a shell over the same spot
+    expect(strongestLightsInto(sc, lamp.x, lamp.y, 0, 50, 50, 1, -1)).toBe(1);
+    expect(pickedLight(0)).toBe(1);
   });
 });

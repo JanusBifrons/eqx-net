@@ -10,16 +10,17 @@
  * Per frame, {@link addRoadLampLights} adds only the on-screen lamps, up to a
  * cap, and allocates nothing (#14).
  *
- * Lamps are weak on purpose: lit meshes keep their strongest few lights
- * (`strongestLightsInto`, 4 on phones), and a blast (intensity 3) or a shell
- * (0.9) must still win the slots over a lamp.
+ * The dark deck needs a bright lamp to show a pool (the shader scales a light
+ * by the albedo), but lit meshes keep only their strongest few lights
+ * (`strongestLightsInto`, 4 on phones): a lamp is added with a low `rank`, so
+ * when picking, a shell (0.9) or a blast (3) still beats it (1.8 × 0.25).
  */
 import type { LitScene } from '../art/litShipShader.js';
 import { roadOverlayPlan } from './structureStyleC.transport.road.js';
 import type { RoadPiece } from './roadJoins.js';
 
 /** How a road lamp lights (Pixi space; z and reach in world units). */
-export const ROAD_LAMP_LIGHT = { z: 40, color: 0xffb060, intensity: 0.5, reach: 300 } as const;
+export const ROAD_LAMP_LIGHT = { z: 30, color: 0xffb060, intensity: 1.8, reach: 280, rank: 0.25 } as const;
 /** At most this many lamps light a frame (nearest the table order, on screen). */
 export const ROAD_LAMP_CAP = 24;
 
@@ -63,7 +64,7 @@ export function addRoadLampLights(scene: Pick<LitScene, 'addLight'>, bounds: Flo
   for (let i = 0; i < lampCount && n < cap; i++) {
     const x = lampXY[i * 2]!, y = lampXY[i * 2 + 1]!;
     if (bounds !== undefined && (x + r < bounds[0]! || x - r > bounds[2]! || y + r < bounds[1]! || y - r > bounds[3]!)) continue;
-    scene.addLight(x, y, L.z, L.color, L.intensity, r);
+    scene.addLight(x, y, L.z, L.color, L.intensity, r, -1, L.rank);
     n++;
   }
   return n;
