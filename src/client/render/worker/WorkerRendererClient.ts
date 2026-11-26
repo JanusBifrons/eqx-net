@@ -75,6 +75,8 @@ function emptyFeedback(): RendererFeedback {
     shieldRingVisibleCount: 0,
     firstFrameRendered: false,
     artReady: false,
+    artBakeDone: 0,
+    artBakeTotal: 0,
     liveBeamRenderedFromX: null,
     liveBeamRenderedFromY: null,
     placementScreenX: null,
@@ -790,6 +792,8 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.shieldRingVisibleCount = msg.feedback.shieldRingVisibleCount;
         this.feedback.firstFrameRendered = msg.feedback.firstFrameRendered;
         this.feedback.artReady = msg.feedback.artReady;
+        this.feedback.artBakeDone = msg.feedback.artBakeDone;
+        this.feedback.artBakeTotal = msg.feedback.artBakeTotal;
         this.feedback.liveBeamRenderedFromX = msg.feedback.liveBeamRenderedFromX;
         this.feedback.liveBeamRenderedFromY = msg.feedback.liveBeamRenderedFromY;
         this.feedback.placementScreenX = msg.feedback.placementScreenX;

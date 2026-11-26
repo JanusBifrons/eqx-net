@@ -112,7 +112,7 @@ describe('WarpScreen — status text re-shows on consecutive transits (Phase G, 
     useUIStore.getState().setFirstSnapshotApplied(true);
     rerender();
     expect(visible()).toBe('1'); // still gated by the minDisplay floor
-    expect(statusText()).toBe(stepName('draw')); // the floor folds into drawing
+    expect(statusText()).toBe(stepName('bake')); // art not baked yet after the re-arm
     useUIStore.getState().setJoinMinimumElapsed(true);
     // Plan: crispy-kazoo, Commit 2 — synchronised warp-in handshake
     // gates must also flip for the curtain to drop. In production these
@@ -187,7 +187,7 @@ describe('WarpScreen — status text re-shows on consecutive transits (Phase G, 
     });
     renderWarp();
     expect(visible()).toBe('1');
-    // The display floor folds into the drawing step (never its own step).
-    expect(statusText()).toBe(stepName('draw'));
+    // The display floor folds into the placing step (never its own step).
+    expect(statusText()).toBe(stepName('place'));
   });
 });

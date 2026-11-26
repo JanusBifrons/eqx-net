@@ -1,9 +1,8 @@
 import { getSector } from '../../core/galaxy/galaxy';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 import { factionDisplayName } from '../../shared-types/factions.js';
-import { SECTOR_PLAYABLE_HALF_EXTENT } from '../../shared-types/sectorBounds.js';
 import { factionColor } from '../render/galaxy/galaxyTerritories';
-import type { RosterEntry, UIStore } from '../state/storeTypes';
+import type { UIStore } from '../state/storeTypes';
 import { buildSectorTooltip } from './galaxyTooltip';
 import { cssHex } from './sectorPanelParts';
 
@@ -11,14 +10,13 @@ import { cssHex } from './sectorPanelParts';
  * Pure content of the join loading screen's "sector briefing" (WarpScreen,
  * Idea A). Everything here comes from data the client ALREADY holds before
  * the room joins: the static galaxy graph, the last `/galaxy/snapshot` poll
- * (`galaxyStats`, via the shared `buildSectorTooltip`) and the roster poll
- * (`shipRoster`). No new endpoint, no per-frame work: called on render only,
+ * (`galaxyStats`, via the shared `buildSectorTooltip`). No new endpoint, no per-frame work: called on render only,
  * which happens on store changes (gate flips, poll replies).
  */
 
-/** The join gates WarpScreen waits on, in order. The progress bar fills one
- *  step per gate DONE — never a timer. Mirrors `computeGameReadyFromState`. */
-export const JOIN_GATE_COUNT = 9;
+/** The join gates WarpScreen waits on, in order: `computeGameReadyFromState`'s
+ *  plus the art bake that holds `client_ready`. Never a timer. */
+export const JOIN_GATE_COUNT = 10;
 
 export type JoinGateState = Pick<
   UIStore,
@@ -32,19 +30,36 @@ export type JoinGateState = Pick<
   | 'arrivalTickFromServer'
   | 'arrivalAcked'
   | 'pilotMode'
+  | 'artBakeReady'
+  | 'artBakePct'
 >;
 
-export type JoinStepId = 'connect' | 'ship' | 'sector' | 'draw' | 'place' | 'arrive';
+export type JoinStepId = 'connect' | 'ship' | 'sector' | 'draw' | 'bake' | 'place' | 'arrive';
 
-/** The loading steps the screen lists, in order: a playful headline `name`
- *  and a plain-English `detail` of what is really happening. Pure data. */
-export const JOIN_STEP_TEXT: readonly { id: JoinStepId; name: string; detail: string }[] = [
-  { id: 'connect', name: 'Tuning the subspace antenna', detail: 'Connecting to the sector server' },
-  { id: 'ship', name: 'Rummaging for your ship keys', detail: 'Looking up the ship you are flying' },
-  { id: 'sector', name: 'Unpacking the sector', detail: 'Downloading the ships, rocks and structures around you' },
-  { id: 'draw', name: 'Texturizing the void', detail: 'Drawing the world on your screen' },
-  { id: 'place', name: 'Parallel-parking in orbit', detail: 'Putting your ship where the server says it is' },
-  { id: 'arrive', name: 'Calibrating warp ballast', detail: 'Agreeing the exact moment you arrive with the server' },
+/** The loading steps the screen lists, in order, each named for what the
+ *  game is really doing at that moment. Pure data. */
+export const JOIN_STEP_TEXT: readonly { id: JoinStepId; name: string }[] = [
+  { id: 'connect', name: 'Connecting to the sector server' },
+  { id: 'ship', name: 'Finding your ship' },
+  { id: 'sector', name: 'Downloading ships, rocks and structures' },
+  { id: 'draw', name: 'Drawing the first frame' },
+  { id: 'bake', name: 'Baking ship textures' },
+  { id: 'place', name: 'Placing your ship' },
+  { id: 'arrive', name: 'Syncing your arrival with the server' },
+];
+
+/** The fun lines the loading screen cycles through in one fixed spot, so
+ *  something always moves (proof it has not frozen). Says nothing about real
+ *  progress: the step list does that. */
+export const LOADING_QUIPS: readonly string[] = [
+  'Shimmering the shields',
+  'Percolating the plasma',
+  'Tuning the subspace antenna',
+  'Rummaging for your ship keys',
+  'Texturizing the void',
+  'Parallel-parking in orbit',
+  'Calibrating warp ballast',
+  'Polishing the hull rivets',
 ];
 
 /** One loading step over one or more of the {@link JOIN_GATE_COUNT} join
@@ -52,45 +67,50 @@ export const JOIN_STEP_TEXT: readonly { id: JoinStepId; name: string; detail: st
 export interface JoinGateStep {
   id: JoinStepId;
   name: string;
-  detail: string;
   /** Gates this step covers. */
   gates: number;
   /** Of those, how many are done. */
   gatesDone: number;
   done: boolean;
+  /** 0..100: the real share of the bake for "bake", else the share of its gates. */
+  pct: number;
 }
 
 /** The join gates grouped into the ordered steps the loading screen lists.
- *  The ONLY place the gate checks live: {@link joinGatesDone} counts from
- *  this, so the list and the bar can never disagree. The minimum-display
- *  floor (`joinMinimumElapsed`) folds into "draw" so it never reads as a
- *  step of its own. A spectator joining with no ship never gets a ship id or
- *  pose, so those count as done for them (as `computeBootstrapReadyFromState`
- *  treats them). */
+ *  The ONLY place the gate checks live: the bar ({@link joinOverallPct}) is
+ *  derived from these steps, so the list and the bar can never disagree. The minimum-display
+ *  floor (`joinMinimumElapsed`) holds `client_ready`, so it folds into
+ *  "place". A spectator joining with no ship never gets a ship id or pose, so
+ *  those count as done for them (as `computeBootstrapReadyFromState` treats
+ *  them). */
 export function joinGateSteps(s: JoinGateState): JoinGateStep[] {
   const shiplessSpectator = s.pilotMode === 'spectator' && s.localShipInstanceId === null;
   const checks: Record<JoinStepId, readonly boolean[]> = {
     connect: [s.connectionStatus === 'connected'],
     ship: [s.localShipInstanceId !== null || shiplessSpectator],
     sector: [s.firstSnapshotApplied],
-    draw: [s.rendererFirstFrameRendered, s.joinMinimumElapsed],
-    place: [s.localPoseResolved || shiplessSpectator, s.clientReadySent],
+    draw: [s.rendererFirstFrameRendered],
+    bake: [s.artBakeReady || s.clientReadySent],
+    place: [s.localPoseResolved || shiplessSpectator, s.joinMinimumElapsed, s.clientReadySent],
     arrive: [s.arrivalTickFromServer !== null, s.arrivalAcked],
   };
-  return JOIN_STEP_TEXT.map(({ id, name, detail }) => {
+  return JOIN_STEP_TEXT.map(({ id, name }) => {
     const c = checks[id];
     let n = 0;
     for (const ok of c) if (ok) n++;
-    return { id, name, detail, gates: c.length, gatesDone: n, done: n === c.length };
+    const done = n === c.length;
+    const pct = done ? 100 : id === 'bake' ? Math.min(99, s.artBakePct) : Math.floor((n / c.length) * 100);
+    return { id, name, gates: c.length, gatesDone: n, done, pct };
   });
 }
 
-/** How many of the {@link JOIN_GATE_COUNT} join gates are done (0..9),
- *  counted from {@link joinGateSteps}. */
-export function joinGatesDone(s: JoinGateState): number {
-  let n = 0;
-  for (const st of joinGateSteps(s)) n += st.gatesDone;
-  return n;
+/** The whole load, 0..100: the mean of the steps' percentages, so the bake's
+ *  own progress moves the main bar too. */
+export function joinOverallPct(steps: readonly JoinGateStep[]): number {
+  if (steps.length === 0) return 100;
+  let sum = 0;
+  for (const st of steps) sum += st.pct;
+  return Math.floor(sum / steps.length);
 }
 
 /** Index of the step in progress (the first not done), or -1 when all are. */
@@ -111,13 +131,6 @@ export interface BriefingFact {
   value: string;
 }
 
-/** A radar blip in the 100×100 radar viewBox (centre 50,50, rim radius 46). */
-export interface BriefingBlip {
-  id: string;
-  cx: number;
-  cy: number;
-}
-
 export interface SectorBriefing {
   name: string;
   /** "Held by Sol Dominion", "Held by Sol Dominion · contested", "Unclaimed". */
@@ -126,7 +139,6 @@ export interface SectorBriefing {
   ownerColor: string;
   held: boolean;
   facts: readonly BriefingFact[];
-  blips: readonly BriefingBlip[];
 }
 
 /** The holder's readable name. A player-held sector has no NPC faction name
@@ -155,31 +167,10 @@ function threatValue(live: { enemies: number; capital: string | null; elite: str
   return 'Quiet';
 }
 
-/** Radar blips: the player's own roster hulls in this sector (their last
- *  roster position), scaled to the playable extent and clamped to the rim.
- *  Game Y is up, SVG Y is down. */
-function rosterBlips(roster: readonly RosterEntry[], sectorKey: string): BriefingBlip[] {
-  const out: BriefingBlip[] = [];
-  const scale = 46 / SECTOR_PLAYABLE_HALF_EXTENT;
-  for (const ship of roster) {
-    if (ship.sectorKey !== sectorKey) continue;
-    let dx = ship.x * scale;
-    let dy = -ship.y * scale;
-    const r = Math.hypot(dx, dy);
-    if (r > 44) {
-      dx = (dx / r) * 44;
-      dy = (dy / r) * 44;
-    }
-    out.push({ id: ship.shipId, cx: 50 + dx, cy: 50 + dy });
-  }
-  return out;
-}
-
 /** The briefing for `sectorKey`, or null for an unknown / absent key. */
 export function buildSectorBriefing(
   sectorKey: string | null,
   stats: readonly SectorLiveState[],
-  roster: readonly RosterEntry[],
 ): SectorBriefing | null {
   if (sectorKey === null) return null;
   const tip = buildSectorTooltip(sectorKey, stats);
@@ -199,6 +190,5 @@ export function buildSectorBriefing(
       { id: 'rocks', label: 'Rock field', value: rocksValue(sectorKey) },
       { id: 'threat', label: 'Threat', value: threatValue(tip) },
     ],
-    blips: rosterBlips(roster, sectorKey),
   };
 }

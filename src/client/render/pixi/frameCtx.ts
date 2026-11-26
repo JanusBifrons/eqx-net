@@ -142,8 +142,9 @@ export interface RendererFrameCtx {
   /** Wall-clock of the last `effects.tick` call. Used to derive dt for the
    *  next call. 0 ⇒ first frame (use a default 16.67 ms to seed). */
   lastEffectsTickNowMs: number;
-  /** Scratch for `feedback.artReady` (see `writeFrameFeedback`). */
-  artPendingSeen: boolean;
+  /** Scratch for `feedback.artReady` / `artBakeDone` (see `writeFrameFeedback`):
+   *  how many on-screen art handles are still pending. */
+  artPendingCount: number;
   /** The own-ship art handle already moved to the front of the bake queue. */
   prioritizedArtKey: string | null;
   readonly noteArtPending: (h: { state: string }) => void;
@@ -169,11 +170,11 @@ export function createRendererFrameCtx(refs: RendererFrameRefs): RendererFrameCt
     hullBlastsReplaced: 0,
     lastSwarmUpdateNow: 0,
     lastEffectsTickNowMs: 0,
-    artPendingSeen: false,
+    artPendingCount: 0,
     prioritizedArtKey: null,
     // Bound once: no per-frame closure (#14).
     noteArtPending: (h: { state: string }): void => {
-      if (h.state === 'pending') ctx.artPendingSeen = true;
+      if (h.state === 'pending') ctx.artPendingCount++;
     },
     artCollectFrame: 0,
     artInUse: new Set<ArtHandle>(),

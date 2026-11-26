@@ -1,7 +1,7 @@
 /**
  * WarpScreen "sector briefing" (Idea A) locks: the facts come from the galaxy
- * data the client already holds (galaxyStats / shipRoster), the progress bar
- * counts REAL join gates, and the owner line never shows a raw id.
+ * data the client already holds (galaxyStats), the progress bar is the real
+ * join percentage, and the owner line never shows a raw id.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import { render, screen, act } from '@testing-library/react';
@@ -9,8 +9,7 @@ import { LayoutContext } from '../layout/useLayout.js';
 import { WarpScreen } from './WarpScreen.js';
 import { useUIStore } from '../state/store.js';
 import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
-import type { RosterEntry } from '../state/storeTypes.js';
-import { buildSectorBriefing, joinGatesDone, sectorKeyFromRoomName, JOIN_GATE_COUNT, JOIN_STEP_TEXT, type JoinStepId } from './sectorBriefing.js';
+import { joinGateSteps, joinOverallPct, sectorKeyFromRoomName, JOIN_STEP_TEXT, type JoinStepId } from './sectorBriefing.js';
 
 /** The status label names the loading step in progress. */
 const stepName = (id: JoinStepId): string => JOIN_STEP_TEXT.find((s) => s.id === id)!.name;
@@ -30,6 +29,8 @@ const GATES_OPEN = {
   arrivalAcked: false,
   travelling: false,
   pilotMode: 'pilot' as const,
+  artBakeReady: false,
+  artBakePct: 0,
 };
 
 function live(over: Partial<SectorLiveState>): SectorLiveState {
@@ -123,52 +124,42 @@ describe('WarpScreen sector briefing', () => {
     expect(screen.getByTestId('warp-screen-status').textContent).toBe(stepName('sector'));
   });
 
-  it('the progress bar advances one step per real gate', () => {
+  it('the progress bar shows the real join percentage, ticking up with the bake', () => {
     renderWarp();
-    const done = (): string | null => screen.getByTestId('warp-screen-progress').getAttribute('data-gates-done');
-    expect(done()).toBe('2'); // connected + ship id
+    const pct = (): number => Number(screen.getByTestId('warp-screen-progress').getAttribute('data-pct'));
+    const overall = (): number => joinOverallPct(joinGateSteps(useUIStore.getState()));
+    expect(pct()).toBe(overall());
     act(() => useUIStore.setState({ rendererFirstFrameRendered: true, firstSnapshotApplied: true }));
-    expect(done()).toBe('4');
-    act(() => useUIStore.setState({ joinMinimumElapsed: true, localPoseResolved: true, clientReadySent: true }));
-    expect(done()).toBe('7');
-    act(() => useUIStore.setState({ arrivalTickFromServer: 42 }));
-    expect(done()).toBe('8');
+    const beforeBake = pct();
+    expect(beforeBake).toBe(overall());
+    act(() => useUIStore.getState().setArtBake(50, false));
+    expect(pct()).toBeGreaterThan(beforeBake);
+    expect(pct()).toBe(overall());
+    expect(screen.getByTestId('warp-overall-pct').textContent).toBe(`${pct()}%`);
+    act(() => useUIStore.setState({ joinMinimumElapsed: true, localPoseResolved: true, clientReadySent: true, arrivalTickFromServer: 42 }));
     expect(screen.getByTestId('warp-screen-status').textContent).toBe(stepName('arrive'));
+    expect(pct()).toBeLessThan(100);
   });
 
-  it('plots own roster hulls in the sector as radar blips, none elsewhere', () => {
-    const ship = (shipId: string, sectorKey: string): RosterEntry => ({
-      shipId, kind: 'fighter', kindVersion: 1, health: 100, sectorKey, x: 0, y: 0, isActive: false,
-    });
-    useUIStore.setState({ currentSectorKey: 'sol-prime', shipRoster: [ship('a', 'sol-prime'), ship('b', 'vega-reach')] });
+  it('shows the pilot faction sigil, not a radar', () => {
+    useUIStore.setState({ currentSectorKey: 'sol-prime' });
     renderWarp();
-    expect(screen.getByTestId('warp-briefing-radar').getAttribute('data-blips')).toBe('1');
+    expect(screen.getByTestId('warp-briefing-emblem')).toBeTruthy();
+    expect(screen.queryByTestId('warp-briefing-radar')).toBeNull();
+  });
+
+  it('shows one fun line in one fixed spot', () => {
+    renderWarp();
+    expect(screen.getAllByTestId('warp-quips')).toHaveLength(1);
   });
 });
 
 describe('sectorBriefing helpers', () => {
-  it('joinGatesDone counts all gates and treats a shipless spectator as having ship + pose', () => {
-    const all = {
-      connectionStatus: 'connected' as const, localShipInstanceId: 's', rendererFirstFrameRendered: true,
-      firstSnapshotApplied: true, joinMinimumElapsed: true, localPoseResolved: true, clientReadySent: true,
-      arrivalTickFromServer: 1, arrivalAcked: true, pilotMode: 'pilot' as const,
-    };
-    expect(joinGatesDone(all)).toBe(JOIN_GATE_COUNT);
-    expect(joinGatesDone({ ...all, localShipInstanceId: null, localPoseResolved: false, pilotMode: 'spectator' })).toBe(JOIN_GATE_COUNT);
-  });
-
   it('sectorKeyFromRoomName resolves only real galaxy sectors', () => {
     expect(sectorKeyFromRoomName('galaxy-sol-prime')).toBe('sol-prime');
     expect(sectorKeyFromRoomName('galaxy-test')).toBeNull();
     expect(sectorKeyFromRoomName('sector')).toBeNull();
     expect(sectorKeyFromRoomName(undefined)).toBeNull();
-  });
-
-  it('blips clamp to the radar rim and flip game Y', () => {
-    const far: RosterEntry = { shipId: 'f', kind: 'fighter', kindVersion: 1, health: 1, sectorKey: 'sol-prime', x: 0, y: 1e9, isActive: false };
-    const b = buildSectorBriefing('sol-prime', [], [far])!;
-    expect(b.blips[0]!.cx).toBeCloseTo(50);
-    expect(b.blips[0]!.cy).toBeCloseTo(6);
   });
 
   it('unmounts the briefing once loading lifts (no stale "Arriving at" text or roster re-renders in play)', () => {

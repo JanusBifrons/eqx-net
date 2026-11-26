@@ -23,6 +23,7 @@ import type { SectorLiveState } from '../../shared-types/galaxySnapshot.js';
 import type { SectorStructurePresence } from '../../shared-types/galaxyPresence.js';
 import type { ShieldToggleUi } from './shieldToggleUi.js';
 import type { RightPanelUi } from './rightPanel.js';
+import type { ArtBakeUi } from './artBakeUi.js';
 
 export type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -208,7 +209,7 @@ export interface UIHealthStats {
   longtask: { count30s: number; maxMs30s: number };
 }
 
-export interface UIStore extends ShieldToggleUi, RightPanelUi {
+export interface UIStore extends ShieldToggleUi, RightPanelUi, ArtBakeUi {
   connectionStatus: ConnectionStatus;
   sectorName: string;
   hullPct: number;

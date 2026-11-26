@@ -17,6 +17,7 @@ import type {
   UISelection,
 } from './storeTypes.js';
 import { closeBuildPanel, rightPanelSlice } from './rightPanel.js';
+import { ART_BAKE_REARM, artBakeSlice } from './artBakeUi.js';
 export { selectDrawerOpen } from './rightPanel.js';
 
 // Re-export the type surface so existing import sites (40+ files using
@@ -119,7 +120,7 @@ function commonReadinessRearm(prevGen: number): {
   arrivalAcked: false;
   localPoseResolved: false;
   maxProgressSeen: 0;
-} {
+} & typeof ART_BAKE_REARM {
   return {
     firstSnapshotApplied: false,
     joinMinimumElapsed: false,
@@ -129,6 +130,7 @@ function commonReadinessRearm(prevGen: number): {
     arrivalAcked: false,
     localPoseResolved: false,
     maxProgressSeen: 0,
+    ...ART_BAKE_REARM,
   };
 }
 
@@ -198,6 +200,7 @@ export const useUIStore = create<UIStore>((set, get) => ({
   upgradeAck: null,
   lastFireMs: null,
   ...rightPanelSlice(set),
+  ...artBakeSlice(set, get),
   // Living Galaxy P5 — the live galaxy map is the first screen on load. The
   // `?room=`/`?galaxy=` deep-links still override to 'game' via App's autoJoin
   // effect; `meta` is retired from the default path (kept reachable via
