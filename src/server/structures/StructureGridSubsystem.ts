@@ -26,7 +26,7 @@ import { GOOD_IDS, type GoodId } from '../../shared-types/goods.js';
 import { PROD_STATE } from '../../shared-types/production.js';
 import { AMMO_SHOTS_PER_UNIT } from '../../shared-types/ammo.js';
 import { redrawStructure, switchStructure, throttleStructure } from './structurePowerSwitch.js';
-import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { getStructureKind, isFlatDeckKind } from '../../shared-types/structureKinds.js';
 import { structureWorkRate } from '../../shared-types/structurePower.js';
 import {
   canUpgradeStructure,
@@ -38,6 +38,7 @@ import { isWeaponId, type WeaponDef, type WeaponId, type MissileWeaponDef } from
 import { MINING_BEAM_PLAYER_DPS, resolveMiningBeamEndpoint, type MiningBeamObstacle } from '../../core/combat/miningBeamHazard.js';
 import { Grid, type GridObstacle, type ObstacleBox, type PowerSummary } from '../../core/structures/Grid.js';
 import { buildStallReason } from './constructionStall.js';
+import { deckTileFundingTarget } from './deckTileFunding.js';
 import { flashRouteConnections } from './routeFlash.js';
 import { batteryChargeOf, chargeComponentBatteries, dischargeComponentBatteries, drainBatteries } from './gridBatteries.js';
 import type { Connection, FlowMaterial } from '../../core/structures/Connection.js';
@@ -548,7 +549,7 @@ export class StructureGridSubsystem {
     let attempts = 0;
     for (const rec of registry.all()) {
       if (attempts >= MAX_RECONNECT_ATTEMPTS_PER_PULSE) break;
-      if (registry.connectionCount(rec.id) > 0) continue;
+      if (registry.connectionCount(rec.id) > 0 || isFlatDeckKind(rec.kind)) continue; // a road takes no cable
       // Phase 5 — a structure that has EVER connected and is now at 0 was either
       // deliberately CLEARED by the player or ORPHANED by its hub's destruction.
       // Leave it orphaned until the player manually reconnects (the sweep used to
@@ -850,7 +851,7 @@ export class StructureGridSubsystem {
   }
 
   /** Why a paused build is paused: minerals owed on a dry bank, or no Capital route (`constructionStall.ts`). */
-  buildStallReason(rec: StructureRecord): ReturnType<typeof buildStallReason> { return buildStallReason(rec, this.hooks.registry.all(), (a, b) => this.grid.route(a, b)); }
+  buildStallReason(rec: StructureRecord): ReturnType<typeof buildStallReason> { return buildStallReason(rec, this.hooks.registry.all(), (a, b) => this.grid.route(a, deckTileFundingTarget(this.hooks.registry, b))); }
 
   /**
    * Phase-1 issue 6 — player-triggered "reconnect to the nearest structure(s)".
@@ -957,7 +958,7 @@ export class StructureGridSubsystem {
       if (rec.kind !== 'capital' || rec.minerals <= 0) continue;
       const fundingCapable = rec.isConstructed || rec.upgradeTargetLevel !== undefined;
       if (!fundingCapable) continue;
-      const route = this.grid.route(rec.id, targetId);
+      const route = this.grid.route(rec.id, deckTileFundingTarget(this.hooks.registry, targetId)); // a road: via its plate's anchor
       if (route) return { capital: rec, route };
     }
     return null;

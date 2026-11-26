@@ -79,6 +79,8 @@ describe('deck base roads between the gates (base platforms 32)', () => {
         expect(isPlateCentreHex(q, r), `road ${k} off the anchor's yard`).toBe(false);
       }
       for (const p of b.placements) if (p.kind === 'road') expect([30, 90, 150]).toContain(p.rot);
+      // A road takes no cable (base platforms 34): no edge ends on one.
+      for (const [i, j] of b.edges) expect([b.placements[i]!.kind, b.placements[j]!.kind], 'cable on a road').not.toContain('road');
       // Every road is part of the network: it reaches a gate.
       const fromGates = new Set<string>();
       for (const g of gateRoads) for (const k of reach(roads, g)) fromGates.add(k);

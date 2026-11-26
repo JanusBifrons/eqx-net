@@ -156,10 +156,10 @@ export function layDeckFence(L: DeckLayout): DeckFence {
   // rules refuse is taken back (its hex stays open floor).
   const gateOn = new Map<Seam, number>();
   for (const s of gates) {
-    if (L.placeOnHex({ kind: DECK_ROAD_KIND }, s.q, s.r, plannedTurn(roads, s.q, s.r), L.anchorAt(s.q, s.r)) < 0) continue;
+    if (L.placeOnHex({ kind: DECK_ROAD_KIND }, s.q, s.r, plannedTurn(roads, s.q, s.r), -1) < 0) continue;
     const g = placeSnapped(L, DECK_FENCE_GATE_KIND, s.m.x, s.m.y);
     if (g >= 0) gateOn.set(s, g);
-    else { B.unlinkLast(); B.undoLast(); }
+    else B.undoLast();
   }
   // A post on every boundary corner (shared corners once).
   const posts = new Map<string, number>();

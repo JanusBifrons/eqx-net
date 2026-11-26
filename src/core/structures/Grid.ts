@@ -20,6 +20,7 @@
  */
 import { Connection } from './Connection.js';
 import { CONNECTION_MAX_RANGE } from './structureGridConstants.js';
+import { isFlatDeckKind } from '../../shared-types/structureKinds.js';
 import { clampLinksToSockets } from '../leveling/structureLevel.js';
 import { rayHitsConvexPolygon } from '../combat/Weapons.js';
 import { convexHullCCW } from '../swarm/asteroidShape.js';
@@ -291,6 +292,11 @@ export function canConnect(
   if (!a.isConnector && !b.isConnector && a.isShieldPylon !== true && b.isShieldPylon !== true) {
     return { ok: false, reason: 'connector-required' };
   }
+
+  // A flat deck tile (a road) takes no cable at any level: it belongs to the
+  // deck it sits on (`structureKinds/deckTiles.ts`).
+  if (isFlatDeckKind(a.kind)) return { ok: false, reason: 'a-full' };
+  if (isFlatDeckKind(b.kind)) return { ok: false, reason: 'b-full' };
 
   const aConns = adjacency.get(a.id) ?? [];
   if (aConns.some((c) => c.getOtherNode(a.id) === b.id)) {
