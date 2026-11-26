@@ -50,7 +50,7 @@ export interface PlacementGhostCtx {
   obstacles: readonly GridObstacle[] | null;
   /** The server's overlap rule for the ghost (red / green), and its pose scratch. */
   readonly verdict: PlacementGhostVerdict;
-  /** Free build-slot outlines (`?buildSlots=on`, set in `init` by `applyRestyleLook`); null = off. */
+  /** Free build-slot outlines (on by default, `?buildSlots=off` hides; set in `init` by `applyRestyleLook`); null = off. */
   slotOutlines: BuildSlotOutlines | null;
   readonly pose: GhostPose;
   readonly isTouch: boolean;
@@ -86,7 +86,7 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
   // never steady-state. (Phase-A3: the create/rebuild/hide branching could
   // move to a pure spriteUpdateDecisions helper if a 3rd preview type lands.)
   const preview = mirror.pendingPlacementPreview;
-  // Show where the picked kind can go (deck rooms, `?buildSlots=on`): recomputed on change only.
+  // Show where the picked kind can go (deck rooms; `?buildSlots=off` hides): recomputed on change only.
   ctx.slotOutlines?.update(preview, mirror);
   // A "pending" preview is the dim post-Confirm ghost (playtest 2026-06-10
   // Issue 7): placement is DONE, so it must NOT capture pointers (the camera

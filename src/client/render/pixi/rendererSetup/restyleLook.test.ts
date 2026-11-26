@@ -74,7 +74,7 @@ describe('structure restyle on the worker renderer', () => {
   });
 
   it('a worker renderer booted without the fields falls back to the defaults (on)', () => {
-    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a', fenceLook: 'new', zones: true, approach: true, buildSlots: false });
+    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a', fenceLook: 'new', zones: true, approach: true, buildSlots: true });
   });
 });
 
@@ -172,16 +172,16 @@ describe('gate approach lights (`?approach=`)', () => {
 });
 
 describe('build-slot outlines (`?buildSlots=`)', () => {
-  it('defaults to off; `on` rides BOOT to the worker and builds the outlines on the ghost ctx', () => {
-    expect(readRestyleLook('').buildSlots).toBe(false);
-    expect(resolveRestyleLook({ mode: 'classic' }, null).buildSlots).toBe(false);
-    const art: ArtOptions = { mode: 'machined', ...readRestyleLook('?room=deck&buildSlots=on') };
+  it('defaults to on (builds the outlines on the ghost ctx); `off` rides BOOT to the worker', () => {
+    expect(readRestyleLook('').buildSlots).toBe(true);
+    expect(resolveRestyleLook({ mode: 'classic' }, null).buildSlots).toBe(true);
+    const art: ArtOptions = { mode: 'machined', ...readRestyleLook('?room=deck') };
     const [, workerArt] = rendererArgsFromBoot(structuredClone(bootFrom(art)));
     expect(workerArt.buildSlots).toBe(true);
     const ghost: { slotOutlines: BuildSlotOutlines | null } = { slotOutlines: null };
     applyRestyleLook({ lineLook: null }, {}, new Container(), workerArt, null, ghost);
     expect(ghost.slotOutlines).toBeInstanceOf(BuildSlotOutlines);
-    const offArt: ArtOptions = { mode: 'machined', ...readRestyleLook('?room=deck') };
+    const offArt: ArtOptions = { mode: 'machined', ...readRestyleLook('?room=deck&buildSlots=off') };
     const [, offWorker] = rendererArgsFromBoot(structuredClone(bootFrom(offArt)));
     expect(offWorker.buildSlots).toBe(false);
     const off: { slotOutlines: BuildSlotOutlines | null } = { slotOutlines: null };

@@ -64,7 +64,7 @@ On by default on both renderer paths (BOOT carries the flag to the worker);
 `?approach=off` turns them off. See them in `?room=deck-bases`: each base
 has at least two gates.
 
-## Free build-slot outlines (off by default; `?buildSlots=on` shows them)
+## Free build-slot outlines (on by default; `?buildSlots=off` hides them)
 
 While a kind is picked in build mode on a deck room, a faint cyan outline
 marks every free slot on the local player's own plates: each hex, rhombus,
@@ -82,7 +82,7 @@ under the approach lamps), owned by the placement ghost ctx and updated from
 `updatePlacementGhost`. It recomputes only when the kind, held turn, mirror,
 plates or structure set change; a steady frame walks the structure map once
 for its signature and allocates nothing. The flag rides BOOT to the worker
-like `?approach=`. See it in `?room=deck&buildSlots=on`: pick any building;
+like `?approach=` (owner OK 2026-11-26: on by default). See it in `?room=deck`: pick any building;
 the player's plate is centred on the world origin.
 
 ## History: Tier A static geometry (retired in phase E)

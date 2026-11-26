@@ -1,6 +1,6 @@
 /**
- * Base platforms — "show where you can build" (`?buildSlots=on`, default off
- * until the owner signs off the look). While a kind is picked on a deck room,
+ * Base platforms — "show where you can build" (default on, owner OK 2026-11-26;
+ * `?buildSlots=off` hides). While a kind is picked on a deck room,
  * a faint outline marks every free slot on the local player's own plates
  * where the ghost would turn cyan. Hex-edge kinds (a shield gate, `'edge'`
  * slot) get none: their placement rule is being redesigned. No slot ⇒ nothing drawn.
@@ -30,9 +30,9 @@ import { ghostDeckContext } from './placementDeckSnap.js';
 
 type Preview = NonNullable<RenderMirror['pendingPlacementPreview']>;
 
-/** `?buildSlots=on` — default off (look awaiting the owner's OK). */
+/** Default on (owner OK 2026-11-26); `?buildSlots=off` hides. */
 export function readBuildSlotsFlag(search: string): boolean {
-  return /[?&]buildSlots=on\b/.test(search);
+  return !/[?&]buildSlots=off\b/.test(search);
 }
 
 /** zIndex: over road tiles (ROAD_UNDER_Z −1.0625) so a slot beside a road

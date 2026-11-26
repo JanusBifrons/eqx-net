@@ -32,7 +32,7 @@ export interface RestyleLook {
   zones: boolean;
   /** Runway approach lights outside deck fence gates (`?approach=on|off`, default on). */
   approach: boolean;
-  /** Free build-slot outlines while placing on a deck (`?buildSlots=on`, default off). */
+  /** Free build-slot outlines while placing on a deck (default on; `?buildSlots=off` hides). */
   buildSlots: boolean;
 }
 
@@ -46,7 +46,7 @@ export function readRestyleLook(search: string): RestyleLook {
 
 /** What a renderer draws: `ArtOptions` first, else the URL (`search`, null in a worker), else the defaults. */
 export function resolveRestyleLook(art: ArtOptions, search: string | null): RestyleLook {
-  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, zones: true, approach: true, buildSlots: false };
+  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, zones: true, approach: true, buildSlots: true };
   return {
     lineLook: art.lineLook !== undefined ? art.lineLook : fromUrl.lineLook,
     rigs: art.rigs ?? fromUrl.rigs,
@@ -79,7 +79,7 @@ export function applyRestyleLook(
   if (look.rigs) swarmUpdaterCtx.structureRigs = new StructureRigs(shipContainer);
   // Base platforms: the deck floor (drawn only while the room's deck flag is on).
   swarmUpdaterCtx.deckPlates = new StructureDeckPlates(shipContainer, look.deckTex, look.zones, look.approach);
-  // Base platforms: outline the free build slots while placing (`?buildSlots=on`).
+  // Base platforms: outline the free build slots while placing (default on; `?buildSlots=off` hides).
   if (placementGhostCtx) placementGhostCtx.slotOutlines = look.buildSlots ? new BuildSlotOutlines(shipContainer) : null;
   return look;
 }

@@ -44,8 +44,8 @@ const centre: HexPoint = { x: 0, y: 0 };
 plateCentreWorldInto(0, 0, centre);
 
 describe('build-slot outlines', () => {
-  it('flag: off by default, `?buildSlots=on` turns it on', () => {
-    expect(readBuildSlotsFlag('')).toBe(false);
+  it('flag: on by default, `?buildSlots=off` hides it', () => {
+    expect(readBuildSlotsFlag('')).toBe(true);
     expect(readBuildSlotsFlag('?room=deck&buildSlots=off')).toBe(false);
     expect(readBuildSlotsFlag('?room=deck&buildSlots=on')).toBe(true);
   });

@@ -67,7 +67,7 @@ export interface BootMsg {
   zones?: boolean;
   /** Gate approach lights (`?approach=`). Absent = off. */
   approach?: boolean;
-  /** Free build-slot outlines (`?buildSlots=`). Absent = off. */
+  /** Free build-slot outlines (`?buildSlots=`). Absent = on. */
   buildSlots?: boolean;
   /** Cut-field ore look (`?ore=`, F1c trial); absent = off. */
   ore?: import('../../art/artMode.js').FieldOreLook;
