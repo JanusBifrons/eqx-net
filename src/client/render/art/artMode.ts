@@ -63,6 +63,8 @@ export interface ArtOptions {
   approach?: boolean;
   /** Base platforms free build-slot outlines (`?buildSlots=off` hides). Absent = the URL / on. */
   buildSlots?: boolean;
+  /** Readable construction ring + wireframe hologram (`?buildRing=on|off`). Absent = the URL / on. */
+  buildRing?: boolean;
   /** Cut-field ore look (`?ore=off|tint|veins|seams`, F1c); absent = veins (owner's pick). */
   ore?: FieldOreLook;
   /** Graphics quality (edge smoothing, render scale, texture softening);

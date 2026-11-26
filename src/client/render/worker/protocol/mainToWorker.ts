@@ -69,6 +69,8 @@ export interface BootMsg {
   approach?: boolean;
   /** Free build-slot outlines (`?buildSlots=`). Absent = on. */
   buildSlots?: boolean;
+  /** Readable construction ring (`?buildRing=on|off`). Absent = on (the worker default). */
+  buildRing?: boolean;
   /** Cut-field ore look (`?ore=`, F1c trial); absent = off. */
   ore?: import('../../art/artMode.js').FieldOreLook;
   /** Graphics quality (`?aa=` / `?renderscale=` / `?texsoft=`), plain data; absent = today's look. */

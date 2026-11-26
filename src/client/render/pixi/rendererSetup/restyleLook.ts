@@ -18,6 +18,7 @@ import { DEFAULT_FENCE_LOOK, readFenceLook, type FenceLook } from '../connectorF
 import { readZonesFlag } from '../structureDeckZones.js';
 import { readApproachFlag } from '../deckApproachLights.js';
 import { BuildSlotOutlines, readBuildSlotsFlag } from '../buildSlotOutlines.js';
+import { readBuildRingFlag } from '../buildRing.js';
 
 export interface RestyleLook {
   /** Grid line look; null = the pre-restyle thin line. */
@@ -34,19 +35,21 @@ export interface RestyleLook {
   approach: boolean;
   /** Free build-slot outlines while placing on a deck (default on; `?buildSlots=off` hides). */
   buildSlots: boolean;
+  /** Readable construction: progress ring + wireframe hologram on unbuilt structures (`?buildRing=on|off`, default on). */
+  buildRing: boolean;
 }
 
 /** The restyle scene options from a URL query string. */
 export function readRestyleLook(search: string): RestyleLook {
   return {
     lineLook: readLineLook(search), rigs: readRigsFlag(search), deckTex: readDeckTex(search), fenceLook: readFenceLook(search), zones: readZonesFlag(search),
-    approach: readApproachFlag(search), buildSlots: readBuildSlotsFlag(search),
+    approach: readApproachFlag(search), buildSlots: readBuildSlotsFlag(search), buildRing: readBuildRingFlag(search),
   };
 }
 
 /** What a renderer draws: `ArtOptions` first, else the URL (`search`, null in a worker), else the defaults. */
 export function resolveRestyleLook(art: ArtOptions, search: string | null): RestyleLook {
-  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, zones: true, approach: true, buildSlots: true };
+  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, zones: true, approach: true, buildSlots: true, buildRing: true };
   return {
     lineLook: art.lineLook !== undefined ? art.lineLook : fromUrl.lineLook,
     rigs: art.rigs ?? fromUrl.rigs,
@@ -55,14 +58,15 @@ export function resolveRestyleLook(art: ArtOptions, search: string | null): Rest
     zones: art.zones ?? fromUrl.zones,
     approach: art.approach ?? fromUrl.approach,
     buildSlots: art.buildSlots ?? fromUrl.buildSlots,
+    buildRing: art.buildRing ?? fromUrl.buildRing,
   };
 }
 
 /** Init step (`initSceneAndOverlays`): set the connector line look and build the
  *  one `StructureRigs` the swarm updater poses (and the deck floor), on either renderer path. */
 export function applyRestyleLook(
-  connectorRenderer: { lineLook: LineLook | null; socketCables?: boolean; cables?: { fenceBeams: boolean } },
-  swarmUpdaterCtx: { structureRigs?: StructureRigs; deckPlates?: StructureDeckPlates; socketNubs?: boolean },
+  connectorRenderer: { lineLook: LineLook | null; socketCables?: boolean; cables?: { fenceBeams: boolean }; buildRing?: boolean },
+  swarmUpdaterCtx: { structureRigs?: StructureRigs; deckPlates?: StructureDeckPlates; socketNubs?: boolean; buildRing?: boolean },
   shipContainer: Container,
   art: ArtOptions,
   search: string | null,
@@ -76,6 +80,9 @@ export function applyRestyleLook(
   if (connectorRenderer.cables) connectorRenderer.cables.fenceBeams = look.fenceLook === 'new';
   // 0d slice 10: socket nubs on the structures, same flag.
   swarmUpdaterCtx.socketNubs = art.fx === true;
+  // Readable construction: the ring replaces the blueprint fill bar.
+  swarmUpdaterCtx.buildRing = look.buildRing;
+  connectorRenderer.buildRing = look.buildRing;
   if (look.rigs) swarmUpdaterCtx.structureRigs = new StructureRigs(shipContainer);
   // Base platforms: the deck floor (drawn only while the room's deck flag is on).
   swarmUpdaterCtx.deckPlates = new StructureDeckPlates(shipContainer, look.deckTex, look.zones, look.approach);

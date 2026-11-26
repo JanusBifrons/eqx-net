@@ -106,4 +106,7 @@ export interface SwarmSpriteCtx {
   /** Structure restyle 0d slice 10 (new effects, `?fx=new`): socket nubs on
    *  each structure's outline (structureSocketNubs.ts). Absent / false ⇒ none. */
   socketNubs?: boolean;
+  /** Readable construction (`?buildRing`, default on): unbuilt structures draw the
+   *  wireframe hologram plus a progress hexagon (buildRing.ts). Absent / false ⇒ off. */
+  buildRing?: boolean;
 }

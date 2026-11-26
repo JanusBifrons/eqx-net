@@ -123,7 +123,7 @@ describe('fenced deck base: a closed seam ring with road gates (base platforms 2
         expect(ins > 0 && ins < 6, `post (${p.x}, ${p.y}) on the boundary`).toBe(true);
       }
       // Each gate: links to the two posts on its seam's ends, and has its road
-      // on the inside hex (the player's 'no-road' rule passes).
+      // on the inside hex (roads are optional; generation still lays one).
       b.placements.forEach((g, gi) => {
         if (g.kind !== 'shield_gate') return;
         const ends = b.edges.filter(([i, j]) => i === gi || j === gi).map(([i, j]) => b.placements[i === gi ? j : i]!);

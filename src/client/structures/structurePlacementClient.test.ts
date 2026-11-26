@@ -194,7 +194,7 @@ describe('commitChosenPlacement', () => {
       mirror: false, // build mirror (4B): default off
     });
     // The dim pending ghost is recorded so it bridges the render gap (R2.1).
-    expect(notePendingPlacement).toHaveBeenCalledWith('capital', 1234.5, -678.25, 0, false);
+    expect(notePendingPlacement).toHaveBeenCalledWith('capital', 1234.5, -678.25, 0, false, null);
   });
 
   it('falls back to ahead-of-ship only when the ghost was never positioned', () => {
@@ -298,7 +298,7 @@ describe('placement mirror (4B)', () => {
     placementChosen.worldY = 20;
     commitChosenPlacement('solar');
     expect(send).toHaveBeenCalledWith('place_structure', expect.objectContaining({ kind: 'solar', mirror: true }));
-    expect(notePendingPlacement).toHaveBeenCalledWith('solar', 10, 20, 0, true);
+    expect(notePendingPlacement).toHaveBeenCalledWith('solar', 10, 20, 0, true, null);
     const pending: PendingPlacement = { kind: 'solar', x: 10, y: 20, rot: 0, mirror: true, sentAtMs: 0, baselineStructureCount: 0 };
     const out: PlacementPreview = { kind: 'capital', x: 0, y: 0, angle: 0 };
     expect(resolvePlacementPreviewStatus(null, null, pending, 0, 0, false, out)).toBe('pending');

@@ -63,6 +63,7 @@ import {
   RockObstacleShapes, type FieldRockBodySource,
 } from '../../structures/mirrorToGridNode.js';
 import { makePreviewConn, type PreviewConn } from './previewConn.js';
+import { drawPendingRun } from './pendingRunGhosts.js';
 import { ConnectorStaticLayer, cableInView, linkCableOf, staticSignature } from './connectorStaticLayer.js';
 import { isSegmentInView, isSpriteInView } from '../spriteUpdateDecisions.js';
 
@@ -249,6 +250,8 @@ export class ConnectorRenderer {
    *  (connectorCables.ts); behind the new-effects flag (`ArtOptions.fx`).
    *  Off = `lineLook` / the thin line, straight centre to centre. */
   socketCables = false;
+  /** `?buildRing`, default on: a blueprint's progress shows as the hologram's hexagon (buildRing.ts), so no fill bar. */
+  buildRing = false;
   /** Each live link's flattened cable (re-flattened only on change). */
   readonly cables = new LinkCableCache();
   /** Preview line scratch, and the ok hubs' socket picks (parallel to `_okHubScratch`). */
@@ -495,7 +498,7 @@ export class ConnectorRenderer {
         continue;
       }
       if (!st.built) {
-        drawStatusBar(g, ax, ay, a.radius, this.displayedBuildPct(id, st.buildPct, st.etaMs ?? null, nowMs), 0x66ccff, scale);
+        if (!this.buildRing) drawStatusBar(g, ax, ay, a.radius, this.displayedBuildPct(id, st.buildPct, st.etaMs ?? null, nowMs), 0x66ccff, scale);
       } else if (st.deconstructPct > 0) {
         drawStatusBar(g, ax, ay, a.radius, 1 - st.deconstructPct, 0xff5555, scale); // red emptying bar while reclaiming
       } else if (st.storedPowerMax !== undefined && st.storedPowerMax > 0 && !(this.socketCables && hasBodyStatus(a.shipKind))) {
@@ -559,6 +562,7 @@ export class ConnectorRenderer {
     // normal placed-structure `connTo` web (update()'s st.connTo loop) once the
     // server echoes the connection. The counts were reset to 0 by the caller, so
     // an early return correctly publishes 0 green / 0 overflow / 0 ring radius.
+    drawPendingRun(this.gfx, preview?.run, scale); // fence run: the sent posts + beams, pending or not
     if (!preview || preview.pending === true) return;
 
     const ghostX = this.ghostWorldX ?? preview.x;

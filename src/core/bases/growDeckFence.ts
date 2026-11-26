@@ -10,8 +10,8 @@
  *  2. Gates: for each of four bearings from the Capital (0°, 90°, 180°, 270°,
  *     the row base's mid-side gates), the boundary seam nearest it (within
  *     45°) whose inside hex is open floor gets a `road` tile on that hex
- *     (turned along the road network, `growDeckRoads.ts`) and a `shield_gate` on the seam, so
- *     the gate passes the player's `'no-road'` rule. A deck with no open
+ *     (turned along the road network, `growDeckRoads.ts`) and a `shield_gate` on the seam
+ *     (a gate needs no road; generated bases lay one anyway). A deck with no open
  *     boundary hex (a dense base packs every one) lays one fresh plate first:
  *     the newest plate is on the outside, all of it open floor.
  *  3. A `shield_pylon` on every boundary corner; the two posts of each seam
@@ -172,7 +172,7 @@ export function layDeckFence(L: DeckLayout, opts: DeckFenceOptions = {}): DeckFe
   // The road network joining the gates (`growDeckRoads.ts`): planned now so
   // each gate road takes its turn; the rest is laid once the ring is up.
   const roads = planDeckRoads(L, gates);
-  // Each gate after its road (the gate needs it); a road whose gate the
+  // Each gate after its road (generation pairs them; a gate needs none); a road whose gate the
   // rules refuse is taken back (its hex stays open floor).
   const gateOn = new Map<Seam, number>();
   for (const s of gates) {

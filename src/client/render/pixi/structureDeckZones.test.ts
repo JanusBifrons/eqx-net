@@ -11,7 +11,9 @@ import type { DeckPlatesMirror } from '../../../core/contracts/IRenderer.js';
 import { DECK_HEX_SIZE } from '../../../core/hex/plates.js';
 import { getStructureKind } from '../../../shared-types/structureKinds/lookup.js';
 import { DECK_UNDER_Z, StructureDeckPlates } from './structureDeckPlates.js';
+import type { StructureRenderState } from '../../../core/contracts/render/StructureRenderState.js';
 import { RIG_UNDER_Z } from './structureRigs.js';
+import { isUnderConstruction } from './structureHologram.js';
 import {
   CAPITAL_LINE, CAPITAL_OUTER, DECK_ZONE_Z, GUN_MARGIN, GUN_RING_WIDTH,
   deckZoneContext, deckZoneOf, readZonesFlag,
@@ -117,6 +119,25 @@ describe('deck zone markings — lifetime', () => {
     expect(deck.zones!.size).toBe(1);
     expect(deck.zones!.graphicsOf(2)).toBeUndefined();
     expect(zoneGraphics(ship).length).toBe(1);
+  });
+
+  it('a gun under construction gets no danger zone; once built, it does', () => {
+    const ship = new Container();
+    const deck = new StructureDeckPlates(ship, 'plain');
+    const pm = plates(1, true);
+    const st = { built: false } as StructureRenderState;
+    deck.sync(pm);
+    deck.note(1, 'turret', 0, 0, 0, isUnderConstruction(st)); // the hologram's predicate
+    deck.note(2, 'turret', 500, 0, 0, isUnderConstruction(undefined)); // no state yet: built
+    expect(deck.zones!.graphicsOf(1)).toBeUndefined();
+    expect(deck.zones!.graphicsOf(2)).toBeDefined();
+    expect(zoneGraphics(ship).length).toBe(1);
+    deck.sync(pm);
+    st.built = true;
+    deck.note(1, 'turret', 0, 0, 0, isUnderConstruction(st));
+    deck.note(2, 'turret', 500, 0, 0, isUnderConstruction(undefined));
+    expect(deck.zones!.graphicsOf(1)).toBeDefined();
+    expect(zoneGraphics(ship).length).toBe(2);
   });
 
   it('?zones=off: the floor has no zone layer', () => {

@@ -43,10 +43,18 @@ Each has `filterBy(testId)`, and the pilot spawns south of the fence. Lock:
 `tests/integration/sectorRoom/npcBases.test.ts`. Showcase shot:
 `showcase/shots/proceduralBase.ts`.
 
+## Deck gates and roads
+
+Roads are optional (owner ruling 2026-11-26). A deck gate (`shield_gate` on a
+hex seam between two fence posts) needs no road beside it: `placementRejection`
+never checks for one. Generated bases still lay a road on the inside hex of
+each gate (`growDeckFence.ts`, `growDeckRoads.ts`), and the road join art draws
+an arm to a gate when a road is there (`roadJoins.ts`).
+
 ## Deck gate approach lights (on by default; `?approach=off` hides them)
 
-Outside every deck fence gate (`shield_gate` on a seam, its road running along
-the gate's local ±y) runway lights run out along the road, like the lights off
+Outside every deck fence gate (`shield_gate` on a seam, its road, if any, running
+along the gate's local ±y) runway lights run out along the road, like the lights off
 the end of an airfield. A white centre row of 10 lamps runs down the road's
 middle; red and green rows of 5 sit on the road's exact edges (±175, the road's
 half width), red on the inbound pilot's left, green on the right. The outside is
@@ -84,6 +92,36 @@ plates or structure set change; a steady frame walks the structure map once
 for its signature and allocates nothing. The flag rides BOOT to the worker
 like `?approach=` (owner OK 2026-11-26: on by default). See it in `?room=deck`: pick any building;
 the player's plate is centred on the world origin.
+## Fence run (placing a deck fence by its corners)
+
+With the fence post (`shield_pylon`) picked in a deck room, each Place snaps
+to the nearest hex corner and puts a post there if it has none (an existing
+post is reused, so 3 clicks make 2 edges). From the second click on, the game
+fills a post on every corner along the shortest run of plated hex edges from
+the previous click's corner; inner edges count, not just the rim. A fence may
+cross a road (it blocks it; `deckFenceRoad.test.ts`).
+
+- **Path:** `core/hex/deckCornerGraph.ts` is only a `SearchGraph` adapter over
+  the plate corners (edges where `isDeckSeam` holds); the search is the nav
+  `GraphSearch`.
+- **Wire:** nothing new. The client (`client/structures/fenceRun.ts`, routed
+  from `commitPlacement`) sends one ordinary `place_structure` per missing
+  corner via `placeStructureAt`; the server's `autoConnectStructure` makes the
+  `DECK_LINK_SEAM_FENCE` beams.
+- **Refusals:** the first corner the ghost's own rule (`PlacementGhostVerdict`)
+  refuses is still sent, so the server's `lastRefusal` notice says why, and the
+  run stops there. No rollback. Rocks are not in the client check: a corner on
+  a rock is refused by the server while later corners still go.
+- **Preview:** the sent corners ride the one pending record
+  (`PendingPlacement.sent` / `run`, `pendingPlacementRun.ts`) into
+  `pendingPlacementPreview.run`, drawn by `drawPendingRun` inside
+  `drawPlacementPreview` until all of the run's posts land (or the pending
+  timeout).
+- **Ends** on Cancel (right-click, ✕) or any change of `placementKind`.
+
+See it in `?room=deck`: pick Shield Pylon and click hex corners of the empty
+west hex (centre (-1300, 0)), e.g. (-650, 375) then (-1950, 375): the post at
+(-1300, 751) between them is filled.
 
 ## History: Tier A static geometry (retired in phase E)
 
