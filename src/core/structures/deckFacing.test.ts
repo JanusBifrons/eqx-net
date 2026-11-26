@@ -9,7 +9,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { snapPlacementToDeck } from './deckPlacement.js';
-import { DECK_FENCE_POST_KIND } from './deckLinks.js';
+import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from './deckLinks.js';
 import { rhombusCentroidInto, rhombusFacingDeg, snapToDeckSlot, type DeckSnap } from '../hex/deckSnap.js';
 import { hexCornerInto } from '../hex/hex.js';
 import { DECK_HEX_SIZE, deckHexCentreInto, isPlateCentreHex, plateCentreWorldInto } from '../hex/plates.js';
@@ -17,8 +17,9 @@ import { STRUCTURE_KINDS_LIST } from '../../shared-types/structureKinds/catalogu
 import { isStructureQuarterTurnOnly, normaliseStructureQuarterTurn, snapPlayerStructureRotation } from '../../shared-types/structureKinds.js';
 
 const out = (): DeckSnap => ({ x: 0, y: 0, q: 0, r: 0, rhombus: -1, slot: 'small', rot: -1 });
-// The fence post snaps to a hex corner instead (slice 19, `deckFence.test.ts`).
-const SMALL = STRUCTURE_KINDS_LIST.filter((k) => k.deckSlot === 'small' && k.id !== DECK_FENCE_POST_KIND);
+// The fence post snaps to a hex corner instead (slice 19, `deckFence.test.ts`),
+// the fence gate to a seam's midpoint (slice 21, `deckGate.test.ts`).
+const SMALL = STRUCTURE_KINDS_LIST.filter((k) => k.deckSlot === 'small' && k.id !== DECK_FENCE_POST_KIND && k.id !== DECK_FENCE_GATE_KIND);
 /** Hexes (not plate centres) to sample. */
 const HEXES: Array<[number, number]> = [];
 for (let q = -3; q <= 3; q++) for (let r = -3; r <= 3; r++) if (!isPlateCentreHex(q, r)) HEXES.push([q, r]);

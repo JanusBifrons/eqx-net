@@ -75,7 +75,10 @@ export function normaliseStructureQuarterTurn(deg: number | null | undefined): S
  *  with world-axis part boxes (gates, airlocks, the shipyard, teleporter
  *  pads; their posts and door leaves are hit as axis boxes,
  *  `gateWorldAxisBoxes` / `writeDoorLeafBoxes`). Must list exactly the
- *  kinds `gateColliderBoxes` answers for (`quarterTurnOnlyParity.test.ts`). */
+ *  kinds `gateColliderBoxes` answers for (`quarterTurnOnlyParity.test.ts`).
+ *  One exception: a deck fence gate takes its seam's turn (30° / 90° / 150°,
+ *  `deckPlacement.ts` `'edge'` slot); its part boxes are then world-axis
+ *  bounds (`gateWorldAxisBoxes`). */
 export function isStructureQuarterTurnOnly(kindId: string | null | undefined): boolean {
   return kindId === 'shield_gate' || kindId === 'shield_airlock' || kindId === 'shipyard' || isTeleporterKind(kindId);
 }

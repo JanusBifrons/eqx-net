@@ -140,11 +140,14 @@ function turnedSmallRoom(k: StructureKind, rh: number): { room: number; rot: num
   return { room: polyRoom(box, polyEdges(poly)), rot: s.rot };
 }
 
-/** Small kinds short of 130 u room at their snapped facing (slice 18): the
- *  shield gate turns only in quarters, so in rhombi 1 and 2 (long diagonal at
- *  120° / 240°) it sits 30° off the diagonal and keeps ~127 u. It still fits;
- *  flagged for the owner rather than force-fitted. */
-const SHORT_TURNED: readonly string[] = ['shield_gate'];
+/** Small kinds short of 130 u room at their snapped facing (slice 18). None
+ *  since the fence kinds left the rhombi (below). */
+const SHORT_TURNED: readonly string[] = [];
+
+/** Fence kinds keep `deckSlot: 'small'` but the player snap puts them on the
+ *  seams instead (core `deckPlacement.ts`): the post on a hex corner (slice
+ *  19), the gate on an edge midpoint (slice 21). */
+const FENCE_KINDS: readonly string[] = ['shield_pylon', 'shield_gate'];
 
 describe('deckSlot (base platforms)', () => {
   it('the slot shapes measure as designed', () => {
@@ -170,7 +173,7 @@ describe('deckSlot (base platforms)', () => {
     },
   );
 
-  it.each(STRUCTURE_KINDS_LIST.filter((k) => k.deckSlot === 'small').map((k) => [k.id, k] as const))(
+  it.each(STRUCTURE_KINDS_LIST.filter((k) => k.deckSlot === 'small' && !FENCE_KINDS.includes(k.id)).map((k) => [k.id, k] as const))(
     '%s fits each rhombus of a hex at its snapped facing (slice 18)',
     (id, k) => {
       for (let rh = 0; rh < 3; rh++) {

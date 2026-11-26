@@ -28,6 +28,7 @@ import {
 import { linkReachBoxAdd, linkReachBoxStart, makeCableSocketPick } from '../../core/structures/cableCurve.js';
 import { makeCableReseat } from '../../core/structures/socketReseat.js';
 import { DECK_LINK_NONE, deckLinkKind } from '../../core/structures/deckLinks.js';
+import { cutLinksReplacedByDeckGate } from './deckGateLinks.js';
 import type { StructureRecord, StructureRegistry } from './StructureRegistry.js';
 
 /** Scratch socket pick for every link made here: `canConnect` writes the
@@ -202,6 +203,8 @@ export function autoConnectStructure(
   const nodes = buildGridNodes(registry);
   const adjacency = registry.adjacencyMap();
   const newNode = nodes.get(newId)!;
+  // Slice 21: a deck gate replaces its seam's post-to-post wall.
+  if (registry.deck) cutLinksReplacedByDeckGate(registry, newRec);
 
   // Gather every legal, in-range hub the new structure could link to right now.
   const candidates: ConnectCandidate[] = [];

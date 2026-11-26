@@ -23,11 +23,15 @@
  *
  * A fence (slice 19): a shield pylon snaps to the nearest hex CORNER
  * (`'corner'`), so its walls run along the seams (`deckLinks.ts`).
+ *
+ * A fence gate (slice 21): a shield gate snaps to the nearest hex EDGE
+ * midpoint (`'edge'`), turned to lie along that seam (30° / 90° / 150°, past
+ * the gate's quarter-turn rule: the seam decides the turn, R does nothing).
  */
 import { getStructureKind, isConnectorKind, snapPlayerStructureRotation } from '../../shared-types/structureKinds.js';
 import { snapToDeckSlot, type DeckSnap } from '../hex/deckSnap.js';
 import { isPlateCentreHex } from '../hex/plates.js';
-import { DECK_FENCE_POST_KIND } from './deckLinks.js';
+import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from './deckLinks.js';
 
 /** Allocation-free: snap a player's requested point for `kind` to the centre
  *  of its deck slot (`kind.deckSlot`, or the plate centre for a connector in
@@ -35,7 +39,8 @@ import { DECK_FENCE_POST_KIND } from './deckLinks.js';
  *  building is placed at (`out.rot`, see the header), written into `out`. */
 export function snapPlacementToDeck(kind: string, x: number, y: number, out: DeckSnap, rotDeg = 0): DeckSnap {
   const k = getStructureKind(kind);
-  snapToDeckSlot(kind === DECK_FENCE_POST_KIND ? 'corner' : k.deckSlot, x, y, out);
+  snapToDeckSlot(kind === DECK_FENCE_POST_KIND ? 'corner' : kind === DECK_FENCE_GATE_KIND ? 'edge' : k.deckSlot, x, y, out);
+  if (out.slot === 'edge') return out; // the seam's turn, a 30° step already
   if (out.slot !== 'plate' && isConnectorKind(kind) && isPlateCentreHex(out.q, out.r)) snapToDeckSlot('plate', x, y, out);
   const faced = out.rot >= 0 ? out.rot + (k.footprint.h > k.footprint.w ? 90 : 0) : rotDeg;
   out.rot = snapPlayerStructureRotation(faced, true, kind);
