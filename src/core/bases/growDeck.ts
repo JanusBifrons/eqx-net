@@ -44,7 +44,9 @@ import { rhombusCentroidInto, type DeckSnap } from '../hex/deckSnap.js';
 import { PlateSet } from '../hex/plateSet.js';
 import { snapPlacementToDeck } from '../structures/deckPlacement.js';
 import { Builder, type GrownPlacement } from './growBuilder.js';
-import { layDeckFence } from './growDeckFence.js';
+import { layDeckFence, type DeckFence } from './growDeckFence.js';
+import { gatesJoined, reserveDeckRoads } from './growDeckRoads.js';
+import { DECK_ROAD_KIND } from '../structures/deckGateRoad.js';
 import type { Want } from './roleUnits.js';
 
 /** Growth options (`growBase`). Absent / false = today's row layout, unchanged. */
@@ -123,7 +125,9 @@ export class DeckLayout {
   /** Per laid plate (index into `laid`), outer hexes holding a building. */
   private readonly used: number[] = [];
 
-  constructor(private readonly perPlate: number) {}
+  /** `reserved`: hexes kept as open floor for roads (`growDeckRoads.ts`);
+   *  no building takes one. */
+  constructor(private readonly perPlate: number, private readonly reserved: ReadonlySet<string> = new Set()) {}
 
   /** Lay plate (i, j): a connector snapped to its centre, linked to every
    *  laid neighbour's anchor. Returns false (nothing left) when refused. */
@@ -165,7 +169,7 @@ export class DeckLayout {
       for (const k of RING_ORDER) {
         const d = HEX_DIRS[k]!;
         const q = l.q + d.q, r = l.r + d.r, key = `${q},${r}`;
-        if (this.hexFull.has(key)) continue;
+        if (this.hexFull.has(key) || this.reserved.has(key)) continue;
         const held = this.smallHeld.get(key) ?? 0;
         if (!small && held !== 0) continue;
         // An empty hex on a plate at its cap stays open floor.
@@ -191,6 +195,12 @@ export class DeckLayout {
   isHexFree(q: number, r: number): boolean {
     const key = `${q},${r}`;
     return !this.hexFull.has(key) && (this.smallHeld.get(key) ?? 0) === 0;
+  }
+
+  /** The anchor of the laid plate holding hex (q, r). */
+  anchorAt(q: number, r: number): number {
+    plateOfHexInto(q, r, plate);
+    return this.laid.find((l) => l.i === plate.i && l.j === plate.j)!.anchor;
   }
 
   /** A `'hex'` kind on the centre of hex (q, r), turned `rotDeg`, linked to
@@ -228,8 +238,28 @@ export class DeckLayout {
  * outside it, never on a plate inside the ring.
  */
 export function layDeckBase(wants: readonly Want[], hexesPerPlate: number = DECK_HEXES_PER_PLATE, guns: readonly Want[] | null = null): DeckBase {
-  const L = new DeckLayout(hexesPerPlate);
-  if (!L.layPlate(0, 0)) return { B: L.B, fencePylons: 0, fenceGates: 0 };
+  const a = layDeckOnce(wants, hexesPerPlate, guns, new Set());
+  // Roads (slice 32, `growDeckRoads.ts`): the gates' road network is planned
+  // on this layout and its hexes kept open in a second one. That one is kept
+  // when it loses no building or gate and joins more gates, for at most one
+  // more inside plate (a plate's open floor is every other outer hex, so a
+  // road round its anchor can push a building onto a new plate).
+  if (a.fence === null || a.fence.gateEnds.length < 2) return a.base;
+  const reserved = reserveDeckRoads(a.L, a.inside, a.fence.gateEnds);
+  const b = layDeckOnce(wants, hexesPerPlate, guns, reserved);
+  if (b.fence === null || b.inside > a.inside + 1 || b.base.fenceGates < a.base.fenceGates) return a.base;
+  if (deckBuildings(b.base.B) < deckBuildings(a.base.B)) return a.base;
+  const ja = gatesJoined(a.base.B, a.fence.gateEnds), jb = gatesJoined(b.base.B, b.fence.gateEnds);
+  return jb > ja || (jb === ja && b.inside <= a.inside && roads(b.base.B) > roads(a.base.B)) ? b.base : a.base;
+}
+
+/** One deck layout (see `layDeckBase`), `reserved` hexes kept open. */
+function layDeckOnce(wants: readonly Want[], hexesPerPlate: number, guns: readonly Want[] | null, reserved: ReadonlySet<string>): DeckPass {
+  const L = new DeckLayout(hexesPerPlate, reserved);
+  const pass = (fence: DeckFence | null): DeckPass => ({
+    L, fence, inside: L.laid.length, base: { B: L.B, fencePylons: fence?.pylons ?? 0, fenceGates: fence?.gates ?? 0 },
+  });
+  if (!L.layPlate(0, 0)) return pass(null);
   const sized = (ws: readonly Want[]): Want[] => ws.filter((w) => {
     const s = getStructureKind(w.kind).deckSlot;
     return s === 'hex' || s === 'small';
@@ -239,8 +269,9 @@ export function layDeckBase(wants: readonly Want[], hexesPerPlate: number = DECK
     // plate never will, so it is left out rather than laying plate after plate.
     if (L.place(w, 0) < 0 && L.layNext()) L.place(w, L.laid.length - 1);
   }
-  if (guns === null) return { B: L.B, fencePylons: 0, fenceGates: 0 };
+  if (guns === null) return pass(null);
   const fence = layDeckFence(L);
+  const out = pass(fence);
   // Bastions: plates laid from here on are outside the ring. A gun takes a
   // slot on a bastion plate (never an inside one), or one fresh bastion; no
   // bastion goes on a plate a gate opens onto.
@@ -248,7 +279,30 @@ export function layDeckBase(wants: readonly Want[], hexesPerPlate: number = DECK
   for (const w of sized(guns)) {
     if (L.place(w, inside) < 0 && L.layNext(fence.blocksBastion)) L.place(w, L.laid.length - 1);
   }
-  return { B: L.B, fencePylons: fence.pylons, fenceGates: fence.gates };
+  return out;
+}
+
+/** One layout pass: the layout, its fence (null = unfenced) and how many
+ *  plates are inside the ring. */
+interface DeckPass {
+  L: DeckLayout;
+  fence: DeckFence | null;
+  inside: number;
+  base: DeckBase;
+}
+
+/** Placements that are not anchors, fence or roads (what the base bought). */
+function deckBuildings(B: Builder): number {
+  let n = 0;
+  for (const p of B.placements) if (p.kind !== 'connector' && p.kind !== 'shield_pylon' && p.kind !== 'shield_gate' && p.kind !== DECK_ROAD_KIND) n++;
+  return n;
+}
+
+/** Road tiles laid. */
+function roads(B: Builder): number {
+  let n = 0;
+  for (const p of B.placements) if (p.kind === DECK_ROAD_KIND) n++;
+  return n;
 }
 
 /** The Capital first, then the rest biggest first (they need the room). */
