@@ -39,8 +39,11 @@ export function readBuildSlotsFlag(search: string): boolean {
  *  reads, under the approach lamps (−1.03125) and rig pads (−1). */
 export const BUILD_SLOT_Z = -1.046875;
 export const BUILD_SLOT_COLOR = 0x7fe8ff;
-export const BUILD_SLOT_ALPHA = 0.35;
-export const BUILD_SLOT_WIDTH = 22;
+/** Faint: thinner than the deck seams (28 u) and far under the ghost's own
+ *  slot outline (alpha 0.7), so it never reads louder than the ghost. */
+export const BUILD_SLOT_ALPHA = 0.22;
+export const BUILD_SLOT_WIDTH = 16;
+const BUILD_SLOT_STROKE = { color: BUILD_SLOT_COLOR, alpha: BUILD_SLOT_ALPHA, width: BUILD_SLOT_WIDTH, join: 'round', cap: 'round' } as const;
 /** Slot areas are drawn shrunk about their centre, so neighbours read apart. */
 const INSET = 0.9;
 /** Probe points toward a corner (of the way from the hex centre): the snap
@@ -114,7 +117,6 @@ export class BuildSlotOutlines {
   readonly slots: number[] = [];
   private readonly verdict = new PlacementGhostVerdict();
   private readonly seen = new Set<number>();
-  private readonly pts: number[] = [];
   // Last computed signature.
   private kind: string | null = null;
   private angle = NaN;
@@ -186,13 +188,14 @@ export class BuildSlotOutlines {
       const x = s[n]!, y = s[n + 1]!, slot = SLOT_CODES[s[n + 2]!]!;
       const scale = slot === 'corner' ? 1 : INSET;
       for (const poly of outlineFor(slot, s[n + 3]!)) {
-        const pts = this.pts;
-        pts.length = 0;
+        // A fresh array per polygon: Pixi's Polygon keeps the array it is
+        // given (no copy), so a reused scratch moved every outline onto the
+        // last slot. Recompute-time only, never per frame.
+        const pts: number[] = [];
         for (let i = 0; i < poly.length; i += 2) pts.push(x + poly[i]! * scale, -(y + poly[i + 1]! * scale));
-        g.poly(pts, true);
+        g.poly(pts, true).stroke(BUILD_SLOT_STROKE);
       }
     }
-    g.stroke({ color: BUILD_SLOT_COLOR, alpha: BUILD_SLOT_ALPHA, width: BUILD_SLOT_WIDTH, join: 'round', cap: 'round' });
   }
 
   destroy(): void {

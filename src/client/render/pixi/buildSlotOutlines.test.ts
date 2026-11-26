@@ -60,6 +60,25 @@ describe('build-slot outlines', () => {
     for (const s of slotsOf(o)) expect(ghostVerdict(m, s.x, s.y, s.rot < 0 ? 0 : s.rot)).toBeNull();
   });
 
+  it('draws an outline at EVERY slot, not all at the last one (Pixi keeps each poly\'s point array)', () => {
+    // Stills bug: a reused scratch array put all seven outlines on the last
+    // hex, so one bright thick hex showed and the other free hexes none.
+    const o = new BuildSlotOutlines(new Container());
+    const m = mirrorFor('reactor', []);
+    o.update(m.pendingPlacementPreview, m);
+    const shapes = o.gfx.context.instructions.flatMap((i) => (i.action === 'stroke' ? i.data.path.shapePath.shapePrimitives : []));
+    expect(shapes.length).toBe(7);
+    const centres = new Set(shapes.map((sp) => {
+      const b = sp.shape.getBounds();
+      return `${Math.round(b.x + b.width / 2)},${Math.round(b.y + b.height / 2)}`;
+    }));
+    expect(centres.size).toBe(7);
+    // Faint: thinner than the deck seams and well under the ghost's 0.7 alpha.
+    const stroke = o.gfx.context.instructions.find((i) => i.action === 'stroke');
+    expect(stroke!.data.style.alpha).toBeLessThanOrEqual(0.3);
+    expect(stroke!.data.style.width).toBeLessThan(28);
+  });
+
   it('a placed building takes its slot out (the verdict refuses it there)', () => {
     const o = new BuildSlotOutlines(new Container());
     const m = mirrorFor('reactor', [{ id: 1, kind: 'reactor', x: centre.x, y: centre.y }]);
