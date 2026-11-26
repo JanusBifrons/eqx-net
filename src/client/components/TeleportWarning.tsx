@@ -22,10 +22,10 @@ const PAD_TEXT: Readonly<Record<number, string>> = {
   [TP_PHASE.SEALED]: 'Sealed. Charging up…',
 };
 
-/** The Ancients' gate has no pad and no doors: its outer ring seals. */
+/** The Ancients' gate has no pad and no doors: its inner ring, round the light pool, seals. */
 const GATE_TEXT: Readonly<Record<number, string>> = {
   [TP_PHASE.ARMED]: 'Gate jumping soon. Stay inside the ring to ride, or fly out now.',
-  [TP_PHASE.CLOSING]: 'Outer ring closing.',
+  [TP_PHASE.CLOSING]: 'Inner ring closing.',
   [TP_PHASE.SEALED]: 'Sealed. Charging up…',
 };
 

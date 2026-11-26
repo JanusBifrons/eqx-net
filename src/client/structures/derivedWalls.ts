@@ -7,7 +7,7 @@
  *   - a FENCE wall between any two connected, built shield emitters (pylons and
  *     gates), anchored on the gate post nearest the far end (`emitterAnchor`).
  *     It blocks while both ends report their walls up (STRUCTURE_FLAG_WALL_ACTIVE).
- *   - the Ancients' gate's iris spans: its outer ring, a closed polygon of
+ *   - the Ancients' gate's iris spans: its inner ring, a closed polygon of
  *     chords (redesign A3; solid only while SEALED). A chamber
  *     pad (`isPadChamberKind`) has no iris: its blast doors are rig leaves
  *     (teleporter redesign T3), like a gate's.
@@ -46,7 +46,7 @@ export function visitDerivedWalls(
     if (!st.built) continue;
     const e = swarm.get(id);
     if (!e) continue;
-    // v4 T2 — the Ancients' gate's iris: its outer ring's seal chords, solid
+    // v4 T2 — the Ancients' gate's iris: its inner ring's seal chords, solid
     // only while SEALED (the server's iris walls, #15). Drawn as open
     // otherwise. A chamber pad has none (redesign T3): its doors are leaves.
     if (isPadChamberKind(e.shipKind)) continue;

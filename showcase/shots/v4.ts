@@ -115,7 +115,8 @@ export const alienGate: Shot = {
   viewport: 'phone-landscape',
   // West of the gate and a little south (-y): a sideways phone's wide view takes the
   // whole ring up and to the right, clear of the rail and the fire button, once
-  // the pilot stops ~570 from its centre (outside the outer ring).
+  // the pilot stops ~200 from its centre, on the light pool (the ride area,
+  // inside the inner ring), under the stone rings it flew beneath.
   target: { galaxy: 'sol-prime', params: { shipKind: 'fighter', spawnX: SOL_GATE.x - 3200, spawnY: SOL_GATE.y - 150 } },
   hud: 'minimal',
   durationMs: 22_000,
@@ -150,8 +151,9 @@ export const alienGate: Shot = {
       await a.up(); await b.up();
     };
     await ctx.sleep(600);
-    // Fly toward the gate, pinching out on the way, and stop short of its ring.
-    const fly = flyTo(ctx, SOL_GATE.x - 550, SOL_GATE.y - 150, { arrive: 150, maxMs: 9000 });
+    // Fly toward the gate, pinching out on the way, under its rings and onto
+    // the light pool, the ride area.
+    const fly = flyTo(ctx, SOL_GATE.x - 150, SOL_GATE.y - 100, { arrive: 100, maxMs: 9000 });
     await ctx.sleep(1500);
     await pinchOut();
     await ctx.sleep(300);

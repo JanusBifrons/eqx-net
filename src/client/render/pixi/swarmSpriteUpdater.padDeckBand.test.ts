@@ -74,7 +74,9 @@ function drawOrder(kind: string): { hull: number; structure: number; z: number }
 }
 
 describe('updateSwarmSprites — a teleporter chamber draws under the ships in it', () => {
-  it.each(['teleporter', 'pocket_pad'])('%s: built after a hull, still drawn below it (pad-deck band)', (kind) => {
+  // The Ancients' gate's light pool is a floor too (owner 2026-11-26: ships
+  // ride on it; only its stone rings, a rig `over` layer, draw above ships).
+  it.each(['teleporter', 'pocket_pad', 'alien_gate'])('%s: built after a hull, still drawn below it (pad-deck band)', (kind) => {
     const o = drawOrder(kind);
     expect(o.z).toBe(RIG_UNDER_Z);
     expect(o.structure).toBeLessThan(o.hull);

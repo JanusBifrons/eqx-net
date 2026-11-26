@@ -44,7 +44,7 @@ Both pads run it together, like train doors closing:
 | Swap | — | Both pads trade contents |
 | Open | 2 s | The doors slide open again |
 
-**Doors follow power,** like the gatehouse doors: at full power a door takes `DOOR_TRAVEL_S` (3 s) to cross; on a weak grid it moves slower, and a moving door draws full power. Closing ends only when BOTH pads' doors are fully shut, so the swap waits on the slower end. If a pad loses all power mid-close, the jump is cancelled and both pads reopen (no swap, no charge spent). A free pad with no grid (the Transit Pad) always runs at full speed. The Ancients' gate has no doors: its closing phase is timed and its outer ring seals instead ([alien-gates](alien-gates.md)).
+**Doors follow power,** like the gatehouse doors: at full power a door takes `DOOR_TRAVEL_S` (3 s) to cross; on a weak grid it moves slower, and a moving door draws full power. Closing ends only when BOTH pads' doors are fully shut, so the swap waits on the slower end. If a pad loses all power mid-close, the jump is cancelled and both pads reopen (no swap, no charge spent). A free pad with no grid (the Transit Pad) always runs at full speed. The Ancients' gate has no doors: its closing phase is timed and its inner ring seals instead ([alien-gates](alien-gates.md)).
 
 The inspector shows the phase. Room state carries it (`tpPhase`), so a late joiner sees a jump in progress.
 
@@ -64,11 +64,11 @@ It is separate from base storage, so production never draws from it.
 
 ## Riding the jump (T2)
 
-**Who rides.** At the swap, everything on either pad trades places, each at the same offset from its pad's centre. That means active pilots, parked (lingering) hulls, NPC ships and scrap. **Everyone rides, strangers and enemies included** (your ruling): defend your pads. The pad is the floor square inside the walls (`onPad`, rotation-aware); on the Ancients' gate it is the disc inside its sealed outer ring ([alien-gates](alien-gates.md)).
+**Who rides.** At the swap, everything on either pad trades places, each at the same offset from its pad's centre. That means active pilots, parked (lingering) hulls, NPC ships and scrap. **Everyone rides, strangers and enemies included** (your ruling): defend your pads. The pad is the floor square inside the walls (`onPad`, rotation-aware); on the Ancients' gate it is the green light pool inside its sealed inner ring ([alien-gates](alien-gates.md)).
 
 **The doors.**
 - **Closing:** a gentle push moves any ship straddling a doorway fully in, or fully out, whichever side its centre is on (`padPushDir`, ~90 u/s²). On a chamber it pushes along the doorway axis only; on the Ancients' gate, along the radius.
-- **Sealed:** a chamber's blast doors are shut; the Ancients' gate's outer ring turns into a solid circle of iris spans. No one can fly in or out at the last moment.
+- **Sealed:** a chamber's blast doors are shut; the Ancients' gate's inner ring turns into a solid circle of iris spans. No one can fly in or out at the last moment.
 - **Both sides agree.** The server worker and your client's prediction world run the same push and the same walls from the room-state phase (#15), so your ship doesn't judder at the doors.
 
 **The warning.** A pilot whose ship is on a pad sees a top-centre banner while its cycle runs: "Teleport departing. Stay on the pad to ride, or fly off now.", then "Doors closing.", then "Sealed. Charging up…". It is worked out on the client from room state; no message is sent.
@@ -197,4 +197,4 @@ The zone `CLAUDE.md` keeps a condensed form of these rules; this is the full wor
 
 ## History
 
-- **Teleporter redesign (2026-11-25):** the pad used to be an open square ringed by posts, and a dashed shield iris closed round its edge on a fixed 4 s timer. Now the Teleporter, Large Teleporter and Transit Pad are walled chambers with blast doors at each end on the gatehouse door machinery (T1–T3), so closing follows power and waits for both pads' doors; the chamber got its style C art (T4–T5). The Ancients' gate became the Astrolabe and seals with its outer ring ([alien-gates](alien-gates.md#history)).
+- **Teleporter redesign (2026-11-25):** the pad used to be an open square ringed by posts, and a dashed shield iris closed round its edge on a fixed 4 s timer. Now the Teleporter, Large Teleporter and Transit Pad are walled chambers with blast doors at each end on the gatehouse door machinery (T1–T3), so closing follows power and waits for both pads' doors; the chamber got its style C art (T4–T5). The Ancients' gate became the Astrolabe and seals with its inner ring ([alien-gates](alien-gates.md#history)).

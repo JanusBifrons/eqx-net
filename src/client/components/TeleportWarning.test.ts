@@ -15,7 +15,8 @@ describe('warningText', () => {
       expect(text).toBeDefined();
       expect(text).not.toMatch(/pad|door/i);
     }
-    expect(warningText('alien_gate', TP_PHASE.CLOSING)).toMatch(/ring/i);
+    // Owner 2026-11-26: the inner ring (round the light pool) is the one that closes.
+    expect(warningText('alien_gate', TP_PHASE.CLOSING)).toBe('Inner ring closing.');
   });
 
   it('says nothing when idle or opening', () => {

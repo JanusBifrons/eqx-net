@@ -51,8 +51,9 @@ export const TP_DOORS_DEF: RigDef = tpDoorsDef('tp-doors', 'teleporter');
 export const TP_DOORS_LARGE_DEF: RigDef = tpDoorsDef('tp-doors-large', 'teleporter_large');
 
 // Ancients' gate "Astrolabe" (teleporter redesign A1): three nested rings
-// round the crystal, each a SPINNING cosmetic hinge (`PartDef.spin`) under
-// the ships. Looks only: no outline, so no collider, hit box or nav change.
+// round the crystal, each a SPINNING cosmetic hinge (`PartDef.spin`) OVER
+// the ships (owner 2026-11-26: stone arches they fly under, never stone they
+// fly over). Looks only: no outline, so no collider, hit box or nav change.
 // The client sets the spin clock from `astrolabePoseAt`
 // (galaxy/alienGateAstrolabe.ts) so the lanes line up at every jump; the
 // server passes no clock, so for it the rings sit at rest.
@@ -61,7 +62,7 @@ export const ALIEN_GATE_ASTROLABE_DEF: RigDef = {
   parts: ASTROLABE_RINGS.map((r) => ({
     id: r.part, parent: null, anchorX: 0, anchorY: 0,
     joint: { type: 'hinge' as const, min: -Math.PI, max: Math.PI },
-    rest: 0, layer: 'under' as const, kind: 'cosmetic' as const, spin: r.spin,
+    rest: 0, layer: 'over' as const, kind: 'cosmetic' as const, spin: r.spin,
   })),
   clips: [],
 };

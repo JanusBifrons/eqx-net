@@ -152,7 +152,7 @@ export class TestMessageHandlers {
   }
 
   /** Teleporter redesign A3 — `test_gate_seal`: hold the room's Ancients'
-   *  gates SEALED (outer ring solid) or IDLE, without the timetable. */
+   *  gates SEALED (inner ring solid) or IDLE, without the timetable. */
   gateSeal(client: Client, raw: unknown): void {
     const d = this.deps;
     if (!(d.testMode || d.allowDevOverrides)) return;

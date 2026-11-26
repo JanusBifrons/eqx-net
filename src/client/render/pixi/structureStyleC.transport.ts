@@ -21,7 +21,7 @@ import { ASTROLABE_RIG_HOOK, alienGate } from './structureStyleC.transport.astro
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
  *  art for this family re-bakes and nothing else does. */
-export const version = 't5c';
+export const version = 't5d';
 
 /** Medium dock (`freight_dock`, 1000 × 400): the loading pad is OUTSIDE the
  *  building (the rig's `lip` apron, past the open -y edge, pixi), so the
