@@ -140,6 +140,17 @@ describe('deck sign board', () => {
     expect(out[1] - 50).toBeCloseTo(200, 0); // level with the ship, not down at the thumb controls
   });
 
+  it('moves beside the ship in a world-space view with rounding (r13: it fell back onto the ship)', () => {
+    // Pixi-space bounds as the camera reports them: off-origin, fractional.
+    const b = [-1556.2444474981883, 1583.9097360713392, -61.16436491628588, 2381.9823961628717];
+    const vw = b[2]! - b[0]!, vh = b[3]! - b[1]!, cx = (b[0]! + b[2]!) / 2, cy = (b[1]! + b[3]!) / 2;
+    const w = vw * 0.26068922214169155, h = vh * 0.28398863928567614, jx = b[0]! + vw * 0.4722264566104788;
+    const out = new Float64Array(2);
+    placeBoard(jx, b[1]! + vh * 0.4435878464339022, w, h, jx, b, out);
+    expect(out[0] + w / 2).toBeLessThanOrEqual(cx - vw * SIGN_SHIP_KEEPOUT[0]); // left of the ship
+    expect(out[1] - h / 2).toBeCloseTo(cy, 3); // level with it
+  });
+
   it('a disabled board never opens', () => {
     const off = new DeckSignBoard(new Container(), { scale: { x: 1 } } as unknown as Camera, false);
     shipAt(mirror, 0, 0);

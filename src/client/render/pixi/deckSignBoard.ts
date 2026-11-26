@@ -59,6 +59,8 @@ export const SIGN_SHIP_KEEPOUT = [0.06, 0.12] as const;
 /** A board moved beside the ship may use the side bands down to this inset
  *  (the mid-left / mid-right of the view is clear of the HUD corners). */
 const SIDE_INSET = 0.08;
+/** Gap between a side-placed board and the ship keep-out (fraction of view width). */
+const SIDE_GAP = 0.01;
 const STEM_PX = 1.5;
 const PIN_PX = 4;
 const PANEL_FILL = 0x04101a;
@@ -322,12 +324,13 @@ export function placeBoard(bx: number, by: number, w: number, h: number, jx: num
   const y0 = b[1]! + vh * SIGN_SAFE_INSET[1] + h, y1 = b[3]! - vh * SIGN_SAFE_INSET[3];
   const cx = (b[0]! + b[2]!) / 2, cy = (b[1]! + b[3]!) / 2;
   const kw = vw * SIGN_SHIP_KEEPOUT[0], kh = vh * SIGN_SHIP_KEEPOUT[1];
+  const gap = vw * SIDE_GAP; // never exactly on the keep-out edge: rounding would fail the clear test
   const side = jx < cx ? -1 : 1;
   for (let k = 0; k < 5; k++) {
     let x = bx, y = by;
     // Beside the ship: level with it (mid-height bands, clear of the thumb controls).
-    if (k === 1) { x = cx + side * (kw + w / 2); y = cy + h / 2; }
-    else if (k === 2) { x = cx - side * (kw + w / 2); y = cy + h / 2; }
+    if (k === 1) { x = cx + side * (kw + gap + w / 2); y = cy + h / 2; }
+    else if (k === 2) { x = cx - side * (kw + gap + w / 2); y = cy + h / 2; }
     else if (k === 3) y = cy - kh;
     else if (k === 4) y = cy + kh + h;
     const side2 = k === 1 || k === 2;
