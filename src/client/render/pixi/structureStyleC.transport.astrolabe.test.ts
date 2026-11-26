@@ -33,8 +33,8 @@ const target = (): { spinClock: number; litAlpha: number } => ({ spinClock: -1, 
 describe('astrolabe: style C alien_gate drawer', () => {
   it('is registered for alien_gate in style C, with the transport art version bumped', () => {
     expect(structureStyleDrawer('c', 'alien_gate')).toBe(alienGate);
-    expect(version).toBe('t5a2');
-    expect(structureStyleVersion('c', 'alien_gate')).toBe('t5a2');
+    expect(version).toBe('t5c');
+    expect(structureStyleVersion('c', 'alien_gate')).toBe('t5c');
   });
 
   it('bakes no pylons and nothing in the ring band', () => {
