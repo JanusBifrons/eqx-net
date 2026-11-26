@@ -46,6 +46,7 @@ export const DECK_ZONE_Z = -1.25;
  * The deck's floor bands on `shipContainer` (bottom to top):
  *   plates (DECK_UNDER_Z −1.5) < zone paint (DECK_ZONE_Z −1.25)
  *   < cables (CABLE_UNDER_Z) < road tiles (ROAD_UNDER_Z, joins + lamps ride the sprite)
+ *   < gate approach lights (APPROACH_LAMP_Z, `deckApproachLights.ts`)
  *   < rig pads (RIG_UNDER_Z −1) < bodies, pylons, fence beams (0).
  * Numbers, not imports: `structureRigs.ts` sits on an import cycle with the road art.
  */

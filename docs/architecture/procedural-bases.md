@@ -43,6 +43,24 @@ Each has `filterBy(testId)`, and the pilot spawns south of the fence. Lock:
 `tests/integration/sectorRoom/npcBases.test.ts`. Showcase shot:
 `showcase/shots/proceduralBase.ts`.
 
+## Deck gate approach lights (`?approach=on`)
+
+Outside every deck fence gate (`shield_gate` on a seam, its road running along
+the gate's local ±y) a line of six small lamps runs out along the road, 135 u
+apart from 140 u off the seam, like the lights off the end of a runway. The
+outside is the seam side whose hex is on no floored plate; a gate with plates
+on both sides (or neither) gets none. A white strobe (the "rabbit") walks lamp
+by lamp toward the gate every 1.5 s of effect time (`fxNow`); between pulses
+each lamp is a dim amber base. Render only, part of the deck floor layer:
+`StructureDeckPlates` owns a `DeckApproachLights`
+(`src/client/render/pixi/deckApproachLights.ts`), noted per structure by the
+swarm updater like the zone paint. Each gate's Container is built once and
+re-placed only when its pose or the plate set changes; a frame writes only the
+flash alphas of on-screen gates. Z band: over road tiles, under rig pads.
+Default OFF until the owner signs off the look; `?approach=on` turns it on on
+both renderer paths (BOOT carries it to the worker). See it in
+`?room=deck-bases&approach=on`: each base has at least two gates.
+
 ## History: Tier A static geometry (retired in phase E)
 
 The first pass generated **inert scenery**: warehouse walls, racks and

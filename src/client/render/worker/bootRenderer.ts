@@ -32,6 +32,7 @@ export function rendererArgsFromBoot(
       ...(msg.deckTex !== undefined ? { deckTex: msg.deckTex } : {}),
       ...(msg.fenceLook !== undefined ? { fenceLook: msg.fenceLook } : {}),
       ...(msg.zones !== undefined ? { zones: msg.zones } : {}),
+      ...(msg.approach !== undefined ? { approach: msg.approach } : {}),
       ...(msg.ore ? { ore: msg.ore } : {}),
       ...(msg.quality ? { quality: msg.quality } : {}),
     },

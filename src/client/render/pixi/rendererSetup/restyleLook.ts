@@ -16,6 +16,7 @@ import { StructureDeckPlates } from '../structureDeckPlates.js';
 import { DEFAULT_DECK_TEX, readDeckTex, type DeckTex } from '../structureDeckTexture.js';
 import { DEFAULT_FENCE_LOOK, readFenceLook, type FenceLook } from '../connectorFenceBeam.js';
 import { readZonesFlag } from '../structureDeckZones.js';
+import { readApproachFlag } from '../deckApproachLights.js';
 
 export interface RestyleLook {
   /** Grid line look; null = the pre-restyle thin line. */
@@ -28,22 +29,28 @@ export interface RestyleLook {
   fenceLook: FenceLook;
   /** Deck zone markings (`?zones=on|off`, base platforms slice 33). */
   zones: boolean;
+  /** Runway approach lights outside deck fence gates (`?approach=on|off`, default off). */
+  approach: boolean;
 }
 
 /** The restyle scene options from a URL query string. */
 export function readRestyleLook(search: string): RestyleLook {
-  return { lineLook: readLineLook(search), rigs: readRigsFlag(search), deckTex: readDeckTex(search), fenceLook: readFenceLook(search), zones: readZonesFlag(search) };
+  return {
+    lineLook: readLineLook(search), rigs: readRigsFlag(search), deckTex: readDeckTex(search), fenceLook: readFenceLook(search), zones: readZonesFlag(search),
+    approach: readApproachFlag(search),
+  };
 }
 
 /** What a renderer draws: `ArtOptions` first, else the URL (`search`, null in a worker), else the defaults. */
 export function resolveRestyleLook(art: ArtOptions, search: string | null): RestyleLook {
-  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, zones: true };
+  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, zones: true, approach: false };
   return {
     lineLook: art.lineLook !== undefined ? art.lineLook : fromUrl.lineLook,
     rigs: art.rigs ?? fromUrl.rigs,
     deckTex: art.deckTex ?? fromUrl.deckTex,
     fenceLook: art.fenceLook ?? fromUrl.fenceLook,
     zones: art.zones ?? fromUrl.zones,
+    approach: art.approach ?? fromUrl.approach,
   };
 }
 
@@ -66,6 +73,6 @@ export function applyRestyleLook(
   swarmUpdaterCtx.socketNubs = art.fx === true;
   if (look.rigs) swarmUpdaterCtx.structureRigs = new StructureRigs(shipContainer);
   // Base platforms: the deck floor (drawn only while the room's deck flag is on).
-  swarmUpdaterCtx.deckPlates = new StructureDeckPlates(shipContainer, look.deckTex, look.zones);
+  swarmUpdaterCtx.deckPlates = new StructureDeckPlates(shipContainer, look.deckTex, look.zones, look.approach);
   return look;
 }
