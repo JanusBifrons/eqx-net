@@ -1,7 +1,7 @@
 /**
  * Base platforms slice 33 — zone markings painted on the deck floor. Locks:
- * which kinds get which marking, the industry stripe box turns with the
- * building (sized off its footprint), the gun ring and the Capital's hex
+ * which kinds get which marking (no industry stripes: dropped 2026-11-26),
+ * gun paint turns with its building, the gun ring and the Capital's hex
  * border (never turned), deck rooms only, paint goes with its building, and
  * an unchanged frame builds nothing (counted, not timed).
  */
@@ -13,7 +13,7 @@ import { getStructureKind } from '../../../shared-types/structureKinds/lookup.js
 import { DECK_UNDER_Z, StructureDeckPlates } from './structureDeckPlates.js';
 import { RIG_UNDER_Z } from './structureRigs.js';
 import {
-  CAPITAL_LINE, CAPITAL_OUTER, DECK_ZONE_Z, GUN_MARGIN, GUN_RING_WIDTH, INDUSTRY_BAND, INDUSTRY_MARGIN,
+  CAPITAL_LINE, CAPITAL_OUTER, DECK_ZONE_Z, GUN_MARGIN, GUN_RING_WIDTH,
   deckZoneContext, deckZoneOf, readZonesFlag,
 } from './structureDeckZones.js';
 
@@ -26,9 +26,9 @@ function zoneGraphics(c: Container): Graphics[] {
 }
 
 describe('deck zone markings — which kinds', () => {
-  it('industry: production, heavy industry, mining, cargo bay, freight dock', () => {
+  it('industry gets no paint (hazard stripes dropped by the owner)', () => {
     for (const k of ['refinery', 'smelter', 'silicon_works', 'reclaimer', 'cargo_bay', 'freight_dock', 'shipyard', 'miner']) {
-      expect(deckZoneOf(k)).toBe('industry');
+      expect(deckZoneOf(k)).toBeNull();
     }
   });
   it('guns: turrets and coastal guns; capital: the Capital; others none', () => {
@@ -46,17 +46,15 @@ describe('deck zone markings — which kinds', () => {
 });
 
 describe('deck zone markings — the paint', () => {
-  it('industry stripe box: a margin outside the footprint, turning with the building', () => {
-    const fp = getStructureKind('refinery').footprint;
-    const b = deckZoneContext('refinery')!.bounds;
-    expect(b.maxX).toBeCloseTo(fp.w / 2 + INDUSTRY_MARGIN + INDUSTRY_BAND, 3);
-    expect(b.maxY).toBeCloseTo(fp.h / 2 + INDUSTRY_MARGIN + INDUSTRY_BAND, 3);
+  it('gun paint sits on its building and turns with it', () => {
+    const b = deckZoneContext('missile_turret')!.bounds;
+    expect(b.maxX).toBeCloseTo(getStructureKind('missile_turret').radius + GUN_MARGIN + GUN_RING_WIDTH / 2, 0);
     const ship = new Container();
     const deck = new StructureDeckPlates(ship, 'plain');
     deck.sync(plates(1, true));
-    deck.zones!.note(7, 'refinery', 100, 200, Math.PI / 2);
+    deck.zones!.note(7, 'missile_turret', 100, 200, Math.PI / 2);
     const g = deck.zones!.graphicsOf(7)!;
-    expect(g.context).toBe(deckZoneContext('refinery'));
+    expect(g.context).toBe(deckZoneContext('missile_turret'));
     expect(g.x).toBe(100);
     expect(g.y).toBe(-200); // Y-flip
     expect(g.rotation).toBeCloseTo(-Math.PI / 2);
@@ -91,10 +89,10 @@ describe('deck zone markings — lifetime', () => {
     const ship = new Container();
     const deck = new StructureDeckPlates(ship, 'plain');
     deck.sync(plates(1, false));
-    deck.zones!.note(1, 'refinery', 0, 0, 0);
+    deck.zones!.note(1, 'missile_turret', 0, 0, 0);
     expect(deck.zones!.size).toBe(0);
     deck.sync(plates(2, true));
-    deck.zones!.note(1, 'refinery', 0, 0, 0);
+    deck.zones!.note(1, 'missile_turret', 0, 0, 0);
     expect(deck.zones!.size).toBe(1);
     deck.sync(plates(3, false));
     expect(deck.zones!.size).toBe(0);
@@ -106,15 +104,15 @@ describe('deck zone markings — lifetime', () => {
     const deck = new StructureDeckPlates(ship, 'plain');
     const pm = plates(1, true);
     deck.sync(pm);
-    deck.zones!.note(1, 'refinery', 0, 0, 0);
+    deck.zones!.note(1, 'missile_turret', 0, 0, 0);
     deck.zones!.note(2, 'turret', 500, 0, 0);
     const g1 = deck.zones!.graphicsOf(1);
     deck.sync(pm); // next frame: both still there
-    deck.zones!.note(1, 'refinery', 0, 0, 0);
+    deck.zones!.note(1, 'missile_turret', 0, 0, 0);
     deck.zones!.note(2, 'turret', 500, 0, 0);
     expect(deck.zones!.graphicsOf(1)).toBe(g1);
     deck.sync(pm); // turret destroyed: not noted last frame
-    deck.zones!.note(1, 'refinery', 0, 0, 0);
+    deck.zones!.note(1, 'missile_turret', 0, 0, 0);
     deck.sync(pm);
     expect(deck.zones!.size).toBe(1);
     expect(deck.zones!.graphicsOf(2)).toBeUndefined();
