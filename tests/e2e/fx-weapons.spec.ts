@@ -13,6 +13,7 @@ import { randomUUID } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
 import { test, expect, type Browser } from '@playwright/test';
 import { DEFAULT_BASE_URL } from './helpers/ports';
+import { MAIN_THREAD_RENDER_CONTEXT } from './helpers/softwareGl';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 type Stats = { fxBeam?: boolean; fxProjectiles?: number; fxReady?: number; failed?: number; lastFailure?: string };
@@ -25,7 +26,7 @@ test.describe.configure({ timeout: 90_000 });
 const AUTO_FIRE_ROOM = { room: 'auto-fire-test', startHostile: '1', initialHull: '5000' };
 
 async function join(browser: Browser, shipKind: string, fx: boolean, room: Record<string, string> = AUTO_FIRE_ROOM) {
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 }, ...MAIN_THREAD_RENDER_CONTEXT });
   const page = await ctx.newPage();
   const params = new URLSearchParams({
     ...room, shipKind, testId: randomUUID(),
@@ -106,7 +107,7 @@ test('a destroyed drone goes up in the new explosion with ?fx=new (B4)', async (
 test('shields and fences use the new look with ?fx=new (B5)', async ({ browser }) => {
   // gate-test: two powered shield gates, so there are fences to draw; the
   // local ship spawns with its shield up.
-  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const ctx = await browser.newContext({ viewport: { width: 1280, height: 720 }, ...MAIN_THREAD_RENDER_CONTEXT });
   const page = await ctx.newPage();
   const params = new URLSearchParams({ room: 'gate-test', spawnX: '-400', spawnY: '-1300', testId: randomUUID(), worker: '0', art: 'machined', fx: 'new', zoom: '0.6' });
   await page.goto(`${BASE_URL}?${params}`);

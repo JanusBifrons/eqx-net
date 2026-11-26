@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { Browser, Page } from '@playwright/test';
+import type { Browser, BrowserContextOptions, Page } from '@playwright/test';
 import { DEFAULT_BASE_URL } from './ports';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
@@ -151,6 +151,8 @@ export interface GalaxyTestClientOpts {
   startMode?: 'fly' | 'command';
   /** Extra URL params (e.g. `{ art: 'machined', fx: 'new' }`), set last. */
   extraParams?: Record<string, string>;
+  /** Browser-context options, e.g. `MAIN_THREAD_RENDER_CONTEXT` (helpers/softwareGl.ts). */
+  contextOptions?: BrowserContextOptions;
 }
 
 /**
@@ -162,7 +164,7 @@ export interface GalaxyTestClientOpts {
  */
 export async function launchGalaxyTestClient(browser: Browser, opts: GalaxyTestClientOpts) {
   const playerId = opts.playerId ?? randomUUID();
-  const ctx = await browser.newContext();
+  const ctx = await browser.newContext(opts.contextOptions);
   await ctx.addInitScript((pid) => {
     try {
       localStorage.setItem('eqxPlayerId', pid as string);

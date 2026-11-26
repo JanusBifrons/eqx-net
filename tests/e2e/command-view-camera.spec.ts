@@ -23,6 +23,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { launchGalaxyTestClient } from './helpers/gameScenario';
+import { MAIN_THREAD_RENDER_CONTEXT } from './helpers/softwareGl';
 
 const SURFACE = '[data-testid="game-surface"]';
 
@@ -101,6 +102,7 @@ test.describe('Command view camera @feature', () => {
     const { ctx, page } = await launchGalaxyTestClient(browser, {
       testId: randomUUID(), shipKind: 'fighter', spawnX: 0, spawnY: 0, startMode: 'command',
       extraParams: { art: 'machined', fx: 'new' },
+      contextOptions: MAIN_THREAD_RENDER_CONTEXT,
     });
     await page.waitForFunction(
       () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-pilot-mode') === 'spectator',

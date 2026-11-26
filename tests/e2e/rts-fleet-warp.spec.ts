@@ -28,6 +28,7 @@ import { test, expect, type Browser, type BrowserContext, type Page } from '@pla
 import { randomUUID } from 'node:crypto';
 import { waitForInPlay } from './helpers/gameScenario';
 import { DEFAULT_BASE_URL } from './helpers/ports';
+import { MAIN_THREAD_RENDER_CONTEXT } from './helpers/softwareGl';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 const SURFACE = '[data-testid="game-surface"]';
@@ -50,7 +51,7 @@ function galaxyUrl(sector: string, spawnX: number, spawnY: number, newShip: bool
 async function joinCommander(
   browser: Browser, sector: string, spawnX: number, spawnY: number, timeScale?: number,
 ): Promise<{ ctx: BrowserContext; page: Page }> {
-  const ctx = await browser.newContext();
+  const ctx = await browser.newContext(MAIN_THREAD_RENDER_CONTEXT);
   await ctx.addInitScript((pid) => {
     try { localStorage.setItem('eqxPlayerId', pid as string); } catch { /* ignore */ }
   }, randomUUID());
@@ -130,7 +131,7 @@ async function boxSelectOwnHulls(page: Page): Promise<string[]> {
     const n = await selCount(page);
     if (n === hulls.length) return n;
     const now = await ownHulls(page);
-    if (now.some((h) => !Number.isFinite(h.sx))) return n;
+    if (now.length !== hulls.length || now.some((h) => !Number.isFinite(h.sx) || !Number.isFinite(h.sy))) return n;
     const pad = 70;
     await page.mouse.move(Math.min(...now.map((h) => h.sx)) - pad, Math.min(...now.map((h) => h.sy)) - pad);
     await page.mouse.down();
