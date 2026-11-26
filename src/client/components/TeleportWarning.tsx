@@ -1,7 +1,8 @@
 /**
  * v4 T2 — "the doors are closing": warns a pilot whose ship sits on a
- * teleporter pad while that pad's jump cycle runs. Everyone on either pad
- * rides, strangers included, so the warning says how to get off.
+ * teleporter pad (or inside an Ancients' gate's ring) while its jump cycle
+ * runs. Everyone aboard rides, strangers included, so the warning says how
+ * to get off. The gate has no pad and no doors, so it gets its own words.
  *
  * Derived on the client from room state (#16): the pad's phase rides the
  * teleporter's room-state row, and the ship's pose is in the render mirror.
@@ -11,38 +12,57 @@
 import { memo, useEffect, useState } from 'react';
 import { EqxPrompt } from '../../ui/index.js';
 import { getGameClient } from '../net/clientSingleton';
-import { TP_PHASE, isTeleporterKind, onPad } from '../../shared-types/teleport';
+import { TP_PHASE, isAlienGateKind, isTeleporterKind, onPad } from '../../shared-types/teleport';
 
 const POLL_MS = 200;
 
-const TEXT: Readonly<Record<number, string>> = {
+const PAD_TEXT: Readonly<Record<number, string>> = {
   [TP_PHASE.ARMED]: 'Teleport departing. Stay on the pad to ride, or fly off now.',
   [TP_PHASE.CLOSING]: 'Doors closing.',
   [TP_PHASE.SEALED]: 'Sealed. Charging up…',
 };
 
-/** The jump phase of the pad the local ship sits on (0 when none). */
-export function localPadPhase(): number {
+/** The Ancients' gate has no pad and no doors: its outer ring seals. */
+const GATE_TEXT: Readonly<Record<number, string>> = {
+  [TP_PHASE.ARMED]: 'Gate jumping soon. Stay inside the ring to ride, or fly out now.',
+  [TP_PHASE.CLOSING]: 'Outer ring closing.',
+  [TP_PHASE.SEALED]: 'Sealed. Charging up…',
+};
+
+/** The warning for a pilot aboard a jumper of this kind in this phase (undefined: none). */
+export function warningText(kind: string, phase: number): string | undefined {
+  return (isAlienGateKind(kind) ? GATE_TEXT : PAD_TEXT)[phase];
+}
+
+/** The warning for the jumper the local ship sits on (undefined when none or idle). */
+export function localPadWarning(): { phase: number; text: string } | undefined {
   const m = getGameClient()?.mirror;
   const id = m?.localPlayerId;
   const me = id ? m?.ships.get(id) : undefined;
-  if (!m || !me || !m.structures || !m.swarm) return 0;
+  if (!m || !me || !m.structures || !m.swarm) return undefined;
   for (const [eid, st] of m.structures) {
     const phase = st.teleport?.phase ?? 0;
     if (phase === 0) continue;
     const e = m.swarm.get(eid);
-    if (e && isTeleporterKind(e.shipKind) && onPad(e.shipKind, e.x, e.y, me.x, me.y, e.angle)) return phase;
+    if (e && isTeleporterKind(e.shipKind) && onPad(e.shipKind, e.x, e.y, me.x, me.y, e.angle)) {
+      const text = warningText(e.shipKind, phase);
+      return text === undefined ? undefined : { phase, text };
+    }
   }
-  return 0;
+  return undefined;
 }
 
 export const TeleportWarning = memo(function TeleportWarning(): JSX.Element | null {
   const [phase, setPhase] = useState(0);
+  const [text, setText] = useState<string | undefined>(undefined);
   useEffect(() => {
-    const t = setInterval(() => setPhase(localPadPhase()), POLL_MS);
+    const t = setInterval(() => {
+      const w = localPadWarning();
+      setPhase(w?.phase ?? 0);
+      setText(w?.text);
+    }, POLL_MS);
     return () => clearInterval(t);
   }, []);
-  const text = TEXT[phase];
   if (text === undefined) return null;
   return <EqxPrompt tone="warn" message={text} data-testid="teleport-warning" dataAttrs={{ phase }} />;
 });
