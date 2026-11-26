@@ -421,7 +421,7 @@ export class ConnectorRenderer {
         // (repair→green / minerals→orange / construction→cyan). Absent ⇒ minerals.
         const material = codeToFlowMaterial(flowMat ? flowMat.get(key) : undefined);
         const v = connectorVisualInto(this._edgeVisual, flashUntil, nowMs, scale, phaseOffset, material);
-        if (!v.pulseActive) continue; // idle: drawn on the static layer
+        if (!v.pulseActive || this.cables.isFenceBeam(a, b)) continue; // idle / a deck fence beam: drawn on the static layer
         const bx = b.x;
         const by = -b.y;
         if (this.socketCables) {

@@ -25,6 +25,7 @@ import { CABLE_NO_SOCKET } from '../../../core/structures/cableCurve.js';
 import { builtRangeCircleVisualInto, connectorVisualInto, staticScaleKey, type ConnectorVisual, type RingVisual } from './connectorVisual.js';
 import { drawLineLookBody, type LineLook } from './connectorLineLooks.js';
 import { drawSocketCableBody, type LinkCable, type LinkCableCache } from './connectorCables.js';
+import { drawFenceBeamBody, fenceBeamUp } from './connectorFenceBeam.js';
 
 /** Chunk cell size (world units). A phone at the far end of the stall band
  *  (viewHalf 2048) sees a few cells across; at viewHalf 512, about one. */
@@ -375,6 +376,8 @@ export class ConnectorStaticLayer {
         if (id > otherId) continue; // each undirected edge once
         const b = swarm.get(otherId);
         if (!b) continue;
+        // Slice 30: a deck fence link is a shield beam, not a cable (`?fenceLook=new`).
+        if (host.cables.isFenceBeam(a, b)) { drawFenceBeamBody(g, ax, ay, b.x, -b.y, scale, a.radius, b.radius, fenceBeamUp(st, structures.get(otherId))); continue; }
         if (cables) { drawSocketCableBody(g, linkCableOf(host.cables, id, st, c, a, b, structures), scale, a.radius, b.radius); continue; }
         if (look) { drawLineLookBody(g, look, ax, ay, b.x, -b.y, scale, a.radius, b.radius); continue; }
         g.moveTo(ax, ay).lineTo(b.x, -b.y);

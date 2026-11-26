@@ -61,6 +61,8 @@ export interface BootMsg {
   rigs?: boolean;
   /** Deck floor look (`?deckTex=`). Absent = the default. */
   deckTex?: import('../../pixi/structureDeckTexture.js').DeckTex;
+  /** Deck fence link look (`?fenceLook=`). Absent = the default. */
+  fenceLook?: import('../../pixi/connectorFenceBeam.js').FenceLook;
   /** Cut-field ore look (`?ore=`, F1c trial); absent = off. */
   ore?: import('../../art/artMode.js').FieldOreLook;
   /** Graphics quality (`?aa=` / `?renderscale=` / `?texsoft=`), plain data; absent = today's look. */
