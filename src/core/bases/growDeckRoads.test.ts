@@ -5,10 +5,10 @@
  * rules; `growDeckFence.test.ts` the ring and that every road is inside it.
  */
 import { describe, expect, it } from 'vitest';
-import { isConnectorKind } from '../../shared-types/structureKinds.js';
+import { isConnectorKind, structureHalfExtents } from '../../shared-types/structureKinds.js';
 import { HEX_DIRS, pixelToAxialInto } from '../hex/hex.js';
 import { DECK_HEX_SIZE, isPlateCentreHex } from '../hex/plates.js';
-import { isRoadBesideDeckGate } from '../structures/deckGateRoad.js';
+import { connectorOnRoadHex, isRoadBesideDeckGate } from '../structures/deckGateRoad.js';
 import { growBase, type GrownBase } from './growBase.js';
 import type { BaseProfile, BaseRole, BaseTier } from './baseProfile.js';
 
@@ -66,7 +66,12 @@ describe('deck base roads between the gates (base platforms 32)', () => {
       // A road shares its hex with nothing but the fence on its seams.
       for (const p of b.placements) {
         if (p.kind === 'road' || p.kind === 'shield_pylon' || p.kind === 'shield_gate') continue;
-        if (isConnectorKind(p.kind)) continue; // anchors: plate middle hexes
+        if (isConnectorKind(p.kind)) {
+          // Roads can't go through a connector: no pylon anywhere in a road's hex.
+          const e = structureHalfExtents(p.kind, p.rot ?? 0);
+          for (const r of b.placements) if (r.kind === 'road') expect(connectorOnRoadHex(p.x, p.y, e.hw, e.hh, r.x, r.y), `${p.kind} in road hex ${hexKey(r.x, r.y)}`).toBe(false);
+          continue;
+        }
         expect(roads.has(hexKey(p.x, p.y)), `${p.kind} on a road hex`).toBe(false);
       }
       for (const k of roads) {
