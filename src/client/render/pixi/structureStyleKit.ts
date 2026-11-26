@@ -9,6 +9,7 @@
  * structure, in catalogue footprint units.
  */
 import { structureOutline, type StructureKindId } from '../../../shared-types/structureKinds.js';
+import { PAD_SPECS, isPadChamberKind, padHalfExtent } from '../../../shared-types/teleport.js';
 import { insidePoly } from '../art/raster.js';
 
 export { insidePoly };
@@ -52,6 +53,19 @@ export function mixColor(c: number, target: number, t: number): number {
 /** The kind's outline (`structureOutline`, the shape seam) in pixi space. */
 export function outlinePx(kindId: string, styleId: string): Pt[] {
   return structureOutline(kindId, styleId).map((p) => [p.x, -p.y] as const);
+}
+
+/** A teleporter chamber's art frame cut, as a fraction of its tower side. */
+export const CHAMBER_FRAME_CUT = 0.3;
+
+/** The polygon a kind's style art must fit in: its outline, except a
+ *  teleporter CHAMBER (`isPadChamberKind`), whose walls and towers (the
+ *  collider, `gateColliderBoxes`) fill the whole footprint square: there
+ *  the frame is that square with the corner towers' outer corners cut. */
+export function artFramePx(kindId: string, styleId: string): Pt[] {
+  if (!isPadChamberKind(kindId)) return outlinePx(kindId, styleId);
+  const h = padHalfExtent(kindId), k = PAD_SPECS[kindId].post * CHAMBER_FRAME_CUT;
+  return chamferBox(-h - 1, -h - 1, 2 * h + 2, 2 * h + 2, k); // 1 unit over: art may run to the footprint edge
 }
 
 /** Scale points about (cx, cy). */
@@ -293,14 +307,14 @@ export function rng(seed: number): () => number {
 }
 
 export function poly(c: StyleCtx, pts: Pts, color: number, mat: PolyOp['mat'], lift: number, bevel: number, extra?: Partial<PolyOp>): void {
-  if (pts.length >= 3 && fits(outlinePx(c.kindId, c.styleId), pts, 0)) c.polys.push({ pts, color, mat, lift, bevel, ...extra });
+  if (pts.length >= 3 && fits(artFramePx(c.kindId, c.styleId), pts, 0)) c.polys.push({ pts, color, mat, lift, bevel, ...extra });
 }
 export function glow(c: StyleCtx, pts: Pts, color: number, alpha = 1): void {
   poly(c, pts, color, 'glow', -0.8, 1, { alpha });
 }
 /** A small hard work lamp, only where it lands on the structure. */
 export function lamp(c: StyleCtx, x: number, y: number, r: number, color = LAMP_AMBER): void {
-  if (polyEdgeDist(outlinePx(c.kindId, c.styleId), x, y) > r * 0.5) c.lit(x, y, r, color);
+  if (polyEdgeDist(artFramePx(c.kindId, c.styleId), x, y) > r * 0.5) c.lit(x, y, r, color);
 }
 
 // ── Engineered parts ───────────────────────────────────────────────────────
@@ -393,7 +407,7 @@ export function wornStripe(c: StyleCtx, pts: Pts, ang: number, off: number, w: n
   let lo = Infinity, hi = -Infinity;
   for (const [x, y] of band) { const s = x * tx + y * ty; lo = Math.min(lo, s); hi = Math.max(hi, s); }
   const r = rng(c.seed * 104729 + salt);
-  const out = outlinePx(c.kindId, c.styleId);
+  const out = artFramePx(c.kindId, c.styleId);
   let s = lo;
   while (s < hi - 2) {
     const len = Math.min(hi - s, 10 + r() * 26);

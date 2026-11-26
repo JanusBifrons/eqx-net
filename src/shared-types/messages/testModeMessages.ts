@@ -31,3 +31,13 @@ export const TestDropPodsSchema = z
     type: z.literal('test_drop_pods'),
   })
   .strict();
+
+/** testMode only (teleporter redesign A3 E2E): hold every Ancients' gate in
+ *  the room SEALED (its outer ring solid) or back at IDLE (no walls), so a
+ *  test sees the seal without waiting for the gate's timetable. */
+export const TestGateSealSchema = z
+  .object({
+    type: z.literal('test_gate_seal'),
+    sealed: z.boolean(),
+  })
+  .strict();

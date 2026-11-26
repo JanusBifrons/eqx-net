@@ -286,7 +286,7 @@ export class ConnectorRenderer {
    * One shield wall in pixi space. R2.19: a distinct cyan-white energy BARRIER
    * — a glow field + two parallel rails (the band slab) + a sweeping shimmer —
    * so it never reads as a connector link. Down = the dim red flicker. An
-   * unsealed teleporter iris = a faint dashed guide across the gap.
+   * unsealed Ancients' gate iris = a faint dashed guide across the gap.
    *
    * `steady` (static layer): the rails of an up wall and an open iris's guide.
    * Otherwise (per frame): an up wall's breathing glow + shimmer, or a down
@@ -387,7 +387,7 @@ export class ConnectorRenderer {
     const flashes = this._flashClock.sync(mirror.gridFlashes, nowMs); // pulse stamps -> fxNow windows
     const flowSrc = mirror.gridFlowSrc, flowMat = mirror.gridFlowMaterial;
 
-    // Shield walls: fence walls between emitters + teleporter irises, from the
+    // Shield walls: fence walls between emitters + Ancients' gate irises, from the
     // same derived-wall rules the prediction world collides with (#15).
     this._wallNow = nowMs;
     this._wallScale = scale;

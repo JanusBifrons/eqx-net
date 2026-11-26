@@ -49,7 +49,10 @@ describe('structureRenderVerts (R2.13 — render matches collider)', () => {
       expect(maxX, k.id).toBeLessThanOrEqual(hw + 0.5);
       expect(minY, k.id).toBeGreaterThanOrEqual(-hh - 0.5);
       expect(maxY, k.id).toBeLessThanOrEqual(hh + 0.5);
-      // Spans the box (within the rim/inset slack of the plan).
+      // Spans the box (within the rim/inset slack of the plan). The Ancients'
+      // gate has no collider box to match (no posts; its seal is the outer
+      // ring, teleporter redesign A3), so only the inside check applies.
+      if (k.id === 'alien_gate') continue;
       expect(maxX - minX, k.id).toBeGreaterThanOrEqual(k.footprint.w * 0.9);
       expect(maxY - minY, k.id).toBeGreaterThanOrEqual(k.footprint.h * 0.9);
     }

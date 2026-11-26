@@ -7,6 +7,9 @@
  * Select the west teleporter → its panel shows it paired → wait for the
  * capacitor → load 10 alloy onto the pad → Fire → the cycle runs and the pad
  * empties (its hold swapped to the partner, which unloads into storage).
+ * The teleporters are chambers (redesign T1–T3): CLOSING lasts until both
+ * pads' blast doors are shut (DOOR_TRAVEL_S at full power, not scaled by the
+ * room's cycle scale), so a whole cycle here is ~4 s.
  */
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
@@ -60,6 +63,9 @@ test('pair, charge, load and fire a teleporter from the inspector', async ({ bro
  * v4 T2 — the pilot rides. Spawn ON the west pad, fire it: the doors-closing
  * warning shows, the ship arrives on the east pad (x ≈ +1300), and it stays
  * there (the client re-seeds its prediction at the new pose; no snap back).
+ * Redesign T3: the pad is a walled chamber whose blast doors rest open and
+ * shut (at door speed, not the cycle's scale) before the jump; the client
+ * reads both states from the pad's room row.
  */
 test('a pilot on the pad is warned, rides the jump, and stays on the far pad', async ({ browser }) => {
   test.setTimeout(120_000);
@@ -78,6 +84,25 @@ test('a pilot on the pad is warned, rides the jump, and stays on the far pad', a
     return m?.localPlayerId ? (m.ships.get(m.localPlayerId)?.x ?? NaN) : NaN;
   });
   await expect.poll(shipX, { timeout: 10_000 }).toBeLessThan(-900);
+  // Redesign T3 — the west pad's blast doors as the client decoded them from
+  // its room row ('open' / 'closing' / 'opening'; '' = no door decoded).
+  const westDoors = (): Promise<string> => page.evaluate(() => {
+    type Seg = { dir: number; level: number };
+    const m = (window as unknown as { __eqxClient?: { mirror?: {
+      structures?: Map<number, { doorA?: Seg }>; swarm?: Map<number, { x: number; shipKind?: string }>;
+    } } }).__eqxClient?.mirror;
+    if (!m?.structures || !m.swarm) return '';
+    for (const [id, e] of m.swarm) {
+      if (e.shipKind !== 'teleporter' || e.x > 0) continue;
+      const d = m.structures.get(id)?.doorA;
+      if (d === undefined) return '';
+      if (d.dir < 0) return 'closing';
+      return d.level > 0 ? 'opening' : 'open';
+    }
+    return '';
+  });
+  // At rest the chamber stands open (the ship spawned inside it).
+  await expect.poll(westDoors, { timeout: 10_000 }).toBe('open');
 
   await expect.poll(() => page.evaluate(() => (window as unknown as EqxWindow).__eqxSelectAtWorld?.(-1300, 250) ?? null), { timeout: 10_000 }).not.toBeNull();
   await page.getByTestId('left-strip-cog').click(); // its section is in the Details panel (strip ⚙)
@@ -86,6 +111,8 @@ test('a pilot on the pad is warned, rides the jump, and stays on the far pad', a
   await page.getByTestId('tp-fire').click();
 
   await expect(page.getByTestId('teleport-warning')).toBeVisible({ timeout: 5_000 });
+  // The doors shut on the pilot (real door travel: CLOSING waits for them).
+  await expect.poll(westDoors, { timeout: 5_000 }).toBe('closing');
   await expect.poll(shipX, { timeout: 10_000 }).toBeGreaterThan(900);
   // It stays: sample for a second, never back on the west side.
   for (let i = 0; i < 10; i++) {
@@ -101,7 +128,7 @@ test('a pilot on the pad is warned, rides the jump, and stays on the far pad', a
  * arms, pays, and their wallet goes down.
  *
  * The answer must land before the swap settles the toll, so this uses the
- * half-speed `teleport-toll-test` room (~6 s from arming to the swap), and the
+ * half-speed `teleport-toll-test` room (~7 s from arming to the swap), and the
  * rider renders off the main thread (no `worker=0`): two main-thread renderers
  * on one box starved the rider page and its click took up to 11 s.
  */

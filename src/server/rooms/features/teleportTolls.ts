@@ -15,6 +15,7 @@ import { getTradeSink } from '../../economy/tradeSink.js';
 import { parseOwner, relationOf, type RelationContext } from '../../../shared-types/relations.js';
 import { slotBase, SLOT_X_OFF, SLOT_Y_OFF } from '../../../shared-types/sabLayout.js';
 import { TOLL_DODGE_STANDING, tollFor, onPad, isTeleporterKind, type TollAnswer, type TollPrompt } from '../../../shared-types/teleport.js';
+import { padAngle } from '../../structures/padDoors.js';
 
 /** What the toll steps need from the room; getters read the live field. */
 export interface TeleportTollHost {
@@ -58,7 +59,7 @@ export class TeleportTolls {
       const ship = this.h.getActiveShip(pid);
       if (!ship?.alive || !ship.isActive || pid === rec.owner) continue;
       const sb = slotBase(slot);
-      if (!onPad(rec.kind, rec.x, rec.y, sabF32[sb + SLOT_X_OFF]!, sabF32[sb + SLOT_Y_OFF]!)) continue;
+      if (!onPad(rec.kind, rec.x, rec.y, sabF32[sb + SLOT_X_OFF]!, sabF32[sb + SLOT_Y_OFF]!, padAngle(rec))) continue;
       const rel = relationOf(pid, rec.owner, this.h.relationCtx);
       if (rel === 'self' || rel === 'friendly' || rel === 'allied') continue;
       const pref = sink?.tollPref?.(pid, ownerFaction);
@@ -94,7 +95,7 @@ export class TeleportTolls {
       const slot = this.h.playerToSlot().get(pid);
       if (slot === undefined) continue;
       const sb = slotBase(slot);
-      if (!onPad(rec.kind, rec.x, rec.y, sabF32[sb + SLOT_X_OFF]!, sabF32[sb + SLOT_Y_OFF]!)) continue;
+      if (!onPad(rec.kind, rec.x, rec.y, sabF32[sb + SLOT_X_OFF]!, sabF32[sb + SLOT_Y_OFF]!, padAngle(rec))) continue;
       if (hostile) this.h.hostileActs.record(pid, rec.owner, this.h.now());
       else this.h.adjustStanding(ownerFaction, pid, TOLL_DODGE_STANDING);
       serverLogEvent('teleport_toll_dodged', { sectorKey: this.h.sectorKey() ?? '', playerId: pid, owner: rec.owner, hostile });

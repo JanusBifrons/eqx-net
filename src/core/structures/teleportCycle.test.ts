@@ -57,3 +57,37 @@ describe('jump charge depends only on distance', () => {
     expect(jumpDistance(2, 0, 0, 3000, 4000)).toBe(2 * TELEPORT_HOP_DISTANCE_U);
   });
 });
+
+describe('chamber doors gate CLOSING (redesign T2)', () => {
+  const closing = (): CycleState => ({ phase: TP_PHASE.CLOSING, phaseEndsAtMs: 100 });
+  it('waits past the timer until both pads are shut, then seals', () => {
+    const s = closing();
+    expect(stepCycle(s, 10_000, 1, { shut: false, stalled: false })).toBeNull();
+    expect(s.phase).toBe(TP_PHASE.CLOSING);
+    expect(stepCycle(s, 10_001, 1, { shut: true, stalled: false })).toBeNull();
+    expect(s.phase).toBe(TP_PHASE.SEALED);
+    expect(s.phaseEndsAtMs).toBe(10_001 + TP_PHASE_MS[3]);
+  });
+  it('seals early when the doors shut before the nominal time', () => {
+    const s = closing();
+    stepCycle(s, 5, 1, { shut: true, stalled: false });
+    expect(s.phase).toBe(TP_PHASE.SEALED);
+  });
+  it('a stalled (unpowered) pad cancels: straight to OPEN, no swap', () => {
+    const s = closing();
+    expect(stepCycle(s, 50, 1, { shut: false, stalled: true })).toBe('cancel');
+    expect(s.phase).toBe(TP_PHASE.OPEN);
+    expect(s.phaseEndsAtMs).toBe(50 + TP_PHASE_MS[4]);
+  });
+  it('without doors, CLOSING ends on its timer as before', () => {
+    const s = closing();
+    expect(stepCycle(s, 99)).toBeNull();
+    expect(s.phase).toBe(TP_PHASE.CLOSING);
+    stepCycle(s, 100);
+    expect(s.phase).toBe(TP_PHASE.SEALED);
+  });
+  it('doors are ignored outside CLOSING', () => {
+    const s: CycleState = { phase: TP_PHASE.SEALED, phaseEndsAtMs: 100 };
+    expect(stepCycle(s, 100, 1, { shut: false, stalled: true })).toBe('swap');
+  });
+});

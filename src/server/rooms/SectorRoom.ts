@@ -75,6 +75,7 @@ import { canTakeFullDraw } from '../structures/structurePowerSwitch.js';
 import { ShieldWallManager } from '../structures/ShieldWallManager.js';
 import type { GateController } from '../structures/GateController.js';
 import { buildGateController } from '../structures/gateControllerFactory.js';
+import { PadDoors } from '../structures/padDoors.js';
 import { createRelationContext, isNpcOwner, npcOwner, parseOwner, relationOf, walletOwnerOf, type StandingQuery } from '../../shared-types/relations.js';
 import { BreakInSubsystem } from './BreakInSubsystem.js';
 import { ForceFieldSubsystem, lockKeyBodyId } from './ForceFieldSubsystem.js';
@@ -183,7 +184,7 @@ import { FleetCommandSubsystem } from '../fleet/FleetCommandSubsystem.js';
 import { LeaveHandler } from './LeaveHandler.js';
 import { JoinHandler } from './join/JoinHandler.js';
 import { TeleportTolls } from './features/teleportTolls.js';
-import { TeleportPadRiders, buildTeleporters } from './features/teleportMessages.js';
+import { TeleportPadRiders, buildTeleporters, holdAlienGatesSealed } from './features/teleportMessages.js';
 import { WingmanPilots } from './features/wingmanPilots.js';
 import { FleetRoomHooks } from './features/fleetRoomHooks.js';
 import { PilotSwap } from './features/pilotSwap.js';
@@ -2233,6 +2234,8 @@ export class SectorRoom extends Room<SectorState> {
       postToWorker: (cmd) => this.postToWorker(cmd), sendToPlayer: (pid, type, msg) => this.sendToPlayerHere(pid, type, msg),
       canReceiveHull: (shipInstanceId) => this.freeSlots.length > 0 && !this.state.ships.has(shipInstanceId),
       receiveLingeringHull: (row) => this.hullHandOff.receiveHandedOffHull(row), receiveFleetSquads: (rows) => { this.fleet.restoreSquads(rows); },
+      padDoors: new PadDoors({ serverTick: () => this.serverTick, nowMs: () => this.gameClock.now(), supplyFrac: (id) => this.structureGrid.powerSummaryFor(id).supplyFrac,
+        setActive: (rec, on) => this.structureGrid.setActive(rec, on), post: (cmd) => this.postToWorker(cmd), hitBoxes: (id) => this.swarmRegistry.get(id)?.boxes }),
     }));
     this.gates = buildGateController({
       registry: this.structureRegistry, pilots: this.playerToSlot, activeShip: (pid) => this.getActiveShip(pid), pose: (pid) => this.shipPoseCache.get(pid),
@@ -2480,6 +2483,7 @@ export class SectorRoom extends Room<SectorState> {
           if (m && t) this.forceFields.renewTractor(pid, { ...m, weaponId: 'tractor' }, t.id, ticks);
         },
         dropTestPods: (pid) => { const p = this.shipPoseCache.get(pid); if (p) dropTestPodRow(this.loot, p.x, p.y); },
+        sealAlienGates: (sealed) => holdAlienGatesSealed(this.structureRegistry, this.teleporters, sealed),
       },
       onMessage: (type, handler) => this.onMessage(type, handler),
       nav: this.nav,

@@ -5,7 +5,8 @@ Plan `soft-leaping-truffle` v4, phase A. Every sector has a ring of ancient gate
 ## What a gate is
 
 - **A teleporter nobody owns or builds.** It is the `alien_gate` structure kind, and it works like a built teleporter (see [teleporters.md](teleporters.md)). It has the same pad, the same doors-closing cycle, and the same rule that everyone on the pad rides.
-- **Bigger:** a 1600 × 1600 footprint with an open pad reaching 640 units from its centre (twice a small teleporter's), ringed by twelve glowing posts.
+- **Bigger:** a 1600 × 1600 footprint, ringed by three turning stone rings (the Astrolabe). It has no posts: outside a jump nothing at the gate blocks a ship.
+- **Sealed by its outer ring** (teleporter redesign A3). Through the last seconds before a jump (the SEALED phase) the outermost stone ring becomes a solid circle, so nobody gets in or out; everyone inside it rides. The circle is a closed loop of 32 straight iris walls whose corners sit on the ring's outer edge (radius 818, a chord sags under 4 units). One shared source, `src/shared-types/alienGateSeal.ts`, gives the ring's size (the Astrolabe rig reads it), the walls (server iris walls and the client's derived walls, locked equal by `tests/unit/irisSpanParity.test.ts`), the ride disc (`onPad`) and the radial closing push (`padPushDir` round). The walls reach about 30 units past the 1600 footprint's edge.
 - **Quicker:** its cycle runs at about a third of a built teleporter's (about 5 s from warning to arrival).
 - **Free:** it charges itself. No grid, no capacitor, no toll.
 - **On a timetable:** each twinned pair jumps once a minute, at a moment set by the two sector keys. Different pairs jump at different moments, so the galaxy's gates don't all fire at once. The inspector shows where a gate leads and roughly when it next jumps.
@@ -39,6 +40,7 @@ A disabled ship's **engines and weapons go offline for 10 seconds**. Its hull is
 |---|---|
 | Sites (pure) | `src/core/galaxy/alienGates.test.ts`: one gate per neighbour, twins face each other, gates inside the sector and apart |
 | Timetable (pure) | `src/shared-types/teleport.test.ts`: both ends agree on the moment, the next jump is within a minute, the test speed-up |
+| Seal (unit) | `src/shared-types/alienGateSeal.test.ts`: the 32 walls close a loop on the outer ring, the ride disc, the radial push; `tests/unit/irisSpanParity.test.ts`: server and client walls agree, solid only while SEALED; `World.gate.test.ts`: no solid part, a ship flies through where a post stood |
 | Guard (unit) | `src/server/structures/AlienGateGuard.test.ts`: hits and zone shots disable, re-applied attacks extend it, NPC slots, turrets ignored |
 | Both sides agree (unit) | `tests/unit/disableParity.test.ts`: the shared gate clears every movement bit; the server handler honours it; both sides call it |
 | Integration | `tests/integration/sectorRoom/alienGates.test.ts` (two real neighbouring rooms): twins pair, the timetable carries a pilot across the border for free, a hit disables the attacker and puts `disabledMs` on its snapshot, a shot inside the zone disables, nobody can build or pair one. `galaxyBases.test.ts` checks the gates fit around the biggest bases |

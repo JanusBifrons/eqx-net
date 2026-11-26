@@ -23,12 +23,44 @@ export function armCycle(s: CycleState, nowMs: number, scale = 1): void {
 }
 
 /**
+ * The chamber doors of BOTH pads of a pair (teleporter redesign T2), as the
+ * cycle sees them. Absent: the pads have no doors (the Ancients' gate) and
+ * CLOSING ends on its timer as always.
+ */
+export interface CycleDoors {
+  /** Both pads' doors are fully shut. */
+  shut: boolean;
+  /** A pad's doors cannot move (power level 0) and are not shut. */
+  stalled: boolean;
+}
+
+/**
  * Advance a running cycle. Returns `'swap'` exactly when SEALED ends (the
  * caller swaps the pads, then the cycle is OPEN), `'done'` when OPEN ends,
  * else null. Never skips a swap, even after a long gap.
+ *
+ * With `doors` (chamber pads), CLOSING ignores its timer: it ends when both
+ * pads' doors are shut (doors move at their grid's power level, so a weak
+ * grid closes slowly). A pad whose doors stall (no power) before they are
+ * shut cancels the jump: straight to OPEN, no swap, returns `'cancel'` (as a
+ * lost charge skips the swap).
  */
-export function stepCycle(s: CycleState, nowMs: number, scale = 1): 'swap' | 'done' | null {
-  if (s.phase === TP_PHASE.IDLE || nowMs < s.phaseEndsAtMs) return null;
+export function stepCycle(
+  s: CycleState, nowMs: number, scale = 1, doors?: Readonly<CycleDoors>,
+): 'swap' | 'done' | 'cancel' | null {
+  if (s.phase === TP_PHASE.IDLE) return null;
+  if (doors !== undefined && s.phase === TP_PHASE.CLOSING) {
+    if (doors.shut) {
+      s.phase = TP_PHASE.SEALED;
+      s.phaseEndsAtMs = nowMs + TP_PHASE_MS[3] * scale;
+      return null;
+    }
+    if (!doors.stalled) return null;
+    s.phase = TP_PHASE.OPEN;
+    s.phaseEndsAtMs = nowMs + TP_PHASE_MS[4] * scale;
+    return 'cancel';
+  }
+  if (nowMs < s.phaseEndsAtMs) return null;
   const leaving = s.phase;
   s.phase = nextTpPhase(leaving);
   if (s.phase !== TP_PHASE.IDLE) s.phaseEndsAtMs = nowMs + TP_PHASE_MS[s.phase as 1 | 2 | 3 | 4] * scale;

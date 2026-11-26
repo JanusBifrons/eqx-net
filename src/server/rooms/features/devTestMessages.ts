@@ -1,7 +1,7 @@
 /**
  * Test-only client messages (`test_tractor`, `test_aggro`,
  * `test_reload_turrets`, `test_kill_capitals`, `test_fleet_warp`,
- * `test_drop_pods`): cues
+ * `test_drop_pods`, `test_gate_seal`): cues
  * integration and E2E tests send to skip a long setup. Each handler lives on
  * `TestMessageHandlers`, which gates it on the room's testMode (or
  * `EQX_ALLOW_DEV_OVERRIDES=1`) before it parses the payload.
@@ -24,5 +24,6 @@ export function registerDevTestMessages(h: DevTestMessageHost): RoomFeature {
   h.onMessage('test_kill_capitals', (client: Client, raw: unknown) => testHandlers.killCapitals(client, raw));
   h.onMessage('test_fleet_warp', (client: Client, raw: unknown) => testHandlers.fleetWarp(client, raw));
   h.onMessage('test_drop_pods', (client: Client, raw: unknown) => testHandlers.dropPods(client, raw));
+  h.onMessage('test_gate_seal', (client: Client, raw: unknown) => testHandlers.gateSeal(client, raw));
   return {};
 }

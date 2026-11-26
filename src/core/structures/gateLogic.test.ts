@@ -30,6 +30,7 @@ import {
   GATE_SPAN_THICKNESS,
   emitterAnchor,
   gateColliderBoxes,
+  gateColliderPolygons,
   gateGapHalf,
   gateTypeOf,
   shipyardSlipFits,
@@ -43,7 +44,7 @@ import { RECIPES } from '../../shared-types/recipes.js';
 import { getShipKind } from '../../shared-types/shipKinds.js';
 import { tuningFor } from '../../shared-types/shipScale/lookup.js';
 import { SHIPYARD_KEEL_X } from '../articulation/rigs/heavyIndustry.js';
-import { PAD_SPECS, padDoorwayHalf, padHalfExtent, padPostCenters } from '../../shared-types/teleport.js';
+import { PAD_SPECS, padDoorwayHalf, padHalfExtent } from '../../shared-types/teleport.js';
 
 const TICK = 100;
 const R = 14; // a fighter-sized ship
@@ -401,8 +402,8 @@ describe('teleporter chamber colliders (redesign T1)', () => {
     }
   }
 
-  it("the Ancients' gate keeps only its 12 post boxes (open pad, no walls)", () => {
-    const boxes = gateColliderBoxes('alien_gate')!;
-    expect(boxes.map((b) => [b.cx, b.cy, b.hw, b.hh])).toEqual(padPostCenters('alien_gate').map(([x, y]) => [x, y, 50, 50]));
+  it("the Ancients' gate has no solid part at all (redesign A3: no posts, no walls)", () => {
+    expect(gateColliderBoxes('alien_gate')).toEqual([]);
+    expect(gateColliderPolygons('alien_gate')).toEqual([]);
   });
 });

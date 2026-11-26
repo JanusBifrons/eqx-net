@@ -30,8 +30,11 @@ export interface PadForceField {
   active: boolean;
   /** A chamber pad (`isPadChamberKind`): its rotation (rad). The push then runs
    *  only along the doorway axis, never into a wall (`padPushDir`). Absent:
-   *  the open square pad (the Ancients' gate). */
+   *  the open square pad. */
   doorAngle?: number;
+  /** A round pad (the Ancients' gate, redesign A3): `half` is its seal's
+   *  radius and the push runs along the radius (`padPushDir` round). */
+  round?: boolean;
 }
 
 /** Most beam-line bodies one tractor carries (fixed capacity, #14). */
@@ -101,10 +104,10 @@ export const FORCE_FIELD_MASS_SCALED: Readonly<Record<ForceFieldKind, boolean>> 
 export function storeForceField(prev: ForceField | undefined, src: ForceField): ForceField {
   if (src.kind === 'pad') {
     if (prev !== undefined && prev.kind === 'pad') {
-      prev.cx = src.cx; prev.cy = src.cy; prev.half = src.half; prev.active = src.active;
+      prev.cx = src.cx; prev.cy = src.cy; prev.half = src.half; prev.active = src.active; prev.doorAngle = src.doorAngle; prev.round = src.round;
       return prev;
     }
-    return { kind: 'pad', cx: src.cx, cy: src.cy, half: src.half, active: src.active };
+    return { kind: 'pad', cx: src.cx, cy: src.cy, half: src.half, active: src.active, doorAngle: src.doorAngle, round: src.round };
   }
   const t: TractorForceField = prev !== undefined && prev.kind === 'tractor'
     ? prev
@@ -203,7 +206,7 @@ function applyPad(f: PadForceField, bodies: ReadonlyMap<string, ForceFieldBody>,
     // TODO: alloc-debt — Rapier's translation() returns a fresh vector; this
     // runs only during a pad's ~4 s closing phase.
     const t = b.translation();
-    if (!padPushDir(f.cx, f.cy, f.half, t.x, t.y, rec.kind.radius, _padDir, f.doorAngle)) continue;
+    if (!padPushDir(f.cx, f.cy, f.half, t.x, t.y, rec.kind.radius, _padDir, f.doorAngle, f.round === true)) continue;
     // massScaled: mass × accel × dt; else force × dt (heavy bodies barely move).
     const j = massScaled ? b.mass() * PAD_PUSH_ACCEL * dt : PAD_PUSH_ACCEL * dt;
     _impulse.x = _padDir.x * j;

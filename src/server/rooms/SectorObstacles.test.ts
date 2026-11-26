@@ -123,3 +123,27 @@ describe('SectorObstacles (navigation slice 2: the one obstacle gatherer)', () =
     expect(w.g.hullCircles('me').map((c) => [c.x, c.r])).toEqual([[10, 400], [20, 25], [40, 50], [70, 400]]);
   });
 });
+
+describe('SectorObstacles: teleporter collider parts (redesign T2)', () => {
+  it('a chamber pad gives its solid walls, turned with the pad; the Ancients\' gate none (A3)', () => {
+    const boxesOf = (kind: string, rot: number) => {
+      const w = world();
+      w.structures.push({ id: 't', kind, x: 1000, y: 0, rot, radius: 300 } as unknown as StructureRecord);
+      return w.g.structureBoxes().map((b) => [b.x - 1000, b.y, b.hw, b.hh]);
+    };
+    expect(boxesOf('alien_gate', 0)).toEqual([]);
+    for (const kind of ['teleporter', 'pocket_pad']) {
+      const flat = boxesOf(kind, 0);
+      expect(flat.length).toBeGreaterThan(0);
+      const turned = boxesOf(kind, 90);
+      // a quarter turn: (x, y, hw, hh) → (−y, x, hh, hw)
+      expect(turned).toEqual(flat.map(([x, y, hw, hh]) => [-y! + 0, x, hh, hw]));
+    }
+  });
+  it('reuses the cached boxes on repeat calls (#14)', () => {
+    const w = world();
+    w.structures.push({ id: 't', kind: 'teleporter', x: 0, y: 0, rot: 270, radius: 300 } as unknown as StructureRecord);
+    const a = w.g.structureBoxes().map((b) => [b.x, b.y, b.hw, b.hh]);
+    expect(w.g.structureBoxes().map((b) => [b.x, b.y, b.hw, b.hh])).toEqual(a);
+  });
+});

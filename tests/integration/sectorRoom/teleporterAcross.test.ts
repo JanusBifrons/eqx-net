@@ -83,13 +83,15 @@ describe('SectorRoom integration — teleporters across sectors (v4 T3)', () => 
     const parkedId = [...roomB.state.ships.values()].find((sh) => sh.playerId === OTHER)?.shipInstanceId ?? '';
     expect(parkedId, 'the parked hull is in B').toBeTruthy();
     // A second parked hull on the far pad whose AI pilot has a stance and a
-    // patrol route in B.
+    // patrol route in B. The route stays inside the chamber: the doors take their
+    // full travel to shut (T2), and a hull that patrols out of the pad first
+    // misses the ride, as it should.
     const flownId = getPlayerShipStore().create({ playerId: OTHER, userId: null, kind: 'fighter', sectorKey: B, x: -1300, y: -60, health: 150 }).shipId;
     ib.restoreLingeringHulls([{
       shipInstanceId: flownId, playerId: OTHER, kind: 'fighter', x: -1300, y: -60, vx: 0, vy: 0, angle: 0, angvel: 0, health: 150, shieldDown: false,
     }]);
     expect(ib.fleet.setStance(OTHER, [flownId], 'holdFire')).toEqual([flownId]);
-    expect(ib.fleet.setMode(OTHER, [flownId], 'patrol', { route: [[-1300, -60], [-1300, -900]] })).toEqual([flownId]);
+    expect(ib.fleet.setMode(OTHER, [flownId], 'patrol', { route: [[-1300, -60], [-1300, -160]] })).toEqual([flownId]);
 
     // Something on each pad's hold.
     tpA.padHold = { goods: { alloy: 5 }, blueprints: [] };

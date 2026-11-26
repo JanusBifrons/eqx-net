@@ -6,6 +6,7 @@ import {
   astrolabePoseAt, createAstrolabePose,
 } from './alienGateAstrolabe.js';
 import { ALIEN_GATE_INTERVAL_MS, alienGateOffsetMs, nextAlienGateJumpMs, TP_PHASE } from '../../shared-types/teleport.js';
+import { ALIEN_GATE_SEAL_RADIUS } from '../../shared-types/alienGateSeal.js';
 import { rigForStructureKind } from '../articulation/rigCatalogue.js';
 import { createRigPose, evaluateRig } from '../articulation/evaluate.js';
 import { gateColliderBoxes } from '../structures/gateGeometry.js';
@@ -142,14 +143,16 @@ describe('alien gate rig: looks only', () => {
     for (let i = 0; i < rig.partCount; i++) expect(pose.value[i]).toBe(0);
   });
 
-  it('colliders, posts and hit boxes are unchanged (12 posts, no door leaves)', () => {
-    expect(gateColliderBoxes('alien_gate')).toEqual([
-      { cx: -690, cy: -690, hw: 50, hh: 50 }, { cx: -230, cy: -690, hw: 50, hh: 50 }, { cx: 230, cy: -690, hw: 50, hh: 50 },
-      { cx: 690, cy: -690, hw: 50, hh: 50 }, { cx: 690, cy: -230, hw: 50, hh: 50 }, { cx: 690, cy: 230, hw: 50, hh: 50 },
-      { cx: 690, cy: 690, hw: 50, hh: 50 }, { cx: 230, cy: 690, hw: 50, hh: 50 }, { cx: -230, cy: 690, hw: 50, hh: 50 },
-      { cx: -690, cy: 690, hw: 50, hh: 50 }, { cx: -690, cy: 230, hw: 50, hh: 50 }, { cx: -690, cy: -230, hw: 50, hh: 50 },
-    ]);
+  it('no posts, colliders or hit boxes (redesign A3), no door leaves', () => {
+    expect(gateColliderBoxes('alien_gate')).toEqual([]);
     expect(doorLeafCount('alien_gate')).toBe(0);
-    expect(gateHitBoxes('alien_gate', 0)?.length).toBe(12 * 4);
+    expect(gateHitBoxes('alien_gate', 0)?.length).toBe(0);
+  });
+
+  it('the outer ring is the one its seal closes (redesign A3)', () => {
+    const outer = ASTROLABE_RINGS[0]!;
+    expect(outer.part).toBe('ring-outer');
+    for (const r of ASTROLABE_RINGS) expect(r.radius + r.width / 2).toBeLessThanOrEqual(outer.radius + outer.width / 2);
+    expect(ALIEN_GATE_SEAL_RADIUS).toBe(outer.radius + outer.width / 2);
   });
 });

@@ -21,7 +21,8 @@ import { PhysicsWorld, type ShipPhysicsState } from '@core/physics/World';
 import type { PadForceField } from '@core/physics/forceFields';
 import { decideStatAllocReanchor } from './localStatAlloc';
 import { visitDerivedWalls, type DerivedWallVisitor } from '../structures/derivedWalls.js';
-import { PAD_SPECS, TP_PHASE, isTeleporterKind } from '../../shared-types/teleport.js';
+import { isTeleporterKind } from '../../shared-types/teleport.js';
+import { writePadForceField } from './padForceField.js';
 
 /** v4 T2 — prediction-world pad field ids, cached per structure (no per-sync string). */
 const PAD_FIELD_IDS = new Map<number, string>();
@@ -2185,9 +2186,7 @@ export class ColyseusGameClient {
       if (t === undefined) continue;
       const e = swarm.get(id);
       if (!e || !isTeleporterKind(e.shipKind)) continue;
-      const f = this._padForceField;
-      f.cx = e.x; f.cy = e.y; f.half = PAD_SPECS[e.shipKind].padRadius; f.active = t.phase === TP_PHASE.CLOSING;
-      world.setForceField(padFieldId(id), f);
+      world.setForceField(padFieldId(id), writePadForceField(this._padForceField, e.shipKind, e.x, e.y, e.angle, t.phase));
     }
   }
 
@@ -2197,7 +2196,7 @@ export class ColyseusGameClient {
    * rule), so the LOCAL player is predicted-blocked by an up wall instead of
    * predicting through it and rubber-banding to the server. Snapshot cadence
    * (NOT the per-frame loop): walls are static + low-count, so a reconcile here
-   * is cheap. Every wall (fence walls, teleporter irises) is derived by the
+   * is cheap. Every wall (fence walls, Ancients' gate irises) is derived by the
    * shared `visitDerivedWalls`, the rules the renderer draws with and the server
    * collides with (#15). A wall that isn't blocking (down, or an unsealed iris)
    * keeps its body with the collider disabled. Gate doors are rig leaves, not walls.

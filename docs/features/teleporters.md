@@ -62,11 +62,11 @@ It is separate from base storage, so production never draws from it.
 
 ## Riding the jump (T2)
 
-**Who rides.** At the swap, everything on either pad trades places, each at the same offset from its pad's centre. That means active pilots, parked (lingering) hulls, NPC ships and scrap. **Everyone rides, strangers and enemies included** (your ruling): defend your pads. The pad is the open square inside the posts (`onPad`).
+**Who rides.** At the swap, everything on either pad trades places, each at the same offset from its pad's centre. That means active pilots, parked (lingering) hulls, NPC ships and scrap. **Everyone rides, strangers and enemies included** (your ruling): defend your pads. The pad is the open square inside the posts (`onPad`); on the Ancients' gate it is the disc inside its sealed outer ring ([alien-gates](alien-gates.md)).
 
 **The doors.**
 - **Closing:** a gentle push moves any ship straddling the pad edge fully in, or fully out, whichever side its centre is on (`padPushDir`, ~90 u/s²).
-- **Sealed:** the iris spans between the posts turn solid, so no one can fly in or out at the last moment.
+- **Sealed:** a chamber's blast doors are shut; the Ancients' gate's outer ring turns into a solid circle of iris spans. No one can fly in or out at the last moment.
 - **Both sides agree.** The server worker and your client's prediction world run the same push and the same walls from the room-state phase (#15), so your ship doesn't judder at the doors.
 
 **The warning.** A pilot whose ship is on a pad sees a top-centre banner while its cycle runs: "Teleport departing. Stay on the pad to ride, or fly off now.", then "Doors closing.", then "Sealed. Charging up…". It is worked out on the client from room state; no message is sent.

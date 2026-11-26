@@ -76,7 +76,8 @@ import { placedRockMeshData } from '../field/placedRockMesh.js';
 const NO_WRECKS: ReadonlyMap<number, unknown> = new Map();
 
 import type { SpriteBuildSig, SwarmSpriteCtx } from './swarmSpriteCtx.js';
-import { RIG_TICKS_PER_SEC, type StructureRigView } from './structureRigs.js';
+import { RIG_TICKS_PER_SEC, RIG_UNDER_Z, type StructureRigView } from './structureRigs.js';
+import { isPadChamberKind } from '../../../shared-types/teleport.js';
 import { hasBodyStatus, updateSocketNubs } from './structureSocketNubs.js';
 import { syncStructureHologram } from './structureHologram.js';
 export type { SpriteBuildSig, SwarmSpriteCtx };
@@ -139,6 +140,8 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
   if (rigs !== undefined && ctx.cameraScale !== undefined) rigs.zoom = ctx.cameraScale; // 3e: pulse sized like a cable's
   // Aiming rig parts (solar panels) face the sector's sun: the art light rig's.
   if (rigs !== undefined) rigs.sunAz = ctx.art.art !== null ? ctx.art.sunAz : undefined;
+  // External spin clocks (the Ancients' gate rings) read the sector and game time.
+  if (rigs !== undefined) { rigs.clockFrame.sectorKey = ctx.sectorKey ?? null; rigs.clockFrame.fxNowMs = fxNow; }
   // Restyle 2e: rig clips run on the client tick clock against their server
   // start tick (no clock in tests / before welcome: the fx clock, in ticks).
   const rigTick = mirror.rigTick ?? fxNow / (1000 / RIG_TICKS_PER_SEC);
@@ -257,6 +260,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         // the shared shipKind byte (structures plan, Phase 2).
         const stKind = entry.shipKind, stRadius = entry.radius;
         sprite = buildArtShipSprite(artHandle, () => buildStructureGfx(stKind, stRadius, 1, ctx.art.structStyle));
+        // A teleporter chamber is a deck ships fly into: the pad-deck band (the
+        // dock apron's), under every hull whatever the add order.
+        if (isPadChamberKind(stKind)) sprite.zIndex = RIG_UNDER_Z;
         // WS-4 Phase 5 (R2.16) — a Miner shows a faint dashed mining-range ring
         // at its `miningRange` radius. Built HERE (the once-per-sprite create
         // path, invariant #14 — never per-frame) and parented to the body so it

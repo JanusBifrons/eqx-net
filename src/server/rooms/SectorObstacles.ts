@@ -20,7 +20,8 @@ import type { SiteBox, SiteCircle, SiteSegment } from '../../core/bases/baseSite
 import type { SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import type { StructureRecord } from '../structures/StructureRegistry.js';
 import { SLOT_ANGLE_OFF, SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
-import { PAD_SPECS, isTeleporterKind, padPostCenters } from '../../shared-types/teleport.js';
+import { isTeleporterKind } from '../../shared-types/teleport.js';
+import { gateWorldAxisBoxes } from '../../core/structures/gateGeometry.js';
 import { SWARM_KIND_WRECK } from '../../shared-types/swarmWireFormat.js';
 
 /** Receives each pilot hull (active ship or parked hull). */
@@ -77,6 +78,19 @@ export function rockParts(rec: SwarmEntityRecord): GridObstacle['parts'] {
   return p;
 }
 
+/** A teleporter's world-axis collider boxes per kind, by quarter turn (+4 when
+ *  mirrored): built once each, so `structureBoxes` allocates nothing after. */
+const padBoxCache = new Map<string, Float32Array[]>();
+const NO_BOXES = new Float32Array(0);
+
+function padBoxes(r: StructureRecord): Float32Array {
+  const rad = ((r.rot ?? 0) * Math.PI) / 180;
+  const q = (((Math.round(rad / (Math.PI / 2)) % 4) + 4) % 4) + (r.mirror === true ? 4 : 0);
+  let byTurn = padBoxCache.get(r.kind);
+  if (byTurn === undefined) { byTurn = []; padBoxCache.set(r.kind, byTurn); }
+  return byTurn[q] ??= gateWorldAxisBoxes(r.kind, (q % 4) * (Math.PI / 2), q >= 4) ?? NO_BOXES;
+}
+
 export class SectorObstacles implements HullSink, WallSink {
   /** Rocks (live + dormant) from the last `rocks` call. */
   readonly rockList: GridObstacle[] = [];
@@ -119,14 +133,16 @@ export class SectorObstacles implements HullSink, WallSink {
     return out;
   }
 
-  /** Solid structure boxes (a teleporter's pad is open: only its posts). */
+  /** Solid structure boxes (a teleporter's pad is open: only its collider
+   *  parts, `gateWorldAxisBoxes`: the gate's posts, a chamber's walls turned
+   *  with the pad). */
   structureBoxes(): SiteBox[] {
     const out = this.boxes;
     let n = 0;
     for (const r of this.src.structures.all()) {
       if (isTeleporterKind(r.kind)) {
-        const h = PAD_SPECS[r.kind].post / 2;
-        for (const [cx, cy] of padPostCenters(r.kind)) n = this.pushBox(n, r.x + cx, r.y + cy, h, h);
+        const b = padBoxes(r);
+        for (let i = 0; i + 3 < b.length; i += 4) n = this.pushBox(n, r.x + b[i]!, r.y + b[i + 1]!, b[i + 2]!, b[i + 3]!);
       } else {
         n = this.pushBox(n, r.x, r.y, r.halfW ?? r.radius, r.halfH ?? r.radius);
       }

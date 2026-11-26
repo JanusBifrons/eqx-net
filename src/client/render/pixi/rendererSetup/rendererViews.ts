@@ -150,7 +150,7 @@ export function frameRefsView(h: RendererViewHost): RendererFrameRefs {
     get projectileUpdaterCtx() { return s.projectileUpdaterCtx; }, get missileUpdaterCtx() { return s.missileUpdaterCtx; },
     get beamCtx() { return s.beamCtx; }, get spectator() { return h.spectator; }, get lockMarksVisible() { return h.lockMarksVisible; },
     get cleanWorld() { return s.cleanWorld; }, get beamsDisabled() { return s.beamsDisabled; }, get ringProbeOn() { return h.fleetRing.on; },
-    get artStatsHook() { return h.artStatsHook; }, get placementGhostCtx() { return h.placementGhostCtx; }, get halo() { return h.halo; },
+    get sectorKey() { return h.sectorKey; }, get artStatsHook() { return h.artStatsHook; }, get placementGhostCtx() { return h.placementGhostCtx; }, get halo() { return h.halo; },
     sprites: h.sprites, mountVisuals: h.mountVisuals, cameraDirector: h.cameraDirector, input: h.input,
     feedback: h.feedback, frameMarkers: h.frameMarkers, hudCtx: h.hudCtx, hitEventCtx: h.hitEventCtx,
     litSceneCtx: h.litSceneCtx, turretShotCtx: h.turretShotCtx, warpFxCtx: h.warpFxCtx, engineShieldFxCtx: h.engineShieldFxCtx,

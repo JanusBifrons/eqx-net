@@ -9,8 +9,8 @@ import {
   FleetModeSchema, FleetStanceSchema, FleetSpeedSchema, FleetOrderSchema, SetModeSchema, SetStanceSchema, FormSquadSchema, DisbandSquadSchema,
 } from './fleetCommandMessages.js';
 export { FleetModeSchema, FleetStanceSchema, FleetSpeedSchema, FleetOrderSchema, SetModeSchema, SetStanceSchema, FormSquadSchema, DisbandSquadSchema };
-import { TestFleetWarpSchema, TestTractorSchema, TestDropPodsSchema } from './testModeMessages.js';
-export { TestFleetWarpSchema, TestTractorSchema, TestDropPodsSchema };
+import { TestFleetWarpSchema, TestTractorSchema, TestDropPodsSchema, TestGateSealSchema } from './testModeMessages.js';
+export { TestFleetWarpSchema, TestTractorSchema, TestDropPodsSchema, TestGateSealSchema };
 
 export const InputMessageSchema = z
   .object({
@@ -472,6 +472,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   TestFleetWarpSchema,
   TestTractorSchema,
   TestDropPodsSchema,
+  TestGateSealSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   RemoveStructureSchema,

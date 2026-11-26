@@ -50,6 +50,12 @@ describe('structureSockets', () => {
     const clamped: string[] = [];
     for (const kind of STRUCTURE_KINDS_LIST) {
       const sockets = structureSockets(kind.id);
+      // The Ancients' gate has no posts and takes no cables (teleporter redesign A3).
+      if (kind.id === 'alien_gate') {
+        expect(sockets.length).toBe(0);
+        expect(kind.maxConnections).toBe(0);
+        continue;
+      }
       expect(sockets.length, kind.id).toBeGreaterThan(0);
       // Connectors and shield emitters (pylon, gate, airlock) take cables from
       // any side: their sockets are not a link limit.
@@ -83,7 +89,8 @@ describe('structureSockets', () => {
 
   it('non-hex kinds (chamfered in the house look): no socket on a cut corner, one on each long side (pylon keeps its corners)', () => {
     for (const kind of STRUCTURE_KINDS_LIST) {
-      if (STRUCTURE_OUTLINE_FAMILY[kind.id] === 'hex' || isGate(kind.id)) continue;
+      // The Ancients' gate has no sockets at all (no posts, no cables; redesign A3).
+      if (STRUCTURE_OUTLINE_FAMILY[kind.id] === 'hex' || isGate(kind.id) || kind.id === 'alien_gate') continue;
       const sockets = structureSockets(kind.id);
       const diagonal = sockets.filter((s) => Math.abs(s.nx) > 1e-9 && Math.abs(s.ny) > 1e-9).length;
       if (kind.id === 'shield_pylon') {
