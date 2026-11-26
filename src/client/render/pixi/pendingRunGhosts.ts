@@ -9,7 +9,7 @@
  *   between clicks. Solid: the sent ghost look, full beams.
  * - HOVER (`preview.runHover` + `runHoverMark`, `fenceRunHover.ts`): the run a
  *   click at the hovered corner would place. Faint: ghosts at
- *   {@link HOVER_ALPHA}, beams on a Graphics at that alpha. The corner the
+ *   {@link HOVER_ALPHA}, beams on a Graphics at {@link HOVER_BEAM_ALPHA}. The corner the
  *   click's verdict refuses (mark 2), or the first one the ghost's rock check
  *   refuses (`obstacles`, as the single ghost), draws red with a down-beam
  *   into it, and nothing past it draws. The hovered corner itself is the
@@ -36,6 +36,8 @@ type Preview = NonNullable<RenderMirror['pendingPlacementPreview']>;
 export const RUN_GHOST_CAP = 24;
 /** The hover run's alpha (posts and beams): faint next to the sent run. */
 export const HOVER_ALPHA = 0.4;
+/** The hover run's beams: stronger than its posts so the leg reads next to the green power line (owner, 2026-11-26). */
+export const HOVER_BEAM_ALPHA = 0.7;
 
 /** What one frame's run drawing needs (from the placement ghost ctx). */
 export interface RunGhostFrame {
@@ -95,7 +97,7 @@ export class PendingRunGhosts {
 
   private gfx(hover: boolean): Graphics {
     if (hover) {
-      if (!this.hoverGfx) { this.hoverGfx = new Graphics(); this.hoverGfx.alpha = HOVER_ALPHA; this.parent.addChild(this.hoverGfx); }
+      if (!this.hoverGfx) { this.hoverGfx = new Graphics(); this.hoverGfx.alpha = HOVER_BEAM_ALPHA; this.parent.addChild(this.hoverGfx); }
       return this.hoverGfx;
     }
     if (!this.sentGfx) { this.sentGfx = new Graphics(); this.parent.addChild(this.sentGfx); }

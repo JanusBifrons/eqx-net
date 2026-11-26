@@ -6,7 +6,7 @@ import { describe, expect, it } from 'vitest';
 import { Container } from 'pixi.js';
 import type { RenderMirror } from '../../../core/contracts/IRenderer.js';
 import { PlacementGhostVerdict } from '../../structures/placementGhostVerdict.js';
-import { HOVER_ALPHA, PendingRunGhosts, RUN_GHOST_CAP, type RunGhostFrame } from './pendingRunGhosts.js';
+import { HOVER_ALPHA, HOVER_BEAM_ALPHA, PendingRunGhosts, RUN_GHOST_CAP, type RunGhostFrame } from './pendingRunGhosts.js';
 
 function frame(preview: Record<string, unknown>, ghostX = 1e6, ghostY = 1e6): RunGhostFrame {
   const pv = { kind: 'shield_pylon', x: 0, y: 0, angle: 0, ...preview };
@@ -39,6 +39,10 @@ describe('fence run ghosts', () => {
     expect(rg.hoverBeams).toBe(3);
     expect(rg.hoverStop).toBe(-1);
     for (const p of visiblePosts(parent)) expect(p.alpha).toBeLessThanOrEqual(HOVER_ALPHA + 1e-9);
+    // Beams read stronger than the posts (owner): their own Graphics, at the beam alpha.
+    const beams = parent.children.find((c) => c.label !== 'hologram' && c.visible && c.alpha === HOVER_BEAM_ALPHA);
+    expect(beams).toBeDefined();
+    expect(HOVER_BEAM_ALPHA).toBeGreaterThan(HOVER_ALPHA);
   });
 
   it('the refused corner ends the hover run there (red, nothing past it)', () => {
