@@ -66,6 +66,13 @@ export function underZForStructure(kindId: string | undefined): number | null {
   return isFlatDeckKind(kindId) ? ROAD_UNDER_Z : null;
 }
 
+/** The radius a structure sprite is culled by. A road draws its carriageway
+ *  out to its deck hex edges, past the footprint its catalogue radius bounds,
+ *  so it culls by the whole hex (else it pops in at the screen edge). */
+export function cullRadiusForStructure(kindId: string | undefined, radius: number): number {
+  return isFlatDeckKind(kindId) ? Math.max(radius, DECK_HEX_SIZE) : radius;
+}
+
 /** Paint look (mock-up colours; world units). */
 export const ZONE_RED = 0xd8342c;
 export const ZONE_BLUE = 0x3d7fd9;
