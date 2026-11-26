@@ -23,11 +23,12 @@ import { SHIELD_WALL_CORE_COLOR, SHIELD_WALL_GLOW_COLOR, SHIELD_WALL_SHIMMER_COL
 /** The P2 mock-up look: `off` = today's. */
 export type EdgeLook = 'off' | 'a' | 'b' | 'c';
 
-export const DEFAULT_EDGE_LOOK: EdgeLook = 'off';
+/** Look A (light sheet), owner OK 2026-11-26. */
+export const DEFAULT_EDGE_LOOK: EdgeLook = 'a';
 
-/** `?edgeLook=a|b|c`; absent or unknown = {@link DEFAULT_EDGE_LOOK}. */
+/** `?edgeLook=off|a|b|c`; absent or unknown = {@link DEFAULT_EDGE_LOOK}. */
 export function readEdgeLook(search: string): EdgeLook {
-  const m = /[?&]edgeLook=(a|b|c)(?![\w-])/.exec(search);
+  const m = /[?&]edgeLook=(off|a|b|c)(?![\w-])/.exec(search);
   return m ? (m[1] as EdgeLook) : DEFAULT_EDGE_LOOK;
 }
 

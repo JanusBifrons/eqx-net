@@ -59,6 +59,17 @@ warning appears under the ghost whenever a shield wall lies within its range.
 | Stun duration | 5 s |
 | Blocks | ships **and** weapons fire while up |
 
+## How it looks
+
+On a base deck, a post is a round cap with a glowing cyan lens, and each lit
+link is a soft band of light with a bright white core: a thin sheet of light
+between posts ("look A", `connectorEdgeLook.ts`). An unpowered post's lens goes
+dark and a downed link shows one dim red line. The deck power cable runs on
+the same seams, so under a lit link it hides its cradles and clamps
+(`setCableCover`); it shows them again where it leaves the fence or the link
+is down. `?edgeLook=off` shows the older post and link; `?edgeLook=b|c` are the
+two mock-ups the owner did not pick (hex field, pylon fork).
+
 See [docs/architecture/structures-and-power-grid.md](../architecture/structures-and-power-grid.md)
 for the system internals (the derived-collider wall, the grid-power/stun model,
 and the battery buffer).

@@ -4,10 +4,11 @@
  * battery cells. Powered = the baked lit art (nothing drawn over it);
  * unpowered = dead glass over every emitter / light; the bake never changes.
  */
-import { describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { Container, GraphicsContext } from 'pixi.js';
 import { bodyStatusCode, hasBodyStatus, socketNubContext, socketNubsOf, updateSocketNubs } from './structureSocketNubs.js';
 import { status } from './structureStyleC.fences.js';
+import { DEFAULT_EDGE_LOOK, edgePost } from './connectorEdgeLook.js';
 import { getStructureKind, type StructureKindId } from '../../../shared-types/structureKinds.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 
@@ -28,6 +29,9 @@ function fills(kind: StructureKindId, code: number): { colors: number[]; ctx: Gr
 }
 
 describe('fences: pylon and lock lights dark unpowered', () => {
+  // The pre-look-A post (`?edgeLook=off`); the edge looks' post states are in connectorEdgeLook.test.
+  beforeAll(() => { edgePost.look = 'off'; });
+  afterAll(() => { edgePost.look = DEFAULT_EDGE_LOOK; });
   const KINDS = ['shield_pylon', 'territory_lock'] as const;
 
   it('both kinds have a body state', () => {

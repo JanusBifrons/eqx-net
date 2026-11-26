@@ -17,7 +17,7 @@ import type { MainToWorkerMsg } from '../worker/protocol.js';
 import type { ArtOptions } from '../art/artMode.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 
-afterEach(() => { edgePost.look = 'off'; });
+afterEach(() => { edgePost.look = DEFAULT_EDGE_LOOK; });
 
 /** Records every draw call in order. */
 function recorder(): LinePath & { calls: string[] } {
@@ -34,15 +34,16 @@ function recorder(): LinePath & { calls: string[] } {
 }
 
 describe('?edgeLook= parse', () => {
-  it('off by default; a|b|c read; anything else = off', () => {
-    expect(DEFAULT_EDGE_LOOK).toBe('off');
-    expect(readEdgeLook('')).toBe('off');
+  it('look A by default; off|a|b|c read; anything else = the default', () => {
+    expect(DEFAULT_EDGE_LOOK).toBe('a');
+    expect(readEdgeLook('')).toBe('a');
+    expect(readEdgeLook('?edgeLook=off')).toBe('off');
     expect(readEdgeLook('?room=sector&edgeLook=a')).toBe('a');
     expect(readEdgeLook('?edgeLook=b&deckTex=a')).toBe('b');
     expect(readEdgeLook('?edgeLook=c')).toBe('c');
-    expect(readEdgeLook('?edgeLook=d')).toBe('off');
-    expect(readEdgeLook('?edgeLook=ab')).toBe('off');
-    expect(readEdgeLook('?xedgeLook=a')).toBe('off');
+    expect(readEdgeLook('?edgeLook=d')).toBe('a');
+    expect(readEdgeLook('?edgeLook=ab')).toBe('a');
+    expect(readEdgeLook('?xedgeLook=off')).toBe('a');
     expect(readRestyleLook('?edgeLook=c').edgeLook).toBe('c');
     for (const l of ['off', 'a', 'b', 'c'] as EdgeLook[]) expect(edgeLookOfIndex(edgeLookIndex(l))).toBe(l);
   });
@@ -94,6 +95,7 @@ describe('the pylon emitter (body-status overlay)', () => {
     ({ powered, netPower: powered ? 1 : 0, connTo: [], built, buildPct: built ? 1 : 0.2, deconstructPct: 0 }) as unknown as StructureRenderState;
 
   it('off: today\'s codes (0 lit, 1 unpowered, 0 unbuilt)', () => {
+    edgePost.look = 'off';
     expect(pylonStatusCode('shield_pylon', row(true))).toBe(0);
     expect(pylonStatusCode('shield_pylon', row(false))).toBe(1);
     expect(pylonStatusCode('shield_pylon', row(false, false))).toBe(0);
@@ -132,7 +134,7 @@ describe('edgeLook rides BOOT and init sets the beam + post look', () => {
     expect(conn.cables.edgeLook).toBe('b');
     expect(edgePost.look).toBe('b');
     applyRestyleLook(conn, {}, new Container(), { mode: 'machined' }, '');
-    expect(conn.cables.edgeLook).toBe('off');
-    expect(edgePost.look).toBe('off');
+    expect(conn.cables.edgeLook).toBe(DEFAULT_EDGE_LOOK);
+    expect(edgePost.look).toBe(DEFAULT_EDGE_LOOK);
   });
 });
