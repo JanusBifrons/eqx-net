@@ -10,6 +10,7 @@ import { SHOWCASE_PILOT_ID } from '../showcaseRooms.js';
 import { DECK_HEX_SIZE, deckHexCentreInto, plateCentreWorldInto } from '../../../core/hex/plates.js';
 import { hexCornerInto } from '../../../core/hex/hex.js';
 import { snapPlacementToDeck } from '../../../core/structures/deckPlacement.js';
+import { DECK_BASES_OPTS } from './deckBasesRoom.js';
 
 /**
  * `?room=base-build-test` (Sunday base loop): stills and films of building.
@@ -522,4 +523,5 @@ export function defineEngineeringRooms(gameServer: Server): void {
   gameServer.define('base-build-test', SectorRoom, { ...BASE_BUILD_TEST_OPTS }).filterBy(['testId']);
   gameServer.define('deck', SectorRoom, { ...DECK_TEST_OPTS }).filterBy(['testId']);
   gameServer.define('deck-show', SectorRoom, { ...DECK_SHOW_OPTS }).filterBy(['testId']);
+  gameServer.define('deck-bases', SectorRoom, { ...DECK_BASES_OPTS }).filterBy(['testId']);
 }
