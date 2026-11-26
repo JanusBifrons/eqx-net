@@ -43,6 +43,7 @@ import { chooseBaseSite, deckExtent, grownExtent, type SiteBox, type SiteCircle 
 import { galaxyBasePlan, type GalaxyBasePlan } from '../../core/bases/galaxyBases.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
 import { pocketClearing, sectorSites } from '../../core/galaxy/sectorSites.js';
+import type { FieldClearing } from '../../core/terrain/fieldLayout.js';
 import { HOME_POCKET_HALF_EXTENT, SOLAR_SECTORS, sectorSpace } from '../../shared-types/sectorBounds.js';
 import { SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
@@ -121,9 +122,11 @@ export class NpcBaseSubsystem {
 
   /** Grow the base a spec describes (pure; nothing placed). Lets a caller
    *  pick a site from its extent before seeding (T1). On a deck room
-   *  (`registry.deck`, base platforms) the base is grown on plates. */
-  grow(spec: NpcBaseSpec): GrownBase {
-    return growBase(this.profileOf(spec), spec.seed, spec.features ?? [], this.h.registry.deck ? { deck: true } : {});
+   *  (`registry.deck`, base platforms) the base is grown on plates; `dense`
+   *  (a base in an asteroid-field clearing, slice 25) packs every plate. */
+  grow(spec: NpcBaseSpec, dense = false): GrownBase {
+    const opts = this.h.registry.deck ? (dense ? { deck: true, dense: true } : { deck: true }) : {};
+    return growBase(this.profileOf(spec), spec.seed, spec.features ?? [], opts);
   }
 
   /** Place a base with its Capital (a deck base: its origin plate) at (spec.x, spec.y). `grown` may come from
@@ -303,6 +306,15 @@ export function seedGalaxyBase(h: NpcBaseSeedHost, sectorKey: string): void {
   h.structureGridTick();
 }
 
+/** The rock-free clearing a galaxy base's pocket (home, or `at`) sits in, or
+ *  null outside an asteroid field. In a cut field the base stays inside it
+ *  (the square's corners reach past the outer pocket's rim), and a base in a
+ *  clearing grows dense (base platforms 25): space there is dear, so its deck
+ *  packs every plate and clears less rock. */
+export function galaxyBaseClearing(sectorKey: string, at: { x: number; y: number } | null, solar = SOLAR_SECTORS): FieldClearing | null {
+  return pocketClearing(sectorKey, solar, at?.x ?? 0, at?.y ?? 0);
+}
+
 /** Seed one planned galaxy base; returns its footprint box, inflated by the
  *  gap a later base must keep, or null when no site fits. */
 function seedOneGalaxyBase(
@@ -320,7 +332,8 @@ function seedOneGalaxyBase(
     baseId: plan.baseId, role: profile.role, tier: profile.tier, seed, x: 0, y: 0,
     side: profile.ownerFaction, features: [...features], profile,
   };
-  const grown = sub.grow(spec);
+  const clearing = galaxyBaseClearing(sectorKey, at);
+  const grown = sub.grow(spec, clearing !== null);
   const hard: SiteBox[] = [...seededBases];
   for (const r of h.structureRegistry.all()) hard.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
   for (const p of h.lingeringPoseCache.values()) hard.push({ x: p.x, y: p.y, hw: 150, hh: 150 });
@@ -336,9 +349,6 @@ function seedOneGalaxyBase(
   // on a plate centre (base platforms 24).
   const deck = h.structureRegistry.deck;
   const ext = deck ? deckExtent(grown.placements) : grownExtent(grown.placements);
-  // In a cut field the base also stays inside its pocket's rock-free
-  // clearing (the square's corners reach past the outer pocket's rim).
-  const clearing = pocketClearing(sectorKey, SOLAR_SECTORS, at?.x ?? 0, at?.y ?? 0);
   const site = chooseBaseSite(ext, hard, soft, {
     // The home pocket (today's whole sector; the same bound when solar-system
     // sectors are off).

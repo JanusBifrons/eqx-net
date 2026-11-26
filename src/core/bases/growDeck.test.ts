@@ -15,7 +15,7 @@ import { DECK_HEX_SIZE, PLATE_DIRS, isPlateCentreHex, plateOfHexInto } from '../
 import type { DeckSnap } from '../hex/deckSnap.js';
 import { pixelToAxialInto } from '../hex/hex.js';
 import { BASE_GROWTH_VERSION, growBase, type GrownBase } from './growBase.js';
-import { DECK_HEXES_PER_PLATE, deckBaseOriginInto } from './growDeck.js';
+import { DECK_HEXES_PER_PLATE, DECK_HEXES_PER_PLATE_DENSE, deckBaseOriginInto, type GrowBaseOptions } from './growDeck.js';
 import type { BaseProfile, BaseRole, BaseTier } from './baseProfile.js';
 
 function profile(tier: BaseTier, role: BaseRole, fenced = true): BaseProfile {
@@ -89,9 +89,30 @@ function verifyDeck(b: GrownBase): { plates: PlateSet<number>; reached: number }
   return { plates, reached: seen.size };
 }
 
+/** Per-plate outer-hex use of a deck base; asserts no plate exceeds `cap`
+ *  and nothing stands on an anchor's yard. */
+function density(b: GrownBase, cap: number): { plates: number; buildings: number; used: number; maxPerPlate: number } {
+  const anchors = new Set<string>();
+  const usedPerPlate = new Map<string, Set<string>>();
+  const PI = { i: 0, j: 0 };
+  const h = { q: 0, r: 0 };
+  for (const p of b.placements) {
+    if (isConnectorKind(p.kind) && plateCentreAtWorldInto(p.x, p.y, PI)) { anchors.add(`${PI.i},${PI.j}`); continue; }
+    // A small kind sits on a rhombus of its hex: that hex is the one used.
+    pixelToAxialInto(p.x, p.y, DECK_HEX_SIZE, h);
+    expect(isPlateCentreHex(h.q, h.r), `${p.kind} off the anchor's yard`).toBe(false);
+    plateOfHexInto(h.q, h.r, PI);
+    const pk = `${PI.i},${PI.j}`;
+    (usedPerPlate.get(pk) ?? usedPerPlate.set(pk, new Set()).get(pk)!).add(`${h.q},${h.r}`);
+  }
+  let used = 0, maxPerPlate = 0;
+  for (const s of usedPerPlate.values()) { expect(s.size).toBeLessThanOrEqual(cap); used += s.size; maxPerPlate = Math.max(maxPerPlate, s.size); }
+  return { plates: anchors.size, buildings: b.placements.length - anchors.size, used, maxPerPlate };
+}
+
 describe('growBase deck option (base platforms 23)', () => {
   it('bumps the growth version', () => {
-    expect(BASE_GROWTH_VERSION).toBe(25);
+    expect(BASE_GROWTH_VERSION).toBe(26);
   });
 
   it('flag off: output byte-identical to before the slice (default and explicit false)', () => {
@@ -103,9 +124,10 @@ describe('growBase deck option (base platforms 23)', () => {
     expect(off).toEqual(before);
   });
 
-  for (const [tier, role, fenced, seed] of CASES) {
-    it(`${tier} ${role}${fenced ? ' (fenced)' : ''}: plates contiguous, every piece on a deck slot under the player rules`, () => {
-      const b = growBase(profile(tier, role, fenced), seed, [...FEATURES], { deck: true });
+  // Slice 25: the same invariants hold for a dense (asteroid-field) base.
+  for (const dense of [false, true]) for (const [tier, role, fenced, seed] of CASES) {
+    it(`${dense ? 'dense ' : ''}${tier} ${role}${fenced ? ' (fenced)' : ''}: plates contiguous, every piece on a deck slot under the player rules`, () => {
+      const b = growBase(profile(tier, role, fenced), seed, [...FEATURES], dense ? { deck: true, dense: true } : { deck: true });
       const flat = growBase(profile(tier, role, fenced), seed, [...FEATURES]);
       const { plates, reached } = verifyDeck(b);
       expect(reached, 'every structure reachable from the Capital').toBe(b.placements.length);
@@ -146,27 +168,38 @@ describe('growBase deck option (base platforms 23)', () => {
   // of its 6 outer hexes, so at least half of all outer hexes are open floor.
   for (const [tier, role, fenced, seed] of CASES) {
     it(`${tier} ${role}: mostly empty deck (≥ half of every plate's outer hexes open)`, () => {
-      const b = growBase(profile(tier, role, fenced), seed, [...FEATURES], { deck: true });
-      const anchors = new Set<string>();
-      const usedPerPlate = new Map<string, Set<string>>();
-      const PI = { i: 0, j: 0 };
-      const h = { q: 0, r: 0 };
-      for (const p of b.placements) {
-        if (isConnectorKind(p.kind) && plateCentreAtWorldInto(p.x, p.y, PI)) { anchors.add(`${PI.i},${PI.j}`); continue; }
-        // A small kind sits on a rhombus of its hex: that hex is the one used.
-        pixelToAxialInto(p.x, p.y, DECK_HEX_SIZE, h);
-        expect(isPlateCentreHex(h.q, h.r), `${p.kind} off the anchor's yard`).toBe(false);
-        plateOfHexInto(h.q, h.r, PI);
-        const pk = `${PI.i},${PI.j}`;
-        (usedPerPlate.get(pk) ?? usedPerPlate.set(pk, new Set()).get(pk)!).add(`${h.q},${h.r}`);
-      }
-      let used = 0;
-      for (const s of usedPerPlate.values()) { expect(s.size).toBeLessThanOrEqual(DECK_HEXES_PER_PLATE); used += s.size; }
-      const outer = anchors.size * 6;
-      console.log(`${tier} ${role}: ${anchors.size} plates, ${b.placements.length - anchors.size} buildings on ${used}/${outer} outer hexes`);
-      expect(used * 2).toBeLessThanOrEqual(outer);
+      const d = density(growBase(profile(tier, role, fenced), seed, [...FEATURES], { deck: true }), DECK_HEXES_PER_PLATE);
+      console.log(`${tier} ${role}: ${d.plates} plates, ${d.buildings} buildings on ${d.used}/${d.plates * 6} outer hexes`);
+      expect(d.used * 2).toBeLessThanOrEqual(d.plates * 6);
     });
   }
+
+  // Slice 25 — a dense (asteroid-field) base packs up to all 6 outer hexes,
+  // so it lays fewer plates than the sparse base for the same purchases.
+  for (const [tier, role, fenced, seed] of CASES) {
+    it(`${tier} ${role}: dense packs more hexes per plate on fewer plates than sparse`, () => {
+      const sparseB = growBase(profile(tier, role, fenced), seed, [...FEATURES], { deck: true });
+      const denseB = growBase(profile(tier, role, fenced), seed, [...FEATURES], { deck: true, dense: true });
+      const sp = density(sparseB, DECK_HEXES_PER_PLATE);
+      const dn = density(denseB, DECK_HEXES_PER_PLATE_DENSE);
+      console.log(`${tier} ${role}: sparse ${sp.plates} plates ${sp.used}/${sp.plates * 6} hexes; dense ${dn.plates} plates ${dn.used}/${dn.plates * 6} hexes (max ${dn.maxPerPlate}/plate)`);
+      expect(dn.buildings, 'dense keeps every building').toBe(sp.buildings);
+      expect(dn.plates).toBeLessThan(sp.plates);
+      expect(dn.maxPerPlate).toBeGreaterThan(DECK_HEXES_PER_PLATE);
+    });
+  }
+
+  it('dense needs the deck: without it the row base is unchanged', () => {
+    const p = profile('settlement', 'refinery');
+    const opts: GrowBaseOptions = { dense: true };
+    expect(growBase(p, 7, [...FEATURES], opts)).toEqual(growBase(p, 7, [...FEATURES]));
+    expect(growBase(p, 7, [...FEATURES], { deck: true, dense: false })).toEqual(growBase(p, 7, [...FEATURES], { deck: true }));
+  });
+
+  it('dense is deterministic per seed', () => {
+    const p = profile('stronghold', 'military');
+    expect(growBase(p, 42, [], { deck: true, dense: true })).toEqual(growBase(p, 42, [], { deck: true, dense: true }));
+  });
 
   it('is deterministic per seed', () => {
     const p = profile('settlement', 'workshop');
