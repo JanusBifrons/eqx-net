@@ -40,13 +40,20 @@ export const DECK_HEX_FRAME: Pts = ngon(0, 0, DECK_HEX_SIZE + 8, 6);
 /** Panel joint width (u; ~2 texels at DECK_LIT_PPU) and depth. */
 export const ROAD_JOINT_W = 5;
 const JOINT_DEPTH = -0.5;
-const JOINT = mixColor(ROAD_LANE, 0x000000, 0.25);
 /** Panel tone spread (fraction toward black / white). */
 const PANEL_TONE = 0.06;
 /** Wheel tracks: lateral offset (fraction of the half width) and width (u). */
 const TRACK_OFF = 0.5;
 const TRACK_W = 44;
-const TRACK = mixColor(ROAD_LANE, 0x000000, 0.12);
+/**
+ * Joint and wheel-track tones, worked out on first use: this module and the
+ * road style import each other, and the browser loads the road first, so
+ * reading ROAD_LANE at module load throws (TDZ) and the game never boots.
+ */
+let tones: { joint: number; track: number } | undefined;
+export function roadLitTones(): { joint: number; track: number } {
+  return (tones ??= { joint: mixColor(ROAD_LANE, 0x000000, 0.25), track: mixColor(ROAD_LANE, 0x000000, 0.12) });
+}
 
 /** Flat (x, y) pairs as points. */
 function pts(flat: readonly number[]): Pt[] {
@@ -91,8 +98,8 @@ export function roadLitPolys(c: StyleCtx, plan: RoadOverlayPlan): void {
     // Worn wheel tracks, on past the seam into the neighbour's identical ones.
     for (const side of [-1, 1]) {
       const s = side * W * TRACK_OFF;
-      poly(c, armBand(ux, uy, ROAD_HALF_W, end, s - TRACK_W / 2, s + TRACK_W / 2), TRACK, 'metal', 0, 0.5, flat);
+      poly(c, armBand(ux, uy, ROAD_HALF_W, end, s - TRACK_W / 2, s + TRACK_W / 2), roadLitTones().track, 'metal', 0, 0.5, flat);
     }
-    for (const t of joints) poly(c, armBand(ux, uy, t - ROAD_JOINT_W / 2, t + ROAD_JOINT_W / 2, -W, W), JOINT, 'metal', JOINT_DEPTH, 1.5, flat);
+    for (const t of joints) poly(c, armBand(ux, uy, t - ROAD_JOINT_W / 2, t + ROAD_JOINT_W / 2, -W, W), roadLitTones().joint, 'metal', JOINT_DEPTH, 1.5, flat);
   }
 }
