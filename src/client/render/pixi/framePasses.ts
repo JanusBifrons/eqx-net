@@ -7,13 +7,14 @@
 
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { updateEntitySprites, updateProjectilesAndGhost } from './worldSpriteUpdater.js';
-import { updateBeamsAndCamera, updateBackdrop, updateHudOverlays } from './frameViewUpdater.js';
+import { carryCameraAcrossJump, updateBeamsAndCamera, updateBackdrop, updateHudOverlays } from './frameViewUpdater.js';
 import { writeFrameFeedback, tickFrameEffects } from './frameFeedbackUpdater.js';
 import { LanePhase, lanePhaseMark, lanePhaseStart } from '../../debug/perf/lanePhaseTiming.js';
 import type { RendererFrameCtx } from './frameCtx.js';
 
 /** Run the frame passes over the pooled frame ctx (`frameCtx.ts`). */
 export function runFramePasses(mirror: RenderMirror, f: RendererFrameCtx): void {
+  carryCameraAcrossJump(mirror, f); // before any pass culls or draws from the camera
   updateEntitySprites(mirror, f); // pixi/worldSpriteUpdater.ts
   let t = lanePhaseStart();
   updateProjectilesAndGhost(mirror, f);
