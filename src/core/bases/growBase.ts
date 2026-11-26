@@ -67,8 +67,9 @@ export type { GrowBaseOptions } from './growDeck.js';
  *  20→21 (restyle F2): wider gate (416), airlock (392) and pylons (120×120); fence pylons 660 apart, each half-side spaced to the gate end (no pylon on a gate).
  *  21→22: one cable per connector socket (max 6): leaf gaps fit the face turned at the leaf; a bastion steps off a fence post on its line.
  *  22→23: cables a body width apart (fan-outs too), min cable 67 u box edge to edge; relays a cable length clear.
- *  23→24 (base platforms 23): growth option `deck` lays the base on plates (`growDeck.ts`); without it the output is unchanged. */
-export const BASE_GROWTH_VERSION = 24;
+ *  23→24 (base platforms 23): growth option `deck` lays the base on plates (`growDeck.ts`); without it the output is unchanged.
+ *  24→25 (base platforms 24): a deck plate holds buildings on at most `DECK_HEXES_PER_PLATE` (3) outer hexes, every other hex first (mostly empty deck); rows unchanged. */
+export const BASE_GROWTH_VERSION = 25;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
