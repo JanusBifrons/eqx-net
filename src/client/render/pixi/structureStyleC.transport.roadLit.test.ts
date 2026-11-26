@@ -194,6 +194,48 @@ describe('lit seam between neighbouring tiles', () => {
     expect(dashOk).toBe(true);
   });
 
+  /**
+   * Dash notch (stills 2026-11-26, zoom 1): the later tile's art reaches past
+   * the seam further than its lane outline (the coverage fade, then the lit
+   * mesh's linear filter one more texel), so a line that stops at the lane
+   * end leaves a strip where that art half-covers the earlier tile's dash: a
+   * dark notch across it. Every line must run on as far as its art shows.
+   */
+  it('the later tile\'s dash and edge lines run on past every texel of its art beyond the seam', () => {
+    for (const mask of [0b010010, 0b001001, 0b100100]) {
+      const f = forgeStructure('road', { ppu: DECK_LIT_PPU, arms: mask, box: DECK_HEX_BOX, style: 'c', seed: 1 });
+      const { w, h, ppu, ox, oy } = f.g;
+      const cov = (tx: number, ty: number): number => (tx < 0 || ty < 0 || tx >= w || ty >= h ? 0 : f.cov[ty * w + tx]!);
+      /** The linear filter's sample of the coverage at world (x, y). */
+      const sample = (x: number, y: number): number => {
+        const fx = x * ppu + ox - 0.5, fy = y * ppu + oy - 0.5;
+        const x0 = Math.floor(fx), y0 = Math.floor(fy), ax = fx - x0, ay = fy - y0;
+        return cov(x0, y0) * (1 - ax) * (1 - ay) + cov(x0 + 1, y0) * ax * (1 - ay) + cov(x0, y0 + 1) * (1 - ax) * ay + cov(x0 + 1, y0 + 1) * ax * ay;
+      };
+      const plan = roadOverlayPlan(mask, true);
+      for (const j of plan.slots) {
+        const a = armAngle(j), ux = Math.cos(a), uy = Math.sin(a);
+        /** How far past the seam the art shows along the arm, at lateral offset s. */
+        const reach = (s: number): number => {
+          let last = 0;
+          for (let t = R; t <= R + 40; t += 0.25) if (sample(ux * t - uy * s, uy * t + ux * s) > 1e-3) last = t;
+          return last - R;
+        };
+        // The dash on this arm's axis: its far end.
+        let dashEnd = 0;
+        for (let i = 0; i < plan.dashes.length; i += 4) {
+          const t = plan.dashes[i + 2]! * ux + plan.dashes[i + 3]! * uy;
+          if (Math.abs(plan.dashes[i + 2]! * -uy + plan.dashes[i + 3]! * ux) < 1e-6) dashEnd = Math.max(dashEnd, t);
+        }
+        expect(dashEnd - R, `mask ${mask} arm ${j} dash`).toBeGreaterThanOrEqual(reach(0));
+        // Edge lines: their points furthest out along this arm.
+        let edgeEnd = 0;
+        for (const l of plan.edges) for (let i = 0; i < l.length; i += 2) edgeEnd = Math.max(edgeEnd, l[i]! * ux + l[i + 1]! * uy);
+        expect(edgeEnd - R, `mask ${mask} arm ${j} edge`).toBeGreaterThanOrEqual(reach(ROAD_HALF_W - 18));
+      }
+    }
+  });
+
   it('flag off: the lines stop at the seam exactly (today)', () => {
     const p = roadOverlayPlan(ROAD_STRAIGHT_MASK);
     for (const l of p.edges) for (let i = 1; i < l.length; i += 2) expect(Math.abs(l[i]!)).toBeLessThanOrEqual(R + 1e-6);

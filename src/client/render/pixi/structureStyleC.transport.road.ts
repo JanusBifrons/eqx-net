@@ -54,6 +54,12 @@ export const ROAD_HALF_W = 175;
 /** The lit carriageway outline runs this far past the seam (over a texel at
  *  the lit bake's density), so its edge fade lies under the neighbour's art. */
 export const ROAD_LANE_OVERRUN = 4;
+/** The edge lines and the seam dash run this far past the seam on a lit
+ *  tile: past every texel its art shows there (the lane end, its coverage
+ *  fade and the lit mesh's linear filter, ~1.5 texels at DECK_LIT_PPU), so
+ *  the later tile's art never half-covers the earlier tile's lines (the
+ *  dash notch). */
+export const ROAD_LINE_OVERRUN = ROAD_LANE_OVERRUN + 6;
 const EDGE_OFF = ROAD_HALF_W - 18;
 const EDGE_W = 10;
 const LAMP_OFF = ROAD_HALF_W + 34;
@@ -143,7 +149,7 @@ function sideLine(line: number[], ja: number, jb: number, gap: number, off: numb
   line.push(ub[0] * R + qb[0] * off, ub[1] * R + qb[1] * off);
 }
 
-/** `lit`: the road's lit art carries the surface and runs ROAD_LANE_OVERRUN
+/** `lit`: the road's lit art carries the surface and runs ROAD_LANE_OVERRUN (lines ROAD_LINE_OVERRUN)
  *  past each seam, over the neighbour's overlay when drawn after it; the
  *  edge lines and the seam dash then run on just as far, on the neighbour's
  *  own lines, so the later tile redraws what its art covered. */
@@ -157,7 +163,7 @@ export function roadOverlayPlan(mask: number, lit = false): RoadOverlayPlan {
   const lane: number[] = [];
   const n = slots.length;
   const R = ROAD_ARM_LEN;
-  const lineEnd = lit ? R + ROAD_LANE_OVERRUN : R;
+  const lineEnd = lit ? R + ROAD_LINE_OVERRUN : R;
   for (let k = 0; k < n; k++) {
     const ja = slots[k]!, jb = slots[(k + 1) % n]!;
     const gap = n === 1 ? 6 : ((jb - ja + 6) % 6 || 6);
