@@ -17,7 +17,7 @@ import { shipScrapGroups } from '../../../core/geometry/shipScrapGroups.js';
 import { shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
 import { planBowFeatures, type BowFeature } from './bowDetail.js';
 import { sizeClassOf } from '../../../shared-types/shipScale/tuning.js';
-import { hash01, lin, MAT, newFields, paintOf, PALETTE, setAlbedo, valueNoise, type Fields, type Livery, type StructLivery } from './fieldsCore.js';
+import { bleedFringe, hash01, lin, MAT, newFields, paintOf, PALETTE, setAlbedo, valueNoise, type Fields, type Livery, type StructLivery } from './fieldsCore.js';
 import { stampSigils, stampSigilSlot } from './sigil.js';
 import { bakedHullPaint, liveryHullGrey, liveryLayout, liveryPaint, paintEnamel, paintLivery, weatherLivery } from './liveryForge.js';
 
@@ -742,6 +742,7 @@ export function forgeStructure(kindId: string, opts: StructureForgeOpts): Fields
       f.albedo[i * 3]! *= k; f.albedo[i * 3 + 1]! *= k; f.albedo[i * 3 + 2]! *= k;
     }
   }
+  if (opts.box) bleedFringe(f, 2); // lit deck tile: no black fringe at the seam
   // Lamps.
   for (const l of plan.lights) {
     const e = lin(l.color);

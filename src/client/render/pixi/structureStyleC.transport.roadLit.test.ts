@@ -13,7 +13,7 @@ import { Container, GraphicsContext, Sprite } from 'pixi.js';
 import { readDeckLitFlag, readRestyleLook, resolveRestyleLook, applyRestyleLook } from './rendererSetup/restyleLook.js';
 import { rendererArgsFromBoot } from '../worker/bootRenderer.js';
 import {
-  armAngle, circle, drawRoadOverlay, roadOverlayPlan, ROAD_ARM_LEN, ROAD_DASH_PERIOD, ROAD_HALF_W,
+  armAngle, circle, drawRoadOverlay, roadOverlayPlan, ROAD_ARM_LEN, ROAD_DASH_PERIOD, ROAD_HALF_W, ROAD_LANE_OVERRUN,
 } from './structureStyleC.transport.road.js';
 import { ROAD_JOINT_W, roadJointTs } from './structureStyleC.transport.roadLit.js';
 import { bakeKey, DECK_HEX_BOX, DECK_LIT_PPU, type BakeJob } from '../art/bake.js';
@@ -155,6 +155,66 @@ describe('flag on: the carriageway surface is baked', () => {
     const gj = f.height[idx(0, last)]!, gp = f.height[idx(0, mid)]!;
     expect(gj).toBeLessThan(gp);
     expect(gp - gj).toBeLessThan(1);
+  });
+});
+
+/**
+ * Seam between two lit road tiles (stills 2026-11-26, lit1b: edge lines and
+ * the seam dash cut by a dark line where tiles meet). Each tile's lit art
+ * runs ROAD_LANE_OVERRUN past the seam, over the neighbour's already-drawn
+ * overlay; so the later tile's own lines must run on over that strip, on the
+ * same lines as the earlier tile's, and the art's fringe must carry the lane
+ * colour, not black.
+ */
+describe('lit seam between neighbouring tiles', () => {
+  const R = ROAD_ARM_LEN;
+  /** Straight tiles along Pixi y: A at the origin, B one hex up (+y). */
+  const B_OFF = 2 * R;
+  /** Segments of an edge polyline (flat x, y) as [x0, y0, x1, y1]. */
+  const segs = (line: number[], dy: number): number[][] => {
+    const out: number[][] = [];
+    for (let i = 0; i + 3 < line.length; i += 2) out.push([line[i]!, line[i + 1]! + dy, line[i + 2]!, line[i + 3]! + dy]);
+    return out;
+  };
+  /** Does a segment cover x = `x` from y0 to y1 (vertical, same line)? */
+  const covers = (s: number[], x: number, y0: number, y1: number): boolean =>
+    Math.abs(s[0]! - x) < 1e-6 && Math.abs(s[2]! - x) < 1e-6 && Math.min(s[1]!, s[3]!) <= y0 + 1e-6 && Math.max(s[1]!, s[3]!) >= y1 - 1e-6;
+
+  it('the later tile\'s lines and dash run over the strip its art covers, on the earlier tile\'s lines', () => {
+    const a = roadOverlayPlan(ROAD_STRAIGHT_MASK, true), b = roadOverlayPlan(ROAD_STRAIGHT_MASK, true);
+    // A's edge lines end at the seam (x = ±off): B's art covers y in [R - OVR, R] of them.
+    const aEnds = a.edges.flatMap((l) => segs(l, 0)).filter((s) => Math.max(s[1]!, s[3]!) >= R - 1e-6);
+    expect(aEnds.length).toBe(2);
+    const bSegs = b.edges.flatMap((l) => segs(l, B_OFF));
+    for (const s of aEnds) expect(bSegs.some((t) => covers(t, s[0]!, R - ROAD_LANE_OVERRUN, R))).toBe(true);
+    // The seam dash: B's half dash runs down over the same strip of A's.
+    const d = b.dashes;
+    let dashOk = false;
+    for (let i = 0; i < d.length; i += 4) if (covers([d[i]!, d[i + 1]! + B_OFF, d[i + 2]!, d[i + 3]! + B_OFF], 0, R - ROAD_LANE_OVERRUN, R)) dashOk = true;
+    expect(dashOk).toBe(true);
+  });
+
+  it('flag off: the lines stop at the seam exactly (today)', () => {
+    const p = roadOverlayPlan(ROAD_STRAIGHT_MASK);
+    for (const l of p.edges) for (let i = 1; i < l.length; i += 2) expect(Math.abs(l[i]!)).toBeLessThanOrEqual(R + 1e-6);
+    for (let i = 1; i < p.dashes.length; i += 2) expect(Math.abs(p.dashes[i]!)).toBeLessThanOrEqual(R + 1e-6);
+  });
+
+  it('the lit bake\'s fringe past the lane end carries the lane colour, not black', () => {
+    const f = forgeStructure('road', { ppu: DECK_LIT_PPU, arms: ROAD_STRAIGHT_MASK, box: DECK_HEX_BOX, style: 'c', seed: 1 });
+    const row = (y: number): number => Math.floor(y * f.g.ppu + f.g.oy);
+    const col = Math.floor(f.g.ox);
+    const inside = row(R) * f.g.w + col;
+    const lum = (i: number): number => f.albedo[i * 3]! + f.albedo[i * 3 + 1]! + f.albedo[i * 3 + 2]!;
+    // Walk out past the lane end: every texel the linear filter can blend in
+    // (until two texels past the last covered one) is lane-coloured.
+    let r = row(R), seen = 0;
+    while (r < f.g.h - 1 && f.cov[r * f.g.w + col]! > 0) r++;
+    for (let k = row(R); k <= Math.min(f.g.h - 1, r + 1); k++) {
+      expect(lum(k * f.g.w + col)).toBeGreaterThan(lum(inside) * 0.7);
+      seen++;
+    }
+    expect(seen).toBeGreaterThanOrEqual(3);
   });
 });
 

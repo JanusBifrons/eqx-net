@@ -143,7 +143,11 @@ function sideLine(line: number[], ja: number, jb: number, gap: number, off: numb
   line.push(ub[0] * R + qb[0] * off, ub[1] * R + qb[1] * off);
 }
 
-export function roadOverlayPlan(mask: number): RoadOverlayPlan {
+/** `lit`: the road's lit art carries the surface and runs ROAD_LANE_OVERRUN
+ *  past each seam, over the neighbour's overlay when drawn after it; the
+ *  edge lines and the seam dash then run on just as far, on the neighbour's
+ *  own lines, so the later tile redraws what its art covered. */
+export function roadOverlayPlan(mask: number, lit = false): RoadOverlayPlan {
   const slots: number[] = [];
   for (let j = 0; j < 6; j++) if ((mask >> j) & 1) slots.push(j);
   const junction = slots.length >= 3;
@@ -153,6 +157,7 @@ export function roadOverlayPlan(mask: number): RoadOverlayPlan {
   const lane: number[] = [];
   const n = slots.length;
   const R = ROAD_ARM_LEN;
+  const lineEnd = lit ? R + ROAD_LANE_OVERRUN : R;
   for (let k = 0; k < n; k++) {
     const ja = slots[k]!, jb = slots[(k + 1) % n]!;
     const gap = n === 1 ? 6 : ((jb - ja + 6) % 6 || 6);
@@ -161,7 +166,7 @@ export function roadOverlayPlan(mask: number): RoadOverlayPlan {
     const pa = [-ua[1], ua[0]] as const; // arm a's side toward b
     const qb = [ub[1], -ub[0]] as const; // arm b's side toward a
     const line: number[] = [];
-    sideLine(line, ja, jb, gap, EDGE_OFF, 4);
+    sideLine(line, ja, jb, gap, EDGE_OFF, 4, lineEnd);
     edges.push(line);
     sideLine(lane, ja, jb, gap, ROAD_HALF_W, 8, R + ROAD_LANE_OVERRUN);
     // Lamps outside this edge: each arm side is in exactly one pair.
@@ -179,7 +184,7 @@ export function roadOverlayPlan(mask: number): RoadOverlayPlan {
     const a = armAngle(j), ux = Math.cos(a), uy = Math.sin(a);
     for (let k = 0; k <= steps; k++) {
       const c = k * ROAD_DASH_PERIOD;
-      const t0 = Math.max(0, c - DASH_LEN / 2), t1 = Math.min(R, c + DASH_LEN / 2);
+      const t0 = Math.max(0, c - DASH_LEN / 2), t1 = Math.min(lineEnd, c + DASH_LEN / 2);
       dashes.push(ux * t0, uy * t0, ux * t1, uy * t1);
     }
   }
@@ -195,7 +200,7 @@ export function roadOverlayPlan(mask: number): RoadOverlayPlan {
 
 /** Draw the overlay for local arm mask `mask` into `g` (cold: once per mask). */
 export function drawRoadOverlay(g: GraphicsContext, mask: number, fill = true): void {
-  const plan = roadOverlayPlan(mask);
+  const plan = roadOverlayPlan(mask, !fill);
   // Carriageway: one band per arm and a centre disc that fills the joint.
   if (fill) for (const b of plan.bands) fillPoly(g, b, LANE, 1);
   for (const line of plan.edges) {
