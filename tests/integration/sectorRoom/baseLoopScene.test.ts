@@ -13,7 +13,7 @@ import { bootSectorTestServer, type SectorTestHarness } from './harness.js';
 import type { SectorRoom } from '../../../src/server/rooms/SectorRoom.js';
 import { perfSceneById } from '../../../src/shared-types/perf/perfScenes.js';
 import { perfRoomOptions } from '../../../src/server/rooms/perfRooms.js';
-import { BASE_LOOP_AT, BASE_LOOP_OPTS } from '../../../src/server/rooms/scenarioLayouts.js';
+import { BASE_LOOP_AT, BASE_LOOP_OPTS } from '../../../src/server/rooms/baseLoopLayout.js';
 import { PROD_STATE } from '../../../src/shared-types/production.js';
 import { ALIEN_GATE_OWNER } from '../../../src/core/galaxy/alienGates.js';
 
