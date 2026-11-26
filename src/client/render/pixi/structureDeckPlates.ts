@@ -136,9 +136,10 @@ export class StructureDeckPlates {
   }
 
   /** Structure `id` of kind `kindId` stands at game pose (x, y, angle) this
-   *  frame (the swarm updater, every structure): floor paint and gate lights. */
-  note(id: number, kindId: string | undefined, x: number, y: number, angle: number): void {
-    this.zones?.note(id, kindId, x, y, angle);
+   *  frame (the swarm updater, every structure): floor paint and gate lights.
+   *  `building`: under construction (`isUnderConstruction`): no zone paint yet. */
+  note(id: number, kindId: string | undefined, x: number, y: number, angle: number, building = false): void {
+    this.zones?.note(id, kindId, x, y, angle, building);
     this.approach?.note(id, kindId, x, y, angle);
   }
 

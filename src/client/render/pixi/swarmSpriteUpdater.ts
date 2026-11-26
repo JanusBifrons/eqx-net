@@ -80,7 +80,7 @@ import { RIG_TICKS_PER_SEC, type StructureRigView } from './structureRigs.js';
 import { cullRadiusForStructure, underZForStructure } from './structureDeckZones.js';
 import { hasBodyStatus, updateSocketNubs } from './structureSocketNubs.js';
 import { syncRoadJoins } from './roadJoins.js';
-import { holoRingOut, syncStructureHologram } from './structureHologram.js';
+import { holoRingOut, isUnderConstruction, syncStructureHologram } from './structureHologram.js';
 export type { SpriteBuildSig, SwarmSpriteCtx };
 
 /** Module-scope scratch for a structure's per-mount arc-local angles passed
@@ -410,7 +410,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     } else if (entry.kind === 2) {
       // Build mirror (4C): flip in the local frame before the rig follows it.
       structMirrored = applyStructureMirror(sprite, mirror.structures?.get(entityId)?.mirror === true);
-      ctx.deckPlates?.note(entityId, entry.shipKind, lerped.x, lerped.y, lerped.angle); // floor paint + gate approach lights
+      ctx.deckPlates?.note(entityId, entry.shipKind, lerped.x, lerped.y, lerped.angle, isUnderConstruction(mirror.structures?.get(entityId))); // floor paint (none while building) + gate lights
       // Restyle 2c: pose the structure's rig (visible structures only); its
       // parts hang off this sprite and `shipContainer` (structureRigs.ts).
       let rigView: StructureRigView | null = null;
@@ -538,7 +538,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     }
     // Base loop 3O — a blueprint (not yet built) draws as a cyan hologram that
     // a print line fills in with its build fraction (structureHologram.ts);
-    // the fill-bar (ConnectorRenderer) shows the number, or `?buildRing=on` a progress hexagon (buildRing.ts).
+    // the fill-bar (ConnectorRenderer) shows the number, or (build ring on, the default) a progress hexagon (buildRing.ts).
     // Off screen (hidden by the A3 view test) none of this shows: skip the
     // hologram and readout child scans until it scrolls back into view.
     if (entry.kind === 2 && sprite.visible) {

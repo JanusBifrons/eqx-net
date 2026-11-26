@@ -32,7 +32,7 @@ export interface RestyleLook {
   zones: boolean;
   /** Runway approach lights outside deck fence gates (`?approach=on|off`, default on). */
   approach: boolean;
-  /** Readable construction: progress ring + wireframe hologram on unbuilt structures (`?buildRing=on`, default off). */
+  /** Readable construction: progress ring + wireframe hologram on unbuilt structures (`?buildRing=on|off`, default on). */
   buildRing: boolean;
 }
 
@@ -46,7 +46,7 @@ export function readRestyleLook(search: string): RestyleLook {
 
 /** What a renderer draws: `ArtOptions` first, else the URL (`search`, null in a worker), else the defaults. */
 export function resolveRestyleLook(art: ArtOptions, search: string | null): RestyleLook {
-  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, zones: true, approach: true, buildRing: false };
+  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, zones: true, approach: true, buildRing: true };
   return {
     lineLook: art.lineLook !== undefined ? art.lineLook : fromUrl.lineLook,
     rigs: art.rigs ?? fromUrl.rigs,

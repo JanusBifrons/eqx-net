@@ -249,7 +249,7 @@ export class ConnectorRenderer {
    *  (connectorCables.ts); behind the new-effects flag (`ArtOptions.fx`).
    *  Off = `lineLook` / the thin line, straight centre to centre. */
   socketCables = false;
-  /** `?buildRing=on`: a blueprint's progress shows as the hologram's hexagon (buildRing.ts), so no fill bar. */
+  /** `?buildRing`, default on: a blueprint's progress shows as the hologram's hexagon (buildRing.ts), so no fill bar. */
   buildRing = false;
   /** Each live link's flattened cable (re-flattened only on change). */
   readonly cables = new LinkCableCache();

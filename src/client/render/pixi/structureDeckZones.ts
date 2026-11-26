@@ -3,7 +3,8 @@
  * owner's mock-up), part of the deck floor layer ({@link StructureDeckPlates}
  * owns one of these; not a layer of its own). The industry hazard stripes
  * were dropped 2026-11-26 (owner: buildings need a bigger redesign first):
- *  - guns: a dashed red danger ring with a faint red fill;
+ *  - guns: a dashed red danger ring with a faint red fill (once built: none
+ *    while the gun is under construction);
  *  - Capital: a blue border round its deck hex (solid outer line, dashed inner).
  *
  * Flat paint just above the plates and under everything else ({@link DECK_ZONE_Z}).
@@ -189,10 +190,13 @@ export class StructureDeckZones {
     this.stamp++;
   }
 
-  /** Structure `id` of kind `kindId` stands at game pose (x, y, angle) this frame. */
-  note(id: number, kindId: string | undefined, x: number, y: number, angle: number): void {
+  /** Structure `id` of kind `kindId` stands at game pose (x, y, angle) this frame.
+   *  `building` (under construction, the hologram's `isUnderConstruction`): no
+   *  paint yet; a gun's danger zone appears the frame it is built. */
+  note(id: number, kindId: string | undefined, x: number, y: number, angle: number, building = false): void {
     if (!this.deck) return;
     let e = this.entries.get(id);
+    if (building) { if (e !== undefined) this.drop(id, e); return; }
     if (e !== undefined && e.kind !== kindId) { this.drop(id, e); e = undefined; } // recycled id
     if (e === undefined) {
       const ctx = deckZoneContext(kindId);

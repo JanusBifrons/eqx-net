@@ -54,7 +54,7 @@ const GHOST_PULSE_MS = 1200;
  *  (cyan baked in, faint panels: the solid art fills in behind it).
  *  `ghost` = the placement plan: white (tinted per frame), bright panels and
  *  thick edges so it reads on a phone at zoom ~0.5 over a busy sector.
- *  `wire` = the blueprint under `?buildRing=on` (readable construction): a
+ *  `wire` = the blueprint under `?buildRing`, default on (readable construction): a
  *  dimmer ghost, thinner glass, near-empty panels, bold outlines and no scan
  *  lines (at build zoom the scan lines merged into a solid fill and the plan
  *  read as finished), drawn at `WIRE_ALPHA`. */
@@ -226,10 +226,17 @@ export const holoRingOut = { labelY: 0 };
 /** On-screen gap (CSS px) between the hexagon and the ETA label above it. */
 const RING_LABEL_GAP_PX = 4;
 
+/** A structure is under construction (draws the hologram) while its state says
+ *  not built; no state yet counts as built. The one predicate the hologram and
+ *  the deck zone paint (structureDeckZones.ts: no gun zone while building) share. */
+export function isUnderConstruction(st: StructureRenderState | undefined): st is StructureRenderState {
+  return st !== undefined && !st.built;
+}
+
 /**
  * Per frame, per structure sprite: an unbuilt structure carries the hologram
  * (made once on first sight), a built one carries none (dropped once).
- * `ringZoom` > 0 (`?buildRing=on`; the camera scale this frame) draws the
+ * `ringZoom` > 0 (`?buildRing`, default on; the camera scale this frame) draws the
  * `wire` look plus a progress hexagon (buildRing.ts) at the hologram's smoothed
  * fraction; 0 = today's blueprint look, no hexagon.
  * Returns true while the sprite is a hologram.
@@ -240,7 +247,7 @@ export function syncStructureHologram(
 ): boolean {
   holoRingOut.labelY = 0;
   let holo = sprite.getChildByLabel(HOLOGRAM_LABEL) as StructureHologram | null;
-  if (st === undefined || st.built) {
+  if (!isUnderConstruction(st)) {
     if (holo) { sprite.removeChild(holo); holo.destroy({ children: true }); }
     return false;
   }

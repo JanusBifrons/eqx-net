@@ -1,5 +1,5 @@
 /**
- * Readable construction (`?buildRing=on`): the blueprint's small fill bar is
+ * Readable construction (`?buildRing`, default on): the blueprint's small fill bar is
  * dropped while the hologram's progress ring shows the fraction; flag off, the
  * bar draws as before.
  */

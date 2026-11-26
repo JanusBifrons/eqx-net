@@ -1,5 +1,5 @@
 /**
- * Readable construction (`?buildRing=on`): the progress HEXAGON round an
+ * Readable construction (`?buildRing`, default on): the progress HEXAGON round an
  * unbuilt structure: its perimeter fill (clockwise from the top vertex), its
  * size (clears a gun's danger ring, never under the on-screen minimum) and
  * its screen-upright pose.
@@ -36,11 +36,12 @@ function expectPt(p: [number, number] | undefined, x: number, y: number): void {
 }
 
 describe('build ring flag', () => {
-  it('is off unless ?buildRing=on', () => {
-    expect(readBuildRingFlag('')).toBe(false);
-    expect(readBuildRingFlag('?room=deck')).toBe(false);
+  it('is on unless ?buildRing=off', () => {
+    expect(readBuildRingFlag('')).toBe(true);
+    expect(readBuildRingFlag('?room=deck')).toBe(true);
     expect(readBuildRingFlag('?buildRing=off')).toBe(false);
-    expect(readBuildRingFlag('?buildRing=bogus')).toBe(false);
+    expect(readBuildRingFlag('?room=deck&buildRing=off')).toBe(false);
+    expect(readBuildRingFlag('?buildRing=bogus')).toBe(true);
     expect(readBuildRingFlag('?buildRing=on')).toBe(true);
     expect(readBuildRingFlag('?room=deck&buildRing=on')).toBe(true);
   });

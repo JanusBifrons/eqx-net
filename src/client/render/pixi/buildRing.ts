@@ -1,6 +1,6 @@
 /**
- * Readable construction (`?buildRing=on`, default off until the owner OKs the
- * stills): a progress HEXAGON round each unbuilt structure.
+ * Readable construction (default on, owner OK; `?buildRing=off` hides it): a
+ * progress HEXAGON round each unbuilt structure.
  *
  * At build-mode zoom (~0.25) a turret's whole construction stage was a few
  * pixels of fill bar. The hexagon is pointy-topped like the deck's hexes
@@ -25,9 +25,9 @@ import { Container, Graphics, GraphicsContext } from 'pixi.js';
 import type { ArcPathSink } from '../arcSubpath.js';
 import { gunDangerOuterRadius } from './structureDeckZones.js';
 
-/** `?buildRing=on` turns the hexagon (and the wireframe hologram) on; anything else = off. */
+/** `?buildRing=on|off` — default on (owner OK); `?buildRing=off` hides the hexagon (and the wireframe hologram). */
 export function readBuildRingFlag(search: string): boolean {
-  return /[?&]buildRing=on\b/.test(search);
+  return !/[?&]buildRing=off\b/.test(search);
 }
 
 /** Child label of the hexagon (inside the hologram). */
