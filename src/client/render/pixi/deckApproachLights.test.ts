@@ -1,7 +1,7 @@
 /**
  * Gate approach lights: lamp line from a gate pose (count, spacing, outside
  * side), the order the rabbit strobe walks, and the floor's build / sweep /
- * strobe lifecycle (default off behind `?approach=on`).
+ * strobe lifecycle (default on; `?approach=off` hides them).
  */
 import { describe, it, expect } from 'vitest';
 import { Container, type Graphics } from 'pixi.js';

@@ -117,7 +117,7 @@ export class StructureDeckPlates {
    *  swarm updater notes each structure into it; {@link sync} sweeps it. */
   readonly zones: StructureDeckZones | undefined;
 
-  /** Runway approach lights outside the fence gates (`?approach=on`, default off). */
+  /** Runway approach lights outside the fence gates (default on; `?approach=off` hides them). */
   readonly approach: DeckApproachLights | undefined;
   private readonly hex: AxialHex = { q: 0, r: 0 };
   private readonly plate: PlateIndex = { i: 0, j: 0 };
