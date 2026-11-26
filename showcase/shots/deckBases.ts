@@ -83,8 +83,9 @@ async function followRoute(ctx: ShotContext, f: Finger, anchor: Pt, route: Reado
     const p = await localPose(ctx);
     if (p) {
       const [tx, ty] = route[i]!;
-      if (Math.hypot(tx - p.x, ty - p.y) < 260) { i++; continue; }
-      const q = polar(anchor, 30, Math.atan2(ty - p.y, tx - p.x));
+      if (Math.hypot(tx - p.x, ty - p.y) < 260) { ctx.log(`road point ${i} reached at ${Math.round(p.x)},${Math.round(p.y)}`); i++; continue; }
+      // World y points up the screen; the stick works in screen space (y down).
+      const q = polar(anchor, 30, Math.atan2(p.y - ty, tx - p.x));
       await f.moveTo(q.x, q.y);
     }
     await ctx.sleep(80);
@@ -103,7 +104,7 @@ export const deckBasesRoadPhone: Shot = {
   reel: false,
   server: 'lean',
   viewport: 'phone-landscape',
-  target: { room: 'deck-bases', params: { shipKind: 'fighter', spawnX: -4300, spawnY: -300, initialHull: 1_000_000 } },
+  target: { room: 'deck-bases', params: { shipKind: 'fighter', spawnX: -3900, spawnY: 0, initialHull: 1_000_000 } },
   hud: 'full',
   durationMs: 30_000,
   async run(ctx) {
