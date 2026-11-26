@@ -36,7 +36,11 @@ export function warningText(kind: string, phase: number): string | undefined {
 
 /** The warning for the jumper the local ship sits on (undefined when none or idle). */
 export function localPadWarning(): { phase: number; text: string } | undefined {
-  const m = getGameClient()?.mirror;
+  const c = getGameClient();
+  // The jump already fired: the picture holds the old room (ship still on the
+  // sealed gate) until landing, so a warning would say "charging" after it.
+  if (c?.holdingPicture() === true) return undefined;
+  const m = c?.mirror;
   const id = m?.localPlayerId;
   const me = id ? m?.ships.get(id) : undefined;
   if (!m || !me || !m.structures || !m.swarm) return undefined;
