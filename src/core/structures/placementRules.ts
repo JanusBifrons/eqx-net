@@ -30,6 +30,8 @@ import { DECK_HEX_SIZE, PLATE_DIRS, plateCentreWorldInto, plateOfHexInto, type P
 import { plateCentreAtWorldInto } from '../hex/plateSet.js';
 import type { GridObstacle } from './Grid.js';
 import { plateOverlapsObstacle } from './plateClearance.js';
+import { DECK_FENCE_GATE_KIND } from './deckLinks.js';
+import { isRoadBesideDeckGate } from './deckGateRoad.js';
 
 /** A circular footprint to test against (a placed structure or the ghost). */
 export interface PlacementFootprint {
@@ -48,7 +50,7 @@ export interface PlacementFootprint {
 }
 
 /** Why a placement is illegal. `null` (from {@link placementRejection}) = legal. */
-export type PlacementRejection = 'overlap-structure' | 'overlap-obstacle' | 'overlap-pad' | 'off-deck' | 'plate-blocked';
+export type PlacementRejection = 'overlap-structure' | 'overlap-obstacle' | 'overlap-pad' | 'off-deck' | 'plate-blocked' | 'no-road';
 
 /** The one plate query the deck rule needs (`PlateSet` on the server and the
  *  client mirror; `OwnerPlateList` in the renderer). */
@@ -73,6 +75,7 @@ export const PLACEMENT_REJECTION_TEXT: Readonly<Record<PlacementRejection, strin
   'overlap-pad': "Keep the landing pad clear",
   'off-deck': 'Off your deck',
   'plate-blocked': 'Plate area not clear',
+  'no-road': 'A gate goes where a road meets the fence',
 });
 
 /** The notice a player gets when the server refuses a placement, e.g.
@@ -288,7 +291,8 @@ export function onOwnDeck(kindId: string, x: number, y: number, deck: PlacementD
  * on the owner's deck ({@link onOwnDeck}), else `off-deck`. A connector
  * that lays a NEW plate needs the whole plate clear (owner ruling, no rock
  * clearing): no obstacle touching any of its 7 hexes and no structure
- * centred on it, else `plate-blocked`.
+ * centred on it, else `plate-blocked`. On a deck a shield gate needs a road
+ * tile on one side of its seam (`deckGateRoad.ts`), else `no-road`.
  */
 export function placementRejection(
   kindId: string,
@@ -313,6 +317,7 @@ export function placementRejection(
   }
   const standing = deck ? deckStanding(kindId, x, y, deck) : ON_DECK;
   let plateBlocked = false;
+  let roadMissing = deck != null && kindId === DECK_FENCE_GATE_KIND;
   for (const s of structures) {
     const shw = s.halfW ?? s.radius, shh = s.halfH ?? s.radius;
     const theirTurned = s.rot !== undefined && !isStructureQuarterTurn(s.rot);
@@ -341,6 +346,7 @@ export function placementRejection(
       } else if (boxesOverlap(mine.x, mine.y, mine.hw, mine.hh, s.x, s.y, shw, shh)) return 'overlap-pad';
     }
     if (standing === NEW_PLATE && !plateBlocked && onLaidPlate(s.x, s.y)) plateBlocked = true;
+    if (roadMissing && isRoadBesideDeckGate(s.kind, s.x, s.y, x, y, rotDeg)) roadMissing = false;
   }
   if (obstacles) {
     for (let i = 0; i < obstacles.length; i++) {
@@ -351,6 +357,7 @@ export function placementRejection(
   }
   if (standing === OFF_DECK) return 'off-deck';
   if (plateBlocked) return 'plate-blocked';
+  if (roadMissing) return 'no-road';
   return null;
 }
 

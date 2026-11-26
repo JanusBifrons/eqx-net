@@ -214,8 +214,26 @@ export function emitterAnchor(
   return out;
 }
 
+/** A gate turn's cos/sin (`out`, returned): exact 0/±1 at a quarter turn (a
+ *  gate's usual turn, `isStructureQuarterTurnOnly`), else the real turn (a
+ *  deck fence gate along a 30° seam, base platforms slice 21). Alloc-free. */
+export function gateTurnCosSinInto(angle: number, out: { cos: number; sin: number }): { cos: number; sin: number } {
+  const qf = angle / (Math.PI / 2), qr = Math.round(qf);
+  if (Math.abs(qf - qr) < 1e-6) {
+    const q = ((qr % 4) + 4) % 4;
+    out.cos = q === 0 ? 1 : q === 2 ? -1 : 0;
+    out.sin = q === 1 ? 1 : q === 3 ? -1 : 0;
+  } else {
+    out.cos = Math.cos(angle);
+    out.sin = Math.sin(angle);
+  }
+  return out;
+}
+
+const TURN = { cos: 1, sin: 0 };
+
 /**
- * World-axis collider boxes for a gate rotated by a quarter turn, as flat
+ * World-axis collider boxes for a gate at turn `angle`, as flat
  * `[offsetX, offsetY, halfW, halfH, ...]` relative to the structure centre.
  * Weapon hits test these instead of the full footprint box, so a shot through
  * an open gate's gap passes. null ⇒ not a gate. `mirror` flips each box
@@ -224,20 +242,18 @@ export function emitterAnchor(
 export function gateWorldAxisBoxes(kind: string | null | undefined, angle: number, mirror?: boolean): Float32Array | null {
   const boxes = gateColliderBoxes(kind);
   if (!boxes) return null;
-  // Gates turn only in quarters (`isStructureQuarterTurnOnly`; the 30° deck
-  // step is refused for them by `snapPlayerStructureRotation`), so the
-  // nearest quarter IS the turn.
-  const q = (((Math.round(angle / (Math.PI / 2)) % 4) + 4) % 4);
+  // A quarter turn is exact (byte-identical); a deck fence gate turned along
+  // a 30° seam (`gateTurnCosSinInto`) gets each part's world-axis bound.
+  gateTurnCosSinInto(angle, TURN);
   const out = new Float32Array(boxes.length * 4);
-  const c = q === 0 ? 1 : q === 2 ? -1 : 0;
-  const s = q === 1 ? 1 : q === 3 ? -1 : 0;
+  const c = TURN.cos, s = TURN.sin;
   const f = mirror === true ? -1 : 1;
   for (let i = 0; i < boxes.length; i++) {
     const b = boxes[i]!;
     out[i * 4] = f * b.cx * c - b.cy * s;
     out[i * 4 + 1] = f * b.cx * s + b.cy * c;
-    out[i * 4 + 2] = q % 2 === 0 ? b.hw : b.hh;
-    out[i * 4 + 3] = q % 2 === 0 ? b.hh : b.hw;
+    out[i * 4 + 2] = Math.abs(b.hw * c) + Math.abs(b.hh * s);
+    out[i * 4 + 3] = Math.abs(b.hw * s) + Math.abs(b.hh * c);
   }
   return out;
 }
