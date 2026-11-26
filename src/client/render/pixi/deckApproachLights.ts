@@ -54,8 +54,8 @@ export const LAMP_HOUSING = 0x1a1d22;
 export const LAMP_AMBER = 0xffc060;
 export const LAMP_BASE_ALPHA = 0.95;
 export const LAMP_FLASH = 0xffffff;
-/** Edge rows: lateral offset from the centre line (world units) and colours. */
-export const APPROACH_EDGE_OFFSET = 150;
+/** Edge rows: lateral offset from the centre line (world units; inside the gate opening, ~±370) and colours. */
+export const APPROACH_EDGE_OFFSET = 300;
 export const LAMP_PORT = 0xff3b30;
 export const LAMP_STARBOARD = 0x30ff6a;
 
