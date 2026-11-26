@@ -114,9 +114,21 @@ cross a road (it blocks it; `deckFenceRoad.test.ts`).
   a rock is refused by the server while later corners still go.
 - **Preview:** the sent corners ride the one pending record
   (`PendingPlacement.sent` / `run`, `pendingPlacementRun.ts`) into
-  `pendingPlacementPreview.run`, drawn by `drawPendingRun` inside
-  `drawPlacementPreview` until all of the run's posts land (or the pending
-  timeout).
+  `pendingPlacementPreview.run` until all of the run's posts land (or the
+  pending timeout).
+- **Hover preview:** once a run is open, the hovered corner (the parked or
+  tapped point on touch) runs the click's own planner (`planFenceRunInto`,
+  allocation-free, re-run only when the corner, anchor, structure count, sent
+  run or deck plates change; `fenceRunHover.ts`, called after
+  `writePreviewDeck` in both mirror passes). Its corners go in the separate
+  `preview.runHover` (+ `runHoverMark`: post there / new post / refused),
+  never in `run`, which the click reads as posts already sent. Both runs draw
+  with one look in the placement ghost pass (`PendingRunGhosts`,
+  `pendingRunGhosts.ts`): a capped pool of placement ghosts and
+  `drawFenceBeamBody` beams, solid for the sent run, faint for the hover. The
+  hover's red corner is the click's refused one, or the first a rock refuses
+  in the renderer's ghost check (the single ghost's `obstacles`); nothing past
+  it draws.
 - **Ends** on Cancel (right-click, ✕) or any change of `placementKind`.
 
 See it in `?room=deck`: pick Shield Pylon and click hex corners of the empty
