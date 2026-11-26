@@ -12,7 +12,8 @@
  * edge midpoints at 30° + 60°·j): a dark carriageway arm from the centre to
  * each edge in the mask, pale edge lines along both sides (meeting at bends),
  * an amber dashed centre line, small amber lamps outside the edge lines (soft
- * glow + bright dot), and at 3+ arms a hatched amber junction box. All flat:
+ * glow + bright dot). Where 3+ arms meet the junction is plain carriageway:
+ * no box, and the centre dashes stop short of it. All flat:
  * ships fly over it.
  */
 import type { GraphicsContext } from 'pixi.js';
@@ -44,8 +45,8 @@ const LAMP_STEP = 130;
 const DASH_LEN = 60;
 const DASH_GAP = 50;
 const DASH_W = 10;
-/** Junction box half size. */
-export const ROAD_JUNCTION_HALF = ROAD_HALF_W * 0.8;
+/** Where 3+ arms meet, centre dashes start this far out (clear of the junction). */
+export const ROAD_JUNCTION_CLEAR = ROAD_HALF_W + 30;
 
 const LANE = mixColor(DECK_FILL, 0x000000, 0.45);
 const EDGE_LINE = mixColor(LAMP_WHITE, DECK_FILL, 0.3);
@@ -135,7 +136,7 @@ export function roadOverlayPlan(mask: number): RoadOverlayPlan {
       }
     }
   }
-  const t0 = junction ? ROAD_JUNCTION_HALF * Math.SQRT2 + 30 : 25;
+  const t0 = junction ? ROAD_JUNCTION_CLEAR : 25;
   for (const j of slots) {
     const a = armAngle(j), ux = Math.cos(a), uy = Math.sin(a);
     for (let t = t0; t + DASH_LEN <= R - 20; t += DASH_LEN + DASH_GAP) dashes.push(ux * t, uy * t, ux * (t + DASH_LEN), uy * (t + DASH_LEN));
@@ -157,17 +158,6 @@ export function drawRoadOverlay(g: GraphicsContext, mask: number): void {
     g.moveTo(line[0]!, line[1]!);
     for (let i = 2; i < line.length; i += 2) g.lineTo(line[i]!, line[i + 1]!);
     strokeNow(g, EDGE_LINE, 0.85, EDGE_W);
-  }
-  if (plan.junction) {
-    const J = ROAD_JUNCTION_HALF;
-    for (let c = -2 * J + 30; c < 2 * J; c += 38) {
-      const x0 = Math.max(-J, -J + c), x1 = Math.min(J, J + c);
-      if (x1 - x0 < 4) continue;
-      g.moveTo(x0, x0 - c).lineTo(x1, x1 - c);
-    }
-    strokeNow(g, LAMP_AMBER, 0.7, 9);
-    g.rect(-J, -J, 2 * J, 2 * J);
-    strokeNow(g, LAMP_AMBER, 0.95, 8);
   }
   const d = plan.dashes;
   for (let i = 0; i < d.length; i += 4) g.moveTo(d[i]!, d[i + 1]!).lineTo(d[i + 2]!, d[i + 3]!);
