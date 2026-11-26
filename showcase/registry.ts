@@ -40,6 +40,7 @@ import { rtsCommand } from './shots/rtsCommand.js';
 import { warp } from './shots/warp.js';
 import { scale } from './shots/scale.js';
 import { mobile } from './shots/mobile.js';
+import { deckBasesPhone } from './shots/deckBases.js';
 import { loot } from './shots/loot.js';
 import { robots } from './shots/robots.js';
 import { nexus } from './shots/nexus.js';
@@ -112,6 +113,7 @@ export const SHOTS: readonly Shot[] = [
   cutFieldLaneBattleship,
   cutFieldLaneRun,
   cutFieldRam,
+  deckBasesPhone,
   machinedTurrets,
   robots,
   nexus,
