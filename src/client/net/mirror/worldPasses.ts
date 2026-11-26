@@ -1,5 +1,6 @@
 import { selectControlMode, useUIStore } from '../../state/store.js';
 import { resolvePlacementPreviewStatus, writePreviewDeck } from '../../structures/structurePlacementClient.js';
+import { writePreviewHoverRun } from '../../structures/fenceRunHover.js';
 import { placementChosen, setPlacementHeld } from '../../structures/placementChosen.js';
 import {
   setSwarmDisplayDelayMode, stepSwarmDisplayDelay, getSwarmSteadyDisplayDelayMs,
@@ -68,6 +69,8 @@ export function updateSpectatorPlacement(ctx: MirrorPassCtx, localId: string | n
     // The next ghost right after Place: dim, no verdict, Place refused (held).
     // Base platforms: the live ghost snaps to its deck slot on a deck room.
     writePreviewDeck(ctx.placementPreviewScratch, useUIStore.getState().deck, ctx.plates, ctx.mirror.localPlayerId ?? null);
+    // Fence run: the whole run a click at the hovered corner would place.
+    writePreviewHoverRun(ctx.placementPreviewScratch, ctx.mirror, status === 'active', placementChosen.worldX, placementChosen.worldY);
     setPlacementHeld(status === 'active' && ctx.placementPreviewScratch.held === true);
     if (status === 'active' || status === 'pending') {
       ctx.mirror.pendingPlacementPreview = ctx.placementPreviewScratch;
