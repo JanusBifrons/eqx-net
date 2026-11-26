@@ -26,6 +26,7 @@ import { builtRangeCircleVisualInto, connectorVisualInto, staticScaleKey, type C
 import { drawLineLookBody, type LineLook } from './connectorLineLooks.js';
 import { drawSocketCableBody, type LinkCable, type LinkCableCache } from './connectorCables.js';
 import { drawFenceBeamBody, fenceBeamUp } from './connectorFenceBeam.js';
+import { CABLE_UNDER_Z } from './structureDeckZones.js';
 
 /** Chunk cell size (world units). A phone at the far end of the stall band
  *  (viewHalf 2048) sees a few cells across; at viewHalf 512, about one. */
@@ -112,7 +113,11 @@ export interface StaticLayerHost {
 }
 
 interface Chunk {
+  /** Rings, walls and fence beams (zIndex 0, with the hulls' band). */
   readonly g: Graphics;
+  /** The link cables / idle edges ({@link CABLE_UNDER_Z}: under roads, rig
+   *  pads and bodies). Shows the same key as `g` (`cctxs` parallel to `ctxs`). */
+  readonly cg: Graphics;
   /** Zoom key of the context `g` shows (NaN = nothing current). */
   key: number;
   /** Structures in the chunk (0 ⇒ hidden). */
@@ -126,6 +131,7 @@ interface Chunk {
   /** Kept contexts and their keys, least recently shown first. */
   readonly keys: number[];
   readonly ctxs: GraphicsContext[];
+  readonly cctxs: GraphicsContext[];
 }
 
 function cellOf(px: number, py: number): number {
@@ -141,15 +147,23 @@ function grow(ch: Chunk, x: number, y: number, r: number): void {
 
 /** Move kept slot `i` to the most-recent end (in place, no allocation). */
 function touch(ch: Chunk, i: number): void {
-  const k = ch.keys[i]!, c = ch.ctxs[i]!;
-  for (let j = i; j < ch.keys.length - 1; j++) { ch.keys[j] = ch.keys[j + 1]!; ch.ctxs[j] = ch.ctxs[j + 1]!; }
+  const k = ch.keys[i]!, c = ch.ctxs[i]!, cc = ch.cctxs[i]!;
+  for (let j = i; j < ch.keys.length - 1; j++) { ch.keys[j] = ch.keys[j + 1]!; ch.ctxs[j] = ch.ctxs[j + 1]!; ch.cctxs[j] = ch.cctxs[j + 1]!; }
   ch.keys[ch.keys.length - 1] = k;
   ch.ctxs[ch.ctxs.length - 1] = c;
+  ch.cctxs[ch.cctxs.length - 1] = cc;
 }
 
 export class ConnectorStaticLayer {
-  /** Added to the scene behind the per-frame layer; one child per chunk. */
+  /** Added to the scene behind the per-frame layer; one child per chunk
+   *  (rings, walls, fence beams: zIndex 0). */
   readonly container = new Container();
+  /** The cables' half (one child per chunk), on its own band under the road
+   *  tiles, rig pads and bodies, above the deck plates and zone paint. */
+  readonly cableContainer = new Container();
+  /** The per-frame flow on the cables (pulse glow, comet trains), drawn by
+   *  `ConnectorRenderer` on the same band, over the static cables. */
+  readonly cableFlow = new Graphics();
   /** Test hooks: frames that redrew anything, chunks redrawn, and
    *  structures whose static lines were redrawn (the tessellation work). */
   rebuilds = 0;
@@ -186,7 +200,10 @@ export class ConnectorStaticLayer {
     },
   };
 
-  constructor(private readonly host: StaticLayerHost) {}
+  constructor(private readonly host: StaticLayerHost) {
+    this.cableContainer.zIndex = CABLE_UNDER_Z;
+    this.cableFlow.zIndex = CABLE_UNDER_Z;
+  }
 
   /** Something the signature cannot see changed: redraw everything. */
   invalidate(): void { this._sig = Number.NaN; }
@@ -195,7 +212,7 @@ export class ConnectorStaticLayer {
   clear(): void {
     if (this._sig !== this._sig) return; // NaN ⇒ already clear
     this._sig = Number.NaN;
-    for (const ch of this.chunks.values()) { ch.g.visible = false; ch.members = 0; ch.key = Number.NaN; }
+    for (const ch of this.chunks.values()) { ch.g.visible = false; ch.cg.visible = false; ch.members = 0; ch.key = Number.NaN; }
     this.ringCount = 0;
     this.ringRadius = 0;
     this.ringWidth = 0;
@@ -225,13 +242,15 @@ export class ConnectorStaticLayer {
     let need = 0;
     for (const ch of this.chunks.values()) {
       ch.build = false;
-      if (ch.members === 0) { ch.g.visible = false; continue; }
+      if (ch.members === 0) { ch.g.visible = false; ch.cg.visible = false; continue; }
       const vis = !view || (ch.x1 + VIEW_PAD >= view[0]! && ch.x0 - VIEW_PAD <= view[2]! && ch.y1 + VIEW_PAD >= view[1]! && ch.y0 - VIEW_PAD <= view[3]!);
       ch.g.visible = vis;
+      ch.cg.visible = vis;
       if (!vis || ch.key === key) continue;
       const i = ch.keys.indexOf(key);
       if (i >= 0) {
         ch.g.context = ch.ctxs[i]!;
+        ch.cg.context = ch.cctxs[i]!;
         ch.key = key;
         touch(ch, i);
         continue;
@@ -280,9 +299,12 @@ export class ConnectorStaticLayer {
         const g = new Graphics();
         g.visible = false;
         this.container.addChild(g);
+        const cg = new Graphics();
+        cg.visible = false;
+        this.cableContainer.addChild(cg);
         ch = {
-          g, key: Number.NaN, members: 0, x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity,
-          rings: 0, ringRadius: 0, ringHl: false, build: false, keys: [], ctxs: [],
+          g, cg, key: Number.NaN, members: 0, x0: Infinity, y0: Infinity, x1: -Infinity, y1: -Infinity,
+          rings: 0, ringRadius: 0, ringHl: false, build: false, keys: [], ctxs: [], cctxs: [],
         };
         this.chunks.set(cell, ch);
       }
@@ -323,18 +345,23 @@ export class ConnectorStaticLayer {
     for (const ch of this.chunks.values()) {
       if (!ch.build) continue;
       // A free slot gets a new context; else the least recently shown one is reused.
-      let ctx: GraphicsContext;
+      let ctx: GraphicsContext, cctx: GraphicsContext;
       if (ch.keys.length < STATIC_CHUNK_KEYS) {
         ctx = new GraphicsContext();
+        cctx = new GraphicsContext();
         ch.keys.push(key);
         ch.ctxs.push(ctx);
+        ch.cctxs.push(cctx);
       } else {
         touch(ch, 0);
         ctx = ch.ctxs[ch.ctxs.length - 1]!;
+        cctx = ch.cctxs[ch.cctxs.length - 1]!;
         ch.keys[ch.keys.length - 1] = key;
         ctx.clear();
+        cctx.clear();
       }
       ch.g.context = ctx;
+      ch.cg.context = cctx;
       ch.key = key;
       ch.rings = 0;
       ch.ringRadius = 0;
@@ -354,7 +381,7 @@ export class ConnectorStaticLayer {
       const ay = -a.y;
       const ch = this.chunks.get(cellOf(ax, ay));
       if (!ch || !ch.build) continue;
-      const g = ch.g;
+      const g = ch.g, cg = ch.cg;
       this.structuresDrawn++;
       // WS-D (#21) — always-on defensive RANGE circle for a BUILT weapon turret.
       if (host.turretOverlays && st.built && a.shipKind !== undefined && isStructureKindId(a.shipKind)) {
@@ -378,10 +405,11 @@ export class ConnectorStaticLayer {
         if (!b) continue;
         // Slice 30: a deck fence link is a shield beam, not a cable (`?fenceLook=new`).
         if (host.cables.isFenceBeam(a, b)) { drawFenceBeamBody(g, ax, ay, b.x, -b.y, scale, a.radius, b.radius, fenceBeamUp(st, structures.get(otherId))); continue; }
-        if (cables) { drawSocketCableBody(g, linkCableOf(host.cables, id, st, c, a, b, structures), scale, a.radius, b.radius); continue; }
-        if (look) { drawLineLookBody(g, look, ax, ay, b.x, -b.y, scale, a.radius, b.radius); continue; }
-        g.moveTo(ax, ay).lineTo(b.x, -b.y);
-        g.stroke({ color: idle.color, alpha: idle.alpha, width: idle.width });
+        // Cables / idle edges go on the cable band (under roads, pads, bodies).
+        if (cables) { drawSocketCableBody(cg, linkCableOf(host.cables, id, st, c, a, b, structures), scale, a.radius, b.radius); continue; }
+        if (look) { drawLineLookBody(cg, look, ax, ay, b.x, -b.y, scale, a.radius, b.radius); continue; }
+        cg.moveTo(ax, ay).lineTo(b.x, -b.y);
+        cg.stroke({ color: idle.color, alpha: idle.alpha, width: idle.width });
       }
     }
     if (host.staticWalls) visitDerivedWalls(structures, swarm, this._drawWalls);
@@ -390,9 +418,13 @@ export class ConnectorStaticLayer {
   destroy(): void {
     for (const ch of this.chunks.values()) {
       ch.g.destroy();
+      ch.cg.destroy();
       for (const c of ch.ctxs) c.destroy();
+      for (const c of ch.cctxs) c.destroy();
     }
     this.chunks.clear();
     this.container.destroy();
+    this.cableContainer.destroy();
+    this.cableFlow.destroy();
   }
 }

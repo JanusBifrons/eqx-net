@@ -15,6 +15,7 @@ import type { Graphics } from 'pixi.js';
 import { updateSwarmSprites, type SwarmSpriteCtx } from './swarmSpriteUpdater.js';
 import { MountVisualManager } from '../MountVisualManager.js';
 import { RIG_UNDER_Z } from './structureRigs.js';
+import { ROAD_UNDER_Z } from './structureDeckZones.js';
 import type { RenderMirror, SwarmRenderState, StructureRenderState, PoseRingEntry } from '../../../core/contracts/IRenderer.js';
 import { POSE_RING_DEPTH } from '../../../core/contracts/IRenderer.js';
 
@@ -77,6 +78,13 @@ describe('updateSwarmSprites — a teleporter chamber draws under the ships in i
   it.each(['teleporter', 'pocket_pad'])('%s: built after a hull, still drawn below it (pad-deck band)', (kind) => {
     const o = drawOrder(kind);
     expect(o.z).toBe(RIG_UNDER_Z);
+    expect(o.structure).toBeLessThan(o.hull);
+  });
+
+  it('a road deck tile sits on the road band: under the pad band and hulls, over the cables', () => {
+    const o = drawOrder('road');
+    expect(o.z).toBe(ROAD_UNDER_Z);
+    expect(o.z).toBeLessThan(RIG_UNDER_Z);
     expect(o.structure).toBeLessThan(o.hull);
   });
 

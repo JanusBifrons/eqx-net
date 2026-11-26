@@ -78,7 +78,7 @@ export function buildLabGridLines(scene: Scene, lineL: Container, nubL?: Contain
   r.socketCables = resolveFxMode(location.search, 'machined', true); // 0d socket cables: `?fx=new`
   r.lineLook = readLineLook(location.search); // 1g `?lineLook=`: odd edges carry flow so the look's pulse shows
   const gridFlashes = r.lineLook ? new Map(scene.edges.filter((_, i) => i % 2 === 1).map(([p, q]) => [(Math.min(p, q) + 1) * 65536 + Math.max(p, q) + 1, 1e12])) : undefined;
-  lineL.addChild(r.staticGfx, r.gfx);
+  lineL.addChild(r.cableStaticGfx, r.cableGfx, r.staticGfx, r.gfx); // cables first: under the rings and walls, as in game
   if (r.socketCables && nubL) scene.structs.forEach((st, i) => {
     const g = new Graphics(socketNubContext(st.id, socketUsedMask(structures.get(i + 1)!.connSockSelf)));
     g.position.set(st.x, st.y); g.rotation = st.rot;

@@ -92,6 +92,9 @@ export class ConnectorRenderer {
   readonly staticLayer: ConnectorStaticLayer = new ConnectorStaticLayer(this);
   /** The static layer's scene node (one Graphics child per chunk). */
   readonly staticGfx = this.staticLayer.container;
+  /** The cable band (under roads, rig pads, bodies): the static cables, then their per-frame flow (cleared each frame). */
+  readonly cableStaticGfx = this.staticLayer.cableContainer;
+  readonly cableGfx = this.staticLayer.cableFlow;
   /** Test hooks: frames that redrew any static chunk, and structures redrawn on it. */
   get staticRebuilds(): number { return this.staticLayer.rebuilds; }
   get staticStructuresDrawn(): number { return this.staticLayer.structuresDrawn; }
@@ -349,6 +352,7 @@ export class ConnectorRenderer {
   update(mirror: RenderMirror, scale: number, nowMs: number): void {
     const g = this.gfx;
     g.clear();
+    const cg = this.cableGfx.clear();
     this.cables.deck = mirror.deckPlates?.deck === true; // base platforms: deck links draw their seam path
     const structures = mirror.structures;
     const swarm = mirror.swarm;
@@ -427,28 +431,28 @@ export class ConnectorRenderer {
         if (this.socketCables) {
           const cab = linkCableOf(this.cables, id, st, ci, a, b, structures);
           // Off screen: only keep the flow train's clock running.
-          if (cableInView(cab, CULL_PAD, vb)) drawSocketCableFlow(g, cab, v, src === undefined || src === id, scale, nowMs, material, a.radius, b.radius);
+          if (cableInView(cab, CULL_PAD, vb)) drawSocketCableFlow(cg, cab, v, src === undefined || src === id, scale, nowMs, material, a.radius, b.radius);
           else noteCableFlow(cab, nowMs);
           continue;
         }
         if (!isSegmentInView(ax, ay, bx, by, CULL_PAD + Math.max(a.radius, b.radius), vb)) continue;
-        if (this.lineLook) { drawLineLookFlow(g, this.lineLook, v, this._comet, src === undefined || src === id, ax, ay, bx, by, scale, a.radius, b.radius); continue; }
+        if (this.lineLook) { drawLineLookFlow(cg, this.lineLook, v, this._comet, src === undefined || src === id, ax, ay, bx, by, scale, a.radius, b.radius); continue; }
         // Glow underlay first (so the core line sits on top).
         if (v.glowAlpha > 0) {
-          g.moveTo(ax, ay).lineTo(bx, by);
-          g.stroke({ color: v.color, alpha: v.glowAlpha, width: v.glowWidth });
+          cg.moveTo(ax, ay).lineTo(bx, by);
+          cg.stroke({ color: v.color, alpha: v.glowAlpha, width: v.glowWidth });
         }
-        g.moveTo(ax, ay).lineTo(bx, by);
-        g.stroke({ color: v.color, alpha: v.alpha, width: v.width });
+        cg.moveTo(ax, ay).lineTo(bx, by);
+        cg.stroke({ color: v.color, alpha: v.alpha, width: v.width });
         // R2.2 — the travelling-comet flow pulse (always runs source→dest).
         // sourceIsLo ⇒ the flow source is the lower-id endpoint (id = the (ax,ay)
         // end); default forward when the direction wasn't recorded.
         if (v.pulseActive && (v.pulseAlpha ?? 0) > 0) {
           const sourceIsLo = src === undefined || src === id;
           const c = cometSegment(this._comet, v.pulseT ?? 0, sourceIsLo, ax, ay, bx, by, scale);
-          g.moveTo(c.x0, c.y0);
-          g.lineTo(c.x1, c.y1);
-          g.stroke({ color: v.pulseColor ?? 0, alpha: v.pulseAlpha ?? 0, width: v.pulseWidth ?? 0 });
+          cg.moveTo(c.x0, c.y0);
+          cg.lineTo(c.x1, c.y1);
+          cg.stroke({ color: v.pulseColor ?? 0, alpha: v.pulseAlpha ?? 0, width: v.pulseWidth ?? 0 });
         }
       }
 

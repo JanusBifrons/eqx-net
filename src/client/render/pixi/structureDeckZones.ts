@@ -48,6 +48,20 @@ export function deckZoneOf(kindId: string | undefined): DeckZone | null {
 /** zIndex: just above the deck plates (`DECK_UNDER_Z` = RIG_UNDER_Z − 0.5), below rig pads. */
 export const DECK_ZONE_Z = -1.25;
 
+/*
+ * The deck's floor bands on `shipContainer` (bottom to top):
+ *   plates (DECK_UNDER_Z −1.5) < zone paint (DECK_ZONE_Z −1.25)
+ *   < cables (CABLE_UNDER_Z) < road tiles (ROAD_UNDER_Z, joins + lamps ride the sprite)
+ *   < rig pads (RIG_UNDER_Z −1) < bodies, pylons, fence beams (0).
+ * Numbers, not imports: `structureRigs.ts` sits on an import cycle with the road art.
+ */
+/** zIndex of the power cables / idle connector edges (static chunks and the
+ *  per-frame flow): over the plates and zone paint, ducted under road tiles,
+ *  rig pads and every body (so a pylon reads over the cables it takes). */
+export const CABLE_UNDER_Z = -1.125;
+/** zIndex of a road deck tile (flat deck kind): over the cables, under rig pads. */
+export const ROAD_UNDER_Z = -1.0625;
+
 /** Paint look (mock-up colours; world units). */
 export const ZONE_AMBER = 0xd9a92a;
 export const ZONE_STRIPE_DARK = 0x16181b;
