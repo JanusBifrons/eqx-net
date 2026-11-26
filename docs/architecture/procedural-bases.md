@@ -64,6 +64,37 @@ On by default on both renderer paths (BOOT carries the flag to the worker);
 `?approach=off` turns them off. See them in `?room=deck-bases`: each base
 has at least two gates.
 
+## Fence run (placing a deck fence by its corners)
+
+With the fence post (`shield_pylon`) picked in a deck room, each Place snaps
+to the nearest hex corner and puts a post there if it has none (an existing
+post is reused, so 3 clicks make 2 edges). From the second click on, the game
+fills a post on every corner along the shortest run of plated hex edges from
+the previous click's corner; inner edges count, not just the rim. A fence may
+cross a road (it blocks it; `deckFenceRoad.test.ts`).
+
+- **Path:** `core/hex/deckCornerGraph.ts` is only a `SearchGraph` adapter over
+  the plate corners (edges where `isDeckSeam` holds); the search is the nav
+  `GraphSearch`.
+- **Wire:** nothing new. The client (`client/structures/fenceRun.ts`, routed
+  from `commitPlacement`) sends one ordinary `place_structure` per missing
+  corner via `placeStructureAt`; the server's `autoConnectStructure` makes the
+  `DECK_LINK_SEAM_FENCE` beams.
+- **Refusals:** the first corner the ghost's own rule (`PlacementGhostVerdict`)
+  refuses is still sent, so the server's `lastRefusal` notice says why, and the
+  run stops there. No rollback. Rocks are not in the client check: a corner on
+  a rock is refused by the server while later corners still go.
+- **Preview:** the sent corners ride the one pending record
+  (`PendingPlacement.sent` / `run`, `pendingPlacementRun.ts`) into
+  `pendingPlacementPreview.run`, drawn by `drawPendingRun` inside
+  `drawPlacementPreview` until all of the run's posts land (or the pending
+  timeout).
+- **Ends** on Cancel (right-click, ✕) or any change of `placementKind`.
+
+See it in `?room=deck`: pick Shield Pylon and click hex corners of the empty
+west hex (centre (-1300, 0)), e.g. (-650, 375) then (-1950, 375): the post at
+(-1300, 751) between them is filled.
+
 ## History: Tier A static geometry (retired in phase E)
 
 The first pass generated **inert scenery**: warehouse walls, racks and
