@@ -103,6 +103,12 @@ const ITEM_UI: Readonly<Record<NetItemKind, { Icon: SvgIconComponent; testId: st
   drones: { Icon: ScatterPlotIcon, testId: 'net-drones', tip: DRONE_TIP },
 };
 
+/** The cluster's box, shared by the live cluster and its invisible reserve. */
+const BOX_STYLE = {
+  display: 'flex', flexDirection: 'column', gap: 4, padding: '3px 6px', borderRadius: 6, background: HUD.color.panel,
+  border: `1px solid ${HUD.color.panelEdge}`, lineHeight: 1.2, maxWidth: DETAILS_MAX_WIDTH_PX,
+} as const;
+
 /** Tabular digits in a fixed-width slot, so a value gaining a digit moves nothing. */
 const SLOT_STYLE = { display: 'inline-block', fontVariantNumeric: 'tabular-nums', textAlign: 'left', whiteSpace: 'nowrap' } as const;
 
@@ -173,7 +179,17 @@ export function NetHealthCluster({ size = 9 }: { size?: number }): JSX.Element |
     return () => window.clearInterval(h);
   }, []);
 
-  if (!monitorRef.current.anyShown) return null;
+  // Nothing to show: an invisible box of the same build (one chip) keeps the
+  // row's height, so the column under it never jumps when a warning clears.
+  if (!monitorRef.current.anyShown) {
+    return (
+      <div data-testid="hud-net-health-reserve" aria-hidden="true" style={{ ...BOX_STYLE, visibility: 'hidden', pointerEvents: 'none' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <SignalCellularAltIcon sx={{ fontSize: size + 3 }} />
+        </div>
+      </div>
+    );
+  }
   const items = netHealthItems(monitorRef.current.view);
 
   return (
@@ -183,11 +199,7 @@ export function NetHealthCluster({ size = 9 }: { size?: number }): JSX.Element |
       role="button"
       aria-expanded={tipOpen}
       onPointerDown={(e) => { e.stopPropagation(); setTipOpen((o) => !o); }}
-      style={{
-        pointerEvents: 'auto', cursor: 'pointer', touchAction: 'manipulation', display: 'flex', flexDirection: 'column',
-        gap: 4, padding: '3px 6px', borderRadius: 6, background: HUD.color.panel, border: `1px solid ${HUD.color.panelEdge}`,
-        lineHeight: 1.2, maxWidth: DETAILS_MAX_WIDTH_PX,
-      }}
+      style={{ ...BOX_STYLE, pointerEvents: 'auto', cursor: 'pointer', touchAction: 'manipulation' }}
     >
       <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
         {items.map((it) => <Chip key={it.kind} item={it} size={size} />)}
