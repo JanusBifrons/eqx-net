@@ -31,11 +31,13 @@ export const STRUCT_MAX_SIDE = 1024;
  *  deck hex box at this density, so its lit frame (three map slices side by
  *  side, litMaps.ts) fits one 2048 page. */
 export const DECK_LIT_PPU = 0.42;
-/** The full deck hex's box (flat-top: corner to corner × flat to flat). */
-export const DECK_HEX_BOX = { w: 2 * DECK_HEX_SIZE, h: DECK_HEX_FLAT } as const;
+/** The full deck hex's box (flat-top: corner to corner × flat to flat), plus
+ *  room for the carriageway's overrun past the seam (ROAD_LANE_OVERRUN): the
+ *  arm ends must sit inside the texture, not on its last texel row. */
+export const DECK_HEX_BOX = { w: 2 * DECK_HEX_SIZE + 12, h: DECK_HEX_FLAT + 12 } as const;
 /** The road arm bake's drawing version (part of its key only: a change
  *  re-bakes just the flag-on roads, never anyone's default art). */
-export const DECK_LIT_VERSION = 1;
+export const DECK_LIT_VERSION = 2; // 2: surface only (lines, dashes, lamps stay vector), seam fix
 
 /** Capital hulls (capital-ship R&D round 3 E): a 5.8 km hull baked sharp is
  *  too big for one texture, so its frames are cut into tiles of at most

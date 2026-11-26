@@ -40,6 +40,9 @@ export interface PolyOp {
   seamAngle?: number;
   /** Glow strength (glow only); default 1. */
   alpha?: number;
+  /** Absolute base height: the plate sits on this instead of what is under
+   *  it (a road surface levelling the paving's edges). Absent = stacks. */
+  level?: number;
 }
 
 /** Blend colour `c` toward `target` by `t` (0..1), per channel. */

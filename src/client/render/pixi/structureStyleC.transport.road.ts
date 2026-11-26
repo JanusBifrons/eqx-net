@@ -20,9 +20,11 @@
  * joint). All flat:
  * ships fly over it.
  *
- * Lit deck spike (`?deckLit=on`, `StyleCtx.arms` set): the same plan is baked
- * INTO the road's art instead (`roadLitPolys`, `structureStyleC.transport.roadLit.ts`)
- * on the full deck hex, and the overlay is skipped for that road.
+ * Lit deck spike (`?deckLit=on`, `StyleCtx.arms` set): the carriageway SURFACE
+ * of the same plan is baked into the road's art (`roadLitPolys`,
+ * `structureStyleC.transport.roadLit.ts`) on the full deck hex; the overlay
+ * then skips only its carriageway fill (`ROAD_LIT_SURFACE`) and still paints
+ * the edge lines, dashes and lamps crisp on top.
  */
 import type { GraphicsContext } from 'pixi.js';
 import type { StructureKindId } from '../../../shared-types/structureKinds.js';
@@ -49,6 +51,9 @@ export function road(c: StyleCtx): void {
 export const ROAD_ARM_LEN = DECK_HEX_INRADIUS;
 /** Carriageway half width (under a shield gate's 416 u span). */
 export const ROAD_HALF_W = 175;
+/** The lit carriageway outline runs this far past the seam (over a texel at
+ *  the lit bake's density), so its edge fade lies under the neighbour's art. */
+export const ROAD_LANE_OVERRUN = 4;
 const EDGE_OFF = ROAD_HALF_W - 18;
 const EDGE_W = 10;
 const LAMP_OFF = ROAD_HALF_W + 34;
@@ -117,8 +122,7 @@ export interface RoadOverlayPlan {
 /** The side line between arms `ja` → `jb` (`gap` slots apart), `off` from
  *  the axes: arm a's end, the inner corner (or the outer arc about the
  *  centre, `arcK` steps per slot past a straight), arm b's end. Pushed onto `line`. */
-function sideLine(line: number[], ja: number, jb: number, gap: number, off: number, arcK: number): void {
-  const R = ROAD_ARM_LEN;
+function sideLine(line: number[], ja: number, jb: number, gap: number, off: number, arcK: number, R = ROAD_ARM_LEN): void {
   const ta = armAngle(ja), tb = armAngle(jb);
   const ua = [Math.cos(ta), Math.sin(ta)] as const, ub = [Math.cos(tb), Math.sin(tb)] as const;
   const pa = [-ua[1], ua[0]] as const; // arm a's side toward b
@@ -159,7 +163,7 @@ export function roadOverlayPlan(mask: number): RoadOverlayPlan {
     const line: number[] = [];
     sideLine(line, ja, jb, gap, EDGE_OFF, 4);
     edges.push(line);
-    sideLine(lane, ja, jb, gap, ROAD_HALF_W, 8);
+    sideLine(lane, ja, jb, gap, ROAD_HALF_W, 8, R + ROAD_LANE_OVERRUN);
     // Lamps outside this edge: each arm side is in exactly one pair.
     for (const [j, u, p] of [[ja, ua, pa], [jb, ub, qb]] as const) {
       for (let t = 100; t <= R - 50; t += LAMP_STEP) {
@@ -190,10 +194,10 @@ export function roadOverlayPlan(mask: number): RoadOverlayPlan {
 }
 
 /** Draw the overlay for local arm mask `mask` into `g` (cold: once per mask). */
-export function drawRoadOverlay(g: GraphicsContext, mask: number): void {
+export function drawRoadOverlay(g: GraphicsContext, mask: number, fill = true): void {
   const plan = roadOverlayPlan(mask);
   // Carriageway: one band per arm and a centre disc that fills the joint.
-  for (const b of plan.bands) fillPoly(g, b, LANE, 1);
+  if (fill) for (const b of plan.bands) fillPoly(g, b, LANE, 1);
   for (const line of plan.edges) {
     g.moveTo(line[0]!, line[1]!);
     for (let i = 2; i < line.length; i += 2) g.lineTo(line[i]!, line[i + 1]!);
@@ -211,6 +215,10 @@ export function drawRoadOverlay(g: GraphicsContext, mask: number): void {
   for (let i = 0; i < l.length; i += 2) fillPoly(g, circle(l[i]!, l[i + 1]!, 3, 8), LAMP_WHITE, 1);
 }
 
+/** Overlay code bit (lit deck spike): the road's lit art carries the
+ *  carriageway surface, so the overlay draws only its lines, dashes and lamps. */
+export const ROAD_LIT_SURFACE = 128;
+
 /** Overlay code: 64 | the road's local arm mask (never 0, so it always draws). */
 export function roadCode(_kind: StructureKindId, _st: StructureRenderState | undefined, _tick = 0, id?: number): number {
   return 64 | roadArmsOf(id);
@@ -219,5 +227,5 @@ export function roadCode(_kind: StructureKindId, _st: StructureRenderState | und
 /** The road's carriageway overlay (`BodyStatusHook`). */
 export const roadStatus: BodyStatusHook = {
   code: roadCode,
-  draw: (g, code) => { if (code > 0) drawRoadOverlay(g, code & 63); },
+  draw: (g, code) => { if (code > 0) drawRoadOverlay(g, code & 63, (code & ROAD_LIT_SURFACE) === 0); },
 };

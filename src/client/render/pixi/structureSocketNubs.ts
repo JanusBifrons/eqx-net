@@ -45,6 +45,7 @@ import { STRUCTURE_FAMILY, type StructureFamilyId } from './structureFamilies.js
 import { BODY_STATUS_HOOKS } from './structureStyleC.js';
 import { DECK_ROAD_KIND } from '../../../core/structures/deckGateRoad.js';
 import { DECK_LIT_LABEL } from './structureMirrorFlip.js';
+import { ROAD_LIT_SURFACE } from './structureStyleC.transport.road.js';
 
 /** Sockets past this index have no bit in the used mask (the most any kind
  *  has today is 24). */
@@ -228,8 +229,9 @@ export function socketNubsOf(sprite: Container): Graphics | undefined {
 export function updateSocketNubs(sprite: Container, kind: string | undefined, st: StructureRenderState | undefined, tick = 0, id?: number): void {
   if (kind === undefined) return;
   const mask = socketUsedMask(st?.connSockSelf);
-  // Lit deck spike: a road showing its lit arm bake draws no vector carriageway.
-  const status = kind === DECK_ROAD_KIND && sprite.getChildByLabel(DECK_LIT_LABEL) !== null ? 0 : bodyStatusCode(kind, st, tick, id);
+  // Lit deck spike: a road showing its lit surface bake keeps only the overlay's lines, dashes and lamps.
+  let status = bodyStatusCode(kind, st, tick, id);
+  if (status !== 0 && kind === DECK_ROAD_KIND && sprite.getChildByLabel(DECK_LIT_LABEL) !== null) status |= ROAD_LIT_SURFACE;
   const s = STATES.get(sprite);
   if (s !== undefined && !s.g.destroyed && s.g.parent === sprite) {
     if (s.kind === kind && s.mask === mask && s.status === status) return;

@@ -603,7 +603,7 @@ function stampStylePoly(f: Fields, p: PolyOp): void {
       const cov = Math.min(1, Math.max(0, ed * g.ppu + 0.5));
       const i = ty * g.w + tx;
       const t = Math.min(1, Math.max(0, ed / bev));
-      let hh = f.height[i]! + p.lift * Math.sqrt(1 - (1 - t) * (1 - t));
+      let hh = (p.level ?? f.height[i]!) + p.lift * Math.sqrt(1 - (1 - t) * (1 - t));
       if (p.roof) hh += p.roof[0] * Math.min(1, Math.max(0, ed - bev) / p.roof[1]);
       let k = 1;
       if (p.seams && ed > bev + 1) {

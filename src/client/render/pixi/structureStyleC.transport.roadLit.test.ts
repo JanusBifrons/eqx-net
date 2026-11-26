@@ -1,9 +1,10 @@
 /**
- * Lit deck spike, slice 1 (`?deckLit=on`): the road's carriageway baked into
+ * Lit deck spike (`?deckLit=on`): the road's carriageway SURFACE baked into
  * its own `struct` art. Locks: the flag parse and its worker hop; flag OFF is
- * today's overlay and bake key exactly; flag ON skips the overlay and keys the
- * bake by the arm mask; the lit frame fits one 2048 page; a mirrored road's
- * lit art is counter-flipped (never a negative scale on a lit mesh).
+ * today's overlay and bake key exactly; flag ON drops only the overlay's fill
+ * (lines, dashes and lamps stay vector) and keys the bake by the arm mask; the
+ * lit frame fits one 2048 page; the surface is flat and opaque right up to the
+ * tile seam (no rim, no fade); a mirrored road's lit art is counter-flipped.
  */
 import { describe, it, expect } from 'vitest';
 import { deckHexCentreInto } from '../../../core/hex/plates.js';
@@ -12,8 +13,9 @@ import { Container, GraphicsContext, Sprite } from 'pixi.js';
 import { readDeckLitFlag, readRestyleLook, resolveRestyleLook, applyRestyleLook } from './rendererSetup/restyleLook.js';
 import { rendererArgsFromBoot } from '../worker/bootRenderer.js';
 import {
-  armAngle, circle, drawRoadOverlay, roadOverlayPlan, ROAD_ARM_LEN, ROAD_HALF_W,
+  armAngle, circle, drawRoadOverlay, roadOverlayPlan, ROAD_ARM_LEN, ROAD_DASH_PERIOD, ROAD_HALF_W,
 } from './structureStyleC.transport.road.js';
+import { ROAD_JOINT_W, roadJointTs } from './structureStyleC.transport.roadLit.js';
 import { bakeKey, DECK_HEX_BOX, DECK_LIT_PPU, type BakeJob } from '../art/bake.js';
 import { forgeStructure } from '../art/fields.js';
 import { LIT_GUTTER } from '../art/litMaps.js';
@@ -84,8 +86,8 @@ describe('flag off: today exactly', () => {
   });
 });
 
-describe('flag on: the carriageway is baked', () => {
-  it('a road whose sprite shows its lit art skips the overlay (nubs only)', () => {
+describe('flag on: the carriageway surface is baked', () => {
+  it('a road whose sprite shows its lit art keeps the overlay minus its fill', () => {
     const sprite = new Container();
     const art = new Sprite();
     art.label = DECK_LIT_LABEL;
@@ -94,9 +96,13 @@ describe('flag on: the carriageway is baked', () => {
     const ref = new Container();
     updateSocketNubs(ref, 'road', undefined, 0, 7);
     expect(socketNubsOf(sprite)!.context).not.toBe(socketNubsOf(ref)!.context);
-    const overlay = new GraphicsContext();
-    drawRoadOverlay(overlay, ROAD_STRAIGHT_MASK);
-    expect(socketNubsOf(sprite)!.context.instructions.length).toBe(socketNubsOf(ref)!.context.instructions.length - overlay.instructions.length);
+    const full = new GraphicsContext(), lines = new GraphicsContext();
+    drawRoadOverlay(full, ROAD_STRAIGHT_MASK);
+    drawRoadOverlay(lines, ROAD_STRAIGHT_MASK, false);
+    const fills = full.instructions.length - lines.instructions.length;
+    expect(fills).toBe(roadOverlayPlan(ROAD_STRAIGHT_MASK).bands.length);
+    expect(lines.instructions.length).toBeGreaterThan(0);
+    expect(socketNubsOf(sprite)!.context.instructions.length).toBe(socketNubsOf(ref)!.context.instructions.length - fills);
   });
 
   it('the arm mask joins the struct job and the bake key (lit and baked)', () => {
@@ -107,7 +113,7 @@ describe('flag on: the carriageway is baked', () => {
     expect(structHandleFor(actx, 'x', 'battery', 0, undefined, 8)!.job).not.toHaveProperty('arms');
     const a: BakeJob = { type: 'struct', id: 'road', seed: 1, style: 'c', arms: 0b010010 };
     const b: BakeJob = { ...a, arms: 0b001001 };
-    expect(bakeKey(a)).toMatch(/:A\d+\.18$/);
+    expect(bakeKey(a)).toMatch(/:A2\.18$/);
     expect(bakeKey(a)).not.toBe(bakeKey(b));
     expect(bakeKey({ ...a, lit: true })).not.toBe(bakeKey({ ...b, lit: true }));
   });
@@ -123,6 +129,32 @@ describe('flag on: the carriageway is baked', () => {
     expect(at(0, 640)).toBeGreaterThan(0.5);
     expect(at(0, -640)).toBeGreaterThan(0.5);
     expect(at(560, 0)).toBe(0);
+  });
+
+  it('the surface is flat and opaque up to the seam; joints line up with the neighbour\'s', () => {
+    const f = forgeStructure('road', { ppu: DECK_LIT_PPU, arms: ROAD_STRAIGHT_MASK, box: DECK_HEX_BOX, style: 'c', seed: 1 });
+    const idx = (x: number, y: number): number => Math.floor(y * f.g.ppu + f.g.oy) * f.g.w + Math.floor(x * f.g.ppu + f.g.ox);
+    const ts = roadJointTs();
+    const last = ts[ts.length - 1]!;
+    const mid = (last + ROAD_ARM_LEN) / 2; // the outer half panel, base tone
+    for (const sy of [1, -1]) {
+      const inner = idx(0, sy * mid);
+      // Every texel from the outer half panel to just past the seam: full cover, same height.
+      for (let y = mid; y <= ROAD_ARM_LEN + 2; y += 1 / f.g.ppu) {
+        const i = idx(0, sy * y);
+        expect(f.cov[i]).toBeGreaterThanOrEqual(0.99);
+        expect(Math.abs(f.height[i]! - f.height[inner]!)).toBeLessThan(1e-6);
+      }
+      // The texture holds the seam row with room to spare (no edge texel at the seam).
+      expect(Math.floor(sy * (ROAD_ARM_LEN + 2) * f.g.ppu + f.g.oy)).toBeLessThan(f.g.h - 1);
+    }
+    // Joints half a period off: the neighbour's (mirrored at the seam) continue the rhythm.
+    expect(ROAD_ARM_LEN - last).toBeCloseTo(ROAD_DASH_PERIOD / 2, 6);
+    expect(ROAD_ARM_LEN - last).toBeGreaterThan(ROAD_JOINT_W * 4);
+    // And a joint is a shallow groove, not a wall.
+    const gj = f.height[idx(0, last)]!, gp = f.height[idx(0, mid)]!;
+    expect(gj).toBeLessThan(gp);
+    expect(gp - gj).toBeLessThan(1);
   });
 });
 
