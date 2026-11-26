@@ -23,6 +23,7 @@ import { DECK_HEX_FLAT, DECK_HEX_SIZE, deckHexCentreInto } from '../../../core/h
 import { DECK_HEX_INRADIUS } from '../../../core/hex/deckCorners.js';
 import { DECK_ROAD_KIND } from '../../../core/structures/deckGateRoad.js';
 import { DECK_FENCE_GATE_KIND } from '../../../core/structures/deckLinks.js';
+import { rebuildRoadLamps, resetRoadLamps } from './roadLampLights.js';
 
 /** Local arm slots of the lone straight: Pixi-local 90° and 270° (j = 1, 4). */
 export const ROAD_STRAIGHT_MASK = (1 << 1) | (1 << 4);
@@ -172,11 +173,13 @@ function rebuild(structures: ReadonlyMap<number, StructureRenderState>, swarm: R
     else if (a.shipKind === DECK_FENCE_GATE_KIND) gates.push({ x: a.x, y: a.y });
   });
   deriveRoadArms(roads, gates, ARMS, LIT_ARMS);
+  rebuildRoadLamps(roads, LIT_ARMS); // lit deck: the lamps light the deck (roadLampLights.ts)
 }
 
 /** Test hook: forget the live table. */
 export function resetRoadJoins(): void {
   ARMS.clear();
   LIT_ARMS.clear();
+  resetRoadLamps();
   signature = 0;
 }
