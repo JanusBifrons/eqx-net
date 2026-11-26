@@ -30,7 +30,8 @@ import { DECK_HEX_SIZE, PLATE_DIRS, plateCentreWorldInto, plateOfHexInto, type P
 import { plateCentreAtWorldInto } from '../hex/plateSet.js';
 import type { GridObstacle } from './Grid.js';
 import { plateOverlapsObstacle } from './plateClearance.js';
-import { DECK_FENCE_GATE_KIND } from './deckLinks.js';
+import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from './deckLinks.js';
+import { isOnDeckCorner, isOnDeckEdgeMid } from '../hex/deckCorners.js';
 import { isRoadBesideDeckGate } from './deckGateRoad.js';
 
 /** A circular footprint to test against (a placed structure or the ghost). */
@@ -248,7 +249,7 @@ const ON_DECK = 0, NEW_PLATE = 1, OFF_DECK = 2;
  *  bordering theirs; that plate is left in DECK_PLATE) or OFF_DECK. */
 function deckStanding(kindId: string, x: number, y: number, deck: PlacementDeck): number {
   const { plates, owner } = deck;
-  if (plates.plateAtWorld(owner, x, y)) return ON_DECK;
+  if (plates.plateAtWorld(owner, x, y) || fenceTouchesDeck(kindId, x, y, deck)) return ON_DECK;
   if (!isConnectorKind(kindId) || !plateCentreAtWorldInto(x, y, DECK_PLATE)) return OFF_DECK;
   const i = DECK_PLATE.i, j = DECK_PLATE.j;
   for (let d = 0; d < PLATE_DIRS.length; d++) {
@@ -257,6 +258,30 @@ function deckStanding(kindId: string, x: number, y: number, deck: PlacementDeck)
     if (plates.plateAtWorld(owner, DECK_PT.x, DECK_PT.y)) return NEW_PLATE;
   }
   return OFF_DECK;
+}
+
+/** Unit steps, 30° apart, from a seam point into the hexes round it. */
+const SEAM_NUDGE_COS = Array.from({ length: 12 }, (_, k) => Math.cos((k * Math.PI) / 6));
+const SEAM_NUDGE_SIN = Array.from({ length: 12 }, (_, k) => Math.sin((k * Math.PI) / 6));
+/** How far a seam point steps into each hex round it: inside every hex that
+ *  touches the point (any other hex is at least half an edge away). */
+const SEAM_NUDGE = DECK_HEX_SIZE / 4;
+
+/**
+ * Base platforms slice 26: a fence post on a hex CORNER, or a fence gate on a
+ * hex EDGE midpoint, stands on the deck when ANY hex it touches is on one of
+ * the owner's plates. The point sits on a seam, so the hex rounding gives it
+ * may be the off-deck one: without this, about a third of the corners and
+ * half the edges round a deck's OUTER boundary were refused `'off-deck'` (a
+ * player could not fence their own deck's edge). Allocation-free.
+ */
+function fenceTouchesDeck(kindId: string, x: number, y: number, deck: PlacementDeck): boolean {
+  const onSeam = kindId === DECK_FENCE_POST_KIND ? isOnDeckCorner(x, y) : kindId === DECK_FENCE_GATE_KIND && isOnDeckEdgeMid(x, y);
+  if (!onSeam) return false;
+  for (let k = 0; k < SEAM_NUDGE_COS.length; k++) {
+    if (deck.plates.plateAtWorld(deck.owner, x + SEAM_NUDGE * SEAM_NUDGE_COS[k]!, y + SEAM_NUDGE * SEAM_NUDGE_SIN[k]!)) return true;
+  }
+  return false;
 }
 
 /** Is world point (x, y) on plate DECK_PLATE? */
