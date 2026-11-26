@@ -57,6 +57,8 @@ export interface ArtOptions {
   deckTex?: import('../pixi/structureDeckTexture.js').DeckTex;
   /** Base platforms deck fence link look (`?fenceLook=old|new`). Absent = the URL / default. */
   fenceLook?: import('../pixi/connectorFenceBeam.js').FenceLook;
+  /** Base platforms deck zone markings (`?zones=on|off`). Absent = the URL / on. */
+  zones?: boolean;
   /** Cut-field ore look (`?ore=off|tint|veins|seams`, F1c); absent = veins (owner's pick). */
   ore?: FieldOreLook;
   /** Graphics quality (edge smoothing, render scale, texture softening);

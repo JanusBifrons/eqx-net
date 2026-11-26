@@ -24,6 +24,7 @@ import { HEX_DIRS, type HexPoint } from '../../../core/hex/hex.js';
 import { DECK_HEX_SIZE, deckHexCentreInto, plateCentreWorldInto } from '../../../core/hex/plates.js';
 import { RIG_UNDER_Z } from './structureRigs.js';
 import { DEFAULT_DECK_TEX, deckPlatePick, drawDeckHexTexture, type DeckTex } from './structureDeckTexture.js';
+import { StructureDeckZones } from './structureDeckZones.js';
 
 /** zIndex of the deck floor: the bottom of the structure under band. */
 export const DECK_UNDER_Z = RIG_UNDER_Z - 0.5;
@@ -111,8 +112,14 @@ export class StructureDeckPlates {
     this.graphics.delete(key);
   };
 
-  /** `tex`: the floor look (`readDeckTex`, `?deckTex=`). */
-  constructor(private readonly shipContainer: Container, private readonly tex: DeckTex = DEFAULT_DECK_TEX) {}
+  /** Slice 33: zone markings painted on the floor (`?zones=off` ⇒ none). The
+   *  swarm updater notes each structure into it; {@link sync} sweeps it. */
+  readonly zones: StructureDeckZones | undefined;
+
+  /** `tex`: the floor look (`readDeckTex`, `?deckTex=`); `zones`: paint zone markings. */
+  constructor(private readonly shipContainer: Container, private readonly tex: DeckTex = DEFAULT_DECK_TEX, zones = true) {
+    this.zones = zones ? new StructureDeckZones(shipContainer) : undefined;
+  }
 
   /** Live plate Graphics (tests, stats): one per plate. */
   get size(): number { return this.graphics.size; }
@@ -122,6 +129,7 @@ export class StructureDeckPlates {
   sync(plates: DeckPlatesMirror | undefined): void {
     const v = plates?.version ?? 0;
     const count = plates?.count ?? 0;
+    this.zones?.frame(plates?.deck === true); // last frame's gone structures lose their paint
     if (v === this.version) return;
     this.version = v;
     this.seen.clear();
@@ -149,6 +157,7 @@ export class StructureDeckPlates {
   }
 
   destroy(): void {
+    this.zones?.destroy();
     this.seen.clear();
     this.graphics.forEach(this.sweepFn);
   }
