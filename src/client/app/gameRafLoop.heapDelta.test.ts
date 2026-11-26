@@ -88,6 +88,7 @@ function makeDeps(): GameRafLoopDeps {
     el,
     gameClient: {
       tickPhysics: () => {},
+      holdingPicture: () => false,
       tickInbound: () => {},
       updateMirror: () => {},
       consumePendingCameraGlide: () => null,
