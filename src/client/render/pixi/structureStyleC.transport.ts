@@ -13,11 +13,14 @@ import {
 } from './structureStyleKit.js';
 import { DOCK_CRANE_PIVOT_X, DOCK_CRANE_PIVOT_Y } from '../../../core/articulation/rigCatalogue.js';
 import type { RigDrawHookTable } from './structureRigLook.js';
+import type { BodyStatusHookTable } from './structureSocketNubs.js';
+import { doorLeafContext } from './structureStyleC.fences.gate.js';
+import { chamber, chamberStatus } from './structureStyleC.transport.chamber.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
  *  art for this family re-bakes and nothing else does. */
-export const version = '';
+export const version = 't5b';
 
 /** Medium dock (`freight_dock`, 1000 × 400): the loading pad is OUTSIDE the
  *  building (the rig's `lip` apron, past the open -y edge, pixi), so the
@@ -105,8 +108,25 @@ function dock(c: StyleCtx): void {
 /** This family's style C drawers (kinds not listed keep today's art). */
 export const kinds: StyleDrawerTable = {
   freight_dock: dock,
+  // Teleporter redesign T4: the chamber (structureStyleC.transport.chamber.ts).
+  teleporter: chamber,
+  pocket_pad: chamber,
+  // T5: the large teleporter (2120, eight towers) shares the drawer.
+  teleporter_large: chamber,
 };
 
 /** This family's rig drawing hooks, by rig id (`RigDrawHook`,
  *  structureRigLook.ts); rigs not listed draw from their part roles only. */
-export const rigs: RigDrawHookTable = {};
+export const rigs: RigDrawHookTable = {
+  // The chamber's blast doors wear the gatehouse leaf art.
+  'tp-doors': { partArt: doorLeafContext },
+  'tp-doors-large': { partArt: doorLeafContext },
+};
+
+/** This family's live body-state hooks (`BodyStatusHook`): the chamber's
+ *  floor lights, door strips and charge coils. */
+export const status: BodyStatusHookTable = {
+  teleporter: chamberStatus,
+  pocket_pad: chamberStatus,
+  teleporter_large: chamberStatus,
+};

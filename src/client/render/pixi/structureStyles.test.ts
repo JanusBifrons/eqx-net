@@ -4,7 +4,7 @@
 import { describe, it, expect } from 'vitest';
 import { buildStructureVisual } from './structureVisuals.js';
 import { parseStructureStyle, STRUCTURE_STYLE_IDS, STRUCTURE_STYLES, structureStyleDrawer } from './structureStyles.js';
-import { insidePoly, outlinePx, polyEdgeDist } from './structureStyleKit.js';
+import { artFramePx, insidePoly, outlinePx, polyEdgeDist } from './structureStyleKit.js';
 import { bakeKey, type BakeJob } from '../art/bake.js';
 import { DEFAULT_STRUCT_STYLE, readStructStyle } from '../art/artMode.js';
 import { forgeStructure, MAT, type Fields } from '../art/fields.js';
@@ -136,14 +136,14 @@ describe('style C (shipyard brutalist, 1f)', () => {
     expect(bakeKey({ ...job, style: 'c' })).not.toBe(bakeKey(job));
     expect(bakeKey({ ...job, style: 'c' })).not.toBe(bakeKey({ ...job, style: 'a' }));
   });
-  it('draws inside the outline, with livery bands, and differs from style A', () => {
+  it('draws inside the art frame (the outline; a chamber its square), with livery bands, and differs from style A', () => {
     for (const id of C_KINDS) {
       const v = buildStructureVisual(id, { accent: 0x66ccaa, style: 'c', livery: true });
       const a = buildStructureVisual(id, { accent: 0x66ccaa, style: 'a', livery: true });
       expect(v.polys!.length, id).toBeGreaterThan(3);
       expect(v.rects, id).toEqual([]);
       expect(v.polys, id).not.toEqual(a.polys);
-      const out = outlinePx(id, 'c');
+      const out = artFramePx(id, 'c');
       for (const p of v.polys!) for (const [x, y] of p.pts) expect(polyEdgeDist(out, x, y), `${id} ${x},${y}`).toBeGreaterThan(-0.5);
       for (const l of v.lights) expect(insidePoly(out, l.x, l.y), id).toBe(true);
       for (const s of v.sigils ?? []) expect(polyEdgeDist(out, s.x, s.y), id).toBeGreaterThan(s.r);
