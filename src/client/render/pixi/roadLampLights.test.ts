@@ -56,4 +56,15 @@ describe('road lamp lights (lit deck slice 3)', () => {
     expect(strongestLightsInto(sc, lamp.x, lamp.y, 0, 50, 50, 1, -1)).toBe(1);
     expect(pickedLight(0)).toBe(1);
   });
+
+  it('over the cap, the lamps nearest the view centre light', () => {
+    const roads = [];
+    const arms = new Map<number, number>();
+    for (let k = 0; k < 10; k++) { roads.push({ id: k, x: k * 1000, y: 0, rotDeg: 0, mirror: false }); arms.set(k, ROAD_STRAIGHT_MASK); }
+    rebuildRoadLamps(roads, arms);
+    const view = new Float64Array([4000, -3000, 14000, 3000]); // centre x 9000: the last road
+    const lit = collect(view, 4);
+    expect(lit.length).toBe(4);
+    for (const [x] of lit) expect(Math.abs(x - 9000)).toBeLessThan(600);
+  });
 });

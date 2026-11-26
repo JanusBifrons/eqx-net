@@ -21,8 +21,12 @@ import type { RoadPiece } from './roadJoins.js';
 
 /** How a road lamp lights (Pixi space; z and reach in world units). */
 export const ROAD_LAMP_LIGHT = { z: 30, color: 0xffb060, intensity: 1.8, reach: 280, rank: 0.25 } as const;
-/** At most this many lamps light a frame (nearest the table order, on screen). */
-export const ROAD_LAMP_CAP = 24;
+/** At most this many lamps light a frame: the on-screen ones nearest the view centre. */
+export const ROAD_LAMP_CAP = 32;
+
+/** Scratch for the nearest-first pick (lamp index, squared distance). */
+const _pick = new Int32Array(ROAD_LAMP_CAP);
+const _pickD = new Float64Array(ROAD_LAMP_CAP);
 
 let lampXY = new Float32Array(64);
 let lampCount = 0;
@@ -56,16 +60,28 @@ export function resetRoadLamps(): void { lampCount = 0; }
 /** The lamp table (Pixi x, y pairs; tests read it). */
 export function roadLamps(): { xy: Float32Array; count: number } { return { xy: lampXY, count: lampCount }; }
 
-/** Add the on-screen lamps (padded by their reach) to `scene`, at most
- *  `cap`. `bounds`: the camera rect (`Camera.visibleBoundsInto`). Alloc-free. */
+/** Add the on-screen lamps (padded by their reach) to `scene`: at most
+ *  `cap` (≤ ROAD_LAMP_CAP), the nearest the view centre first, so a wide
+ *  view lights the lamps round the player, not whichever came first in the
+ *  table. `bounds`: the camera rect (`Camera.visibleBoundsInto`). Alloc-free. */
 export function addRoadLampLights(scene: Pick<LitScene, 'addLight'>, bounds: Float64Array | undefined, cap = ROAD_LAMP_CAP): number {
   const L = ROAD_LAMP_LIGHT, r = L.reach;
-  let n = 0;
-  for (let i = 0; i < lampCount && n < cap; i++) {
+  const n = Math.min(cap, ROAD_LAMP_CAP);
+  const cx = bounds !== undefined ? (bounds[0]! + bounds[2]!) / 2 : 0, cy = bounds !== undefined ? (bounds[1]! + bounds[3]!) / 2 : 0;
+  let k = 0;
+  for (let i = 0; i < lampCount; i++) {
     const x = lampXY[i * 2]!, y = lampXY[i * 2 + 1]!;
     if (bounds !== undefined && (x + r < bounds[0]! || x - r > bounds[2]! || y + r < bounds[1]! || y - r > bounds[3]!)) continue;
-    scene.addLight(x, y, L.z, L.color, L.intensity, r, -1, L.rank);
-    n++;
+    const d = (x - cx) * (x - cx) + (y - cy) * (y - cy);
+    let j: number;
+    if (k < n) j = k++;
+    else { if (d >= _pickD[n - 1]!) continue; j = n - 1; }
+    while (j > 0 && _pickD[j - 1]! > d) { _pickD[j] = _pickD[j - 1]!; _pick[j] = _pick[j - 1]!; j--; }
+    _pickD[j] = d; _pick[j] = i;
   }
-  return n;
+  for (let j = 0; j < k; j++) {
+    const i = _pick[j]!;
+    scene.addLight(lampXY[i * 2]!, lampXY[i * 2 + 1]!, L.z, L.color, L.intensity, r, -1, L.rank);
+  }
+  return k;
 }
