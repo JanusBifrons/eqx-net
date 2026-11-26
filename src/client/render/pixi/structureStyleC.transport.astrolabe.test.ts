@@ -18,7 +18,7 @@ import { ALIEN_GATE_SEAL_RADIUS } from '../../../shared-types/alienGateSeal.js';
 import { rigForStructureKind } from '../../../core/articulation/rigCatalogue.js';
 import { alienGateSites } from '../../../core/galaxy/alienGates.js';
 import { GALAXY_SECTORS } from '../../../core/galaxy/galaxy.js';
-import { astrolabePoseAt, createAstrolabePose } from '../../../core/galaxy/alienGateAstrolabe.js';
+import { ASTROLABE_RINGS, astrolabePoseAt, createAstrolabePose } from '../../../core/galaxy/alienGateAstrolabe.js';
 import { ALIEN_GATE_INTERVAL_MS, alienGateOffsetMs, nextAlienGateJumpMs, TP_PHASE } from '../../../shared-types/teleport.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 
@@ -61,7 +61,7 @@ describe('astrolabe: ring rig art', () => {
     const view = new StructureRigView(rig);
     expect(view.hasSpin).toBe(true);
     expect(view.spinClockOf).toBe(astrolabeSpinClock);
-    for (let i = 0; i < rig.partCount; i++) {
+    for (let i = 0; i < ASTROLABE_RINGS.length; i++) {
       const art = astrolabePartContext(rig, i);
       expect(art).not.toBeNull();
       expect(view.parts[i]!.context).toBe(art);

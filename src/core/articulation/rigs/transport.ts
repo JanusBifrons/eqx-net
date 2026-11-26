@@ -10,7 +10,7 @@ import { FREIGHT_DOCK_BAY, craneRigDef } from '../craneRig.js';
 import type { RigKindMap } from './rigFamily.js';
 import { doorClip, leaf } from './fences.js';
 import { PAD_SPECS, padDoorwayHalf, padHalfExtent, type TeleporterKind } from '../../../shared-types/teleport.js';
-import { ASTROLABE_RINGS } from '../../galaxy/alienGateAstrolabe.js';
+import { ASTROLABE_FX_PARTS, ASTROLABE_RINGS } from '../../galaxy/alienGateAstrolabe.js';
 
 /** The freight dock's crane (bay geometry and arm: `craneRig.ts`). */
 export const DOCK_CRANE_DEF: RigDef = craneRigDef(FREIGHT_DOCK_BAY);
@@ -59,11 +59,20 @@ export const TP_DOORS_LARGE_DEF: RigDef = tpDoorsDef('tp-doors-large', 'teleport
 // server passes no clock, so for it the rings sit at rest.
 export const ALIEN_GATE_ASTROLABE_DEF: RigDef = {
   id: 'alien-astrolabe',
-  parts: ASTROLABE_RINGS.map((r) => ({
-    id: r.part, parent: null, anchorX: 0, anchorY: 0,
-    joint: { type: 'hinge' as const, min: -Math.PI, max: Math.PI },
-    rest: 0, layer: 'over' as const, kind: 'cosmetic' as const, spin: r.spin,
-  })),
+  parts: [
+    ...ASTROLABE_RINGS.map((r) => ({
+      id: r.part, parent: null, anchorX: 0, anchorY: 0,
+      joint: { type: 'hinge' as const, min: -Math.PI, max: Math.PI },
+      rest: 0, layer: 'over' as const, kind: 'cosmetic' as const, spin: r.spin,
+    })),
+    // Light only (lane beams, pool waves, crystal glow, jump flash): still
+    // parts, faded and scaled per frame by the client's partShow.
+    ...ASTROLABE_FX_PARTS.map((f) => ({
+      id: f.part, parent: null, anchorX: 0, anchorY: 0,
+      joint: { type: 'hinge' as const, min: 0, max: 0 },
+      rest: 0, layer: f.layer, kind: 'cosmetic' as const, light: true,
+    })),
+  ],
   clips: [],
 };
 

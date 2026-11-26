@@ -2,7 +2,7 @@
  *  lanes in line from the hold through the jump, free-running between. */
 import { describe, expect, it } from 'vitest';
 import {
-  ASTROLABE_CYCLE_MS, ASTROLABE_LANES, ASTROLABE_PRE_HOLD_MS, ASTROLABE_RELEASE_MS, ASTROLABE_RINGS, ASTROLABE_SETTLE_MS,
+  ASTROLABE_CYCLE_MS, ASTROLABE_FX_PARTS, ASTROLABE_LANES, ASTROLABE_PRE_HOLD_MS, ASTROLABE_RELEASE_MS, ASTROLABE_RINGS, ASTROLABE_SETTLE_MS,
   astrolabePoseAt, createAstrolabePose,
 } from './alienGateAstrolabe.js';
 import { ALIEN_GATE_INTERVAL_MS, alienGateOffsetMs, nextAlienGateJumpMs, TP_PHASE } from '../../shared-types/teleport.js';
@@ -48,7 +48,7 @@ describe('astrolabe rings', () => {
     expect(Math.max(...a0.map(offLane))).toBeGreaterThan(0.05);
   });
 
-  it('slows into line and speeds out of it with no jump in any angle', () => {
+  it('swings into line and speeds out of it with no jump in any angle', () => {
     const p = createAstrolabePose();
     const prev = new Float64Array(ASTROLABE_RINGS.length);
     astrolabePoseAt(p, FIRE, OFFSET);
@@ -64,12 +64,49 @@ describe('astrolabe rings', () => {
       prev.set(p.angles);
     }
     const fastest = Math.max(...ASTROLABE_RINGS.map((r) => Math.abs(r.spin))) * 0.6; // rad per 10 ms at full speed
-    expect(maxStep).toBeLessThanOrEqual(fastest + 1e-9);
-    // Settle eases: half-way through it the rings run at half speed.
+    expect(maxStep).toBeLessThanOrEqual(2.5 * fastest); // the swing peaks near 2x, never a jump
+    // The glow ramps through the swing: half-way through, half on.
     astrolabePoseAt(p, FIRE + ALIEN_GATE_INTERVAL_MS - ASTROLABE_PRE_HOLD_MS - ASTROLABE_SETTLE_MS / 2, OFFSET);
     expect(p.settle).toBeCloseTo(0.5, 6);
     astrolabePoseAt(p, FIRE + ASTROLABE_CYCLE_MS + ASTROLABE_RELEASE_MS / 4, OFFSET);
     expect(p.settle).toBeCloseTo(0.75, 6);
+  });
+
+  it('the rings visibly swing into line just before the gate fires (owner, take 19: "align prior to warp")', () => {
+    const p = createAstrolabePose();
+    const end = FIRE + ALIEN_GATE_INTERVAL_MS - ASTROLABE_PRE_HOLD_MS;
+    const travel = new Float64Array(ASTROLABE_RINGS.length);
+    const prev = new Float64Array(ASTROLABE_RINGS.length);
+    astrolabePoseAt(p, end - ASTROLABE_SETTLE_MS, OFFSET);
+    prev.set(p.angles);
+    let peak = 0;
+    for (let t = end - ASTROLABE_SETTLE_MS + 10; t <= end; t += 10) {
+      astrolabePoseAt(p, t, OFFSET);
+      for (let i = 0; i < prev.length; i++) {
+        let d = Math.abs(p.angles[i]! - prev[i]!);
+        if (d > Math.PI) d = 2 * Math.PI - d;
+        travel[i] = travel[i]! + d;
+        if (i === 0) peak = Math.max(peak, d / (Math.abs(ASTROLABE_RINGS[0]!.spin) * 0.6));
+      }
+      prev.set(p.angles);
+    }
+    // In ~3 s every ring turns a visible arc (outer >= 25 deg, inner >= 80 deg)...
+    expect(travel[0]! * 180 / Math.PI).toBeGreaterThanOrEqual(25);
+    expect(travel[ASTROLABE_RINGS.length - 1]! * 180 / Math.PI).toBeGreaterThanOrEqual(80);
+    // ...speeding up before it brakes into line (a swing, not a slow drift)...
+    expect(peak).toBeGreaterThan(1.5);
+    // ...and stops with every lane in line.
+    expect(p.aligned).toBe(true);
+    for (let i = 0; i < ASTROLABE_RINGS.length; i++) expect(offLane(p.angles[i]!)).toBeLessThan(1e-9);
+    expect(ASTROLABE_SETTLE_MS).toBeLessThanOrEqual(3500);
+  });
+
+  it('reports the time since the last timetabled fire (effects timing)', () => {
+    const p = createAstrolabePose();
+    astrolabePoseAt(p, FIRE + 1234, OFFSET);
+    expect(p.sinceFireMs).toBeCloseTo(1234, 6);
+    astrolabePoseAt(p, FIRE - 10, OFFSET);
+    expect(p.sinceFireMs).toBeCloseTo(ALIEN_GATE_INTERVAL_MS - 10, 6);
   });
 
   it('is deterministic for the same inputs (a late joiner sees the same angles)', () => {
@@ -125,15 +162,32 @@ describe('alien gate rig: looks only', () => {
   it('three cosmetic spinning rings OVER the ships (arches they fly under, owner 2026-11-26), no outline, no clips', () => {
     const rig = rigForStructureKind('alien_gate')!;
     expect(rig.id).toBe('alien-astrolabe');
-    expect(rig.partCount).toBe(3);
+    expect(rig.partCount).toBe(ASTROLABE_RINGS.length + ASTROLABE_FX_PARTS.length);
     expect(rig.clips.length).toBe(0);
-    for (let i = 0; i < rig.partCount; i++) {
+    for (let i = 0; i < ASTROLABE_RINGS.length; i++) {
       const part = rig.parts[i]!;
       expect(part.kind).toBe('cosmetic');
       expect(part.outline).toBeUndefined();
       expect(part.layer).toBe('over');
       expect(rig.spins[i]).not.toBe(0);
     }
+  });
+
+  it('the light-only parts (lanes, pool waves, crystal, flash) are still, cosmetic and outline-free', () => {
+    const rig = rigForStructureKind('alien_gate')!;
+    for (const f of ASTROLABE_FX_PARTS) {
+      const i = rig.partIds.indexOf(f.part);
+      expect(i, f.part).toBeGreaterThanOrEqual(ASTROLABE_RINGS.length);
+      const part = rig.parts[i]!;
+      expect(part.kind).toBe('cosmetic');
+      expect(part.outline).toBeUndefined();
+      expect(part.layer).toBe(f.layer);
+      expect(rig.spins[i]).toBe(0);
+      expect(part.light).toBe(true);
+    }
+    // The flash is over everything at the gate; the floor light under the ships.
+    expect(ASTROLABE_FX_PARTS.find((f) => f.part === 'fx-flash')?.layer).toBe('over');
+    expect(ASTROLABE_FX_PARTS.find((f) => f.part === 'fx-lanes')?.layer).toBe('under');
   });
 
   it('the server pose (no spin clock) is at rest', () => {
