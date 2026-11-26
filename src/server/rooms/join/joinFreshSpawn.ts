@@ -476,6 +476,13 @@ export function joinFreshSpawn(
   // spawned worker body (no-op when un-upgraded) so the very first applyInput
   // tick scales movement by the upgraded factors, identically to the client.
   d.applyStatMulToWorker(playerId, ship.statAlloc);
+  // SPAWN builds the body at angle 0 and the worker then overwrites the SAB
+  // angle written above, so a restored hull (a sector-trip or teleport
+  // arrival, a roster resume) gets its stored heading back here, as the
+  // snapshot restore does. Velocity stays 0: an arrival lands at rest.
+  if (resumedFromStore && resumedAngle !== 0) {
+    d.postToWorker({ type: 'SET_POSITION', entityId: playerId, x: spawnX, y: spawnY, angle: resumedAngle, vx: 0, vy: 0, angvel: 0 });
+  }
 
   // Test-only initialAngle: SPAWN creates the body at angle 0; force
   // the requested heading immediately via SET_POSITION so the spec

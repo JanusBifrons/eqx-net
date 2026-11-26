@@ -10,6 +10,7 @@
 import { describe, it, expect, beforeAll, afterEach } from 'vitest';
 import { randomUUID } from 'node:crypto';
 import { tuningFor } from '../../../src/shared-types/shipScale/lookup.js';
+import { getPlayerShipStore } from '../../../src/server/db/PersistenceWorker.js';
 
 type Harness = Awaited<ReturnType<typeof import('./harness.js')['bootSectorTestServer']>>;
 let boot: typeof import('./harness.js')['bootSectorTestServer'];
@@ -23,7 +24,7 @@ afterEach(async () => { await harness?.cleanup(); harness = null; });
 const ARRIVAL = 'trip-arrival';
 
 
-type Server = { initialSpawnPositions: Map<string, { x: number; y: number }>; lingeringPoseCache: Map<string, { x: number; y: number }>; shipPoseCache: Map<string, { x: number; y: number }> };
+type Server = { initialSpawnPositions: Map<string, { x: number; y: number }>; lingeringPoseCache: Map<string, { x: number; y: number }>; shipPoseCache: Map<string, { x: number; y: number; angle: number }> };
 
 describe('SectorRoom integration — arrivals land clear of other ships', () => {
   it('a second pilot joining at the same point lands clear of the first', { timeout: 30_000 }, async () => {
@@ -60,6 +61,21 @@ describe('SectorRoom integration — arrivals land clear of other ships', () => 
     await harness.connectActive(b, { spawnX: 0, spawnY: 30, shipKind: 'fighter', transitToken: ARRIVAL, teleport: true });
     const server = harness.getServerRoom() as unknown as Server;
     expect(server.initialSpawnPositions.get(b)).toEqual({ x: 0, y: 30 });
+  });
+
+  it('an arrival keeps the heading it left with (the body is not reset to angle 0)', { timeout: 30_000 }, async () => {
+    // Take 13 2026-11-26: a gate rider sealed in facing east and came out
+    // facing north. A roster restore wrote the stored angle to the SAB, but
+    // the worker's SPAWN builds the body at angle 0 and overwrote it.
+    harness = await boot({ sectorKey: 'vega-reach', droneCount: 0, testMode: true, asteroidConfig: [], galaxyBases: false, alienGates: false });
+    const pid = randomUUID();
+    const store = getPlayerShipStore();
+    const shipId = store.create({ playerId: pid, userId: null, kind: 'fighter', sectorKey: 'vega-reach', x: 500, y: 0, health: 400 }).shipId;
+    store.markStored(shipId, { x: 500, y: 0, vx: 0, vy: 0, angle: 1.2, angvel: 0, health: 400, sectorKey: 'vega-reach' });
+    await harness.connectActive(pid, { shipId, shipKind: 'fighter', transitToken: ARRIVAL, teleport: true });
+    const server = harness.getServerRoom() as unknown as Server;
+    await new Promise((r) => setTimeout(r, 500)); // let the worker step the body
+    expect(server.shipPoseCache.get(pid)?.angle).toBeCloseTo(1.2, 2);
   });
 
   it('an ordinary join keeps its exact placement (tests stage collisions)', { timeout: 30_000 }, async () => {
