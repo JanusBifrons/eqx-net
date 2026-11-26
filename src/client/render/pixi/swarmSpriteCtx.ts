@@ -106,4 +106,6 @@ export interface SwarmSpriteCtx {
   /** Structure restyle 0d slice 10 (new effects, `?fx=new`): socket nubs on
    *  each structure's outline (structureSocketNubs.ts). Absent / false ⇒ none. */
   socketNubs?: boolean;
+  /** Junction sign boards (`?signs=on`): feed the road-join junction cache even with the nubs off. */
+  signBoards?: boolean;
 }

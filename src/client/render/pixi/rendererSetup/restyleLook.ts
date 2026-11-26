@@ -16,6 +16,7 @@ import { StructureDeckPlates } from '../structureDeckPlates.js';
 import { DEFAULT_DECK_TEX, readDeckTex, type DeckTex } from '../structureDeckTexture.js';
 import { DEFAULT_FENCE_LOOK, readFenceLook, type FenceLook } from '../connectorFenceBeam.js';
 import { readZonesFlag } from '../structureDeckZones.js';
+import { readSignsFlag } from '../deckSignBoard.js';
 
 export interface RestyleLook {
   /** Grid line look; null = the pre-restyle thin line. */
@@ -28,22 +29,25 @@ export interface RestyleLook {
   fenceLook: FenceLook;
   /** Deck zone markings (`?zones=on|off`, base platforms slice 33). */
   zones: boolean;
+  /** Junction sign boards (`?signs=on`, default off). */
+  signs: boolean;
 }
 
 /** The restyle scene options from a URL query string. */
 export function readRestyleLook(search: string): RestyleLook {
-  return { lineLook: readLineLook(search), rigs: readRigsFlag(search), deckTex: readDeckTex(search), fenceLook: readFenceLook(search), zones: readZonesFlag(search) };
+  return { lineLook: readLineLook(search), rigs: readRigsFlag(search), deckTex: readDeckTex(search), fenceLook: readFenceLook(search), zones: readZonesFlag(search), signs: readSignsFlag(search) };
 }
 
 /** What a renderer draws: `ArtOptions` first, else the URL (`search`, null in a worker), else the defaults. */
 export function resolveRestyleLook(art: ArtOptions, search: string | null): RestyleLook {
-  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, zones: true };
+  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, zones: true, signs: false };
   return {
     lineLook: art.lineLook !== undefined ? art.lineLook : fromUrl.lineLook,
     rigs: art.rigs ?? fromUrl.rigs,
     deckTex: art.deckTex ?? fromUrl.deckTex,
     fenceLook: art.fenceLook ?? fromUrl.fenceLook,
     zones: art.zones ?? fromUrl.zones,
+    signs: art.signs ?? fromUrl.signs,
   };
 }
 
@@ -51,7 +55,7 @@ export function resolveRestyleLook(art: ArtOptions, search: string | null): Rest
  *  one `StructureRigs` the swarm updater poses (and the deck floor), on either renderer path. */
 export function applyRestyleLook(
   connectorRenderer: { lineLook: LineLook | null; socketCables?: boolean; cables?: { fenceBeams: boolean } },
-  swarmUpdaterCtx: { structureRigs?: StructureRigs; deckPlates?: StructureDeckPlates; socketNubs?: boolean },
+  swarmUpdaterCtx: { structureRigs?: StructureRigs; deckPlates?: StructureDeckPlates; socketNubs?: boolean; signBoards?: boolean },
   shipContainer: Container,
   art: ArtOptions,
   search: string | null,
@@ -64,6 +68,7 @@ export function applyRestyleLook(
   if (connectorRenderer.cables) connectorRenderer.cables.fenceBeams = look.fenceLook === 'new';
   // 0d slice 10: socket nubs on the structures, same flag.
   swarmUpdaterCtx.socketNubs = art.fx === true;
+  swarmUpdaterCtx.signBoards = look.signs; // junction signs read the road-join cache
   if (look.rigs) swarmUpdaterCtx.structureRigs = new StructureRigs(shipContainer);
   // Base platforms: the deck floor (drawn only while the room's deck flag is on).
   swarmUpdaterCtx.deckPlates = new StructureDeckPlates(shipContainer, look.deckTex, look.zones);

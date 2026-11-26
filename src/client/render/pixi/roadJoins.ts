@@ -16,6 +16,10 @@
  * The table is rebuilt only when a road or gate is added, moved, turned or
  * removed: per frame {@link syncRoadJoins} folds the deck's roads and gates
  * into one integer (no allocation, invariant #14) and compares it.
+ *
+ * Junction sign boards (`deckSignBoard.ts`, `?signs=on`) read the same
+ * rebuild: {@link JUNCTIONS} holds every junction's centre and world join
+ * mask, plus the road-hex set the sign's road walk (`roadReach.ts`) follows.
  */
 import type { StructureRenderState, SwarmRenderState } from '../../../core/contracts/IRenderer.js';
 import { pixelToAxialInto, type AxialHex } from '../../../core/hex/hex.js';
@@ -48,7 +52,16 @@ export function localArmSlot(i: number, rotDeg: number, mirror: boolean): number
   return ((Math.round((phi - 30) / 60) % 6) + 6) % 6;
 }
 
-const hexKey = (q: number, r: number): number => (q + 0x8000) * 0x10000 + (r + 0x8000);
+/** One integer per deck hex (Set / Map key). */
+export const hexKey = (q: number, r: number): number => (q + 0x8000) * 0x10000 + (r + 0x8000);
+
+/** The deck-hex keys of every road tile, into `out` (cleared). Cold path. */
+export function roadHexKeysInto(roads: readonly RoadPiece[], out: Set<number>): Set<number> {
+  const h: AxialHex = { q: 0, r: 0 };
+  out.clear();
+  for (const p of roads) { pixelToAxialInto(p.x, p.y, DECK_HEX_SIZE, h); out.add(hexKey(h.q, h.r)); }
+  return out;
+}
 
 /**
  * The WORLD join mask of each road (bit `i`: the edge at game angle 60°·i has
@@ -57,8 +70,7 @@ const hexKey = (q: number, r: number): number => (q + 0x8000) * 0x10000 + (r + 0
 export function roadWorldJoins(roads: readonly RoadPiece[], gates: readonly GatePoint[]): Map<number, number> {
   const h: AxialHex = { q: 0, r: 0 };
   const c = { x: 0, y: 0 };
-  const roadHexes = new Set<number>();
-  for (const p of roads) { pixelToAxialInto(p.x, p.y, DECK_HEX_SIZE, h); roadHexes.add(hexKey(h.q, h.r)); }
+  const roadHexes = roadHexKeysInto(roads, new Set<number>());
   // Gate seams, as (hex, edge) bits on both hexes of the seam.
   const gateEdges = new Map<number, number>();
   const tol = DECK_HEX_INRADIUS * 0.05;
@@ -117,7 +129,8 @@ let signature = 0;
 let sigAcc = 0;
 let sigSwarm: ReadonlyMap<number, SwarmRenderState> | undefined;
 
-function mix(h: number, n: number): number {
+/** FNV-style fold step (the change signatures here and in `deckSignBoard.ts`). */
+export function mix(h: number, n: number): number {
   return Math.imul(h ^ (n | 0), 16777619);
 }
 
@@ -157,11 +170,73 @@ function rebuild(structures: ReadonlyMap<number, StructureRenderState>, swarm: R
     if (a.shipKind === DECK_ROAD_KIND) roads.push({ id, x: a.x, y: a.y, rotDeg: (a.angle * 180) / Math.PI, mirror: st.mirror === true });
     else if (a.shipKind === DECK_FENCE_GATE_KIND) gates.push({ x: a.x, y: a.y });
   });
-  deriveRoadArms(roads, gates, ARMS);
+  ARMS.clear();
+  const joins = roadWorldJoins(roads, gates);
+  for (const p of roads) ARMS.set(p.id, roadLocalArms(joins.get(p.id) ?? 0, p.rotDeg, p.mirror));
+  fillJunctions(roads, joins, JUNCTIONS);
+}
+
+// ── Junction cache (sign boards) ────────────────────────────────────────────
+
+/** Every road junction (3+ world joins) of the deck, rebuilt only with the
+ *  arm table. Typed arrays, grown on a rebuild (cold), read per frame. */
+export interface JunctionCache {
+  count: number;
+  /** Junction hex centres, game frame. */
+  x: Float64Array;
+  y: Float64Array;
+  /** Junction hex, axial. */
+  q: Int32Array;
+  r: Int32Array;
+  /** World join mask (bit `i`: road or gate beyond game angle 60°·i). */
+  mask: Uint8Array;
+  /** Bumped on every rebuild: an open sign board re-reads its roads. */
+  epoch: number;
+  /** The deck-hex keys of every road tile ({@link hexKey}). */
+  readonly roadHexes: Set<number>;
+}
+
+export function createJunctionCache(): JunctionCache {
+  return { count: 0, x: new Float64Array(8), y: new Float64Array(8), q: new Int32Array(8), r: new Int32Array(8), mask: new Uint8Array(8), epoch: 0, roadHexes: new Set() };
+}
+
+/** The live junction cache (fed by {@link syncRoadJoins}). */
+export const JUNCTIONS: JunctionCache = createJunctionCache();
+
+/** Fill `out` with the junctions of `roads` (`joins`: {@link roadWorldJoins}). Cold path. */
+export function fillJunctions(roads: readonly RoadPiece[], joins: ReadonlyMap<number, number>, out: JunctionCache): JunctionCache {
+  const h: AxialHex = { q: 0, r: 0 };
+  const c = { x: 0, y: 0 };
+  roadHexKeysInto(roads, out.roadHexes);
+  let n = 0;
+  for (const p of roads) {
+    const m = joins.get(p.id) ?? 0;
+    if (armCount(m) < 3) continue;
+    if (n === out.x.length) {
+      const cap = n * 2;
+      out.x = grown(out.x, new Float64Array(cap)); out.y = grown(out.y, new Float64Array(cap));
+      out.q = grown(out.q, new Int32Array(cap)); out.r = grown(out.r, new Int32Array(cap)); out.mask = grown(out.mask, new Uint8Array(cap));
+    }
+    pixelToAxialInto(p.x, p.y, DECK_HEX_SIZE, h);
+    deckHexCentreInto(h.q, h.r, c);
+    out.x[n] = c.x; out.y[n] = c.y; out.q[n] = h.q; out.r[n] = h.r; out.mask[n] = m;
+    n++;
+  }
+  out.count = n;
+  out.epoch++;
+  return out;
+}
+
+function grown<T extends Float64Array | Int32Array | Uint8Array>(from: T, to: T): T {
+  to.set(from);
+  return to;
 }
 
 /** Test hook: forget the live table. */
 export function resetRoadJoins(): void {
   ARMS.clear();
   signature = 0;
+  JUNCTIONS.count = 0;
+  JUNCTIONS.roadHexes.clear();
+  JUNCTIONS.epoch++;
 }

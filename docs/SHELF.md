@@ -4,6 +4,15 @@ Design work deliberately parked, to revisit. Each entry says what we found,
 why it waits, and what doing it properly involves. Remove an entry in the PR
 that picks it up.
 
+## Waypoints and autopilot, EVE-style (parked 2026-11-26)
+
+Owner idea, loved, out of scope until designed. A route from a purchase or
+contract across sectors (choosing portal or warp) to a base's front gate,
+then through the base along its roads, with follow-me lights on the left
+lane. AI ships can be given the same routes. Junction sign boards
+(`?signs=on`, [procedural-bases](architecture/procedural-bases.md#junction-sign-boards))
+already walk the base roads and could feed the in-base leg.
+
 ## Galaxy radio and the Gazette (parked 2026-11-22, very long term)
 
 Owner idea, inspired by in-car radio in open-world games. An idea only: no

@@ -43,6 +43,46 @@ Each has `filterBy(testId)`, and the pilot spawns south of the fence. Lock:
 `tests/integration/sectorRoom/npcBases.test.ts`. Showcase shot:
 `showcase/shots/proceduralBase.ts`.
 
+## Junction sign boards
+
+Behind `?signs=on` (default off, look R&D). On a deck base, a road junction
+(a road tile with three or more joins) shows a virtual LED board when the
+local ship comes near it. It is not a floor object: when the ship is within
+about 1¼ deck hexes (`SIGN_OPEN_RADIUS`) of a junction that is on screen, one
+board expands in over it (a short scale + fade on the game-time effects
+clock). Past 2 hexes (`SIGN_CLOSE_RADIUS`) or off screen it collapses and is
+gone. It draws above the buildings and keeps a steady screen size at any zoom.
+
+Each row is one road arm leaving the junction: an arrow pointing along that
+road, in the colour of its nearest place, then the nearest two distinct
+places down that road (the kind's `displayName` and a swatch of its catalogue
+`color`). Roads, gates, pylons, connectors, cargo bays, batteries and weapons
+are never places.
+
+How it works (client render only):
+
+- **Junction cache.** The road-join rebuild (`src/client/render/pixi/roadJoins.ts`,
+  run only when a road or gate changes) also fills `JUNCTIONS`: each
+  junction's centre, hex and world join mask, plus the set of road hexes.
+  The swarm updater runs that rebuild when the socket nubs OR the sign boards
+  are on.
+- **Road walk.** `roadReach.ts` follows each arm hex by hex along the road
+  tiles (never back through the junction). A building counts for an arm when
+  one of its deck hexes touches a road hex of that arm; plate buildings use
+  their whole plate (`plateHexes`), hex and small-slot buildings the hex
+  they stand in. A building reachable down two arms is listed under the
+  nearer one. Runs only when a board opens or its base changes.
+- **Board.** `deckSignBoard.ts` (`DeckSignBoard`, built in
+  `rendererSetup/initScene.ts` next to the labels, updated in
+  `frameViewUpdater.ts`). Per frame it scans the junction cache against the
+  local ship and tweens; only while a board is open does it fold the
+  structure rows to notice a changed base.
+- **Flag path.** `readSignsFlag` → `RestyleLook.signs` → `ArtOptions.signs`
+  → BOOT `signs` for the render worker (`WorkerRendererClient` /
+  `bootRenderer`), like `?zones=`.
+
+Locks: `roadReach.test.ts`, `deckSignBoard.test.ts`, `restyleLook.test.ts`.
+
 ## History: Tier A static geometry (retired in phase E)
 
 The first pass generated **inert scenery**: warehouse walls, racks and

@@ -25,6 +25,7 @@ import type { MountVisualManager } from '../../MountVisualManager';
 import type { BackgroundGrid } from '../../BackgroundGrid';
 import type { StarfieldBackground } from '../../StarfieldBackground';
 import { removeDomListeners } from './initDomListeners.js';
+import type { DeckSignBoard } from '../deckSignBoard.js';
 
 /** The renderer state teardown reads (live values: getters on the renderer). */
 export interface RendererTeardownRefs {
@@ -37,6 +38,7 @@ export interface RendererTeardownRefs {
   readonly input: RendererInputController;
   readonly hudCtx: HudDrainCtx;
   readonly labels: LabelManager | null;
+  readonly signBoard: DeckSignBoard | null;
   readonly selectionBracket: SelectionBracket | null;
   readonly hoverBracket: HoverBracket | null;
   readonly mountVisuals: MountVisualManager;
@@ -93,6 +95,7 @@ export function disposeRenderer(r: RendererTeardownRefs): void {
   r.hudCtx.levelUpIcons?.destroy();
   r.hudCtx.healthBars?.destroy();
   r.labels?.destroy();
+  r.signBoard?.destroy();
   r.selectionBracket?.destroy();
   r.hoverBracket?.destroy();
   r.mountVisuals.disposeAll();

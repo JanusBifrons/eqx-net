@@ -41,6 +41,7 @@ import { SelectionBracket } from '../../SelectionBracket.js';
 import { AimFeedbackRenderer } from '../../AimFeedbackRenderer.js';
 import { HoverBracket } from '../../HoverBracket.js';
 import { FleetOverlay } from '../../FleetOverlay.js';
+import { DeckSignBoard } from '../deckSignBoard.js';
 import type { EffectQuality } from '@core/contracts/IEffects';
 import { logEvent, isDiagEnabled } from '../../../debug/ClientLogger.js';
 
@@ -346,6 +347,8 @@ export interface OverlayDeps {
   halo: HaloRadar;
   hudCtx: HudDrainCtx;
   cleanWorld: boolean;
+  /** Junction sign boards (`?signs=on`). */
+  signs: boolean;
 }
 
 export interface Overlays {
@@ -354,6 +357,7 @@ export interface Overlays {
   selectionBracket: SelectionBracket;
   hoverBracket: HoverBracket;
   aimFeedback: AimFeedbackRenderer;
+  signBoard: DeckSignBoard | null;
 }
 
 /** Incoming-fire / helm markers, fleet overlay, radar, HUD managers and brackets. */
@@ -373,11 +377,13 @@ export function buildOverlays(deps: OverlayDeps): Overlays {
   deps.hudCtx.levelUpIcons = new LevelUpIconManager(deps.world, deps.camera);
   deps.hudCtx.healthBars = new HealthBarManager(deps.world);
   const labels = new LabelManager(deps.world, !deps.cleanWorld);
+  // Junction sign boards over the bodies, next to the labels (`?signs=on`).
+  const signBoard = deps.signs ? new DeckSignBoard(deps.world, deps.camera, true) : null;
   // THE selection marker (Item B4; RTS Part A): one 4-corner bracket per
   // selected entity, screen space on the stage like the fleet overlay, drawn
   // in the ticker after the camera tick (`drawFleetOverlay`).
   const selectionBracket = new SelectionBracket(deps.app.stage);
   const hoverBracket = new HoverBracket(deps.world);
   const aimFeedback = new AimFeedbackRenderer(deps.world);
-  return { fleetOverlay, labels, selectionBracket, hoverBracket, aimFeedback };
+  return { fleetOverlay, labels, selectionBracket, hoverBracket, aimFeedback, signBoard };
 }

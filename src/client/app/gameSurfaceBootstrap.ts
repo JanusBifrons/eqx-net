@@ -87,6 +87,7 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
   art.deckTex = restyle.deckTex;
   art.fenceLook = restyle.fenceLook;
   art.zones = restyle.zones;
+  art.signs = restyle.signs;
   const ore = readOreLook(search); // cut-field ore look trial (F1c)
   if (ore) art.ore = ore;
   // Graphics quality (anti-aliasing study): URL > saved choice > today's look.
