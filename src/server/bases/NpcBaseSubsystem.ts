@@ -22,6 +22,7 @@
  */
 import { DEFAULT_TELEPORT_RULES, NPC_LINK_TOLL, isTeleporterKind } from '../../shared-types/teleport.js';
 import { growBase, type GrownBase } from '../../core/bases/growBase.js';
+import { deckBaseOriginInto } from '../../core/bases/growDeck.js';
 import { TIER_LEVEL_CAP, TIER_WEALTH, type BaseProfile, type BaseRole, type BaseTier } from '../../core/bases/baseProfile.js';
 import type { SectorFeature } from '../../core/galaxy/galaxy.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
@@ -119,22 +120,26 @@ export class NpcBaseSubsystem {
   }
 
   /** Grow the base a spec describes (pure; nothing placed). Lets a caller
-   *  pick a site from its extent before seeding (T1). */
+   *  pick a site from its extent before seeding (T1). On a deck room
+   *  (`registry.deck`, base platforms) the base is grown on plates. */
   grow(spec: NpcBaseSpec): GrownBase {
-    return growBase(this.profileOf(spec), spec.seed, spec.features ?? []);
+    return growBase(this.profileOf(spec), spec.seed, spec.features ?? [], this.h.registry.deck ? { deck: true } : {});
   }
 
-  /** Place a base with its Capital at (spec.x, spec.y). `grown` may come from
+  /** Place a base with its Capital (a deck base: its origin plate) at (spec.x, spec.y). `grown` may come from
    *  `grow(spec)`; otherwise it is grown here. */
   seed(spec: NpcBaseSpec, grownIn?: GrownBase): SeededNpcBase {
     const profile = this.profileOf(spec);
     const grown = grownIn ?? this.grow(spec);
     const owner = npcOwner(profile.ownerFaction, spec.baseId);
+    // A deck base is grown round its origin plate: seed it on the nearest
+    // plate centre, so its plates sit on the world's deck lattice.
+    const at = this.h.registry.deck ? deckBaseOriginInto(spec.x, spec.y, { x: 0, y: 0 }) : spec;
 
     const ids: Array<string | null> = [];
     let rejectedPlace = 0;
     for (const p of grown.placements) {
-      const id = this.h.place(owner, p.kind, spec.x + p.x, spec.y + p.y, p.rot ?? 0);
+      const id = this.h.place(owner, p.kind, at.x + p.x, at.y + p.y, p.rot ?? 0);
       ids.push(id);
       if (id === null) {
         rejectedPlace++;
