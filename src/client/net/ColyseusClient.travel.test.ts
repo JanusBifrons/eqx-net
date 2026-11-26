@@ -109,6 +109,12 @@ describe('a teleport to another sector (gate or paired teleporter)', () => {
     c.clock = { now: () => t };
     c.mirror.localPlayerId = 'me';
     c.mirror.ships.set('me', { x: 100, y: 50, vx: 0, vy: 0, angle: -Math.PI / 2 });
+    // The source room is still loaded as the gate seals: its body and its
+    // first snapshot are there (film take 11: the hold landed on the spot,
+    // so the ship sat in empty Vega Reach sky at its Sol Prime position).
+    c.predWorld = await PhysicsWorld.create();
+    c.predWorld.spawnShip('me', 100, 50, 'fighter');
+    useUIStore.setState({ firstSnapshotApplied: true });
     c.beginTravel('hold');
     expect(c.travelOutRemainingMs()).toBe(0);
     const e = c.mirror.ships.get('me')!;
@@ -118,9 +124,15 @@ describe('a teleport to another sector (gate or paired teleporter)', () => {
     expect(e.y).toBe(50);
     expect(e.warp).toBeUndefined();
     expect(c.mirror.travelDeep).toBe(false);
+    expect(useUIStore.getState().joinMinimumElapsed).toBe(false);
 
-    c.predWorld = await PhysicsWorld.create();
+    // The room swap (transit_ready) re-arms join readiness; the far room's
+    // body and first snapshot follow.
+    useUIStore.getState().rearmJoinReadiness();
+    c.predWorld.despawnShip('me');
     c.predWorld.spawnShip('me', 5000, 7000, 'fighter');
+    t += 50; c.updateMirror(t);
+    expect(e.x).toBe(100);
     useUIStore.setState({ firstSnapshotApplied: true });
     t += 50; c.updateMirror(t);
     expect(e.x).toBeCloseTo(5000, 1);

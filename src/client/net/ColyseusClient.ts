@@ -2890,6 +2890,7 @@ export class ColyseusGameClient {
     this._travel = {
       x: e.x, y: e.y, dx: -Math.sin(e.angle), dy: Math.cos(e.angle), angle: e.angle, lastMs: now, startMs: now,
       phase: 'out', inStartMs: 0, ax: 0, ay: 0, landed: false, hold: mode === 'hold',
+      joinGen: useUIStore.getState().joinGeneration,
     };
     this.mirror.travelling = true;
   }

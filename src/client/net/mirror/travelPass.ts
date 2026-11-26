@@ -50,6 +50,10 @@ export interface TravelTrip {
   /** A teleport (gate or paired teleporter): no flight at all. The ship holds
    *  still where it sealed, then is put straight on the far pad. */
   hold: boolean;
+  /** The store's `joinGeneration` when the trip began: a hold lands only after
+   *  the room swap re-arms join readiness (the source room's body and first
+   *  snapshot are still there while the gate seals). */
+  joinGen: number;
 }
 
 /**
@@ -119,12 +123,13 @@ function stepHold(ctx: TravelCtx, t: TravelTrip, e: ShipRenderState, localId: st
   t.lastMs = ctx.clock.now();
   if (!t.landed) {
     const arrival = ctx.predWorld?.getShipState(localId);
-    if (arrival && useUIStore.getState().firstSnapshotApplied) {
+    const ui = useUIStore.getState();
+    if (arrival && ui.joinGeneration !== t.joinGen && ui.firstSnapshotApplied) {
       ctx.mirror.travelJumpX = (ctx.mirror.travelJumpX ?? 0) + (arrival.x - t.x);
       ctx.mirror.travelJumpY = (ctx.mirror.travelJumpY ?? 0) + (arrival.y - t.y);
       t.x = arrival.x; t.y = arrival.y; t.angle = arrival.angle;
       t.landed = true;
-      if (!useUIStore.getState().joinMinimumElapsed) useUIStore.getState().setJoinMinimumElapsed(true);
+      if (!ui.joinMinimumElapsed) ui.setJoinMinimumElapsed(true);
     }
   }
   ctx.mirror.travelDeep = false;
