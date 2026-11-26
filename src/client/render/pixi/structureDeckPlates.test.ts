@@ -24,7 +24,7 @@ function plateGraphics(c: Container): Graphics[] {
 describe('StructureDeckPlates — the deck floor', () => {
   it('one Graphics per plate, on the one shared context, at its plate centre', () => {
     const ship = new Container();
-    const deck = new StructureDeckPlates(ship);
+    const deck = new StructureDeckPlates(ship, 'plain');
     deck.sync(mirrorOf(1, [[0, 0], [1, 0], [0, 1]]));
     const gs = plateGraphics(ship);
     expect(gs.length).toBe(3);
@@ -50,7 +50,7 @@ describe('StructureDeckPlates — the deck floor', () => {
 
   it('adds a plate on add, removes it on remove, keeps the rest', () => {
     const ship = new Container();
-    const deck = new StructureDeckPlates(ship);
+    const deck = new StructureDeckPlates(ship, 'plain');
     deck.sync(mirrorOf(1, [[0, 0]]));
     const first = plateGraphics(ship)[0]!;
     deck.sync(mirrorOf(2, [[0, 0], [1, 1]]));

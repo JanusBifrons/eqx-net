@@ -29,6 +29,7 @@ export function rendererArgsFromBoot(
       ...(msg.structStyle ? { structStyle: msg.structStyle } : {}),
       ...(msg.lineLook !== undefined ? { lineLook: msg.lineLook } : {}),
       ...(msg.rigs !== undefined ? { rigs: msg.rigs } : {}),
+      ...(msg.deckTex !== undefined ? { deckTex: msg.deckTex } : {}),
       ...(msg.ore ? { ore: msg.ore } : {}),
       ...(msg.quality ? { quality: msg.quality } : {}),
     },

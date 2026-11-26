@@ -84,6 +84,7 @@ export function selectRenderer(): { renderer: IRenderer; useWorker: boolean; isT
   const restyle = readRestyleLook(search);
   art.lineLook = restyle.lineLook;
   art.rigs = restyle.rigs;
+  art.deckTex = restyle.deckTex;
   const ore = readOreLook(search); // cut-field ore look trial (F1c)
   if (ore) art.ore = ore;
   // Graphics quality (anti-aliasing study): URL > saved choice > today's look.
