@@ -30,7 +30,7 @@ import { getStructureKind, isStructureKindId } from '../../../shared-types/struc
 import { interpBuildPct } from './buildBarInterp.js';
 import { CONNECTOR_CONSTRUCTION_COLOR, PREVIEW_BLOCKED_COLOR } from './connectorVisual.js';
 import { deckSlotOutline, type DeckSlot } from '../../../core/hex/deckSnap.js';
-import { BUILD_RING_LABEL, BuildRing } from './buildRing.js';
+import { BUILD_RING_LABEL, BuildRing, buildRingClearRadius } from './buildRing.js';
 
 /** The hologram's cyan: the construction-flow cyan (connectors, build bar). */
 export const HOLOGRAM_COLOR = CONNECTOR_CONSTRUCTION_COLOR;
@@ -140,7 +140,7 @@ export class StructureHologram extends Container {
   readonly line: Graphics;
   readonly clip: Graphics;
   readonly halfW: number;
-  /** The footprint's corner radius (the progress ring sits round it). */
+  /** The footprint's corner radius (kinds without a danger ring size the progress hexagon from it). */
   readonly footR: number;
   /** Build-fraction anchor: the fraction ramps smoothly between the server's
    *  1 Hz steps (`interpBuildPct`, the build bar's same ramp). */
@@ -220,18 +220,18 @@ export class StructureHologram extends Container {
 }
 
 /** Out-param of the last `syncStructureHologram` call (scalar, reused: #14):
- *  the build-ETA label's sprite-local y just above the progress ring, or 0
- *  when no ring was drawn (the caller keeps the label's usual place). */
+ *  the build-ETA label's sprite-local y just above the progress hexagon's top vertex, or 0
+ *  when none was drawn (the caller keeps the label's usual place). */
 export const holoRingOut = { labelY: 0 };
-/** On-screen gap (CSS px) between the ring and the ETA label above it. */
+/** On-screen gap (CSS px) between the hexagon and the ETA label above it. */
 const RING_LABEL_GAP_PX = 4;
 
 /**
  * Per frame, per structure sprite: an unbuilt structure carries the hologram
  * (made once on first sight), a built one carries none (dropped once).
  * `ringZoom` > 0 (`?buildRing=on`; the camera scale this frame) draws the
- * `wire` look plus a progress ring (buildRing.ts) at the hologram's smoothed
- * fraction; 0 = today's blueprint look, no ring.
+ * `wire` look plus a progress hexagon (buildRing.ts) at the hologram's smoothed
+ * fraction; 0 = today's blueprint look, no hexagon.
  * Returns true while the sprite is a hologram.
  */
 export function syncStructureHologram(
@@ -246,13 +246,13 @@ export function syncStructureHologram(
   }
   if (!holo) {
     holo = new StructureHologram(kindId, radius, style, ringZoom > 0 ? 'wire' : 'blueprint');
-    if (ringZoom > 0) holo.addChild(new BuildRing());
+    if (ringZoom > 0) holo.addChild(new BuildRing(buildRingClearRadius(kindId, holo.footR)));
     sprite.addChild(holo);
   }
   holo.update(st.buildPct, st.etaMs, nowMs);
   const ring = ringZoom > 0 ? holo.getChildByLabel(BUILD_RING_LABEL) as BuildRing | null : null;
   if (ring) {
-    ring.update(holo.shownPct, holo.footR, ringZoom, sprite);
+    ring.update(holo.shownPct, ringZoom, sprite);
     holoRingOut.labelY = -(ring.localR + RING_LABEL_GAP_PX / (ringZoom * (Math.abs(sprite.scale.y) || 1)));
   }
   return true;

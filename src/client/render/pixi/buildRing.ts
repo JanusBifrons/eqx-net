@@ -1,122 +1,168 @@
 /**
  * Readable construction (`?buildRing=on`, default off until the owner OKs the
- * stills): a progress RING around each unbuilt structure.
+ * stills): a progress HEXAGON round each unbuilt structure.
  *
- * At build-mode zoom (~0.25) a turret's whole construction stage is a few
- * pixels wide and the small fill bar above it is unreadable. The ring sits
- * round the blueprint's footprint but never shrinks below
- * `BUILD_RING_MIN_PX` on screen, so it stays readable when the camera is
- * pulled back: a faint full track plus a bright arc for the build fraction,
- * clockwise from the top of the screen. The fraction is the hologram's own
- * (`StructureHologram.shownPct`: `interpBuildPct`, the bar's same ramp), so
- * ring, print line and (flag off) bar agree.
+ * At build-mode zoom (~0.25) a turret's whole construction stage was a few
+ * pixels of fill bar. The hexagon is pointy-topped like the deck's hexes
+ * (`core/hex`, `structureDeckZones` `hexCorners`) and stays upright on
+ * screen. A faint full outline is the track; a bright line fills it
+ * clockwise from the top vertex along the edges, the build fraction being
+ * the fraction of the perimeter drawn. The fraction is the hologram's own
+ * (`StructureHologram.shownPct`: `interpBuildPct`, the bar's same ramp).
  *
- * Perf (phone, invariant #14): the ring is drawn at a fixed unit radius and
- * scaled to size, so its line width grows with it (a bigger ring is a little
- * bolder). The track is ONE shared `GraphicsContext`; the arc is one shared
- * context per progress step (`BUILD_RING_STEPS + 1` at most, built lazily,
- * never freed). Per frame a ring only swaps its arc's context and sets its
- * scale and rotation: no drawing, no allocation after warm-up.
+ * Size: the hexagon's INSCRIBED radius clears a gun's red dashed danger ring
+ * (`gunDangerOuterRadius` + `BUILD_HEX_DANGER_GAP`), or the footprint's corner
+ * radius + `BUILD_RING_PAD` for a kind without one, and never draws under
+ * `BUILD_RING_MIN_PX` on screen, so it reads with the camera pulled back.
+ *
+ * Perf (phone, invariant #14): drawn once at a unit circumradius and scaled
+ * to size (its line width grows with it). The track is ONE shared
+ * `GraphicsContext`; the fill is one shared context per 1 % step
+ * (`BUILD_RING_STEPS + 1` at most, built lazily, never freed). Per frame a
+ * hexagon only swaps its fill's context and sets its scale and rotation.
  */
 import { Container, Graphics, GraphicsContext } from 'pixi.js';
-import { arcSubpath } from '../arcSubpath.js';
+import type { ArcPathSink } from '../arcSubpath.js';
+import { gunDangerOuterRadius } from './structureDeckZones.js';
 
-/** `?buildRing=on` turns the ring (and the wireframe hologram) on; anything else = off. */
+/** `?buildRing=on` turns the hexagon (and the wireframe hologram) on; anything else = off. */
 export function readBuildRingFlag(search: string): boolean {
   return /[?&]buildRing=on\b/.test(search);
 }
 
-/** Child label of the ring (inside the hologram). */
+/** Child label of the hexagon (inside the hologram). */
 export const BUILD_RING_LABEL = 'buildRing';
-/** The ring never draws smaller than this on screen (CSS px radius). */
-export const BUILD_RING_MIN_PX = 22;
-/** World units between the footprint's corner and the ring when the footprint sets the size. */
-export const BUILD_RING_PAD = 8;
-/** Progress steps the arc snaps to (one shared context each). */
+/** The hexagon's inscribed radius never draws under this on screen (CSS px). */
+export const BUILD_RING_MIN_PX = 36;
+/** World units past the footprint's corner radius (kinds with no danger ring). */
+export const BUILD_RING_PAD = 12;
+/** World units past the outer edge of a gun's danger ring. */
+export const BUILD_HEX_DANGER_GAP = 16;
+/** Progress steps the fill snaps to (one shared context each). */
 export const BUILD_RING_STEPS = 100;
-/** The radius the shared art is drawn at; a ring scales it to size. */
+/** Inscribed / circumscribed radius of a regular hexagon (cos 30°). */
+export const HEX_APOTHEM_RATIO = Math.sqrt(3) / 2;
+/** The circumradius the shared art is drawn at; a hexagon scales it to size. */
 const RING_UNIT = 100;
-/** Line width at `RING_UNIT` (12%: ~2.6 px at the minimum on-screen size). */
+/** Line width at `RING_UNIT` (12 %: ~4.3 px at the minimum on-screen size). */
 const RING_WIDTH = 12;
-/** Ring colours: the construction cyan (track faint, arc bright with a soft glow). */
+/** Colours: the construction cyan (track faint, fill bright with a soft glow). */
 const RING_COLOR = 0x66ccff;
 const RING_CORE = 0xccf4ff;
 const TRACK_ALPHA = 0.28;
-/** Top of the screen (Pixi y-down); the arc runs clockwise from here. */
-export const BUILD_RING_START = -Math.PI / 2;
 
-/** The ring's WORLD radius round a footprint of corner radius `footR` at camera
- *  zoom `zoom` (CSS px per world unit): the footprint plus a pad, but never
- *  under `BUILD_RING_MIN_PX` on screen. Pure. */
-export function buildRingRadius(footR: number, zoom: number): number {
-  const fit = footR + BUILD_RING_PAD;
-  if (!(zoom > 0)) return fit;
-  const min = BUILD_RING_MIN_PX / zoom;
-  return fit > min ? fit : min;
+/** The inscribed radius the hexagon must clear for `kindId` (world u): its
+ *  danger ring plus a gap, else its footprint corner radius plus a pad. */
+export function buildRingClearRadius(kindId: string | undefined, footR: number): number {
+  const danger = gunDangerOuterRadius(kindId);
+  return danger !== null ? danger + BUILD_HEX_DANGER_GAP : footR + BUILD_RING_PAD;
 }
 
-/** The arc step for build fraction `pct` (clamped; 0 = no arc, STEPS = full). */
+/** The hexagon's WORLD inscribed radius at camera `zoom` (CSS px per world
+ *  u): `clearR`, but never under `BUILD_RING_MIN_PX` on screen. Pure. */
+export function buildRingApothem(clearR: number, zoom: number): number {
+  if (!(zoom > 0)) return clearR;
+  const min = BUILD_RING_MIN_PX / zoom;
+  return clearR > min ? clearR : min;
+}
+
+/** The fill step for build fraction `pct` (clamped; 0 = none, STEPS = full). */
 export function buildRingStep(pct: number): number {
   const p = pct < 0 ? 0 : pct > 1 ? 1 : pct;
   return Math.round(p * BUILD_RING_STEPS);
 }
 
-/** The arc's end angle for `step` (it starts at `BUILD_RING_START`). Pure. */
-export function buildRingEndAngle(step: number): number {
-  return BUILD_RING_START + (2 * Math.PI * step) / BUILD_RING_STEPS;
+/** Pointy-top vertex `k` (0 = top, then clockwise on screen) at circumradius
+ *  `r`, Pixi frame (y down), into `out`. */
+function hexVertexInto(r: number, k: number, out: { x: number; y: number }): void {
+  const a = -Math.PI / 2 + ((k % 6) * Math.PI) / 3;
+  out.x = r * Math.cos(a);
+  out.y = r * Math.sin(a);
+}
+const _va = { x: 0, y: 0 };
+const _vb = { x: 0, y: 0 };
+
+/**
+ * The perimeter path for fraction `frac` of a pointy-top hexagon of
+ * circumradius `r`: from the top vertex clockwise along the edges, as one
+ * open subpath (`moveTo` then `lineTo`s; never `arc`). 0 draws nothing; 1 is
+ * the whole outline closed back on the top vertex. Allocates nothing.
+ */
+export function hexPerimeterPath<T extends ArcPathSink>(g: T, r: number, frac: number): T {
+  const f = frac < 0 ? 0 : frac > 1 ? 1 : frac;
+  if (f <= 0) return g;
+  const s = f * 6;
+  const full = Math.floor(s);
+  hexVertexInto(r, 0, _va);
+  g.moveTo(_va.x, _va.y);
+  for (let k = 1; k <= full; k++) { hexVertexInto(r, k, _va); g.lineTo(_va.x, _va.y); }
+  const rem = s - full;
+  if (rem > 0) {
+    hexVertexInto(r, full, _va);
+    hexVertexInto(r, full + 1, _vb);
+    g.lineTo(_va.x + (_vb.x - _va.x) * rem, _va.y + (_vb.y - _va.y) * rem);
+  }
+  return g;
 }
 
 let trackArt: GraphicsContext | null = null;
-const arcArt: (GraphicsContext | undefined)[] = [];
+const fillArt: (GraphicsContext | undefined)[] = [];
 
 function trackContext(): GraphicsContext {
-  trackArt ??= arcSubpath(new GraphicsContext(), 0, 0, RING_UNIT, 0, 2 * Math.PI)
-    .stroke({ color: RING_COLOR, alpha: TRACK_ALPHA, width: RING_WIDTH });
+  trackArt ??= hexPerimeterPath(new GraphicsContext(), RING_UNIT, 1).closePath()
+    .stroke({ color: RING_COLOR, alpha: TRACK_ALPHA, width: RING_WIDTH, join: 'miter' });
   return trackArt;
 }
 
-function arcContext(step: number): GraphicsContext {
-  let c = arcArt[step];
+function fillContext(step: number): GraphicsContext {
+  let c = fillArt[step];
   if (c) return c;
   c = new GraphicsContext();
   if (step > 0) {
-    const a1 = buildRingEndAngle(step);
-    arcSubpath(c, 0, 0, RING_UNIT, BUILD_RING_START, a1).stroke({ color: RING_COLOR, alpha: 0.35, width: RING_WIDTH * 1.9 });
-    arcSubpath(c, 0, 0, RING_UNIT, BUILD_RING_START, a1).stroke({ color: RING_CORE, alpha: 0.95, width: RING_WIDTH });
+    const f = step / BUILD_RING_STEPS, closed = step === BUILD_RING_STEPS;
+    hexPerimeterPath(c, RING_UNIT, f);
+    if (closed) c.closePath();
+    c.stroke({ color: RING_COLOR, alpha: 0.35, width: RING_WIDTH * 1.9, join: 'miter' });
+    hexPerimeterPath(c, RING_UNIT, f);
+    if (closed) c.closePath();
+    c.stroke({ color: RING_CORE, alpha: 0.95, width: RING_WIDTH, join: 'miter' });
   }
-  arcArt[step] = c;
+  fillArt[step] = c;
   return c;
 }
 
-/** The progress ring on one blueprint (a child of its hologram). */
+/** The progress hexagon on one blueprint (a child of its hologram). */
 export class BuildRing extends Container {
   readonly track: Graphics;
+  /** The bright fill (named `arc` from the ring it replaced). */
   readonly arc: Graphics;
-  /** Arc step drawn now (tests read it). */
+  /** Inscribed radius it must clear (world u; `buildRingClearRadius`). */
+  readonly clearR: number;
+  /** Fill step drawn now (tests read it). */
   step = -1;
-  /** Ring radius in the structure sprite's local units, last update. */
+  /** Circumradius (top vertex) in the structure sprite's local units, last update. */
   localR = 0;
 
-  constructor() {
+  constructor(clearR: number) {
     super();
     this.label = BUILD_RING_LABEL;
+    this.clearR = clearR;
     this.track = new Graphics(trackContext());
-    this.arc = new Graphics(arcContext(0));
+    this.arc = new Graphics(fillContext(0));
     this.addChild(this.track, this.arc);
   }
 
   /**
-   * Per frame: size the ring for footprint radius `footR` at camera `zoom`,
-   * fill it to `pct`, and keep it square to the screen (start at the top,
-   * clockwise) whatever the host sprite's turn and build mirror. The host is
-   * the structure sprite (`rotation`, `scale`); this ring's parent (the
-   * hologram) adds no transform. No allocation after the step's first use.
+   * Per frame: size the hexagon at camera `zoom`, fill it to `pct`, and keep
+   * it upright on screen whatever the host sprite's turn and build mirror.
+   * The host is the structure sprite (`rotation`, `scale`); this hexagon's
+   * parent (the hologram) adds no transform. No allocation after warm-up.
    */
-  update(pct: number, footR: number, zoom: number, host: Container): void {
+  update(pct: number, zoom: number, host: Container): void {
     const step = buildRingStep(pct);
-    if (step !== this.step) { this.step = step; this.arc.context = arcContext(step); }
+    if (step !== this.step) { this.step = step; this.arc.context = fillContext(step); }
     const hostScale = Math.abs(host.scale.y) || 1;
-    this.localR = buildRingRadius(footR, zoom) / hostScale;
+    this.localR = buildRingApothem(this.clearR, zoom) / HEX_APOTHEM_RATIO / hostScale;
     const k = this.localR / RING_UNIT;
     // Parent = R(rot)·S(m): the child R(-rot·m)·S(m) cancels it (setDeckSlot's rule).
     const m = host.scale.x < 0 ? -1 : 1;

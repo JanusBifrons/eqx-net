@@ -101,6 +101,12 @@ function dashedSegment(ctx: GraphicsContext, ax: number, ay: number, bx: number,
   }
 }
 
+/** The outer edge (world u) of a gun's dashed red danger ring, or null for a
+ *  kind without one (the construction ring clears it: buildRing.ts). */
+export function gunDangerOuterRadius(kindId: string | undefined): number | null {
+  return deckZoneOf(kindId) === 'gun' ? getStructureKind(kindId).radius + GUN_MARGIN + GUN_RING_WIDTH / 2 : null;
+}
+
 function drawGun(ctx: GraphicsContext, radius: number): void {
   const r = radius + GUN_MARGIN;
   ctx.circle(0, 0, r).fill({ color: ZONE_RED, alpha: GUN_FILL_ALPHA });
