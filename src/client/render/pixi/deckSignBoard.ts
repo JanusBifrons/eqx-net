@@ -325,8 +325,9 @@ export function placeBoard(bx: number, by: number, w: number, h: number, jx: num
   const side = jx < cx ? -1 : 1;
   for (let k = 0; k < 5; k++) {
     let x = bx, y = by;
-    if (k === 1) x = cx + side * (kw + w / 2);
-    else if (k === 2) x = cx - side * (kw + w / 2);
+    // Beside the ship: level with it (mid-height bands, clear of the thumb controls).
+    if (k === 1) { x = cx + side * (kw + w / 2); y = cy + h / 2; }
+    else if (k === 2) { x = cx - side * (kw + w / 2); y = cy + h / 2; }
     else if (k === 3) y = cy - kh;
     else if (k === 4) y = cy + kh + h;
     const side2 = k === 1 || k === 2;

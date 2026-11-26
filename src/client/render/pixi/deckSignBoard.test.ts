@@ -137,6 +137,7 @@ describe('deck sign board', () => {
     const clear = out[0] + 125 <= 500 - kw || out[0] - 125 >= 500 + kw || out[1] <= 200 - kh || out[1] - 100 >= 200 + kh;
     expect(clear).toBe(true);
     expect(out[0]).toBeLessThan(500); // the junction's side
+    expect(out[1] - 50).toBeCloseTo(200, 0); // level with the ship, not down at the thumb controls
   });
 
   it('a disabled board never opens', () => {
