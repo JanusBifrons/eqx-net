@@ -188,6 +188,33 @@ describe('DeckApproachLights', () => {
     expect(ships.children.length).toBe(0);
   });
 
+  it('the run stops short of another deck: no lamp lands on a plate, and the rabbit starts at the last lit lamp', () => {
+    // Plated below the seam (y < 0) and again from the far side of the outside hex: a neighbouring deck across a one-hex gap.
+    const DECK_AT = 2 * DECK_HEX_INRADIUS; // the next hex out: a deck one hex beyond the gate
+    const lights = new DeckApproachLights(new Container(), (_x, y) => y < 0 || y >= DECK_AT);
+    lights.frame(true, 1, 0, undefined);
+    lights.note(7, GATE, 0, 0, 0);
+    const c = lights.containerOf(7)!;
+    const lit = Math.ceil((DECK_AT - APPROACH_LAMP_START) / APPROACH_LAMP_SPACING); // lamps 0..lit-1 fall short of it
+    expect(lit).toBe(APPROACH_LAMP_COUNT - 1); // the long white row reaches it; the edge rows stop well short
+    for (let k = 0; k < APPROACH_LAMP_COUNT; k++) {
+      expect(c.children[2 * k]!.visible).toBe(k < lit);
+      if (k < APPROACH_EDGE_COUNT) {
+        expect(c.children[2 * APPROACH_LAMP_COUNT + 2 * k]!.visible).toBe(k < lit);
+        expect(c.children[2 * APPROACH_LAMP_COUNT + 2 * k + 1]!.visible).toBe(k < lit);
+      }
+    }
+    lights.frame(true, 1, 0, undefined); // t = 0: the farthest LIT lamp flashes, nothing past it
+    const flash = (k: number): Graphics => c.children[2 * k + 1] as Graphics;
+    expect(flash(lit - 1).alpha).toBe(1);
+    for (let k = lit; k < APPROACH_LAMP_COUNT; k++) expect(flash(k).visible).toBe(false);
+    // The neighbour goes away (plate version bumps): the full run comes back.
+    const open = new DeckApproachLights(new Container(), (_x, y) => y < 0);
+    open.frame(true, 2, 0, undefined);
+    open.note(7, GATE, 0, 0, 0);
+    expect(open.containerOf(7)!.children[2 * (APPROACH_LAMP_COUNT - 1)]!.visible).toBe(true);
+  });
+
   it('a gate between two plates (or none) draws no lamps', () => {
     const lights = new DeckApproachLights(new Container(), () => true);
     lights.frame(true, 1, 0, undefined);

@@ -51,7 +51,8 @@ the end of an airfield. A white centre row of 10 lamps runs down the road's
 middle; red and green rows of 5 sit on the road's exact edges (±175, the road's
 half width), red on the inbound pilot's left, green on the right. The outside is
 the seam side whose hex is on no floored plate; a gate with plates on both
-sides (or neither) gets none. The lamps are small and dim; a soft white pulse
+sides (or neither) gets none, and a run that would reach another deck stops
+short of it (no lamp on a plate). The lamps are small and dim; a soft white pulse
 (the "rabbit") walks down the centre row toward the gate every 1.5 s of effect
 time (`fxNow`). Render only, part of the deck floor layer:
 `StructureDeckPlates` owns a `DeckApproachLights`

@@ -164,6 +164,8 @@ interface GateEntry {
   /** Plate version the side was worked out against. */
   plates: number;
   sign: number;
+  /** Lamps lit per row: the run stops before the first lamp on a plate (another deck). */
+  lit: number;
   /** Pixi centre of the lamp line (cull). */
   mx: number; my: number;
 }
@@ -187,9 +189,9 @@ export class DeckApproachLights {
   private readonly strobeFn = (e: GateEntry): void => {
     e.c.visible = e.sign !== 0 && isSpriteInView(e.mx, e.my, CULL_R, this.bounds);
     if (!e.c.visible) return;
-    for (let k = 0; k < e.flashes.length; k++) {
+    for (let k = 0; k < e.lit; k++) {
       const g = e.flashes[k]!;
-      const f = approachFlash(k, APPROACH_LAMP_COUNT, this.nowMs);
+      const f = approachFlash(k, e.lit, this.nowMs);
       g.visible = f > 0;
       g.alpha = f;
     }
@@ -228,18 +230,25 @@ export class DeckApproachLights {
     if (e.x === x && e.y === y && e.a === angle && e.plates === this.plateVersion) return;
     e.x = x; e.y = y; e.a = angle; e.plates = this.plateVersion;
     e.sign = gateOutsideSign(x, y, angle, this.onPlate);
+    e.lit = APPROACH_LAMP_COUNT;
     e.c.position.set(x, -y); // Y-flip
     const lamps = e.c.children;
     for (let k = 0; k < APPROACH_LAMP_COUNT; k++) {
       approachLampInto(0, 0, angle, e.sign, k, this.pt);
+      if (e.lit === APPROACH_LAMP_COUNT && e.sign !== 0 && this.onPlate(x + this.pt[0]!, y + this.pt[1]!)) e.lit = k; // another deck: stop short
+      const on = k < e.lit;
+      lamps[2 * k]!.visible = on;
+      if (!on) lamps[2 * k + 1]!.visible = false;
       lamps[2 * k]!.position.set(this.pt[0]!, -this.pt[1]!);
       lamps[2 * k + 1]!.position.set(this.pt[0]!, -this.pt[1]!);
       if (k >= APPROACH_EDGE_COUNT) continue;
       const lx = this.pt[0]!, ly = this.pt[1]!;
       approachEdgeInto(lx, ly, angle, e.sign, true, this.pt);
       lamps[2 * APPROACH_LAMP_COUNT + 2 * k]!.position.set(this.pt[0]!, -this.pt[1]!);
+      lamps[2 * APPROACH_LAMP_COUNT + 2 * k]!.visible = on;
       approachEdgeInto(lx, ly, angle, e.sign, false, this.pt);
       lamps[2 * APPROACH_LAMP_COUNT + 2 * k + 1]!.position.set(this.pt[0]!, -this.pt[1]!);
+      lamps[2 * APPROACH_LAMP_COUNT + 2 * k + 1]!.visible = on;
     }
     e.mx = x - Math.sin(angle) * e.sign * MID_D;
     e.my = -(y + Math.cos(angle) * e.sign * MID_D);
@@ -269,7 +278,7 @@ export class DeckApproachLights {
     }
     this.shipContainer.sortableChildren = true;
     this.shipContainer.addChild(c);
-    const e: GateEntry = { c, flashes, stamp: 0, x: Number.NaN, y: Number.NaN, a: Number.NaN, plates: -1, sign: 0, mx: 0, my: 0 };
+    const e: GateEntry = { c, flashes, stamp: 0, x: Number.NaN, y: Number.NaN, a: Number.NaN, plates: -1, sign: 0, lit: APPROACH_LAMP_COUNT, mx: 0, my: 0 };
     this.entries.set(id, e);
     return e;
   }
