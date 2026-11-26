@@ -76,9 +76,10 @@ import { placedRockMeshData } from '../field/placedRockMesh.js';
 const NO_WRECKS: ReadonlyMap<number, unknown> = new Map();
 
 import type { SpriteBuildSig, SwarmSpriteCtx } from './swarmSpriteCtx.js';
-import { RIG_TICKS_PER_SEC, RIG_UNDER_Z, type StructureRigView } from './structureRigs.js';
-import { isAlienGateKind, isPadChamberKind } from '../../../shared-types/teleport.js';
+import { RIG_TICKS_PER_SEC, type StructureRigView } from './structureRigs.js';
+import { underZForStructure } from './structureDeckZones.js';
 import { hasBodyStatus, updateSocketNubs } from './structureSocketNubs.js';
+import { syncRoadJoins } from './roadJoins.js';
 import { syncStructureHologram } from './structureHologram.js';
 export type { SpriteBuildSig, SwarmSpriteCtx };
 
@@ -123,6 +124,10 @@ export function scrapHeatTint(ageMs: number): number | undefined {
 // wiped it every frame.
 
 export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): void {
+  // Base platforms: the deck floor follows the plate set (one version compare per frame).
+  ctx.deckPlates?.sync(mirror.deckPlates);
+  // Slice 31: road joins, rebuilt only when a road or gate changed.
+  if (mirror.deckPlates?.deck === true && ctx.socketNubs === true) syncRoadJoins(mirror.structures, mirror.swarm);
   if (!mirror.swarm) return;
   const now = performance.now();
   // Pose-ring arrivals are main-thread stamps: interpolate on that clock.
@@ -258,11 +263,9 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         // the shared shipKind byte (structures plan, Phase 2).
         const stKind = entry.shipKind, stRadius = entry.radius;
         sprite = buildArtShipSprite(artHandle, () => buildStructureGfx(stKind, stRadius, 1, ctx.art.structStyle));
-        // A teleporter chamber is a deck ships fly into: the pad-deck band (the
-        // dock apron's), under every hull whatever the add order. So is the
-        // Ancients' gate's light pool (its stone rings are the rig's `over`
-        // layer, above the ships).
-        if (isPadChamberKind(stKind) || isAlienGateKind(stKind)) sprite.zIndex = RIG_UNDER_Z;
+        // Decks ships fly over (pad chambers, the gate's light pool, roads) sit in a floor band.
+        const underZ = underZForStructure(stKind);
+        if (underZ !== null) sprite.zIndex = underZ;
         // WS-4 Phase 5 (R2.16) — a Miner shows a faint dashed mining-range ring
         // at its `miningRange` radius. Built HERE (the once-per-sprite create
         // path, invariant #14 — never per-frame) and parented to the body so it
@@ -407,6 +410,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     } else if (entry.kind === 2) {
       // Build mirror (4C): flip in the local frame before the rig follows it.
       structMirrored = applyStructureMirror(sprite, mirror.structures?.get(entityId)?.mirror === true);
+      ctx.deckPlates?.zones?.note(entityId, entry.shipKind, lerped.x, lerped.y, lerped.angle); // slice 33 floor paint
       // Restyle 2c: pose the structure's rig (visible structures only); its
       // parts hang off this sprite and `shipContainer` (structureRigs.ts).
       let rigView: StructureRigView | null = null;
@@ -417,7 +421,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         } else rigs.hide(spriteKey);
       }
       // 0d slice 10: socket nubs, redrawn only when the used sockets change.
-      if (ctx.socketNubs === true && sprite.visible) updateSocketNubs(sprite, entry.shipKind, mirror.structures?.get(entityId), rigTick);
+      if (ctx.socketNubs === true && sprite.visible) updateSocketNubs(sprite, entry.shipKind, mirror.structures?.get(entityId), rigTick, entityId);
       // Structures (turret 'barrel' / miner 'drill') carry a mounts entry in
       // the catalogue but NO mountAngles on any wire — the snapshot
       // `structures[]` slice ships only turretTargetId / miningTargetId. So

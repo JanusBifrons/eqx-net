@@ -1,7 +1,9 @@
 /**
  * Style C family "transport" (docs/plans/structure-restyle-stage4.md §4 0a, §6).
  * Transport + docks: teleporter, pocket pad, freight dock; large teleporter + alien gate
- * (the Ancients' gate Astrolabe: structureStyleC.transport.astrolabe.ts).
+ * (parked, large); the road deck tile (base platforms).
+ * (the Ancients' gate Astrolabe: structureStyleC.transport.astrolabe.ts; the road:
+ * structureStyleC.transport.road.ts).
  * This family's drawings live only here; `kinds` is spread into `STYLE_C`
  * (structureStyleC.ts). Kind -> family: structureFamilies.ts.
  */
@@ -17,6 +19,7 @@ import type { BodyStatusHookTable } from './structureSocketNubs.js';
 import { doorLeafContext } from './structureStyleC.fences.gate.js';
 import { chamber, chamberStatus } from './structureStyleC.transport.chamber.js';
 import { ASTROLABE_RIG_HOOK, alienGate } from './structureStyleC.transport.astrolabe.js';
+import { road, roadStatus } from './structureStyleC.transport.road.js';
 
 /** Bump with any change to this family's drawings: it is part of the stored
  *  bake key of every kind below (`structureStyleVersion`), so players' cached
@@ -109,6 +112,7 @@ function dock(c: StyleCtx): void {
 /** This family's style C drawers (kinds not listed keep today's art). */
 export const kinds: StyleDrawerTable = {
   freight_dock: dock,
+  road,
   // Teleporter redesign T4: the chamber (structureStyleC.transport.chamber.ts).
   teleporter: chamber,
   pocket_pad: chamber,
@@ -132,4 +136,6 @@ export const status: BodyStatusHookTable = {
   teleporter: chamberStatus,
   pocket_pad: chamberStatus,
   teleporter_large: chamberStatus,
+  // Base platforms 31: the road's carriageway, joined to its neighbours.
+  road: roadStatus,
 };

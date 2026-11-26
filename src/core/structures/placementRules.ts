@@ -12,8 +12,27 @@
  * iterables are caller-owned, so it's safe to call from the per-frame ghost
  * preview (invariant #14). `null` means legal.
  */
-import { getStructureKind, isStructureKindId, normaliseStructureRotation, structureHalfExtents, structureLocalToWorld } from '../../shared-types/structureKinds.js';
+import {
+  getStructureKind,
+  isConnectorKind,
+  isStructureKindId,
+  isStructureQuarterTurn,
+  normaliseStructureQuarterTurn,
+  normaliseStructureRotation,
+  orientedBoxesOverlap,
+  orientedBoxOverlapsCircle,
+  structureHalfExtentsInto,
+  structureLocalToWorld,
+  structureRotationCosSinInto,
+} from '../../shared-types/structureKinds.js';
+import { pixelToAxialInto, type AxialHex, type HexPoint } from '../hex/hex.js';
+import { DECK_HEX_SIZE, PLATE_DIRS, plateCentreWorldInto, plateOfHexInto, type PlateIndex } from '../hex/plates.js';
+import { plateCentreAtWorldInto } from '../hex/plateSet.js';
 import type { GridObstacle } from './Grid.js';
+import { plateOverlapsObstacle } from './plateClearance.js';
+import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from './deckLinks.js';
+import { isOnDeckCorner, isOnDeckEdgeMid } from '../hex/deckCorners.js';
+import { connectorOnRoadHex, DECK_ROAD_KIND, isRoadBesideDeckGate } from './deckGateRoad.js';
 
 /** A circular footprint to test against (a placed structure or the ghost). */
 export interface PlacementFootprint {
@@ -32,7 +51,22 @@ export interface PlacementFootprint {
 }
 
 /** Why a placement is illegal. `null` (from {@link placementRejection}) = legal. */
-export type PlacementRejection = 'overlap-structure' | 'overlap-obstacle' | 'overlap-pad';
+export type PlacementRejection = 'overlap-structure' | 'overlap-obstacle' | 'overlap-pad' | 'off-deck' | 'plate-blocked' | 'no-road';
+
+/** The one plate query the deck rule needs (`PlateSet` on the server and the
+ *  client mirror; `OwnerPlateList` in the renderer). */
+export interface DeckPlateQuery {
+  /** Is world point (x, y) on one of `owner`'s plates? */
+  plateAtWorld(owner: string, x: number, y: number): boolean;
+}
+
+/** Deck context for {@link placementRejection} (base platforms, room flag
+ *  `deck` on): whose deck the structure must stand on. Absent = no deck rule
+ *  (system placements: NPC seeding, restore, scenarios). */
+export interface PlacementDeck {
+  plates: DeckPlateQuery;
+  owner: string;
+}
 
 /** Plain player-facing text for each rejection. */
 export const PLACEMENT_REJECTION_TEXT: Readonly<Record<PlacementRejection, string>> = Object.freeze({
@@ -40,6 +74,9 @@ export const PLACEMENT_REJECTION_TEXT: Readonly<Record<PlacementRejection, strin
   // Wreck pieces block placement too (wreck fields 7), so say both.
   'overlap-obstacle': 'Blocked by an asteroid or wreck',
   'overlap-pad': "Keep the landing pad clear",
+  'off-deck': 'Off your deck',
+  'plate-blocked': 'Plate area not clear',
+  'no-road': 'A gate goes where a road meets the fence',
 });
 
 /** The notice a player gets when the server refuses a placement, e.g.
@@ -59,27 +96,59 @@ export function placementRejectionNotice(r: PlacementRejection): string {
   return PLACEMENT_REJECTION_NOTICE[r];
 }
 
+/** A kind's `keepClear` area in world space (see {@link keepClearBox}). */
+export interface KeepClearBox {
+  readonly x: number;
+  readonly y: number;
+  /** Axis-aligned half extents at the NEAREST quarter turn (the box base
+   *  growth and cable routing read). */
+  readonly hw: number;
+  readonly hh: number;
+  /** The real (oriented) box: LOCAL half extents turned by (`cos`, `sin`).
+   *  At a quarter turn this is the axis-aligned box (`cos` 1, `sin` 0). */
+  readonly lhw: number;
+  readonly lhh: number;
+  readonly cos: number;
+  readonly sin: number;
+}
+
 /** Scratch for {@link keepClearBox} (alloc-free: the ghost preview calls this per frame). */
-const padBox = { x: 0, y: 0, hw: 0, hh: 0 };
+const padBox = { x: 0, y: 0, hw: 0, hh: 0, lhw: 0, lhh: 0, cos: 1, sin: 0 };
+const padTurn = { cos: 1, sin: 0 };
 
 /** The world box of a kind's `keepClear` area (a dock's landing pad) for a
- *  structure at (x, y) turned `rotDeg` (90° steps, game space y-up, CCW), or
+ *  structure at (x, y) turned `rotDeg` (30° steps, game space y-up, CCW), or
  *  `null` when the kind reserves nothing. `mirror` flips the pad's local
  *  offset first (build mirror, `structureLocalToWorld`). Returns shared
  *  scratch: read it before the next call. */
-export function keepClearBox(kindId: string | undefined, x: number, y: number, rotDeg: number | undefined, mirror?: boolean): { readonly x: number; readonly y: number; readonly hw: number; readonly hh: number } | null {
+export function keepClearBox(kindId: string | undefined, x: number, y: number, rotDeg: number | undefined, mirror?: boolean): KeepClearBox | null {
   if (kindId === undefined || !isStructureKindId(kindId)) return null;
   const kc = getStructureKind(kindId).keepClear;
   if (kc === undefined) return null;
   const r = normaliseStructureRotation(rotDeg);
-  const cos = r === 0 ? 1 : r === 180 ? -1 : 0, sin = r === 90 ? 1 : r === 270 ? -1 : 0;
-  structureLocalToWorld(kc.cx, kc.cy, x, y, cos, sin, mirror, padBox);
-  padBox.hw = (sin === 0 ? kc.w : kc.h) / 2;
-  padBox.hh = (sin === 0 ? kc.h : kc.w) / 2;
+  // Quarter turns stay exact (0 / ±1); a 30° step turns the pad's offset by
+  // its real angle.
+  structureRotationCosSinInto(r, padTurn);
+  structureLocalToWorld(kc.cx, kc.cy, x, y, padTurn.cos, padTurn.sin, mirror, padBox);
+  const swap = normaliseStructureQuarterTurn(r) % 180 !== 0;
+  padBox.hw = (swap ? kc.h : kc.w) / 2;
+  padBox.hh = (swap ? kc.w : kc.h) / 2;
+  if (r % 90 === 0) {
+    padBox.lhw = padBox.hw;
+    padBox.lhh = padBox.hh;
+    padBox.cos = 1;
+    padBox.sin = 0;
+  } else {
+    // The pad box is symmetric, so the mirror flip moves only its offset.
+    padBox.lhw = kc.w / 2;
+    padBox.lhh = kc.h / 2;
+    padBox.cos = padTurn.cos;
+    padBox.sin = padTurn.sin;
+  }
   return padBox;
 }
 
-/** Two axis-aligned boxes (structure footprints, rotations are 90° steps)
+/** Two axis-aligned boxes (structure footprints at quarter turns)
  *  overlap when they intersect on BOTH axes. Touching edges are legal. */
 function boxesOverlap(ax: number, ay: number, ahw: number, ahh: number, bx: number, by: number, bhw: number, bhh: number): boolean {
   return Math.abs(ax - bx) < ahw + bhw && Math.abs(ay - by) < ahh + bhh;
@@ -143,6 +212,96 @@ function boxOverlapsObstacle(bx: number, by: number, hw: number, hh: number, o: 
   return false;
 }
 
+/** {@link boxOverlapsObstacle} for an ORIENTED box (local half extents turned
+ *  by `bcos`, `bsin`): the obstacle is taken into the box's frame (its
+ *  centre turned back, its parts turned by the angle difference), then it is
+ *  the axis-aligned test. Allocation-free. */
+function orientedBoxOverlapsObstacle(bx: number, by: number, hw: number, hh: number, bcos: number, bsin: number, o: GridObstacle): boolean {
+  if (!orientedBoxOverlapsCircle(bx, by, hw, hh, bcos, bsin, o.x, o.y, o.radius)) return false;
+  const parts = o.parts;
+  if (parts === undefined) return true;
+  const ox = o.x - bx, oy = o.y - by;
+  const lx = ox * bcos + oy * bsin, ly = -ox * bsin + oy * bcos;
+  const a = o.angle ?? 0, ocos = Math.cos(a), osin = Math.sin(a);
+  // Turn by (a − b): cos(a−b), sin(a−b).
+  const cos = ocos * bcos + osin * bsin, sin = osin * bcos - ocos * bsin;
+  for (let p = 0; p < parts.length; p++) {
+    if (boxOverlapsPolygon(0, 0, hw, hh, parts[p]!, lx, ly, cos, sin)) return true;
+  }
+  return false;
+}
+
+const DECK_PLATE: PlateIndex = { i: 0, j: 0 };
+/** Scratch for {@link placementRejection} (alloc-free, #14). */
+const myExt = { hw: 0, hh: 0 };
+const myLocal = { hw: 0, hh: 0 };
+const myTurn = { cos: 1, sin: 0 };
+const theirTurn = { cos: 1, sin: 0 };
+const DECK_PT: HexPoint = { x: 0, y: 0 };
+const DECK_HEX: AxialHex = { q: 0, r: 0 };
+const DECK_OF: PlateIndex = { i: 0, j: 0 };
+
+/** {@link deckStanding} results. */
+const ON_DECK = 0, NEW_PLATE = 1, OFF_DECK = 2;
+
+/** Where a `kindId` centre at (x, y) stands against `deck.owner`'s deck:
+ *  ON_DECK, NEW_PLATE (a connector exactly on the centre of an unowned plate
+ *  bordering theirs; that plate is left in DECK_PLATE) or OFF_DECK. */
+function deckStanding(kindId: string, x: number, y: number, deck: PlacementDeck): number {
+  const { plates, owner } = deck;
+  if (plates.plateAtWorld(owner, x, y) || fenceTouchesDeck(kindId, x, y, deck)) return ON_DECK;
+  if (!isConnectorKind(kindId) || !plateCentreAtWorldInto(x, y, DECK_PLATE)) return OFF_DECK;
+  const i = DECK_PLATE.i, j = DECK_PLATE.j;
+  for (let d = 0; d < PLATE_DIRS.length; d++) {
+    const dir = PLATE_DIRS[d]!;
+    plateCentreWorldInto(i + dir.i, j + dir.j, DECK_PT);
+    if (plates.plateAtWorld(owner, DECK_PT.x, DECK_PT.y)) return NEW_PLATE;
+  }
+  return OFF_DECK;
+}
+
+/** Unit steps, 30° apart, from a seam point into the hexes round it. */
+const SEAM_NUDGE_COS = Array.from({ length: 12 }, (_, k) => Math.cos((k * Math.PI) / 6));
+const SEAM_NUDGE_SIN = Array.from({ length: 12 }, (_, k) => Math.sin((k * Math.PI) / 6));
+/** How far a seam point steps into each hex round it: inside every hex that
+ *  touches the point (any other hex is at least half an edge away). */
+const SEAM_NUDGE = DECK_HEX_SIZE / 4;
+
+/**
+ * Base platforms slice 26: a fence post on a hex CORNER, or a fence gate on a
+ * hex EDGE midpoint, stands on the deck when ANY hex it touches is on one of
+ * the owner's plates. The point sits on a seam, so the hex rounding gives it
+ * may be the off-deck one: without this, about a third of the corners and
+ * half the edges round a deck's OUTER boundary were refused `'off-deck'` (a
+ * player could not fence their own deck's edge). Allocation-free.
+ */
+function fenceTouchesDeck(kindId: string, x: number, y: number, deck: PlacementDeck): boolean {
+  const onSeam = kindId === DECK_FENCE_POST_KIND ? isOnDeckCorner(x, y) : kindId === DECK_FENCE_GATE_KIND && isOnDeckEdgeMid(x, y);
+  if (!onSeam) return false;
+  for (let k = 0; k < SEAM_NUDGE_COS.length; k++) {
+    if (deck.plates.plateAtWorld(deck.owner, x + SEAM_NUDGE * SEAM_NUDGE_COS[k]!, y + SEAM_NUDGE * SEAM_NUDGE_SIN[k]!)) return true;
+  }
+  return false;
+}
+
+/** Is world point (x, y) on plate DECK_PLATE? */
+function onLaidPlate(x: number, y: number): boolean {
+  pixelToAxialInto(x, y, DECK_HEX_SIZE, DECK_HEX);
+  plateOfHexInto(DECK_HEX.q, DECK_HEX.r, DECK_OF);
+  return DECK_OF.i === DECK_PLATE.i && DECK_OF.j === DECK_PLATE.j;
+}
+
+/**
+ * Base platforms: may a `kindId` centre at (x, y) stand on `deck.owner`'s
+ * deck? Yes when (x, y) is on one of their plates; also for a connector-kind
+ * structure exactly on the centre of a plate that borders one of theirs (that
+ * connector lays a NEW plate). Occupancy is the overlap check's job.
+ * Allocation-free.
+ */
+export function onOwnDeck(kindId: string, x: number, y: number, deck: PlacementDeck): boolean {
+  return deckStanding(kindId, x, y, deck) !== OFF_DECK;
+}
+
 /**
  * The reason a `kindId` footprint at (x, y) cannot be placed, or `null` when it
  * is legal. A kind's `keepClear` box (a dock's landing pad) counts as
@@ -152,7 +311,15 @@ function boxOverlapsObstacle(bx: number, by: number, hw: number, hh: number, o: 
  * pad. Tests the sum-of-radii overlap against every `structures` entry and
  * every `obstacles` entry (asteroids: bounding circle, then the convex `parts`
  * when the obstacle has them). `obstacles` omitted/empty ⇒ structures-only
- * (byte-identical to the legacy server check).
+ * (byte-identical to the legacy server check). `deck` given (the room's
+ * deck flag is on and this is a player's placement) ⇒ the centre must also be
+ * on the owner's deck ({@link onOwnDeck}), else `off-deck`. A connector
+ * that lays a NEW plate needs the whole plate clear (owner ruling, no rock
+ * clearing): no obstacle touching any of its 7 hexes and no structure
+ * centred on it, else `plate-blocked`. On a deck a shield gate needs a road
+ * tile on one side of its seam (`deckGateRoad.ts`), else `no-road`. A road
+ * and a connector never share a hex (`connectorOnRoadHex`: the road paves
+ * its whole hex, past its footprint box), else `overlap-structure`.
  */
 export function placementRejection(
   kindId: string,
@@ -162,22 +329,63 @@ export function placementRejection(
   obstacles?: readonly GridObstacle[] | null,
   rotDeg: number = 0,
   mirror?: boolean,
+  deck?: PlacementDeck | null,
 ): PlacementRejection | null {
-  const { hw, hh } = structureHalfExtents(kindId, rotDeg);
+  // A quarter turn keeps the exact axis-aligned rules (byte-identical); a
+  // 30° step tests the real turned box (base platforms 16).
+  structureHalfExtentsInto(kindId, rotDeg, myExt);
+  const hw = myExt.hw, hh = myExt.hh;
+  const turned = !isStructureQuarterTurn(rotDeg);
+  let mhw = hw, mhh = hh, mcos = 1, msin = 0;
+  if (turned) {
+    structureHalfExtentsInto(kindId, 0, myLocal);
+    structureRotationCosSinInto(rotDeg, myTurn);
+    mhw = myLocal.hw; mhh = myLocal.hh; mcos = myTurn.cos; msin = myTurn.sin;
+  }
+  const standing = deck ? deckStanding(kindId, x, y, deck) : ON_DECK;
+  let plateBlocked = false;
+  let roadMissing = deck != null && kindId === DECK_FENCE_GATE_KIND;
   for (const s of structures) {
     const shw = s.halfW ?? s.radius, shh = s.halfH ?? s.radius;
-    if (boxesOverlap(s.x, s.y, shw, shh, x, y, hw, hh)) return 'overlap-structure';
+    const theirTurned = s.rot !== undefined && !isStructureQuarterTurn(s.rot);
+    let thw = shw, thh = shh, tcos = 1, tsin = 0;
+    if (theirTurned) {
+      // `halfW`/`halfH` are the nearest-quarter box: swap back to local.
+      const swap = normaliseStructureQuarterTurn(s.rot) % 180 !== 0;
+      thw = swap ? shh : shw;
+      thh = swap ? shw : shh;
+      structureRotationCosSinInto(s.rot, theirTurn);
+      tcos = theirTurn.cos; tsin = theirTurn.sin;
+    }
+    if (roadMeetsConnector(kindId, x, y, hw, hh, s, shw, shh)) return 'overlap-structure';
+    if (turned || theirTurned) {
+      if (orientedBoxesOverlap(s.x, s.y, thw, thh, tcos, tsin, x, y, mhw, mhh, mcos, msin)) return 'overlap-structure';
+    } else if (boxesOverlap(s.x, s.y, shw, shh, x, y, hw, hh)) return 'overlap-structure';
     const theirs = keepClearBox(s.kind, s.x, s.y, s.rot, s.mirror);
-    if (theirs !== null && boxesOverlap(theirs.x, theirs.y, theirs.hw, theirs.hh, x, y, hw, hh)) return 'overlap-pad';
+    if (theirs !== null) {
+      if (turned || theirs.sin !== 0) {
+        if (orientedBoxesOverlap(theirs.x, theirs.y, theirs.lhw, theirs.lhh, theirs.cos, theirs.sin, x, y, mhw, mhh, mcos, msin)) return 'overlap-pad';
+      } else if (boxesOverlap(theirs.x, theirs.y, theirs.hw, theirs.hh, x, y, hw, hh)) return 'overlap-pad';
+    }
     const mine = keepClearBox(kindId, x, y, rotDeg, mirror);
-    if (mine !== null && boxesOverlap(mine.x, mine.y, mine.hw, mine.hh, s.x, s.y, shw, shh)) return 'overlap-pad';
+    if (mine !== null) {
+      if (theirTurned || mine.sin !== 0) {
+        if (orientedBoxesOverlap(mine.x, mine.y, mine.lhw, mine.lhh, mine.cos, mine.sin, s.x, s.y, thw, thh, tcos, tsin)) return 'overlap-pad';
+      } else if (boxesOverlap(mine.x, mine.y, mine.hw, mine.hh, s.x, s.y, shw, shh)) return 'overlap-pad';
+    }
+    if (standing === NEW_PLATE && !plateBlocked && onLaidPlate(s.x, s.y)) plateBlocked = true;
+    if (roadMissing && isRoadBesideDeckGate(s.kind, s.x, s.y, x, y, rotDeg)) roadMissing = false;
   }
   if (obstacles) {
     for (let i = 0; i < obstacles.length; i++) {
       const o = obstacles[i]!;
-      if (boxOverlapsObstacle(x, y, hw, hh, o)) return 'overlap-obstacle';
+      if (turned ? orientedBoxOverlapsObstacle(x, y, mhw, mhh, mcos, msin, o) : boxOverlapsObstacle(x, y, hw, hh, o)) return 'overlap-obstacle';
+      if (standing === NEW_PLATE && !plateBlocked && plateOverlapsObstacle(DECK_PLATE.i, DECK_PLATE.j, o)) plateBlocked = true;
     }
   }
+  if (standing === OFF_DECK) return 'off-deck';
+  if (plateBlocked) return 'plate-blocked';
+  if (roadMissing) return 'no-road';
   return null;
 }
 
@@ -190,6 +398,15 @@ export function canPlaceStructureAt(
   obstacles?: readonly GridObstacle[] | null,
   rotDeg: number = 0,
   mirror?: boolean,
+  deck?: PlacementDeck | null,
 ): boolean {
-  return placementRejection(kindId, x, y, structures, obstacles, rotDeg, mirror) === null;
+  return placementRejection(kindId, x, y, structures, obstacles, rotDeg, mirror, deck) === null;
+}
+
+/** A road on one side and a connector on the other, the connector reaching
+ *  into the road's hex (`connectorOnRoadHex`). `hw`/`hh`: the new
+ *  footprint's nearest-quarter half extents; `shw`/`shh`: `s`'s. */
+function roadMeetsConnector(kindId: string, x: number, y: number, hw: number, hh: number, s: PlacementFootprint, shw: number, shh: number): boolean {
+  if (kindId === DECK_ROAD_KIND) return isConnectorKind(s.kind) && connectorOnRoadHex(s.x, s.y, shw, shh, x, y);
+  return s.kind === DECK_ROAD_KIND && isConnectorKind(kindId) && connectorOnRoadHex(x, y, hw, hh, s.x, s.y);
 }

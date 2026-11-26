@@ -1,4 +1,5 @@
 import { axialToPixel, type GalaxySector } from '@core/galaxy/galaxy';
+import { HEX_DIRS } from '@core/hex/hex';
 import { teamColorOf } from '../../../shared-types/factions.js';
 import type { SectorControl } from '../../../shared-types/galaxySnapshot.js';
 import { NEUTRAL_OWNER } from './sectorOwnership';
@@ -194,21 +195,12 @@ export function isNewFlip(prev: number | null | undefined, next: number | null |
 }
 
 /**
- * Axial neighbour offset across hex-edge `ei`, where edge `ei` runs from
- * `GalaxyMapLayer.hexVertices` vertex `ei` → vertex `(ei+1) % 6` (vertex angles
- * 30°, 90°, 150°, 210°, 270°, 330°). The neighbour across an edge sits in the
- * edge's outward-normal direction. **MUST stay in sync with `hexVertices`** —
- * locked by galaxyTerritories.test.ts against the live vertex order + the core
- * `axialToPixel` projection (the highest-risk detail of the border port).
+ * Axial neighbour offset across hex-edge `ei` (edge `ei` runs from `hexVertices`
+ * vertex `ei` → `(ei+1) % 6`). The table is `HEX_DIRS` in `@core/hex/hex`, the
+ * one home of the hex maths; locked by galaxyTerritories.test.ts against the
+ * vertex order + the `axialToPixel` projection.
  */
-export const HEX_EDGE_NEIGHBOUR_DIRS: ReadonlyArray<{ q: number; r: number }> = [
-  { q: 0, r: 1 }, // edge 0 (30°→90°): lower-right
-  { q: -1, r: 1 }, // edge 1 (90°→150°): lower-left
-  { q: -1, r: 0 }, // edge 2 (150°→210°): left
-  { q: 0, r: -1 }, // edge 3 (210°→270°): upper-left
-  { q: 1, r: -1 }, // edge 4 (270°→330°): upper-right
-  { q: 1, r: 0 }, // edge 5 (330°→30°): right
-];
+export const HEX_EDGE_NEIGHBOUR_DIRS: ReadonlyArray<{ q: number; r: number }> = HEX_DIRS;
 
 /**
  * The hex-edge indices of `sector` that lie on its faction's OUTER perimeter —

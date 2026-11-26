@@ -47,7 +47,12 @@ import { CABLE_NO_SOCKET, type Connection } from './Connection.js';
 import { structureLinksBoundBySockets } from '../leveling/structureLevel.js';
 import { CABLE_BODY_WIDTH, MIN_CABLE_LENGTH } from './structureGridConstants.js';
 import { polylinesWithin } from './cableClearance.js';
-import { keepClearBox } from './placementRules.js';
+import { keepClearBox, type KeepClearBox } from './placementRules.js';
+import {
+  cablePolylineTurnedBoxHit, gridNodeTurnedBoxInto, TURNED_BROAD_MISS, TURNED_HIT, type TurnedBox,
+} from './gridNodeBox.js';
+import { DECK_LINK_NONE, deckLinkKind } from './deckLinks.js';
+import { flattenDeckSeamCable } from './deckCablePath.js';
 
 /** Facing-test tolerance (world units of dot product): a socket at right
  *  angles to its partner counts as facing it, whatever the float noise. */
@@ -187,10 +192,13 @@ export function cablePolylineHitsAabb(poly: Float64Array, minX: number, minY: nu
   return false;
 }
 
+/** Scratch: a node's turned box (alloc-free). */
+const nodeTurn: TurnedBox = { hw: 0, hh: 0, cos: 1, sin: 0 };
+
 /** A node's landing pad (its kind's `keepClear` box, `keepClearBox`) in world
  *  space, or null when the kind has none. Returns `keepClearBox`'s shared
  *  scratch: read it before the next call. Allocation-free. */
-export function gridNodePadBox(n: GridNode): { readonly x: number; readonly y: number; readonly hw: number; readonly hh: number } | null {
+export function gridNodePadBox(n: GridNode): KeepClearBox | null {
   return keepClearBox(n.kind, n.x, n.y, (n.rot * 180) / Math.PI, n.mirror);
 }
 
@@ -199,6 +207,11 @@ export function gridNodePadBox(n: GridNode): { readonly x: number; readonly y: n
 function polylineHitsPad(n: GridNode, poly: Float64Array, box: CableBox): boolean {
   const pad = gridNodePadBox(n);
   if (pad === null) return false;
+  if (pad.sin !== 0) { // a 30° step: the real turned pad box
+    const r = cablePolylineTurnedBoxHit(poly, CABLE_CURVE_SEGMENTS, box, pad.x, pad.y, pad.lhw, pad.lhh, pad.cos, pad.sin);
+    if (r !== TURNED_BROAD_MISS) CABLE_BLOCK_STATS.narrow++;
+    return r === TURNED_HIT;
+  }
   const minX = pad.x - pad.hw, maxX = pad.x + pad.hw, minY = pad.y - pad.hh, maxY = pad.y + pad.hh;
   if (maxX < box.x0 || minX > box.x1 || maxY < box.y0 || minY > box.y1) return false;
   CABLE_BLOCK_STATS.narrow++;
@@ -228,6 +241,12 @@ export function isCablePolylineBlocked(
   for (const n of nodes.values()) {
     if (n.id === a.id || n.id === b.id) continue;
     if (polylineHitsPad(n, poly, box)) return true;
+    if (gridNodeTurnedBoxInto(n, nodeTurn)) { // a 30° step: the real turned body box
+      const r = cablePolylineTurnedBoxHit(poly, CABLE_CURVE_SEGMENTS, box, n.x, n.y, nodeTurn.hw, nodeTurn.hh, nodeTurn.cos, nodeTurn.sin);
+      if (r !== TURNED_BROAD_MISS) CABLE_BLOCK_STATS.narrow++;
+      if (r === TURNED_HIT) return true;
+      continue;
+    }
     const hw = n.halfW ?? n.radius, hh = n.halfH ?? n.radius;
     const minX = n.x - hw, maxX = n.x + hw, minY = n.y - hh, maxY = n.y + hh;
     if (maxX < box.x0 || minX > box.x1 || maxY < box.y0 || minY > box.y1) continue;
@@ -380,6 +399,7 @@ export function pickCableSocketPair(
   usedB = 0,
   adjacency?: ReadonlyMap<string, readonly Connection[]>,
   skip?: Connection,
+  deck = false,
 ): CanConnectReason | null {
   const la = structureSockets(a.kind);
   const lb = structureSockets(b.kind);
@@ -437,7 +457,7 @@ export function pickCableSocketPair(
     endB.x = bx[j]!; endB.y = by[j]!; endB.nx = bNx[j]!; endB.ny = bNy[j]!;
     flattenCableCurve(endA, aAny, endB, bAny, pickPoly, pickBox);
     if (isCablePolylineBlocked(a, b, pickPoly, pickBox, nodes, obstacles)) continue;
-    if (adjacency !== undefined && cableCrossesExisting(a, b, pickPoly, pickBox, adjacency, nodes, skip)) {
+    if (adjacency !== undefined && cableCrossesExisting(a, b, pickPoly, pickBox, adjacency, nodes, skip, deck)) {
       if (crossI === CABLE_NO_SOCKET) { crossI = i; crossJ = j; }
       continue;
     }
@@ -462,6 +482,8 @@ export function pickCableSocketPair(
  * curve `pickCableSocketPair` tested: any-side ends short-tailed. A fence
  * link (either end `CABLE_NO_SOCKET`) is the straight centre-to-centre line,
  * written as the same fixed-length polyline so callers treat both alike.
+ * With `deck` (the room flag) a deck link (`deckLinkKind`) is its seam path
+ * (`flattenDeckSeamCable`, centre to centre; base platforms slice 12).
  * Allocation-free.
  */
 export function flattenLinkCable(
@@ -469,7 +491,9 @@ export function flattenLinkCable(
   b: GridNode, socketB: number,
   out: Float64Array,
   box: CableBox,
+  deck = false,
 ): void {
+  if (deck && deckLinkKind(a, b) !== DECK_LINK_NONE && flattenDeckSeamCable(a.x, a.y, b.x, b.y, out, box, CABLE_CURVE_SEGMENTS)) return;
   const la = structureSockets(a.kind), lb = structureSockets(b.kind);
   const sa = socketA === CABLE_NO_SOCKET ? undefined : la[socketA];
   const sb = socketB === CABLE_NO_SOCKET ? undefined : lb[socketB];
@@ -528,7 +552,8 @@ function linkMayReach(n: GridNode, o: GridNode, box: CableBox, pad: number): boo
  * and a connector's faces sit more than a body width apart, so only a cable
  * leaving along the same path (the same connector face) clashes. Fence links,
  * links with an end missing from `nodes`, a link joining `a` and `b` itself
- * (its cable being re-picked) and `skip` (a link being moved) are skipped. Each link is
+ * (its cable being re-picked), `skip` (a link being moved) and, with `deck`, a deck
+ * link (its seam cable shares seams by design) are skipped. Each link is
  * visited once (from its lower-id end; `adjacency` lists a link under both
  * ends), box-tested before it is flattened. Allocation-free.
  */
@@ -540,6 +565,7 @@ export function cableCrossesExisting(
   adjacency: ReadonlyMap<string, readonly Connection[]>,
   nodes: ReadonlyMap<string, GridNode>,
   skip?: Connection,
+  deck = false,
 ): boolean {
   const pad = CABLE_BODY_WIDTH;
   for (const id of adjacency.keys()) {
@@ -553,6 +579,7 @@ export function cableCrossesExisting(
       if (skip !== undefined && ((id === skip.aId && other === skip.bId) || (id === skip.bId && other === skip.aId))) continue;
       const n = nodes.get(id), o = nodes.get(other);
       if (n === undefined || o === undefined || isFenceLink(n, o) || !linkMayReach(n, o, box, pad)) continue;
+      if (deck && deckLinkKind(n, o) !== DECK_LINK_NONE) continue;
       CABLE_CROSS_STATS.links++;
       flattenLinkCable(n, link.socketAt(id), o, link.socketAt(other), crossPoly, crossBox);
       if (crossBox.x1 + pad < box.x0 || crossBox.x0 - pad > box.x1 || crossBox.y1 + pad < box.y0 || crossBox.y0 - pad > box.y1) continue;

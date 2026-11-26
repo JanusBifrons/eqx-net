@@ -15,7 +15,9 @@
  */
 import type { ShipKind } from '../../shared-types/shipKinds/types.js';
 import { shipTuning } from '../../shared-types/shipScale/tuning.js';
-import { structureHalfExtentsInto } from '../../shared-types/structureKinds/geometry.js';
+import {
+  isStructureQuarterTurn, normaliseStructureRotation, structureHalfExtentsInto,
+} from '../../shared-types/structureKinds/geometry.js';
 import type { CoarseFieldMap } from '../nav/coarseField.js';
 import {
   newWarpLineStop, warpLineClear, warpLineStop,
@@ -115,9 +117,12 @@ export function fillWarpStructureFootprint(
   gateBoxes: Float32Array | null | undefined,
   out: WarpStructureFootprint,
 ): WarpStructureFootprint {
+  // The nearest-quarter box; a 30° step (never a gate: those turn only in
+  // quarters) also carries its turn, for the real turned box.
   structureHalfExtentsInto(kind, rotationDeg, ext);
   out.x = x; out.y = y;
   out.halfW = ext.hw; out.halfH = ext.hh;
+  out.rotDeg = gateBoxes == null && !isStructureQuarterTurn(rotationDeg) ? normaliseStructureRotation(rotationDeg) : undefined;
   out.boxes = gateBoxes ?? undefined;
   return out;
 }

@@ -162,6 +162,18 @@ export class Recorder {
     await context.addInitScript((kv: Record<string, string>) => {
       for (const [k, v] of Object.entries(kv)) localStorage.setItem(k, v);
     }, storage);
+    // Phone takes: the game asks for full screen on the first touch lift
+    // (useFirstTapFullscreen). In the headless capture browser that resizes
+    // the screencast mid-take (frames jump to 2x with the page drawn at 1x in
+    // the top-left quarter). The emulated phone viewport already is the whole
+    // screen, so grant the request as a no-op.
+    if (phone) {
+      // A string, not a function: tsx's keepNames wraps functions in
+      // `__name(...)`, which does not exist in the page.
+      await context.addInitScript({
+        content: 'Element.prototype.requestFullscreen = Element.prototype.webkitRequestFullscreen = function () { return Promise.resolve(); };',
+      });
+    }
     const page = await context.newPage();
     page.on('pageerror', (e) => this.log(`  [pageerror] ${e.message}`));
 

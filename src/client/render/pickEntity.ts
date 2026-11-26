@@ -37,6 +37,7 @@
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getStructureKind, isStructureKindId } from '../../shared-types/structureKinds.js';
 import { getShipKind } from '@shared-types/shipKinds';
+import { pointInOrientedBox, structureTurnedBoxInto } from '../../shared-types/structureKinds/geometry.js';
 import { isParkedHull, isShipIAmFlying } from './shipOwnership.js';
 import { isLootPod } from '@shared-types/swarmWireFormat';
 import { craneBayFor } from '../../core/articulation/craneRig.js';
@@ -71,6 +72,9 @@ export function fingerSlopWorld(scale: number): number {
 
 /** Fallback collision radius when a ship kind can't be resolved. */
 const SHIP_FALLBACK_RADIUS = 20;
+const RAD_TO_DEG = 180 / Math.PI;
+/** A structure's turned box at a 30° step (no allocation on hover). */
+const pickTurn = { hw: 0, hh: 0, cos: 1, sin: 0 };
 
 export function pickEntityAt(
   worldX: number,
@@ -117,10 +121,15 @@ export function pickEntityAt(
         // bounding circle: a tap in the empty corner beside a long Solar must
         // not select it. Inline (no allocation — runs on pointer-move hover).
         const fp = getStructureKind(sw.shipKind).footprint;
+        // A 30° deck step tests the real turned box (`pickTurn` scratch).
         const quarter = Math.round((sw.angle * 2) / Math.PI) % 2 !== 0;
-        const hw = (quarter ? fp.h : fp.w) / 2 + slop;
-        const hh = (quarter ? fp.w : fp.h) / 2 + slop;
-        hit = Math.abs(dx) <= hw && Math.abs(dy) <= hh;
+        if (structureTurnedBoxInto((quarter ? fp.h : fp.w) / 2, (quarter ? fp.w : fp.h) / 2, sw.angle * RAD_TO_DEG, pickTurn)) {
+          hit = pointInOrientedBox(worldX, worldY, sw.x, sw.y, pickTurn.hw, pickTurn.hh, pickTurn.cos, pickTurn.sin, slop);
+        } else {
+          const hw = (quarter ? fp.h : fp.w) / 2 + slop;
+          const hh = (quarter ? fp.w : fp.h) / 2 + slop;
+          hit = Math.abs(dx) <= hw && Math.abs(dy) <= hh;
+        }
       } else {
         const reach = sw.radius + slop;
         hit = distSq <= reach * reach;

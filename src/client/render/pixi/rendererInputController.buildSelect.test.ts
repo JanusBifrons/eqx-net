@@ -32,11 +32,13 @@ function setup() {
   return { ctl, deps, feedback };
 }
 
-/** My own Solar at game (100, -100) = screen (100, 100); no ships in view. */
+/** My own Solar at game (100, -100) = screen (100, 100); no ships in view. The
+ *  pose carries its `angle` like a real mirror entry: the pick tests a 30° deck
+ *  turn's real turned box, and a missing angle (NaN) would miss everything. */
 const MIRROR = {
   localPlayerId: 'me-123',
   ships: new Map(),
-  swarm: new Map([[9, { kind: 2, shipKind: 'solar', radius: 40, x: 100, y: -100 }]]),
+  swarm: new Map([[9, { kind: 2, shipKind: 'solar', radius: 40, x: 100, y: -100, angle: 0 }]]),
   structures: new Map([[9, { owner: 'me-123' }]]),
 } as unknown as RenderMirror;
 
@@ -78,7 +80,7 @@ describe('Build: a tap on something that is not mine (tap rule T4)', () => {
   const ENEMY = {
     localPlayerId: 'me-123',
     ships: new Map(),
-    swarm: new Map([[7, { kind: 2, shipKind: 'turret', radius: 20, x: 100, y: -100 }]]),
+    swarm: new Map([[7, { kind: 2, shipKind: 'turret', radius: 20, x: 100, y: -100, angle: 0 }]]),
     structures: new Map([[7, { owner: 'enemy-9' }]]),
   } as unknown as RenderMirror;
 

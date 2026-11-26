@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   BUILD_CATEGORIES,
+  buildableKinds,
   categoryById,
 } from './buildCategories';
 import { STRUCTURE_KINDS_LIST, isBuildableStructureKind } from '@shared-types/structureKinds';
@@ -19,6 +20,13 @@ describe('buildCategories taxonomy', () => {
     expect(new Set(categorised)).toEqual(new Set(all));
     // length equality rules out duplicates hiding an orphan and vice-versa.
     expect(categorised.length).toBe(all.length);
+  });
+
+  it('offers the road deck tile on a deck room only', () => {
+    const transport = categoryById('transport');
+    expect(buildableKinds(transport, true)).toContain('road');
+    expect(buildableKinds(transport, false)).not.toContain('road');
+    expect(buildableKinds(transport, false)).toContain('teleporter');
   });
 
   it('resolves every category id', () => {

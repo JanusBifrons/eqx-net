@@ -12,7 +12,7 @@ import { canConnect, edgeDistance, type GridNode } from './Grid.js';
 import { CABLE_NO_SOCKET, makeCableSocketPick } from './cableCurve.js';
 import { CABLE_BODY_WIDTH, CABLE_STATION_PITCH, MIN_CABLE_LENGTH } from './structureGridConstants.js';
 import {
-  getStructureKind,
+  getStructureKind, isConnectorKind,
   structureHalfExtents,
   structureSockets,
   structureSocketToWorld,
@@ -23,7 +23,7 @@ function real(id: string, kind: string, x: number, y: number): GridNode {
   const { hw, hh } = structureHalfExtents(kind, 0);
   return {
     id, kind, x, y, rot: 0, radius: k.radius, halfW: hw, halfH: hh, isHub: k.isHub,
-    isCapital: kind === 'capital', isConnector: kind === 'connector',
+    isCapital: kind === 'capital', isConnector: isConnectorKind(kind),
     isShieldPylon: kind === 'shield_pylon' || kind === 'shield_gate' || kind === 'shield_airlock',
     maxConnections: 10, powerOutput: 0, powerConsumption: 0, isConstructed: true,
   };

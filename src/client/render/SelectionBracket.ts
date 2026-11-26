@@ -2,6 +2,7 @@ import { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import { getShipKind } from '@shared-types/shipKinds';
 import { getStructureKind, isStructureKindId } from '../../shared-types/structureKinds.js';
+import { orientedBoxBoundsInto, structureTurnedBoxInto } from '../../shared-types/structureKinds/geometry.js';
 import { interpolateSwarmPose, type InterpolatedPose } from '../net/swarmInterpolation';
 import { mainThreadNowMs } from './mainThreadNow.js';
 
@@ -44,6 +45,8 @@ export const MIN_HALF_PX = MIN_HALF;
 const SHIP_FALLBACK_RADIUS = 20;
 
 const _poseScratch: InterpolatedPose = { x: 0, y: 0, angle: 0 };
+const _turnScratch = { hw: 0, hh: 0, cos: 1, sin: 0 };
+const RAD_TO_DEG = 180 / Math.PI;
 
 /** A selectable entity's game-space centre and half extents (`hw` along x,
  *  `hh` along y). Round things (ships, drones, rocks) have `hw = hh = r`; a
@@ -86,9 +89,15 @@ export function resolveSelectable(mirror: RenderMirror, id: string, out: Selecta
     // kind (the 960x600 Shipyard) would get a box far taller than the yard.
     // Frame its (quarter-turn) footprint box instead, as `pickEntityAt` hits it.
     const fp = getStructureKind(sw.shipKind).footprint;
+    // At a 30° deck step: the bound of the real turned box (cheap, and it
+    // still frames the whole structure).
     const quarter = Math.round((sw.angle * 2) / Math.PI) % 2 !== 0;
-    out.hw = (quarter ? fp.h : fp.w) / 2;
-    out.hh = (quarter ? fp.w : fp.h) / 2;
+    if (structureTurnedBoxInto((quarter ? fp.h : fp.w) / 2, (quarter ? fp.w : fp.h) / 2, sw.angle * RAD_TO_DEG, _turnScratch)) {
+      orientedBoxBoundsInto(_turnScratch.hw, _turnScratch.hh, _turnScratch.cos, _turnScratch.sin, out);
+    } else {
+      out.hw = (quarter ? fp.h : fp.w) / 2;
+      out.hh = (quarter ? fp.w : fp.h) / 2;
+    }
   } else {
     out.hw = sw.radius;
     out.hh = sw.radius;

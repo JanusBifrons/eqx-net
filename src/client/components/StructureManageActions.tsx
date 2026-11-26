@@ -14,7 +14,7 @@ import { Box, Tooltip } from '@mui/material';
 import { sendStructureAction, sendUpgradeStructure } from '../structures/structureActionsClient';
 import { getGameClient } from '../net/clientSingleton';
 import { canUpgradeStructure, structureUpgradeCost, structureUpgradeGoods } from '@core/leveling/structureLevel';
-import { getStructureKind } from '@shared-types/structureKinds';
+import { getStructureKind, isConnectorKind } from '@shared-types/structureKinds';
 import { GOOD_DEFS, type GoodId } from '@shared-types/goods';
 import { phoneTiny } from './inspectorSizes';
 import { HUD } from '../hud/tokens';
@@ -58,7 +58,7 @@ export function readManageData(entityId: number): ManageActionData | null {
   const level = st.level ?? 1;
   const data: ManageActionData = {
     isDeconstructing: st.isDeconstructing === true,
-    isConnector: kindId === 'connector',
+    isConnector: isConnectorKind(kindId),
     canUpgrade: st.built === true && st.isDeconstructing !== true && canUpgradeStructure(level),
   };
   if (data.canUpgrade) {

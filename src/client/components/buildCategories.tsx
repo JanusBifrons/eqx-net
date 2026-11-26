@@ -6,7 +6,7 @@ import FactoryIcon from '@mui/icons-material/Factory';
 import ApartmentIcon from '@mui/icons-material/Apartment';
 import TripOriginIcon from '@mui/icons-material/TripOrigin';
 import CrisisAlertIcon from '@mui/icons-material/CrisisAlert';
-import { COASTAL_DEFENCE_KINDS, type StructureKindId } from '@shared-types/structureKinds';
+import { COASTAL_DEFENCE_KINDS, isDeckOnlyStructureKind, type StructureKindId } from '@shared-types/structureKinds';
 
 /**
  * Build menu categories (WS-13 / R2.6): the Build sidebar's rail.
@@ -66,8 +66,9 @@ export const BUILD_CATEGORIES: readonly BuildCategory[] = [
   { id: 'batteries', label: 'Gun Batteries', kinds: COASTAL_DEFENCE_KINDS },
   // D3 — habitation: station residents use provisions and consumer goods and pay taxes.
   { id: 'habitation', label: 'Habitation', kinds: ['habitat_module', 'tower_module'] },
-  // v4 T1 — teleporters: paired pads that swap ships and cargo.
-  { id: 'transport', label: 'Transport', kinds: ['teleporter', 'teleporter_large'] },
+  // v4 T1 — teleporters: paired pads that swap ships and cargo. Base
+  // platforms: the road deck tile (deck rooms only, `buildableKinds`).
+  { id: 'transport', label: 'Transport', kinds: ['teleporter', 'teleporter_large', 'road'] },
 ];
 
 /** Each category's icon on the Build sidebar's rail (BuildSidebar.tsx). */
@@ -80,6 +81,12 @@ export const CATEGORY_ICON: Record<BuildCategoryId, ReactNode> = {
   habitation: <ApartmentIcon />,
   transport: <TripOriginIcon />,
 };
+
+/** The kinds a category offers in this room: a deck-only kind (the road tile)
+ *  shows only on a deck room (the server refuses it elsewhere too). */
+export function buildableKinds(cat: BuildCategory, deck: boolean): readonly StructureKindId[] {
+  return deck ? cat.kinds : cat.kinds.filter((k) => !isDeckOnlyStructureKind(k));
+}
 
 /** Resolve a category record by id (every id is present — exhaustiveness-locked). */
 export function categoryById(id: BuildCategoryId): BuildCategory {

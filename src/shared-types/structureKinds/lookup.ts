@@ -37,8 +37,10 @@ export const STRUCTURE_KINDS: Record<StructureKindId, StructureKind> = Object.fr
  *  base fits the 5,000-mineral Capital bank.
  *  15→16 (structure-restyle F2, gate family size): SHIELD_GATE 320×72 →
  *  416×72, SHIELD_AIRLOCK 320×260 → 392×260, SHIELD_PYLON 72×72 → 120×120
- *  (the openings ships fly through are unchanged). */
-export const STRUCTURE_KIND_CATALOGUE_VERSION = 16;
+ *  (the openings ships fly through are unchanged).
+ *  16→17 (base platforms): every kind gains `deckSlot`. No size or stat
+ *  changed, so the bump wipes no kind (`STRUCTURE_KIND_WIPES[17] = []`). */
+export const STRUCTURE_KIND_CATALOGUE_VERSION = 17;
 // Gates (SHIELD_GATE, SHIELD_AIRLOCK) were APPENDED without a bump: a bump
 // discards every saved structure on the next boot (SectorPersistence's version
 // gate), and appending a kind leaves every existing record — and so every saved
@@ -63,6 +65,43 @@ export const UNBUILDABLE_STRUCTURE_KINDS: readonly StructureKindId[] = ['alien_g
 
 export function isBuildableStructureKind(id: string): boolean {
   return !(UNBUILDABLE_STRUCTURE_KINDS as readonly string[]).includes(id);
+}
+
+/**
+ * Does this kind act as a grid connector (a cable junction the power grid
+ * routes through)? The ONE answer to "is this a connector?" for server and
+ * client alike, so never test `kind === 'connector'` directly.
+ *
+ * Base platforms slice 22: a buildable PLATE building (the Large Teleporter)
+ * is one too. It sits over its plate's centre and builds the connector in, so
+ * it anchors the plate (`isPlateAnchor`), takes the plate's deck links (whose
+ * cap exemption makes its own `maxConnections: 1` no limit there) and relays
+ * power like a connector everywhere. The Ancients' gate (also `deckSlot:
+ * 'plate'`) never joins a network, so it is NOT a connector.
+ */
+export function isConnectorKind(kind: string | null | undefined): boolean {
+  return kind === 'connector' || kind === 'teleporter_large';
+}
+
+/**
+ * Flat deck tiles (base platforms): kinds that lie ON the deck. Their body is
+ * a permanent hologram (the blueprint ghost body, never turned solid:
+ * `server/structures/blueprintBody.ts`), so ships fly over them, navigation
+ * routes over them and no weapon touches them (`isWeaponTransparent`). The
+ * ONE answer for server and client alike.
+ */
+export const FLAT_DECK_STRUCTURE_KINDS: readonly StructureKindId[] = ['road'];
+
+export function isFlatDeckKind(kind: string | null | undefined): boolean {
+  return kind === 'road';
+}
+
+/** Kinds only a deck room builds (base platforms, room flag `deck`): the
+ *  build menu hides them elsewhere and the server refuses them. */
+export const DECK_ONLY_STRUCTURE_KINDS: readonly StructureKindId[] = ['road'];
+
+export function isDeckOnlyStructureKind(kind: string): boolean {
+  return (DECK_ONLY_STRUCTURE_KINDS as readonly string[]).includes(kind);
 }
 
 export function getStructureKind(id: string | null | undefined): StructureKind {

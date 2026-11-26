@@ -231,7 +231,8 @@ export const PlaceStructureSchema = z
     kind: StructureKindIdSchema,
     x: z.number().finite(),
     y: z.number().finite(),
-    /** Phase V — rotation in degrees; the server snaps it to 0/90/180/270. */
+    /** Rotation in degrees; the server snaps it to 30° steps on a deck room,
+     *  quarter turns elsewhere (`snapPlayerStructureRotation`). */
     rot: z.number().finite().optional(),
     /** Build mirror — place it left-right flipped (x → −x in its local frame). */
     mirror: z.boolean().optional(),

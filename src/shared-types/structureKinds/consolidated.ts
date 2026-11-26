@@ -16,6 +16,7 @@ export const REACTOR: StructureKind = {
   description: 'Burns fuel from base storage for about eight Solars of power. No fuel, no power. A leaf node.',
   radius: 425, // bounding circle of the 600×600 footprint
   footprint: { w: 600, h: 600 },
+  deckSlot: 'hex',
   maxHealth: 3000,
   maxConnections: 1,
   isHub: false,
@@ -34,6 +35,7 @@ export const BATTERY_BANK: StructureKind = {
   description: 'Stores as much power as ten Batteries. A leaf node.',
   radius: 425, // bounding circle of the 600×600 footprint
   footprint: { w: 600, h: 600 },
+  deckSlot: 'hex',
   maxHealth: 2500,
   maxConnections: 1,
   isHub: false,
@@ -52,6 +54,7 @@ export const STORAGE_VAULT: StructureKind = {
   description: 'Holds as much as eight Cargo Bays; part of the base storage network. A leaf node.',
   radius: 289, // bounding circle of the 480×320 footprint
   footprint: { w: 480, h: 320 },
+  deckSlot: 'hex',
   maxHealth: 4000,
   maxConnections: 1,
   isHub: false,
@@ -71,6 +74,7 @@ export const SHIPYARD: StructureKind = {
   description: 'A huge yard that builds packed ships from a ship blueprint and goods (needs power). A hub (4 links); rare.',
   radius: 567, // bounding circle of the 960×600 footprint
   footprint: { w: 960, h: 600 },
+  deckSlot: 'hex',
   maxHealth: 9000,
   maxConnections: 4,
   isHub: true,

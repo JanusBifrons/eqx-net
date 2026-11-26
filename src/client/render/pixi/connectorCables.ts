@@ -28,13 +28,16 @@ import type { GridNode } from '../../../core/structures/Grid.js';
 import {
   CABLE_CURVE_FLOATS, CABLE_CURVE_SEGMENTS, CABLE_NO_SOCKET, flattenLinkCable, makeCableBox,
 } from '../../../core/structures/cableCurve.js';
+import { DECK_LINK_NONE, deckLinkKind } from '../../../core/structures/deckLinks.js';
 import { isShieldEmitterKind } from '../../../core/structures/gateGeometry.js';
+import { isConnectorKind } from '../../../shared-types/structureKinds.js';
 import { blankGridNode } from '../../structures/mirrorToGridNode.js';
 import {
   addCablePathSparks, cablePulseWidth, cableStudInset, drawCablePathBody, drawCablePathCollarFlash, drawCablePathGlow,
   mixColor, strokeCableSparks, type LinePath,
 } from './connectorLineLooks.js';
 import { CONNECTOR_IDLE_COLOR, type ConnectorFlowMaterial, type ConnectorVisual } from './connectorVisual.js';
+import { isDeckFenceLink } from './connectorFenceBeam.js';
 
 /** Points in a cable polyline. */
 export const CABLE_POINTS = CABLE_CURVE_SEGMENTS + 1;
@@ -52,7 +55,7 @@ export interface LinkCable {
   /** Socket to socket (end collars); false for a straight fence link. */
   socketed: boolean;
   // What the curve was flattened from (the cache's change check).
-  ax: number; ay: number; aa: number; ak: string; sa: number; ma: boolean;
+  ax: number; ay: number; aa: number; ak: string; sa: number; ma: boolean; dk: boolean;
   bx: number; by: number; ba: number; bk: string; sb: number; mb: boolean;
   gen: number;
   /** Slice 9: game ms this link's current run of flow started, and the
@@ -64,7 +67,7 @@ export interface LinkCable {
 export function makeLinkCable(): LinkCable {
   return {
     poly: new Float64Array(CABLE_CURVE_FLOATS), cum: new Float64Array(CABLE_POINTS), n: 0, len: 0, socketed: false,
-    ax: NaN, ay: 0, aa: 0, ak: '', sa: CABLE_NO_SOCKET, ma: false,
+    ax: NaN, ay: 0, aa: 0, ak: '', sa: CABLE_NO_SOCKET, ma: false, dk: false,
     bx: 0, by: 0, ba: 0, bk: '', sb: CABLE_NO_SOCKET, mb: false, gen: 0,
     flowSince: 0, flowSeen: -Infinity,
   };
@@ -86,9 +89,10 @@ function measure(out: LinkCable): void {
 }
 
 /** Flatten the link a (socket `sa`) -> b (socket `sb`) into `out`, in Pixi
- *  space: core `flattenLinkCable` (game space, y up), y flipped. */
-export function fillLinkCable(out: LinkCable, a: GridNode, sa: number, b: GridNode, sb: number): void {
-  flattenLinkCable(a, sa, b, sb, _world, _box);
+ *  space: core `flattenLinkCable` (game space, y up), y flipped. `deck`: the
+ *  room's deck flag (a deck link is its seam path, base platforms slice 12). */
+export function fillLinkCable(out: LinkCable, a: GridNode, sa: number, b: GridNode, sb: number, deck = false): void {
+  flattenLinkCable(a, sa, b, sb, _world, _box, deck);
   for (let i = 0; i < CABLE_POINTS; i++) {
     out.poly[i * 2] = _world[i * 2]!;
     out.poly[i * 2 + 1] = -_world[i * 2 + 1]!;
@@ -96,6 +100,17 @@ export function fillLinkCable(out: LinkCable, a: GridNode, sa: number, b: GridNo
   out.n = CABLE_POINTS;
   out.socketed = sa !== CABLE_NO_SOCKET && sb !== CABLE_NO_SOCKET;
   measure(out);
+}
+
+/** A placement-preview line ghost -> node: the link's cable when socket
+ *  cables are on and it has a socket pair or is a deck link (its seam path),
+ *  else the straight centre line from (`ax`, `ay`) (Pixi space). */
+export function fillPreviewCable(
+  out: LinkCable, cables: boolean, deck: boolean, ghost: GridNode, sa: number, node: GridNode, sb: number, ax: number, ay: number,
+): void {
+  const seam = deck && deckLinkKind(ghost, node) !== DECK_LINK_NONE;
+  if (cables && (seam || (sa !== CABLE_NO_SOCKET && sb !== CABLE_NO_SOCKET))) fillLinkCable(out, ghost, sa, node, sb, deck);
+  else fillStraight(out, ax, ay, node.x, -node.y); // Pixi screen space is Y-down; world is Y-up.
 }
 
 /** A plain two-point line (Pixi space): the preview's straight lines. */
@@ -118,7 +133,7 @@ function endNode(e: SwarmRenderState, mirror: boolean, out: GridNode): GridNode 
   out.y = e.y;
   out.rot = e.angle;
   out.mirror = mirror;
-  out.isConnector = kind === 'connector';
+  out.isConnector = isConnectorKind(kind);
   out.isShieldPylon = isShieldEmitterKind(kind);
   return out;
 }
@@ -135,10 +150,18 @@ export class LinkCableCache {
   private gen = 0;
   private readonly nodeA = blankGridNode();
   private readonly nodeB = blankGridNode();
+  /** The room's deck flag (base platforms): deck links flatten to their seam path. */
+  deck = false;
+  /** Base platforms slice 30 (`?fenceLook=new`): on a deck, fence links draw
+   *  as a shield beam (`connectorFenceBeam.ts`), not a cable. Set at init. */
+  fenceBeams = false;
   /** Test hook: how many times a curve was flattened. */
   flattens = 0;
 
   get size(): number { return this.map.size; }
+
+  /** Does link a–b draw as a fence beam (the new look on, a deck, a fence link)? */
+  isFenceBeam(a: SwarmRenderState, b: SwarmRenderState): boolean { return this.fenceBeams && this.deck && isDeckFenceLink(a, b); }
 
   /** `ma` / `mb`: each end's build mirror (its structure row's `mirror`). */
   get(key: number, a: SwarmRenderState, sa: number, b: SwarmRenderState, sb: number, ma = false, mb = false): LinkCable {
@@ -152,9 +175,9 @@ export class LinkCableCache {
     c.gen = this.gen;
     const ak = a.shipKind ?? '', bk = b.shipKind ?? '';
     if (c.ax !== a.x || c.ay !== a.y || c.aa !== a.angle || c.ak !== ak || c.sa !== sa || c.ma !== ma
-      || c.bx !== b.x || c.by !== b.y || c.ba !== b.angle || c.bk !== bk || c.sb !== sb || c.mb !== mb) {
-      fillLinkCable(c, endNode(a, ma, this.nodeA), sa, endNode(b, mb, this.nodeB), sb);
-      c.ax = a.x; c.ay = a.y; c.aa = a.angle; c.ak = ak; c.sa = sa; c.ma = ma;
+      || c.bx !== b.x || c.by !== b.y || c.ba !== b.angle || c.bk !== bk || c.sb !== sb || c.mb !== mb || c.dk !== this.deck) {
+      fillLinkCable(c, endNode(a, ma, this.nodeA), sa, endNode(b, mb, this.nodeB), sb, this.deck);
+      c.ax = a.x; c.ay = a.y; c.aa = a.angle; c.ak = ak; c.sa = sa; c.ma = ma; c.dk = this.deck;
       c.bx = b.x; c.by = b.y; c.ba = b.angle; c.bk = bk; c.sb = sb; c.mb = mb;
       this.flattens++;
     }

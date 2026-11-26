@@ -237,6 +237,9 @@ export class WorkerRendererClient implements IRenderer {
       ...(this._art.structStyle ? { structStyle: this._art.structStyle } : {}),
       ...(this._art.lineLook !== undefined ? { lineLook: this._art.lineLook } : {}),
       ...(this._art.rigs !== undefined ? { rigs: this._art.rigs } : {}),
+      ...(this._art.deckTex !== undefined ? { deckTex: this._art.deckTex } : {}),
+      ...(this._art.fenceLook !== undefined ? { fenceLook: this._art.fenceLook } : {}),
+      ...(this._art.zones !== undefined ? { zones: this._art.zones } : {}),
       // The worker has no `window`: resolve `?cleanworld=1` & co. here.
       fxKillSwitches: readFxKillSwitches(),
     }, [offscreen]);

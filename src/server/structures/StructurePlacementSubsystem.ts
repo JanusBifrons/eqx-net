@@ -19,18 +19,24 @@
  */
 import {
   getStructureKind,
+  isFlatDeckKind,
   isStructureKindId,
   structureKindToIndex,
   type StructureKindId,
   normaliseStructureRotation,
+  orientedBoxBoundsInto,
   structureHalfExtents,
+  structureHalfExtentsInto,
+  structureRotationCosSinInto,
 } from '../../shared-types/structureKinds.js';
 import {
   SCAFFOLDING_HP_FRACTION,
   CAPITAL_STARTING_MINERALS,
 } from '../../core/structures/structureGridConstants.js';
 import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
-import { placementRejection, placementRejectionNotice } from '../../core/structures/placementRules.js';
+import { placementRejection, placementRejectionNotice, type PlacementDeck } from '../../core/structures/placementRules.js';
+import { plateReachBoxAdd } from '../../core/structures/plateClearance.js';
+import { isPlateAnchor } from '../../core/hex/plateSet.js';
 import { StructureRegistry, type StructureRecord } from './StructureRegistry.js';
 import { autoConnectStructure, linkReachBox } from './structureGridView.js';
 import { STARTER_STRUCTURE_KINDS, needsPackedCrate } from '../../shared-types/blueprints.js';
@@ -107,6 +113,11 @@ export interface StructurePlacementHooks {
 export class StructurePlacementSubsystem {
   /** Scratch for `linkReachBox` (auto-connect's `near` box). */
   private readonly linkBox: ObstacleBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
+  /** Scratch for the turned footprint's bounds (`near`). */
+  private readonly localExt = { hw: 0, hh: 0 };
+  private readonly turn = { cos: 1, sin: 0 };
+  /** Scratch deck context for a player's placement on a deck room (#14). */
+  private readonly deckScratch: PlacementDeck = { plates: { plateAtWorld: () => false }, owner: '' };
   /** Why the last `place` was refused (an overlap, or a kind rule via
    *  `placementRefusal`), for the room's notice; null when it wasn't (or it
    *  succeeded). */
@@ -121,13 +132,22 @@ export class StructurePlacementSubsystem {
    * `skipAutoConnect` — a generated base (or a scale lattice) supplies its own
    * intended connection graph via `connectExplicit`; greedy auto-connect would
    * link e.g. gate pylons and close a gate. Players never pass it.
+   *
+   * `ignoreObstacles` — skip the rock / wreck overlap pass (structures still
+   * block). Only the base-platforms plate rebuild passes it: a destroyed plate
+   * connector's blueprint goes back where it stood, over its own wreck pieces
+   * (a blueprint is a non-colliding hologram).
+   *
+   * `deck` — base platforms: the room's deck flag is on and this is a
+   * PLAYER's placement (`place_structure`): the centre must be on the owner's
+   * deck (`off-deck` otherwise). System placements never pass it.
    */
   place(
     owner: string,
     kindId: string,
     x: number,
     y: number,
-    opts?: { skipAutoConnect?: boolean; rot?: number; mirror?: boolean; requirePacked?: boolean },
+    opts?: { skipAutoConnect?: boolean; rot?: number; mirror?: boolean; requirePacked?: boolean; ignoreObstacles?: boolean; deck?: boolean },
   ): string | null {
     this.lastRefusal = null;
     if (!isStructureKindId(kindId)) return null;
@@ -135,6 +155,7 @@ export class StructurePlacementSubsystem {
     const pos = this.hooks.clamp(x, y);
     const rot = normaliseStructureRotation(opts?.rot);
     const mirror = opts?.mirror === true;
+    // The record's box (nearest quarter turn; colliders/hit tests: slice 17).
     const { hw, hh } = structureHalfExtents(kindId, rot);
 
     // No-overlap: reject if the new footprint would intersect an existing
@@ -142,8 +163,21 @@ export class StructurePlacementSubsystem {
     // pass is the fix for "places on an asteroid"; the same `getObstacles` hook
     // the auto-connect LOS check already uses). Shared pure predicate so the
     // client ghost can validate identically.
-    const near = { x0: pos.x - hw, y0: pos.y - hh, x1: pos.x + hw, y1: pos.y + hh };
-    const rejection = placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), this.hooks.getObstacles?.(near, true), rot, mirror);
+    // `near`: the axis-aligned box that BOUNDS the turned footprint, so the
+    // obstacle query covers the oriented test (equal to the box at a quarter turn).
+    structureHalfExtentsInto(kindId, 0, this.localExt);
+    structureRotationCosSinInto(rot, this.turn);
+    const b = orientedBoxBoundsInto(this.localExt.hw, this.localExt.hh, this.turn.cos, this.turn.sin, this.localExt);
+    const near = { x0: pos.x - b.hw, y0: pos.y - b.hh, x1: pos.x + b.hw, y1: pos.y + b.hh };
+    let deck: PlacementDeck | null = null;
+    if (opts?.deck === true) {
+      deck = this.deckScratch;
+      deck.plates = this.hooks.registry.plates;
+      deck.owner = owner;
+      // Laying a plate: its whole 7-hex area must be clear of rocks, so fetch them all.
+      if (isPlateAnchor(kindId, pos.x, pos.y)) plateReachBoxAdd(pos.x, pos.y, near);
+    }
+    const rejection = placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), opts?.ignoreObstacles === true ? undefined : this.hooks.getObstacles?.(near, true), rot, mirror, deck);
     if (rejection !== null) {
       this.lastRefusal = placementRejectionNotice(rejection);
       return null;
@@ -173,7 +207,8 @@ export class StructurePlacementSubsystem {
     // Hologram pass-through: a body turns solid only round no ship. A
     // blueprint always starts as one; a pre-built kind (the Capital) only when
     // a ship is inside its footprint (the grid pulse settles it once clear).
-    const ghost = !preBuilt || shipInsideFootprint({ x: pos.x, y: pos.y, radius: kind.radius, halfW: hw, halfH: hh }, this.hooks);
+    // A flat deck tile (road) is a hologram for good (`settleBlueprintBody`).
+    const ghost = isFlatDeckKind(kindId) || !preBuilt || shipInsideFootprint({ x: pos.x, y: pos.y, radius: kind.radius, halfW: hw, halfH: hh }, this.hooks);
     const hp = preBuilt
       ? kind.maxHealth
       : Math.max(1, Math.floor(kind.maxHealth * SCAFFOLDING_HP_FRACTION));

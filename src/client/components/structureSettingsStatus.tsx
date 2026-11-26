@@ -11,7 +11,7 @@ import { useEffect, useState } from 'react';
 import { Box } from '@mui/material';
 import { getGameClient } from '../net/clientSingleton';
 import { selectionStats } from '../net/selectionStats';
-import { getStructureKind } from '@shared-types/structureKinds';
+import { getStructureKind, isConnectorKind } from '@shared-types/structureKinds';
 import { HUD } from '../hud/tokens';
 import { WINDOW_EDGE } from './GameWindow';
 import { structureOwnerLabel } from './ownerLabel';
@@ -38,7 +38,7 @@ export function readSettingsStatus(entityId: number): SettingsStatusView | null 
   return {
     owner: st.owner ? structureOwnerLabel(st.owner, st.ownerName, client?.mirror.localPlayerId ?? null) : undefined,
     level: st.level ?? 1,
-    conn: kindId === 'connector' ? `${st.connTo.length} / ${getStructureKind('connector').maxConnections ?? 0}` : undefined,
+    conn: isConnectorKind(kindId) ? `${st.connTo.length} / ${getStructureKind('connector').maxConnections ?? 0}` : undefined,
     hold,
   };
 }

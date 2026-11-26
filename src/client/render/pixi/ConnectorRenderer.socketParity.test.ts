@@ -7,7 +7,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { ConnectorRenderer } from './ConnectorRenderer.js';
-import { getStructureKind, structureHalfExtents } from '../../../shared-types/structureKinds.js';
+import { getStructureKind, isConnectorKind, structureHalfExtents } from '../../../shared-types/structureKinds.js';
 import { canConnect, type GridNode, type GridObstacle } from '../../../core/structures/Grid.js';
 import {
   CABLE_CURVE_FLOATS, CABLE_NO_SOCKET, flattenLinkCable, makeCableBox, makeCableSocketPick,
@@ -36,7 +36,7 @@ function serverNode(id: string, kind: string, x: number, y: number): GridNode {
   const { hw, hh } = structureHalfExtents(kind, 0);
   return {
     id, kind, x, y, rot: 0, radius: k.radius, halfW: hw, halfH: hh, isHub: k.isHub,
-    isCapital: kind === 'capital', isConnector: kind === 'connector', isShieldPylon: false,
+    isCapital: kind === 'capital', isConnector: isConnectorKind(kind), isShieldPylon: false,
     maxConnections: k.maxConnections, powerOutput: 0, powerConsumption: 0, isConstructed: true,
   };
 }

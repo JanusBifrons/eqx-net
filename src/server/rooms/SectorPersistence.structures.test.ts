@@ -162,6 +162,16 @@ describe('SectorPersistence — structures survive a server restart', () => {
     expect('mirror' in restored[1]!, 'an unmirrored row writes no key').toBe(false);
   });
 
+  it('base platforms: a 30° turn survives persist → hydrate (degrees, no migration)', () => {
+    let restored: readonly SectorSnapshotStructure[] = [];
+    const { deps } = makeDeps([makeStructure({ kind: 'solar', rot: 30 }), makeStructure({ id: 'p2', kind: 'solar', rot: 270 })], (rows) => { restored = rows; });
+    const persistence = new SectorPersistence(deps);
+    persistence.persist();
+    persistence.hydrate();
+    expect(restored[0]!.rot).toBe(30);
+    expect(restored[1]!.rot, 'an old quarter turn keeps its value').toBe(270);
+  });
+
   it('a refinery breaking down a rock chunk keeps the chunk and its ore left through persist → hydrate', () => {
     const chunk = { product: 'chunk:rock', quality: 0, uid: 'rc-1', weight: 250, ore: { minerals: 7000 } };
     const struct = makeStructure({ kind: 'refinery', recipe: 'refine_rock_chunk', prodLoaded: true, prodProgress: 3, prodChunk: chunk });
@@ -413,10 +423,12 @@ describe('SectorPersistence — structure-catalogue version gate (campaign 6.2)'
     const p = new SectorPersistence(deps);
     p.persist();
     // Simulate a catalogue bump between save and restart: rewrite the stored
-    // row with a STALE stamped version (everything else untouched).
+    // row with a STALE stamped version (everything else untouched). Version 1:
+    // the bumps since then include unflagged ones (`STRUCTURE_KIND_WIPES`), so
+    // the whole set is discarded; LIVE - 1 may be a per-kind (no-wipe) bump.
     const row = deps.loadRow('galaxy-sol')!;
     const payload = JSON.parse(row.snapshot) as SectorSnapshotPayload;
-    payload.structureCatalogueVersion = STRUCTURE_KIND_CATALOGUE_VERSION - 1;
+    payload.structureCatalogueVersion = 1;
     deps.saveRow('galaxy-sol', payload);
     p.hydrate();
     expect(restoredStructures).not.toHaveBeenCalled();

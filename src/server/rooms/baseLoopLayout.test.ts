@@ -9,7 +9,7 @@ import { BASE_FLOW_OPTS } from './scenarioLayouts.js';
 import { BASE_LOOP_OPTS } from './baseLoopLayout.js';
 import { StructureRegistry } from '../structures/StructureRegistry.js';
 import { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
-import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { getStructureKind, isConnectorKind } from '../../shared-types/structureKinds.js';
 import { perfSceneById } from '../../shared-types/perf/perfScenes.js';
 
 type Layout = { prebuiltStructures: ReadonlyArray<{ kind: string; x: number; y: number; rot?: number }> };
@@ -102,7 +102,7 @@ describe('base-flow perf base', () => {
     expect(ids).toHaveLength(BASE_FLOW_OPTS.prebuiltStructures.length);
     expect(unlinkedKinds(registry, ids)).toEqual([]);
     for (const r of registry.all()) {
-      if (r.kind !== 'connector') continue;
+      if (!isConnectorKind(r.kind)) continue;
       const held = registry.connectionsOf(r.id).map((c) => c.socketAt(r.id));
       expect(new Set(held).size, r.id).toBe(held.length);
       expect(held.length, r.id).toBeLessThanOrEqual(6);

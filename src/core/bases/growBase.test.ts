@@ -5,7 +5,7 @@
  * production chain (no base runs all four stages).
  */
 import { describe, expect, it } from 'vitest';
-import { getStructureKind, structureHalfExtents } from '../../shared-types/structureKinds.js';
+import { getStructureKind, isConnectorKind, structureHalfExtents } from '../../shared-types/structureKinds.js';
 import { canConnect, type GridNode } from '../structures/Grid.js';
 import { Connection } from '../structures/Connection.js';
 import { makeCableSocketPick } from '../structures/cableCurve.js';
@@ -21,7 +21,7 @@ function node(id: string, kind: string, x: number, y: number, rot = 0): GridNode
   const { hw, hh } = structureHalfExtents(kind, rot);
   return {
     id, kind, x, y, rot: (rot * Math.PI) / 180, radius: k.radius, halfW: hw, halfH: hh, isHub: k.isHub,
-    isCapital: kind === 'capital', isConnector: kind === 'connector', isShieldPylon: isShieldEmitterKind(kind),
+    isCapital: kind === 'capital', isConnector: isConnectorKind(kind), isShieldPylon: isShieldEmitterKind(kind),
     maxConnections: k.maxConnections, connectionRange: k.connectionRange,
     powerOutput: k.powerOutput, powerConsumption: k.powerConsumption, isConstructed: true,
   };

@@ -9,9 +9,17 @@
  * SOFT obstacles (asteroids — the caller clears the ones it returns), then the
  * site farthest from the origin (players spawn near it), with a seeded
  * tie-break so a sector's base is stable across restarts.
+ *
+ * A deck base (base platforms, slice 24) is sited by its PLATE extent
+ * (`deckExtent`: every plate's 7 hexes, empty deck included) and only on a
+ * plate centre (`deck` option), so its plates sit on the world's deck lattice
+ * and the rock is cleared from the whole deck, not just its buildings.
  */
-import { structureHalfExtents } from '../../shared-types/structureKinds.js';
+import { isConnectorKind, structureHalfExtents } from '../../shared-types/structureKinds.js';
 import { keepClearBox } from '../structures/placementRules.js';
+import { HEX_DIRS, pixelToAxialInto, type AxialHex, type HexPoint } from '../hex/hex.js';
+import { DECK_HEX_FLAT, DECK_HEX_SIZE, deckHexCentreInto, plateCentreWorldInto, type PlateIndex } from '../hex/plates.js';
+import { plateCentreAtWorldInto } from '../hex/plateSet.js';
 import { seededRandom } from './baseProfile.js';
 import type { GrownPlacement } from './growBase.js';
 
@@ -42,6 +50,28 @@ export function grownExtent(placements: readonly GrownPlacement[]): BaseExtent {
   return placements.length === 0 ? { x0: 0, x1: 0, y0: 0, y1: 0 } : { x0, x1, y0, y1 };
 }
 
+/** A deck base's extent: `grownExtent` grown to cover every plate it lays
+ *  (each plate anchor's 7 whole hexes), so the site reserves the empty deck
+ *  too. Seed-time (allocates). */
+export function deckExtent(placements: readonly GrownPlacement[]): BaseExtent {
+  const e = grownExtent(placements);
+  const plate: PlateIndex = { i: 0, j: 0 };
+  const c: AxialHex = { q: 0, r: 0 };
+  const p: HexPoint = { x: 0, y: 0 };
+  const hw = DECK_HEX_FLAT / 2, hh = DECK_HEX_SIZE;
+  for (const a of placements) {
+    if (!isConnectorKind(a.kind) || !plateCentreAtWorldInto(a.x, a.y, plate)) continue;
+    pixelToAxialInto(a.x, a.y, DECK_HEX_SIZE, c);
+    for (let k = -1; k < HEX_DIRS.length; k++) {
+      const d = k < 0 ? null : HEX_DIRS[k]!;
+      deckHexCentreInto(c.q + (d?.q ?? 0), c.r + (d?.r ?? 0), p);
+      e.x0 = Math.min(e.x0, p.x - hw); e.x1 = Math.max(e.x1, p.x + hw);
+      e.y0 = Math.min(e.y0, p.y - hh); e.y1 = Math.max(e.y1, p.y + hh);
+    }
+  }
+  return e;
+}
+
 export interface ChooseSiteOptions {
   /** Half extent of the square searched (centred on the origin, or on
    *  `centreX/centreY`). */
@@ -59,6 +89,9 @@ export interface ChooseSiteOptions {
    *  pocket's rock-free clearing in a cut field (`pocketClearing`). The square
    *  search alone reaches past a clearing's rim at its corners. */
   within?: SiteCircle;
+  /** Base platforms: try only plate centres (the deck lattice) for the
+   *  Capital's origin plate; pass the `deckExtent`. Absent = today's grid. */
+  deck?: boolean;
 }
 
 export interface BaseSite {
@@ -116,6 +149,27 @@ export function chooseBaseSite(
       best = { x: cx, y: cy, soft: n, score };
     }
   };
+  if (o.deck === true) {
+    // Every plate centre in the search box, in lattice order (no flush sites:
+    // a deck base sits on the lattice, never flush against a box).
+    const ax: AxialHex = { q: 0, r: 0 };
+    const pt: HexPoint = { x: 0, y: 0 };
+    let i0 = Infinity, i1 = -Infinity, j0 = Infinity, j1 = -Infinity;
+    for (const [x, y] of [[cxMin, cyMin], [cxMax, cyMin], [cxMin, cyMax], [cxMax, cyMax]] as const) {
+      pixelToAxialInto(x, y, DECK_HEX_SIZE, ax);
+      // Invert q = 2i − j, r = i + 3j (plates.ts).
+      const fi = (3 * ax.q + ax.r) / 7, fj = (2 * ax.r - ax.q) / 7;
+      i0 = Math.min(i0, Math.floor(fi) - 1); i1 = Math.max(i1, Math.ceil(fi) + 1);
+      j0 = Math.min(j0, Math.floor(fj) - 1); j1 = Math.max(j1, Math.ceil(fj) + 1);
+    }
+    for (let i = i0; i <= i1; i++) {
+      for (let j = j0; j <= j1; j++) {
+        plateCentreWorldInto(i, j, pt);
+        if (pt.x >= cxMin - 1e-6 && pt.x <= cxMax + 1e-6 && pt.y >= cyMin - 1e-6 && pt.y <= cyMax + 1e-6) consider(pt.x, pt.y);
+      }
+    }
+    return finish(best, ext, soft, o.margin);
+  }
   for (let cx = cxMin; cx <= cxMax + 1e-6; cx += o.step) {
     for (let cy = cyMin; cy <= cyMax + 1e-6; cy += o.step) consider(cx, cy);
   }
@@ -146,9 +200,14 @@ export function chooseBaseSite(
     for (let cy = cyMin; cy <= cyMax + 1e-6; cy += o.step) consider(cx, cy);
     for (const cy of ey) consider(cx, cy);
   }
+  return finish(best, ext, soft, o.margin);
+}
+
+/** The chosen site and the asteroids under its footprint (plus margin). */
+function finish(best: { x: number; y: number } | null, ext: BaseExtent, soft: readonly SiteCircle[], margin: number): BaseSite | null {
   if (best === null) return null;
-  const x0 = best.x + ext.x0 - o.margin, x1 = best.x + ext.x1 + o.margin;
-  const y0 = best.y + ext.y0 - o.margin, y1 = best.y + ext.y1 + o.margin;
+  const x0 = best.x + ext.x0 - margin, x1 = best.x + ext.x1 + margin;
+  const y0 = best.y + ext.y0 - margin, y1 = best.y + ext.y1 + margin;
   const overlapped: number[] = [];
   for (let i = 0; i < soft.length; i++) if (boxHitsCircle(x0, x1, y0, y1, soft[i]!)) overlapped.push(i);
   return { x: best.x, y: best.y, overlapped };

@@ -16,6 +16,7 @@ export const GAS_COLLECTOR: StructureKind = {
   description: 'Collects gas from a nebula (nebula sectors only; power-gated). A leaf node.',
   radius: 213, // bounding circle of the 300×300 footprint
   footprint: { w: 300, h: 300 },
+  deckSlot: 'hex',
   maxHealth: 1500,
   maxConnections: 1,
   isHub: false,
@@ -33,6 +34,7 @@ export const RECLAIMER: StructureKind = {
   description: 'Breaks salvage down into minerals, with some alloy. A leaf node.',
   radius: 157, // bounding circle of the 240×200 footprint
   footprint: { w: 240, h: 200 },
+  deckSlot: 'small',
   maxHealth: 1200,
   maxConnections: 1,
   isHub: false,
@@ -49,6 +51,7 @@ export const SMELTER: StructureKind = {
   description: 'Smelts minerals into alloy. A leaf node.',
   radius: 223, // bounding circle of the 360×260 footprint
   footprint: { w: 360, h: 260 },
+  deckSlot: 'hex',
   maxHealth: 1800,
   maxConnections: 1,
   isHub: false,
@@ -65,6 +68,7 @@ export const REFINERY: StructureKind = {
   description: 'Refines ice into fuel, or cracks gas into fuel and polymer. A leaf node.',
   radius: 243, // bounding circle of the 380×300 footprint
   footprint: { w: 380, h: 300 },
+  deckSlot: 'hex',
   maxHealth: 1800,
   maxConnections: 1,
   isHub: false,
@@ -81,6 +85,7 @@ export const SILICON_WORKS: StructureKind = {
   description: 'Grows silicon from crystal and minerals. A leaf node.',
   radius: 227, // bounding circle of the 320×320 footprint
   footprint: { w: 320, h: 320 },
+  deckSlot: 'hex',
   maxHealth: 1600,
   maxConnections: 1,
   isHub: false,
@@ -97,6 +102,7 @@ export const HYDROPONICS: StructureKind = {
   description: 'Grows provisions from ice and power. A leaf node.',
   radius: 233, // bounding circle of the 420×200 footprint
   footprint: { w: 420, h: 200 },
+  deckSlot: 'small',
   maxHealth: 1200,
   maxConnections: 1,
   isHub: false,
@@ -113,6 +119,7 @@ export const FABRICATOR: StructureKind = {
   description: 'Fabricates components or electronics (needs a blueprint). A leaf node.',
   radius: 300, // bounding circle of the 480×360 footprint
   footprint: { w: 480, h: 360 },
+  deckSlot: 'hex',
   maxHealth: 2200,
   maxConnections: 1,
   isHub: false,
@@ -129,6 +136,7 @@ export const MUNITIONS_WORKS: StructureKind = {
   description: 'Makes munitions from alloy and fuel (needs a blueprint). A leaf node.',
   radius: 250, // bounding circle of the 400×300 footprint
   footprint: { w: 400, h: 300 },
+  deckSlot: 'hex',
   maxHealth: 2000,
   maxConnections: 1,
   isHub: false,
@@ -145,6 +153,7 @@ export const FREIGHT_DOCK: StructureKind = {
   description: 'Where trade convoys dock; holds cargo and sets import and export orders. A leaf node.',
   radius: 539, // bounding circle of the 1000×400 footprint (Ladder A medium)
   footprint: { w: 1000, h: 400 },
+  deckSlot: 'hex',
   // The landing pad: 900 × 500 past the open (+y) edge with a 10 u gap
   // (y 210..710), centre (0, 460). The ONE definition: `DOCK_BAY_*`
   // (rigCatalogue) derive from it.
@@ -166,6 +175,7 @@ export const DEEP_CORE_RIG: StructureKind = {
   description: 'A huge mining platform: drills a large asteroid for minerals and crystal. A hub (4 links); rare.',
   radius: 538, // bounding circle of the 760×760 footprint
   footprint: { w: 760, h: 760 },
+  deckSlot: 'hex',
   maxHealth: 8000,
   maxConnections: 4,
   isHub: true,
@@ -196,6 +206,7 @@ export const ORE_PROCESSING_COMPLEX: StructureKind = {
   description: 'A huge refinery: smelts alloy and grows silicon in bulk, with better yields. A hub (4 links); rare.',
   radius: 517, // bounding circle of the 840×600 footprint
   footprint: { w: 840, h: 600 },
+  deckSlot: 'hex',
   maxHealth: 9000,
   maxConnections: 4,
   isHub: true,
@@ -212,6 +223,7 @@ export const ASSEMBLY_PLANT: StructureKind = {
   description: 'A huge plant that assembles machinery or consumer goods (needs a blueprint). A hub (4 links); rare.',
   radius: 553, // bounding circle of the 900×640 footprint
   footprint: { w: 900, h: 640 },
+  deckSlot: 'hex',
   maxHealth: 10000,
   maxConnections: 4,
   isHub: true,
@@ -228,6 +240,7 @@ export const RESEARCH_LAB: StructureKind = {
   description: 'Researches, copies and combines blueprints held in your base storage (needs power). A leaf node.',
   radius: 250, // bounding circle of the 400×300 footprint
   footprint: { w: 400, h: 300 },
+  deckSlot: 'hex',
   maxHealth: 1800,
   maxConnections: 1,
   isHub: false,
@@ -246,6 +259,7 @@ export const AUTOCANNON_TURRET: StructureKind = {
   description: 'Fires kinetic shells at hostiles in range. Uses munitions from base storage. A leaf node.',
   radius: 114, // bounding circle of the 160×160 footprint
   footprint: { w: 160, h: 160 },
+  deckSlot: 'small',
   maxHealth: 1400,
   maxConnections: 1,
   isHub: false,

@@ -4,7 +4,7 @@
  * measurements would measure an impossible base.
  */
 import { describe, expect, it } from 'vitest';
-import { getStructureKind, structureHalfExtents } from '../../shared-types/structureKinds.js';
+import { getStructureKind, isConnectorKind, structureHalfExtents } from '../../shared-types/structureKinds.js';
 import { canConnect, type GridNode } from './Grid.js';
 import { Connection } from './Connection.js';
 import { placementRejection } from './placementRules.js';
@@ -19,7 +19,7 @@ function node(id: string, kind: string, x: number, y: number, rot = 0): GridNode
     halfH: structureHalfExtents(kind, rot).hh,
     isHub: k.isHub,
     isCapital: kind === 'capital',
-    isConnector: kind === 'connector',
+    isConnector: isConnectorKind(kind),
     isShieldPylon: isShieldEmitterKind(kind),
     maxConnections: k.maxConnections,
     connectionRange: k.connectionRange,

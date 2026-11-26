@@ -64,6 +64,8 @@ export const StructureKindIdSchema = z.enum([
   'siege_gun_80cm',
   // Sector control lock (galaxy-map plan) — APPEND ONLY.
   'territory_lock',
+  // Base platforms (slice 20) — flat deck tiles — APPEND ONLY.
+  'road',
 ]);
 export type StructureKindId = z.infer<typeof StructureKindIdSchema>;
 
@@ -82,6 +84,16 @@ export const StructureKindSchema = z
      *  placement overlap, connection edge distance and line-of-sight box
      *  (phase V, plan soft-leaping-truffle v2). Rotated in 90° steps. */
     footprint: z.object({ w: z.number().positive(), h: z.number().positive() }).strict(),
+    /** Base-platforms deck slot (spike): the base deck is pointy-top hexes,
+     *  1300 u flat-to-flat. `'small'` = a third of a hex (one of the three
+     *  rhombi made by joining the hex centre to alternate corners; the
+     *  building turns with its rhombus); `'hex'` = one whole hex; `'plate'` =
+     *  a 7-hex leaf, centred on its middle hex (only the large teleporter and
+     *  the Ancients' gate). Each kind takes the smallest slot its footprint
+     *  fits, at its best quarter-turn, with ≥ 130 u room to the slot edge
+     *  (`core/structures/deckSlot.test.ts`; the 800 u teleporter pads are the known short
+     *  fit). */
+    deckSlot: z.enum(['small', 'hex', 'plate']),
     /** Optional KEEP-CLEAR box beside the footprint, in the kind's local frame
      *  at rotation 0 (centre `cx, cy`, size `w × h`; turns with the
      *  structure). No other solid structure may overlap it, and the kind may

@@ -18,6 +18,7 @@ import {
   getPlacementRotationDeg,
 } from './structurePlacementClient.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { useUIStore } from '../state/store.js';
 import { placementChosen, resetPlacementChosen, setPlacementHeld } from './placementChosen.js';
 import { ghostToGridNode, blankGridNode } from './mirrorToGridNode.js';
 
@@ -236,6 +237,30 @@ describe('commitChosenPlacement', () => {
     expect(send).toHaveBeenCalledWith('place_structure', expect.objectContaining({ kind: 'solar', rot: 180 }));
     cyclePlacementRotation();
     expect(cyclePlacementRotation()).toBe(0); // wraps
+    setPlacementRotationDeg(0);
+  });
+});
+
+describe('base platforms: the rotate control steps 30° on a deck room', () => {
+  it('deck on: R steps 30° and wraps after twelve; deck off: quarter turns as before', () => {
+    setPlacementRotationDeg(0);
+    expect(cyclePlacementRotation(true)).toBe(30);
+    expect(cyclePlacementRotation(true)).toBe(60);
+    for (let i = 0; i < 10; i++) cyclePlacementRotation(true);
+    expect(getPlacementRotationDeg()).toBe(0);
+    expect(cyclePlacementRotation(false)).toBe(90);
+    // Off a deck room an odd 30° turn snaps back onto the quarter grid.
+    setPlacementRotationDeg(30);
+    expect(cyclePlacementRotation(false)).toBe(90);
+    setPlacementRotationDeg(0);
+  });
+
+  it('reads the room deck flag from the store by default', () => {
+    useUIStore.getState().setDeck(true);
+    setPlacementRotationDeg(0);
+    expect(cyclePlacementRotation()).toBe(30);
+    useUIStore.getState().setDeck(false);
+    expect(cyclePlacementRotation()).toBe(90); // 30 + 90 snaps to the quarter grid
     setPlacementRotationDeg(0);
   });
 });

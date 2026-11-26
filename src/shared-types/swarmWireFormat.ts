@@ -53,6 +53,7 @@
  * trailing componentIndex byte; v2 had a 29-byte record without the embedded
  * angvel field; v1 had 28 bytes without shipKind.
  */
+import { isFlatDeckKind } from './structureKinds/lookup.js';
 
 export const SWARM_WIRE_VERSION = 7;
 
@@ -126,6 +127,13 @@ export const SWARM_KIND_WRECK = 4;
  *  turrets alike; the client's drawn beam passes it too). */
 export function isLootPod(rec: { kind?: number; shipKind?: string | null }): boolean {
   return rec.kind === SWARM_KIND_SCRAP && rec.shipKind === 'cargo-pod';
+}
+
+/** No weapon touches it: a loot pod (`isLootPod`) or a flat deck tile (a
+ *  road: `isFlatDeckKind`, base platforms). Every shot, beam, missile and
+ *  line-of-fire test passes over it, and no AI picks it as a target. */
+export function isWeaponTransparent(rec: { kind?: number; shipKind?: string | null }): boolean {
+  return isLootPod(rec) || (rec.kind === SWARM_KIND_STRUCTURE && isFlatDeckKind(rec.shipKind));
 }
 
 /** Maximum number of records that fit in a buffer of `bufBytes` total bytes. */

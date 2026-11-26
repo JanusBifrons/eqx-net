@@ -15,8 +15,10 @@ import type { StorageService } from '../../cargo/StorageService.js';
 import type { SectorPersistence } from '../SectorPersistence.js';
 import { auditEvent } from '../../audit/GameplayAuditLog.js';
 import { parsedMessage, type ParsedMessageHost, type RoomFeature } from './parsedMessage.js';
-import { getStructureKind, isBuildableStructureKind } from '../../../shared-types/structureKinds.js';
+import { getStructureKind, isBuildableStructureKind, isDeckOnlyStructureKind, snapPlayerStructureRotation } from '../../../shared-types/structureKinds.js';
 import { needsPackedCrate, productName } from '../../../shared-types/blueprints.js';
+import { snapPlacementToDeck } from '../../../core/structures/deckPlacement.js';
+import type { DeckSnap } from '../../../core/hex/deckSnap.js';
 import {
   PlaceStructureSchema,
   RemoveStructureSchema,
@@ -38,10 +40,15 @@ export interface StructureMessageHost extends ParsedMessageHost {
   structureGrid(): Pick<StructureGridSubsystem, 'reconnect' | 'lastReconnectRefusal' | 'clearConnections' | 'upgradeStructure'>;
   sectorPersistence(): Pick<SectorPersistence, 'persistSoon'>;
   testSeedStorageHold(): SeedHold | null;
+  /** Room flag `state.deck` (base platforms): snap player placements to deck slots. */
+  deck(): boolean;
   findPacked(owner: string, product: string): { rec: StructureRecord } | { shipId: string } | null;
   sendNotice(client: Client, text: string): void;
   logger: Pick<Logger, 'warn'>;
 }
+
+/** Deck-snap scratch for `place_structure` (invariant 14). */
+const deckSnap: DeckSnap = { x: 0, y: 0, q: 0, r: 0, rhombus: -1, slot: 'small', rot: -1 };
 
 export function registerStructureMessages(h: StructureMessageHost): RoomFeature {
   // ── Structures plan, Phase 2 — placement / removal ──────────────────
@@ -50,13 +57,28 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
     if (!owner) return;
     // v4 A — nobody builds an alien gate.
     if (!isBuildableStructureKind(msg.kind)) return;
+    // A deck tile (road) exists only on a deck room.
+    if (isDeckOnlyStructureKind(msg.kind) && !h.deck()) return;
+    // Base platforms: on a deck room the PLAYER's point snaps to its kind's
+    // deck slot (the client ghost runs the same core snap) and must stand on
+    // the owner's deck (`off-deck`, same core rule). place() never snaps.
+    // The turn snaps by the same rule as the ghost: on a deck room the snap
+    // decides it (a small building faces its third of the hex; otherwise 30°
+    // steps, quarter turns for a quarter-turn-only kind); quarter turns off
+    // deck. place() itself keeps any 30° step.
+    let px = msg.x, py = msg.y;
+    let rot: number = snapPlayerStructureRotation(msg.rot, false, msg.kind);
+    if (h.deck()) {
+      snapPlacementToDeck(msg.kind, px, py, deckSnap, msg.rot);
+      px = deckSnap.x; py = deckSnap.y; rot = deckSnap.rot;
+    }
     const id = h.structurePlacement().place(
       owner,
       msg.kind,
-      msg.x,
-      msg.y,
+      px,
+      py,
       // P2b — only a PLAYER's placement can need a packed structure.
-      { rot: msg.rot, mirror: msg.mirror, requirePacked: true },
+      { rot, mirror: msg.mirror, requirePacked: true, deck: h.deck() },
     );
     if (id === null) {
       h.logger.warn({ sessionId: client.sessionId, kind: msg.kind }, 'place_structure rejected');
