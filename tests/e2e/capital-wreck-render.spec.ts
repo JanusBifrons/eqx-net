@@ -9,6 +9,11 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_BASE_URL } from './helpers/ports';
+import { MAIN_THREAD_RENDER_CONTEXT } from './helpers/softwareGl';
+
+// Main-thread renderer (?worker=0) on CI software GL: render a quarter of the
+// pixels so frames, draw stats and the client fire loop keep pace (softwareGl.ts).
+test.use(MAIN_THREAD_RENDER_CONTEXT);
 
 const BASE_URL = process.env['BASE_URL'] ?? DEFAULT_BASE_URL;
 

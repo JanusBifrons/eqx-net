@@ -240,6 +240,13 @@ const E2E_STORAGE_STATE = 'tests/e2e/.auth/e2e-storage-state.json';
 // instead of silently testing another worktree's stale code.
 const IS_OFFSET_LANE = E2E_PORT_OFFSET !== 0;
 
+// EQX_E2E_SOFTWARE_GL=1: render with SwiftShader (software WebGL), the GL a
+// GitHub runner has (it has no GPU), so a CI-only render-speed failure
+// reproduces on a desktop. Same flags as `pnpm perf:counts` (perf/run-counts.ts).
+const SOFTWARE_GL_ARGS = process.env['EQX_E2E_SOFTWARE_GL'] === '1'
+  ? ['--use-angle=swiftshader', '--enable-unsafe-swiftshader']
+  : undefined;
+
 // A full local e2e run is heavy: only through `pnpm heavy run` (or CI). Checked
 // here, before the webServers boot. Only the `playwright test` runner process
 // has `test` in argv (workers re-load this file with no args); a spec file,
@@ -282,6 +289,7 @@ export default defineConfig({
     // Pre-loaded localStorage with the auth token from globalSetup. Applied to
     // every browser context, including those created via `browser.newContext()`.
     storageState: 'tests/e2e/.auth/storage-state.json',
+    ...(SOFTWARE_GL_ARGS ? { launchOptions: { args: SOFTWARE_GL_ARGS } } : {}),
   },
   // Tiered projects (see policy note 5 above). Order matters: when
   // `pnpm e2e` runs `--project=smoke --project=feature`, Playwright
