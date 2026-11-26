@@ -77,6 +77,7 @@ const NO_WRECKS: ReadonlyMap<number, unknown> = new Map();
 
 import type { SpriteBuildSig, SwarmSpriteCtx } from './swarmSpriteCtx.js';
 import { RIG_TICKS_PER_SEC, RIG_UNDER_Z, type StructureRigView } from './structureRigs.js';
+import { ROAD_UNDER_Z } from './structureDeckZones.js';
 import { isPadChamberKind } from '../../../shared-types/teleport.js';
 import { hasBodyStatus, updateSocketNubs } from './structureSocketNubs.js';
 import { syncRoadJoins } from './roadJoins.js';
@@ -265,7 +266,8 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         sprite = buildArtShipSprite(artHandle, () => buildStructureGfx(stKind, stRadius, 1, ctx.art.structStyle));
         // A teleporter chamber is a deck ships fly into: the pad-deck band (the
         // dock apron's), under every hull whatever the add order.
-        if (isPadChamberKind(stKind) || isFlatDeckKind(stKind)) sprite.zIndex = RIG_UNDER_Z; // a road too (flat deck tile)
+        if (isPadChamberKind(stKind)) sprite.zIndex = RIG_UNDER_Z;
+        else if (isFlatDeckKind(stKind)) sprite.zIndex = ROAD_UNDER_Z; // a road: over the cables (ducted under it), under the pads
         // WS-4 Phase 5 (R2.16) — a Miner shows a faint dashed mining-range ring
         // at its `miningRange` radius. Built HERE (the once-per-sprite create
         // path, invariant #14 — never per-frame) and parented to the body so it
