@@ -98,6 +98,7 @@ interface EqxCinemaHook {
   isScripted(): boolean | null;
 }
 import { measureRadarInsets, radarInsetsEqual } from './layout/radarInsets';
+import { setPlacementHudInsets } from './structures/placementHints';
 import type { RadarInsets } from '../shared-types/settings/radar.js';
 
 // Install window.__eqxLogs and window.__eqxClearLogs at module load time.
@@ -308,6 +309,7 @@ function GameSurface({
       if (radarInsetsEqual(last, next)) return;
       last = next;
       renderer.setRadarInsets(next);
+      setPlacementHudInsets(next); // the placement hints keep clear of the same HUD rects
     };
     tick();
     const id = window.setInterval(tick, 500);
