@@ -54,6 +54,29 @@ export interface TravelTrip {
    *  the room swap re-arms join readiness (the source room's body and first
    *  snapshot are still there while the gate seals). */
   joinGen: number;
+  /** A hold: the far room's FULL swarm packet has been decoded (every
+   *  structure in view, the far gate too; a sleeping structure rides only a
+   *  full packet). */
+  farFull?: boolean;
+  /** A hold: when the far room's first snapshot was first seen (-1 before). */
+  farSeenMs?: number;
+}
+
+/** A hold lands without a full far packet after this long past the far
+ *  room's first snapshot (a sector with no swarm sends none). Just over the
+ *  server's full-packet period (60 ticks). */
+const HOLD_FAR_WAIT_MS = 1200;
+
+/** True from the room swap until the hold lands: the old sector is gone from
+ *  the mirror and the far one is not all there yet, so the picture holds what
+ *  is on screen (the sealed gate) and swaps in one frame at landing. */
+export function holdingPicture(t: TravelTrip | null): boolean {
+  return t !== null && t.hold && !t.landed && useUIStore.getState().joinGeneration !== t.joinGen;
+}
+
+/** The swarm handler, per packet: note the far room's first full packet. */
+export function noteSwarmPacket(t: TravelTrip | null, full: boolean): void {
+  if (full && t !== null && t.hold && !t.landed && useUIStore.getState().joinGeneration !== t.joinGen) t.farFull = true;
 }
 
 /**
@@ -120,11 +143,17 @@ export function stepTravel(ctx: TravelCtx, t: TravelTrip, e: ShipRenderState, lo
  * run is drawn: a teleport is not a warp.
  */
 function stepHold(ctx: TravelCtx, t: TravelTrip, e: ShipRenderState, localId: string): void {
-  t.lastMs = ctx.clock.now();
+  const now = ctx.clock.now();
+  t.lastMs = now;
   if (!t.landed) {
     const arrival = ctx.predWorld?.getShipState(localId);
     const ui = useUIStore.getState();
-    if (arrival && ui.joinGeneration !== t.joinGen && ui.firstSnapshotApplied) {
+    const farIn = ui.joinGeneration !== t.joinGen && ui.firstSnapshotApplied;
+    if (farIn && (t.farSeenMs ?? -1) < 0) t.farSeenMs = now;
+    // Land only once the far scene is all there (its full swarm packet), so
+    // the held picture swaps straight to a complete far side.
+    const farReady = farIn && (t.farFull === true || now - (t.farSeenMs ?? now) >= HOLD_FAR_WAIT_MS);
+    if (arrival && farReady) {
       ctx.mirror.travelJumpX = (ctx.mirror.travelJumpX ?? 0) + (arrival.x - t.x);
       ctx.mirror.travelJumpY = (ctx.mirror.travelJumpY ?? 0) + (arrival.y - t.y);
       t.x = arrival.x; t.y = arrival.y; t.angle = arrival.angle;

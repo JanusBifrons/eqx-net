@@ -236,7 +236,9 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     const renderStart = performance.now();
     markLaneLoopPhases(inboundStart, physicsStart, mirrorStart, renderStart);
     const shouldRender = !useWorker || (++workerUpdateCounter % 2) === 0;
-    if (shouldRender) renderer.update(gameClient.mirror);
+    // A teleport mid-swap holds the picture (the old sector is wiped, the far
+    // one not all there yet); it swaps in one frame when the ship lands.
+    if (shouldRender && !gameClient.holdingPicture()) renderer.update(gameClient.mirror);
     const renderEnd = performance.now();
     // plan: imperative-taco — gate the rafWork builder at the call site.
     // `logEvent` has an internal HIGH_VOLUME_TAGS early-return but by then

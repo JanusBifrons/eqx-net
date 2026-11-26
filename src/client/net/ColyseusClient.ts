@@ -119,7 +119,7 @@ import { applySnapshotPerfStats } from './snapshotPerfStats.js';
 import { noteSnapshotArrival } from './snapshotArrivalStats.js';
 import { syncTidiFromRoom } from './tidiSync.js';
 import { updateRttAndLookahead } from './rttLookaheadUpdater.js';
-import { stepTravel, TRAVEL_OUT_S, type TravelTrip } from './mirror/travelPass.js';
+import { stepTravel, TRAVEL_OUT_S, holdingPicture, noteSwarmPacket, type TravelTrip } from './mirror/travelPass.js';
 import { DisplayPoseHitscan } from '../combat/displayPoseHitscan.js';
 import { preResetRemoteShips, applyRemoteShipInputs, type RemoteInput, type PreResetEntry, applyDroneMountAngles, applyAsteroidResources, applyShipLevels, applyShipWarp, applyActivatedMounts, applyParkedHullShieldDown, type PreResetRemoteCtx } from './snapshotRemoteSync.js';
 import { computeRemoteLerpOffsets, type RemoteShipOffset } from './remoteLerpOffsets.js';
@@ -1410,10 +1410,10 @@ export class ColyseusGameClient {
       const decodeStartMs = performance.now();
       if (raw instanceof ArrayBuffer) {
         if (bw) { bw.swarmBytes += raw.byteLength; bw.swarmPackets += 1; }
-        decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._shellTiming);
+        noteSwarmPacket(this._travel, decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._shellTiming));
       } else if (ArrayBuffer.isView(raw)) {
         if (bw) { bw.swarmBytes += raw.byteLength; bw.swarmPackets += 1; }
-        decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._shellTiming);
+        noteSwarmPacket(this._travel, decodeSwarmPacket(raw, this.mirror, performance.now(), true, this._shellTiming));
       }
       this.syncSwarmIntoPredWorld();
       const decodeMs = performance.now() - decodeStartMs;
@@ -2894,6 +2894,9 @@ export class ColyseusGameClient {
     };
     this.mirror.travelling = true;
   }
+
+  /** A teleport mid-swap: the renderer holds the picture (`travelPass.holdingPicture`). */
+  holdingPicture(): boolean { return holdingPicture(this._travel); }
 
   /** End the trip: the local ship drops in at its real (predicted) pose. */
   endTravel(): void {
