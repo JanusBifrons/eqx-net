@@ -1,6 +1,7 @@
 import type { Shot, ShotContext } from '../types.js';
 import { touch, type Finger } from '../touch.js';
 import { polar, type Pt } from '../touchPath.js';
+import { localPose } from './_pilot.js';
 
 /**
  * Base platforms (docs: .resume/base-platforms-plan.md): a phone pilot flies a
@@ -59,6 +60,66 @@ export const deckBasesPhone: Shot = {
       await left.dragTo(anchor.x, anchor.y, { ms: 300 });
       await left.up();
       await ctx.sleep(1500);
+    } finally {
+      await pad.dispose();
+    }
+  },
+};
+
+/** The sparse base's road, hex by hex (plate-centre road tiles of the
+ *  `deck-bases` room's sparse base, seed 7): in from the west end, along the
+ *  row through the junction to the east end. */
+const ROAD_ROUTE: ReadonlyArray<[number, number]> = [
+  [-3900, 0], [-3250, 1126], [-1950, 1126], [-650, 1126], [0, 2252],
+  [1300, 2252], [2600, 2252], [3900, 2252], [4550, 1126],
+];
+
+/** Steer the stick at each route point in turn from the ship's live pose,
+ *  like a thumb following the road; stop at the end or after `maxMs`. */
+async function followRoute(ctx: ShotContext, f: Finger, anchor: Pt, route: ReadonlyArray<[number, number]>, maxMs: number): Promise<void> {
+  const t0 = Date.now(); // -- real time: shot pacing, outside the game
+  let i = 0;
+  while (i < route.length && Date.now() - t0 < maxMs) { // -- real time: shot pacing
+    const p = await localPose(ctx);
+    if (p) {
+      const [tx, ty] = route[i]!;
+      if (Math.hypot(tx - p.x, ty - p.y) < 260) { i++; continue; }
+      const q = polar(anchor, 30, Math.atan2(ty - p.y, tx - p.x));
+      await f.moveTo(q.x, q.y);
+    }
+    await ctx.sleep(80);
+  }
+}
+
+/** Fighter's-eye view (the game's normal fighter zoom): fly along the base's
+ *  road so the deck's scale reads against the ship. Touch stick only. */
+export const deckBasesRoadPhone: Shot = {
+  id: 'deck-bases-road-phone',
+  section: 'mechanics',
+  title: 'Base platforms: following a deck road',
+  caption: 'A fighter at normal zoom follows a base road across the hex deck (review take).',
+  features: ['ART'],
+  docs: ['procedural-bases'],
+  reel: false,
+  server: 'lean',
+  viewport: 'phone-landscape',
+  target: { room: 'deck-bases', params: { shipKind: 'fighter', spawnX: -4300, spawnY: -300, initialHull: 1_000_000 } },
+  hud: 'full',
+  durationMs: 30_000,
+  async run(ctx) {
+    const pad = await touch(ctx.page, ctx.log);
+    try {
+      const left = pad.finger();
+      const zone = await rectOf(ctx, '[data-testid="hud-move-zone"]');
+      const anchor = zone
+        ? { x: zone.x + Math.min(120, zone.width * 0.3), y: zone.y + zone.height * 0.62 }
+        : { x: 120, y: ctx.viewport.height - 110 };
+      await ctx.sleep(1500);
+      await left.down(anchor.x, anchor.y);
+      await followRoute(ctx, left, anchor, ROAD_ROUTE, 26_000);
+      await left.dragTo(anchor.x, anchor.y, { ms: 300 });
+      await left.up();
+      await ctx.sleep(1000);
     } finally {
       await pad.dispose();
     }
