@@ -11,6 +11,17 @@ import { StructurePlacementSubsystem } from '../structures/StructurePlacementSub
 import { GALAXY_SECTORS } from '../../core/galaxy/galaxy.js';
 import { isConnectorKind } from '../../shared-types/structureKinds.js';
 import { NpcBaseSubsystem, galaxyBaseClearing, type NpcBaseSpec } from './NpcBaseSubsystem.js';
+import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from '../../core/structures/deckLinks.js';
+
+
+/** On the owner's deck: the centre on a plate, or (a fence post/gate on a
+ *  seam, as the placement rule allows) a point 2 u around it on one. */
+function onOwnDeck(registry: StructureRegistry, owner: string, kind: string, x: number, y: number): boolean {
+  if (registry.plates.plateAtWorld(owner, x, y)) return true;
+  if (kind !== DECK_FENCE_POST_KIND && kind !== DECK_FENCE_GATE_KIND) return false;
+  for (let k = 0; k < 12; k++) if (registry.plates.plateAtWorld(owner, x + 2 * Math.cos(k * Math.PI / 6), y + 2 * Math.sin(k * Math.PI / 6))) return true;
+  return false;
+}
 
 function seedOn(deck: boolean, dense = false) {
   const registry = new StructureRegistry();
@@ -45,7 +56,7 @@ describe('NPC base on a deck room (base platforms 23)', () => {
     expect(registry.plates.plateCount(owner)).toBeGreaterThan(0);
     for (const rec of registry.all()) {
       expect(rec.owner).toBe(owner);
-      expect(registry.plates.plateAtWorld(owner, rec.x, rec.y), `${rec.kind} on a plate`).toBe(true);
+      expect(onOwnDeck(registry, owner, rec.kind, rec.x, rec.y), `${rec.kind} on a plate`).toBe(true);
     }
   });
 

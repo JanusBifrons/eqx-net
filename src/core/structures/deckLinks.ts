@@ -90,6 +90,9 @@ export function deckGateCutsFenceLink(gate: DeckLinkEnd, a: DeckLinkEnd, b: Deck
 const HEX: AxialHex = { q: 0, r: 0 };
 const PA: PlateIndex = { i: 0, j: 0 };
 const PB: PlateIndex = { i: 0, j: 0 };
+/** World units a boundary piece is moved toward an anchor before its plate
+ *  is read (well under any snap step, well over float noise). */
+const PLATE_NUDGE = 1;
 
 /** Allocation-free: the plate whose hex holds world point (x, y). */
 export function plateOfWorldInto(x: number, y: number, out: PlateIndex): PlateIndex {
@@ -113,10 +116,21 @@ export function deckLinkKind(a: DeckLinkEnd, b: DeckLinkEnd): DeckLinkKind {
   const aAnchor = isPlateAnchor(a.kind, a.x, a.y);
   const bAnchor = isPlateAnchor(b.kind, b.x, b.y);
   if (!aAnchor && !bAnchor) return DECK_LINK_NONE;
+  if (!aAnchor || !bAnchor) {
+    // On-plate test. A fence post on a hex corner (a gate on a seam) sits on
+    // a plate boundary: which hex rounding puts it in is float noise (a grown
+    // base shifted to its site flips it). Nudge it toward the anchor, so a
+    // piece touching the anchor's plate counts as on it, on both sides.
+    const an = aAnchor ? a : b, o = aAnchor ? b : a;
+    plateOfWorldInto(an.x, an.y, PA);
+    const dx = an.x - o.x, dy = an.y - o.y, d = Math.hypot(dx, dy);
+    const k = d > PLATE_NUDGE ? PLATE_NUDGE / d : 0;
+    plateOfWorldInto(o.x + dx * k, o.y + dy * k, PB);
+    return PA.i === PB.i && PA.j === PB.j ? DECK_LINK_ON_PLATE : DECK_LINK_NONE;
+  }
   plateOfWorldInto(a.x, a.y, PA);
   plateOfWorldInto(b.x, b.y, PB);
   if (PA.i === PB.i && PA.j === PB.j) return DECK_LINK_ON_PLATE;
-  if (!aAnchor || !bAnchor) return DECK_LINK_NONE;
   const di = PB.i - PA.i, dj = PB.j - PA.j;
   for (let k = 0; k < PLATE_DIRS.length; k++) {
     const d = PLATE_DIRS[k]!;

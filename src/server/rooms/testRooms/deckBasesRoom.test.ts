@@ -9,6 +9,7 @@ import { npcOwner } from '../../../shared-types/relations.js';
 import { StructureRegistry } from '../../structures/StructureRegistry.js';
 import { StructurePlacementSubsystem } from '../../structures/StructurePlacementSubsystem.js';
 import { NpcBaseSubsystem } from '../../bases/NpcBaseSubsystem.js';
+import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from '../../../core/structures/deckLinks.js';
 import { DECK_BASES_DENSE_AT, DECK_BASES_DENSE_EXT, DECK_BASES_GAP, DECK_BASES_OPTS, DECK_BASES_SPARSE_AT, DECK_BASES_SPARSE_EXT, DECK_BASES_SPECS } from './deckBasesRoom.js';
 
 function seedRoomBases() {
@@ -32,6 +33,16 @@ function seedRoomBases() {
   return { registry, seeded: DECK_BASES_SPECS.map((s) => sub.seed(s)) };
 }
 
+
+/** On the owner's deck: the centre on a plate, or (a fence post/gate on a
+ *  seam, as the placement rule allows) a point 2 u around it on one. */
+function onOwnDeck(registry: StructureRegistry, owner: string, kind: string, x: number, y: number): boolean {
+  if (registry.plates.plateAtWorld(owner, x, y)) return true;
+  if (kind !== DECK_FENCE_POST_KIND && kind !== DECK_FENCE_GATE_KIND) return false;
+  for (let k = 0; k < 12; k++) if (registry.plates.plateAtWorld(owner, x + 2 * Math.cos(k * Math.PI / 6), y + 2 * Math.sin(k * Math.PI / 6))) return true;
+  return false;
+}
+
 describe('deck-bases test room (base platforms 27)', () => {
   it('seeds both bases on the deck with no rejected placement or edge, dense on fewer plates, decks apart', () => {
     const { registry, seeded } = seedRoomBases();
@@ -49,7 +60,7 @@ describe('deck-bases test room (base platforms 27)', () => {
     // Every piece stands on its own deck, never on the other base's.
     for (const rec of registry.all()) {
       const other = rec.owner === sOwner ? dOwner : sOwner;
-      expect(registry.plates.plateAtWorld(rec.owner, rec.x, rec.y), `${rec.kind} on its plate`).toBe(true);
+      expect(onOwnDeck(registry, rec.owner, rec.kind, rec.x, rec.y), `${rec.kind} on its plate`).toBe(true);
       expect(registry.plates.plateAtWorld(other, rec.x, rec.y), `${rec.kind} off the other deck`).toBe(false);
     }
     // Whole-deck extents (every plate's 7 hexes) keep the gap.
