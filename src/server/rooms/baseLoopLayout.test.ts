@@ -5,7 +5,8 @@
  * unpowered base. Placement whole-ness is `prebuiltLayouts.test.ts`.
  */
 import { describe, it, expect } from 'vitest';
-import { BASE_FLOW_OPTS, BASE_LOOP_OPTS } from './scenarioLayouts.js';
+import { BASE_FLOW_OPTS } from './scenarioLayouts.js';
+import { BASE_LOOP_OPTS } from './baseLoopLayout.js';
 import { StructureRegistry } from '../structures/StructureRegistry.js';
 import { StructurePlacementSubsystem } from '../structures/StructurePlacementSubsystem.js';
 import { getStructureKind } from '../../shared-types/structureKinds.js';

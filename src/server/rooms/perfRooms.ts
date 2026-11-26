@@ -6,7 +6,8 @@
 import type { Server } from 'colyseus';
 import { PERF_SCENES, type PerfScene } from '../../shared-types/perf/perfScenes.js';
 import { resolveSectorConfig } from '../galaxy/GalaxyRegistry.js';
-import { BASE_FLOW_OPTS, BASE_LOOP_OPTS } from './scenarioLayouts.js';
+import { BASE_FLOW_OPTS } from './scenarioLayouts.js';
+import { BASE_LOOP_OPTS } from './baseLoopLayout.js';
 
 const PREBUILT_LAYOUTS = { 'base-flow': BASE_FLOW_OPTS, 'base-loop': BASE_LOOP_OPTS } as const;
 
