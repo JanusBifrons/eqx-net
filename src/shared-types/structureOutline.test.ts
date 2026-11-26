@@ -150,9 +150,9 @@ describe('structureOutline', () => {
   });
 
   it('style c leaves every other style outline unchanged (hash pinned before 1i)', () => {
-    // Kinds appended after the pin (the Territory Lock) are left out, so the
+    // Kinds appended after the pin (the Territory Lock, the deck road) are left out, so the
     // pin still guards every outline it covered.
-    const pinned = KIND_IDS.filter((id) => id !== 'territory_lock');
+    const pinned = KIND_IDS.filter((id) => id !== 'territory_lock' && id !== 'road');
     // Rounded to 1e-6 so last-bit float noise between Node versions (CI 22,
     // local 24) cannot move the pin; any real outline change still does.
     const r6 = (v: number): number => Math.round(v * 1e6) / 1e6;

@@ -1,0 +1,192 @@
+<title>Base Platform Sizes</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* One static reading column. Single dark look (a space-game deck at night). Every canvas is drawn once: no animation. */
+:root{
+  color-scheme:dark;
+  --void:#070a10;--panel:#0f141c;--line:#253040;--ink:#d9e1ea;--dim:#8794a5;
+  --amber:#f2b33d;--cyan:#5cc8e0;--red:#e0524a;
+  --display:"Chakra Petch","Segoe UI",system-ui,sans-serif;
+  --body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+body{background:var(--void);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.55}
+.wrap{max-width:900px;margin:0 auto;padding-block:28px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:40px}
+h1,h2{font-family:var(--display);letter-spacing:.02em;text-wrap:balance;margin:0}
+h1{font-size:2.1rem;font-weight:700}
+h2{font-size:1.4rem;font-weight:600}
+p{margin:0;max-width:68ch}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.14em;text-transform:uppercase;color:var(--amber)}
+.lede{color:var(--dim)}
+section{display:flex;flex-direction:column;gap:14px}
+.frame{background:#0a0d13;border:1px solid var(--line);border-radius:4px;overflow-x:auto;width:fit-content;max-width:100%}
+.frame canvas{display:block}
+.cap{font-family:var(--mono);font-size:.78rem;color:var(--dim);max-width:76ch}
+table{border-collapse:collapse;width:100%;font-size:.92rem}
+th,td{text-align:left;padding:7px 10px;border-bottom:1px solid var(--line);vertical-align:top}
+th{font-family:var(--mono);font-size:.72rem;letter-spacing:.1em;text-transform:uppercase;color:var(--dim);font-weight:500}
+td:first-child{white-space:nowrap;color:var(--amber);font-family:var(--display);font-weight:600}
+b{color:#fff}
+</style>
+<div class="wrap">
+<header style="display:flex;flex-direction:column;gap:10px">
+  <div class="eyebrow">Design spike · not committed · round 9c</div>
+  <h1>Base Platform Sizes</h1>
+  <p class="lede">Hexes are now 1 300 u flat to flat. Every building keeps today's shape and sits inside its slot. This page shows the slots, how cables run, and how much room each building has to its hex edge. Every 1-hex building now has at least 130 u.</p>
+</header>
+
+<section>
+  <h2>Slots at 1 300 u</h2>
+  <div style="overflow-x:auto"><table>
+    <tr><th>Slot</th><th>Size</th><th>What goes in it today</th></tr>
+    <tr><td>Small</td><td>A third of a hex (3 per hex)</td><td>25 structures: turrets, batteries, pylons, miner, cargo bay, refinery, smelter, storage vault, habitat, labs…</td></tr>
+    <tr><td>1 hex</td><td>1 300 u flat to flat</td><td>16 structures: capital, reactor, shipyard, freight dock, teleporter, assembly plant, deep core rig, siege gun…</td></tr>
+    <tr><td>7-hex plate</td><td>About 3 900 u across</td><td>2 structures: the large teleporter and the alien gate. The plate's connector is built into their middle.</td></tr>
+    <tr><td>Next size</td><td>19 hexes (picked)</td><td>Nothing today. It is for future buildings bigger than a plate: one big hex with one connector.</td></tr>
+  </table></div>
+</section>
+
+<section>
+  <h2>Cables go up the leaf's seams</h2>
+  <p>A plate is a leaf of 7 hexes with the connector in the middle hex. Cables leave the connector at a corner of the middle hex, run along the seams between hexes, and come in the same way at the next plate's connector. They never cross a hex, so nothing built in a hex sits on a cable, and the middle hex stays a clear yard round the connector.</p>
+  <div class="frame"><canvas id="cables"></canvas></div>
+  <p class="cap">4 plates, linked in a ring, drawn the same both ways. The dashed cyan hex is each connector's yard. On the right the cables follow the dark seams: the seams between plates and the seams between the petals of a leaf.</p>
+</section>
+
+<section>
+  <h2>19 or 49: two ways to grow</h2>
+  <p>Both start the same: 1 hex, then 7 hexes (a hex with a ring round it). They differ in the step after that.</p>
+  <div class="frame"><canvas id="ladder"></canvas></div>
+  <p class="cap"><b>A</b> keeps adding rings: 7 plus a second ring of 12 makes 19, which is still one big hexagon with one connector in the middle. <b>B</b> repeats the flower: 7 plates of 7 make 49, which is a flower of flowers with a connector in each plate (7 in all). Same scale throughout. Cyan diamonds are connectors.</p>
+</section>
+
+<section>
+  <h2>How each one sits on a normal base</h2>
+  <p>A normal base is tiled in 7-hex plates (the grey flowers, each with a connector in the middle). Here's what happens when you put each one down.</p>
+  <div class="frame"><canvas id="onbase"></canvas></div>
+  <p class="cap"><b>A, 19 hexes</b>, doesn't line up with the plates. It takes 2 hexes from each of the 6 plates around it. The red hexes are what is left of those plates: 5 hexes each, in odd shapes. Their connectors still work. <b>B, 49 hexes</b>, covers exactly 7 whole plates, so the plates around it are untouched. It's much bigger, and the 7 connectors under it are built into it. On a huge base, where plates are already 19 hexes, A is exactly one plate.</p>
+</section>
+
+<section>
+  <h2>Every structure today, in its slot</h2>
+  <div class="frame"><canvas id="fit"></canvas></div>
+  <p class="cap">Today's footprints, drawn to scale and measured from the structure catalogue. Amber dashes show the slot. Under each 1-hex building is its smallest gap to the hex edge. Red would mean under 100 u. At 1 300 u none are. Small buildings turn to fit their third of the hex. The two plate buildings are drawn at today's size, with the plate's connector in their middle.</p>
+</section>
+</div>
+
+<script>
+(()=>{
+const SQ3=Math.sqrt(3),F=1300,DIRS=[[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]];
+const dist=(a,b,c,d)=>(Math.abs(a-c)+Math.abs(b-d)+Math.abs(a+b-c-d))/2;
+const ring=n=>{const o=[];for(let q=-n;q<=n;q++)for(let r=-n;r<=n;r++)if(dist(q,r,0,0)<=n)o.push([q,r]);return o;};
+// 7-hex plate centres sit on the lattice i*(2,1)+j*(-1,3)
+function plateOf(q,r){for(let i=-8;i<=8;i++)for(let j=-8;j<=8;j++){const cq=2*i-j,cr=i+3*j;if(dist(q,r,cq,cr)<=1)return[cq,cr];}return[0,0];}
+function cv(id,W,H){const c=document.getElementById(id),d=Math.min(2,devicePixelRatio||1);c.width=W*d;c.height=H*d;c.style.width=W+'px';c.style.height=H+'px';const g=c.getContext('2d');g.scale(d,d);g.fillStyle='#0a0d13';g.fillRect(0,0,W,H);return g;}
+const P=(cx,cy,s)=>(q,r)=>[cx+s*SQ3*(q+r/2),cy+s*1.5*r];
+function hex(g,x,y,s){g.beginPath();for(let i=0;i<6;i++){const a=Math.PI/180*(60*i-30);g.lineTo(x+s*Math.cos(a),y+s*Math.sin(a));}g.closePath();}
+// stroke the edges of a hex set where the neighbour is outside `inside`
+function edges(g,cells,px,s,inside){for(const[q,r]of cells){const[x,y]=px(q,r);for(const[dq,dr]of DIRS){if(inside(q+dq,r+dr))continue;const[nx,ny]=px(q+dq,r+dr),a=Math.atan2(ny-y,nx-x);
+  g.beginPath();g.moveTo(x+s*Math.cos(a-Math.PI/6),y+s*Math.sin(a-Math.PI/6));g.lineTo(x+s*Math.cos(a+Math.PI/6),y+s*Math.sin(a+Math.PI/6));g.stroke();}}}
+function conn(g,x,y,r,built){if(built){g.fillStyle='#10151c';g.beginPath();g.arc(x,y,r*1.7,0,7);g.fill();g.strokeStyle='#5cc8e0';g.lineWidth=1.2;g.stroke();}
+  g.fillStyle='#5cc8e0';g.beginPath();g.moveTo(x,y-r);g.lineTo(x+r,y);g.lineTo(x,y+r);g.lineTo(x-r,y);g.closePath();g.fill();}
+function text(g,x,y,t,o={}){g.textAlign=o.al||'center';g.fillStyle=o.c||'#8794a5';g.font=o.f||'500 10px IBM Plex Mono, monospace';String(t).split('\n').forEach((l,i)=>g.fillText(l,x,y+i*(o.lh||13)));}
+// a building shape: amber fill, thin hex lines, plate seams, bright outline, connectors
+function shape(g,cells,px,s,{seams=false,conns=[]}={}){const set=new Set(cells.map(c=>c+''));const inS=(q,r)=>set.has(q+','+r);
+  for(const[q,r]of cells){const[x,y]=px(q,r);hex(g,x,y,s-.4);g.fillStyle='rgba(242,179,61,.22)';g.fill();g.strokeStyle='rgba(242,179,61,.25)';g.lineWidth=1;g.stroke();}
+  if(seams){g.strokeStyle='rgba(242,179,61,.75)';g.lineWidth=1.4;const pf=c=>plateOf(c[0],c[1])+'';for(const c of cells){const[x,y]=px(c[0],c[1]);for(const[dq,dr]of DIRS){const n=[c[0]+dq,c[1]+dr];if(!inS(...n)||pf(n)===pf(c))continue;const[nx,ny]=px(...n),a=Math.atan2(ny-y,nx-x);
+    g.beginPath();g.moveTo(x+s*Math.cos(a-Math.PI/6),y+s*Math.sin(a-Math.PI/6));g.lineTo(x+s*Math.cos(a+Math.PI/6),y+s*Math.sin(a+Math.PI/6));g.stroke();}}}
+  g.strokeStyle='#f2b33d';g.lineWidth=2.2;edges(g,cells,px,s,inS);
+  for(const c of conns){const[x,y]=px(...c);conn(g,x,y,Math.max(3,s*.32));}}
+const C19=ring(2),C49=ring(5).filter(([q,r])=>{const p=plateOf(q,r);return dist(p[0],p[1],0,0)<=3;});
+const centres49=C49.filter(([q,r])=>{const p=plateOf(q,r);return p[0]===q&&p[1]===r;});
+
+// ---- 1: the two ladders ----
+{const W=820,H=520,s=12,g=cv('ladder',W,H);
+  const row=(y,tag,title,items)=>{text(g,16,y-92,tag,{al:'left',c:'#f2b33d',f:'700 22px Chakra Petch, sans-serif'});text(g,46,y-92,title,{al:'left',c:'#d9e1ea',f:'600 14px Chakra Petch, sans-serif'});
+    items.forEach(([x,cells,opt,lab],i)=>{shape(g,cells,P(x,y,s),s,opt);text(g,x,y+112,lab[0],{c:'#f2b33d',f:'600 14px Chakra Petch, sans-serif'});text(g,x,y+128,lab[1]);
+      if(i)text(g,(items[i-1][0]+x)/2+(i===2?-14:0),y+5,'→',{c:'#8794a5',f:'500 20px IBM Plex Mono, monospace'});});};
+  row(118,'A','Add a ring each step',[[90,[[0,0]],{conns:[[0,0]]},['1 hex','']],[240,ring(1),{conns:[[0,0]]},['7 hexes','1 plate']],[440,C19,{conns:[[0,0]]},['19 hexes','+ a ring of 12 · 1 connector']]]);
+  row(376,'B','Make a flower of flowers',[[90,[[0,0]],{conns:[[0,0]]},['1 hex','']],[240,ring(1),{conns:[[0,0]]},['7 hexes','1 plate']],[480,C49,{seams:true,conns:centres49},['49 hexes','7 plates · 7 connectors']]]);
+  g.strokeStyle='#253040';g.lineWidth=1;g.beginPath();g.moveTo(16,262);g.lineTo(W-16,262);g.stroke();
+  text(g,W-16,118-60,'still one hexagon\n\nsize across:\n1 → 3 → 5 hexes',{al:'right'});
+  text(g,W-16,376-60,'7 copies of the step before\n\nsize across:\n1 → 3 → about 7 hexes',{al:'right'});}
+
+// ---- 2: on a normal base ----
+{const W=820,H=330,s=11,g=cv('onbase',W,H);
+  const panel=(cx,cy,big,label)=>{const px=P(cx,cy,s),inB=new Set(big.map(c=>c+''));
+    const base=ring(9).filter(([q,r])=>{const p=plateOf(q,r);return dist(p[0],p[1],0,0)<=6;});
+    for(const[q,r]of base){const[x,y]=px(q,r),p=plateOf(q,r),alt=((p[0]*7+p[1]*3)%2+2)%2;hex(g,x,y,s-.4);g.fillStyle=alt?'#38414d':'#2a313b';g.fill();}
+    g.strokeStyle='#0b0e13';g.lineWidth=2;const bset=new Set(base.map(c=>c+''));
+    for(const c of base){const[x,y]=px(...c),f=plateOf(...c)+'';for(const[dq,dr]of DIRS){const n=[c[0]+dq,c[1]+dr];if(!bset.has(n+'')||plateOf(...n)+''===f)continue;const[nx,ny]=px(...n),a=Math.atan2(ny-y,nx-x);
+      g.beginPath();g.moveTo(x+s*Math.cos(a-Math.PI/6),y+s*Math.sin(a-Math.PI/6));g.lineTo(x+s*Math.cos(a+Math.PI/6),y+s*Math.sin(a+Math.PI/6));g.stroke();}}
+    // hexes bitten off neighbouring plates
+    for(const[q,r]of base){if(inB.has(q+','+r))continue;const p=plateOf(q,r);if(!big.some(c=>{const pc=plateOf(...c);return pc[0]===p[0]&&pc[1]===p[1];}))continue;const[x,y]=px(q,r);hex(g,x,y,s*.86);g.fillStyle='rgba(224,82,74,.3)';g.fill();g.strokeStyle='#e0524a';g.setLineDash([2,2]);g.lineWidth=1;g.stroke();g.setLineDash([]);}
+    shape(g,big,px,s,{seams:big.length===49});
+    for(const c of base){const p=plateOf(...c);if(p[0]!==c[0]||p[1]!==c[1])continue;const[x,y]=px(...c);conn(g,x,y,3.6,inB.has(c+''));}
+    text(g,cx,cy+128,label[0],{c:'#f2b33d',f:'600 15px Chakra Petch, sans-serif'});text(g,cx,cy+145,label[1]);};
+  panel(205,150,C19,['A · 19 hexes','red: what is left of the 6 plates it bites into']);
+  panel(615,150,C49,['B · 49 hexes','lines up with 7 whole plates · nothing cut']);}
+
+// ---- 3: every structure in its slot ----
+{const W=820,H=640,g=cv('fit',W,H),R=F/SQ3;
+  const fp=(x,y,w,h,U,col)=>{const pw=w/U,ph=h/U,X=x-pw/2,Y=y-ph/2;g.fillStyle='#4a5566';g.fillRect(X,Y,pw,ph);g.fillStyle='#5d6a7d';g.fillRect(X+1,Y+1,pw-2,ph*.45);g.strokeStyle='#9aa8ba';g.lineWidth=1;g.strokeRect(X+.5,Y+.5,pw-1,ph-1);g.fillStyle=col;g.fillRect(X+2,Y+ph-3,Math.max(1,pw-4),2);};
+  const slot=(x,y,s)=>{hex(g,x,y,s-.4);g.fillStyle='#2a313b';g.fill();hex(g,x,y,s*.94);g.strokeStyle='rgba(242,179,61,.6)';g.setLineDash([3,3]);g.lineWidth=1;g.stroke();g.setLineDash([]);};
+  const head=(y,t,sub)=>{text(g,16,y,t,{al:'left',c:'#f2b33d',f:'600 14px Chakra Petch, sans-serif'});text(g,16,y+16,sub,{al:'left'});};
+  const C={r:'#e0524a',c:'#5cc8e0',o:'#c77d4a',p:'#8a7cc9',g:'#6f8a6f',b:'#7d8fb3',h:'#b3a06b'};
+  const small=[['Turret',140,140,C.r],['Bolt turret',150,150,C.r],['AA gun',150,150,C.r],['Autocannon',160,160,C.r],['5 in gun',200,200,C.r],['8 in gun',360,300,C.r],['Missile turret',190,190,C.r],['Mine layer',220,220,C.r],['Shield pylon',120,120,C.p],
+    ['Battery',190,190,C.c],['Mining tower',240,240,C.o],['Gas collector',300,300,C.p],['Reclaimer',240,200,C.o],['Smelter',360,260,C.o],['Refinery',380,300,C.o],['Silicon works',320,320,C.b],['Hydroponics',420,200,C.g],['Munitions',400,300,C.b],
+    ['Research lab',400,300,C.b],['Cargo bay',320,200,C.g],['Storage vault',480,320,C.g],['Habitat',360,240,C.h],['Res. spire',240,240,C.h],['Airlock',392,260,C.h],['Shield gate',416,72,C.p]];
+  head(26,'Small · 25','3 to a hex, one in each third');
+  let s=30;const U=F/(s*SQ3);
+  for(let i=0;i<9;i++){const x=50+i*90,y=96,its=small.slice(i*3,i*3+3);slot(x,y,s);
+    g.strokeStyle='rgba(242,179,61,.35)';g.setLineDash([2,3]);g.beginPath();for(let k=0;k<3;k++){const a=Math.PI/180*(-30+120*k);g.moveTo(x,y);g.lineTo(x+s*.94*Math.cos(a),y+s*.94*Math.sin(a));}g.stroke();g.setLineDash([]);
+    its.forEach((it,k)=>{const[w,h]=(it[1]/F+it[2]/R<=1)?[it[1],it[2]]:[it[2],it[1]];g.save();g.translate(x,y);g.rotate(k*2*Math.PI/3);fp(0,-s*.5,w,h,U,it[3]);g.restore();});
+    text(g,x,y+s+16,its.map(a=>a[0]).join('\n'),{c:'#b8c2cf',f:'500 9px IBM Plex Mono, monospace',lh:11});}
+  const one=[['Capital',560,560,'#f2b33d'],['Reactor',600,600,C.c],['Battery bank',600,600,C.c],['Fabricator',480,360,C.b],['Solar',700,300,'#f2d36b'],['11 in gun',420,420,C.r],['16 in gun',520,520,C.r],['Super battery',640,560,C.r],
+    ['Siege gun',300,900,C.r],['Shipyard',960,600,C.b],['Freight dock',1000,400,C.g],['Assembly plant',900,640,C.b],['Ore processing',840,600,C.o],['Deep core rig',760,760,C.o],['Teleporter',800,800,C.c],['Transit pad',800,800,C.c]];
+  head(200,'1 hex · 16','1 300 u flat to flat; each turned whichever way fits');
+  const fitF=(w,h)=>Math.max(w,(SQ3*h+w)/2);s=34;const U1=F/(s*SQ3);
+  one.forEach((it,i)=>{const x=56+(i%8)*100,y=270+((i/8)|0)*110;slot(x,y,s);
+    if(it[0]==='Teleporter'||it[0]==='Transit pad'){const r=it[1]/U1/2;g.fillStyle='#1d232b';g.beginPath();g.arc(x,y,r,0,7);g.fill();g.strokeStyle='#9aa8ba';g.lineWidth=1;g.stroke();g.strokeStyle='#5cc8e0';g.lineWidth=2;g.beginPath();g.arc(x,y,r*.62,0,7);g.stroke();}
+    else{const[w,h]=fitF(it[1],it[2])<=fitF(it[2],it[1])?[it[1],it[2]]:[it[2],it[1]];fp(x,y,w,h,U1,it[3]);}
+    const circ=it[0]==='Teleporter'||it[0]==='Transit pad',need=circ?it[1]:Math.min(fitF(it[1],it[2]),fitF(it[2],it[1])),gap=Math.round((F-need)/2),tight=gap<100;
+    if(tight){hex(g,x,y,s+3);g.strokeStyle='#e0524a';g.lineWidth=1.5;g.stroke();}
+    text(g,x,y+s+15,it[0]+'\n'+gap+' u to edge',{c:tight?'#e0524a':'#b8c2cf',f:'500 9px IBM Plex Mono, monospace',lh:11});});
+  head(484,'7-hex plate · 2','connector built into the middle');
+  s=21;const U7=F/(s*SQ3);
+  [['Large teleporter',2120,'#5cc8e0',120],['Alien gate',1600,'#8a7cc9',330]].forEach(([n,d,col,x])=>{const y=566,px=P(x,y,s);for(const[q,r]of ring(1)){const[hx,hy]=px(q,r);slot(hx,hy,s);}
+    const r=d/U7/2;g.fillStyle='#1d232b';g.beginPath();g.arc(x,y,r,0,7);g.fill();g.strokeStyle='#9aa8ba';g.lineWidth=1;g.stroke();g.strokeStyle=col;g.lineWidth=3;g.beginPath();g.arc(x,y,r*.7,0,7);g.stroke();conn(g,x,y,4.5,true);
+    text(g,x+s*SQ3*1.5+12,y-6,n+'\n'+d.toLocaleString('en-GB')+' u across',{al:'left',c:'#b8c2cf'});});}
+
+// ---- 4: cables up the leaf's seams ----
+{const W=820,H=340,s=24,g=cv('cables',W,H);
+  const PL=[[0,0],[2,1],[-1,3],[1,4]],LINKS=[[0,1],[0,2],[1,3],[2,3]];
+  const cells=[];for(const[cq,cr]of PL)for(const[q,r]of ring(1))cells.push([cq+q,cr+r]);
+  const panel=(cx,cy,mode,label)=>{const px=P(cx,cy,s),set=new Set(cells.map(c=>c+''));
+    for(const[q,r]of cells){const[x,y]=px(q,r),p=plateOf(q,r),alt=PL.findIndex(a=>a[0]===p[0]&&a[1]===p[1])%2;hex(g,x,y,s-.5);g.fillStyle=alt?'#38414d':'#2a313b';g.fill();}
+    g.strokeStyle='#0b0e13';g.lineWidth=2.4;for(const c of cells){const[x,y]=px(...c),f=plateOf(...c)+'';for(const[dq,dr]of DIRS){const n=[c[0]+dq,c[1]+dr];if(!set.has(n+'')||plateOf(...n)+''===f)continue;const[nx,ny]=px(...n),a=Math.atan2(ny-y,nx-x);
+      g.beginPath();g.moveTo(x+s*Math.cos(a-Math.PI/6),y+s*Math.sin(a-Math.PI/6));g.lineTo(x+s*Math.cos(a+Math.PI/6),y+s*Math.sin(a+Math.PI/6));g.stroke();}}
+    // the middle hex is the connector's yard
+    for(const c of PL){const[x,y]=px(...c);hex(g,x,y,s*.9);g.strokeStyle='rgba(92,200,224,.35)';g.setLineDash([3,3]);g.lineWidth=1;g.stroke();g.setLineDash([]);}
+    g.strokeStyle='#5cc8e0';g.lineWidth=2.4;g.lineJoin='round';g.shadowColor='#5cc8e0';g.shadowBlur=6;
+    if(mode==='straight'){for(const[a,b]of LINKS){const[x1,y1]=px(...PL[a]),[x2,y2]=px(...PL[b]);g.beginPath();g.moveTo(x1,y1);g.lineTo(x2,y2);g.stroke();}}
+    else{// graph of hex corners; cables run only along hex edges
+      const key=(x,y)=>Math.round(x)+','+Math.round(y),V=new Map(),adj=new Map();
+      const add=(x,y)=>{const k=key(x,y);if(!V.has(k)){V.set(k,[x,y]);adj.set(k,new Set());}return k;};
+      const corners=(q,r)=>{const[x,y]=px(q,r);return[0,1,2,3,4,5].map(i=>{const a=Math.PI/180*(60*i-30);return add(x+s*Math.cos(a),y+s*Math.sin(a));});};
+      for(const[q,r]of cells){const k=corners(q,r);for(let i=0;i<6;i++){adj.get(k[i]).add(k[(i+1)%6]);adj.get(k[(i+1)%6]).add(k[i]);}}
+      const mid=new Set();for(const c of PL)corners(...c).forEach(k=>mid.add(k));
+      const path=(a,b)=>{const A=corners(...PL[a]),B=new Set(corners(...PL[b]));const d=new Map(),prev=new Map(),Q=[];
+        for(const k of A){d.set(k,0);Q.push(k);}
+        while(Q.length){Q.sort((x,y)=>d.get(x)-d.get(y));const u=Q.shift();if(B.has(u)){const out=[u];let v=u;while(prev.has(v)){v=prev.get(v);out.unshift(v);}return out;}
+          for(const v of adj.get(u)){if(mid.has(v)&&!B.has(v))continue;// never run round another yard
+            const[ux,uy]=V.get(u),[vx,vy]=V.get(v),nd=d.get(u)+Math.hypot(vx-ux,vy-uy);if(nd<(d.has(v)?d.get(v):1e9)-1e-6){d.set(v,nd);prev.set(v,u);if(!Q.includes(v))Q.push(v);}}}return[];};
+      for(const[a,b]of LINKS){const p=path(a,b),[x1,y1]=px(...PL[a]),[x2,y2]=px(...PL[b]);g.beginPath();g.moveTo(x1,y1);for(const k of p)g.lineTo(...V.get(k));g.lineTo(x2,y2);g.stroke();}}
+    g.shadowBlur=0;
+    for(const c of PL){const[x,y]=px(...c);conn(g,x,y,6);}
+    text(g,cx+s*SQ3*.25,cy+s*1.5*5.6,label[0],{c:'#f2b33d',f:'600 15px Chakra Petch, sans-serif'});text(g,cx+s*SQ3*.25,cy+s*1.5*5.6+17,label[1]);};
+  panel(175,92,'straight',['Before · straight across','cables cut through the petal hexes']);
+  panel(585,92,'seams',['Now · up the seams','connector → a corner → along the seams']);}
+})();
+</script>

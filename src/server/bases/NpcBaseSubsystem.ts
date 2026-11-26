@@ -22,6 +22,7 @@
  */
 import { DEFAULT_TELEPORT_RULES, NPC_LINK_TOLL, isTeleporterKind } from '../../shared-types/teleport.js';
 import { growBase, type GrownBase } from '../../core/bases/growBase.js';
+import { deckBaseOriginInto } from '../../core/bases/growDeck.js';
 import { TIER_LEVEL_CAP, TIER_WEALTH, type BaseProfile, type BaseRole, type BaseTier } from '../../core/bases/baseProfile.js';
 import type { SectorFeature } from '../../core/galaxy/galaxy.js';
 import { effectiveStructureMaxHealth } from '../../core/leveling/structureLevel.js';
@@ -38,10 +39,11 @@ import { fallenBaseOrigins } from '../structures/ownerlessBase.js';
 import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
 import type { StructureRecord, StructureRegistry } from '../structures/StructureRegistry.js';
 import type { Logger } from 'pino';
-import { chooseBaseSite, grownExtent, type SiteBox, type SiteCircle } from '../../core/bases/baseSite.js';
+import { chooseBaseSite, deckExtent, grownExtent, type SiteBox, type SiteCircle } from '../../core/bases/baseSite.js';
 import { galaxyBasePlan, type GalaxyBasePlan } from '../../core/bases/galaxyBases.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
 import { pocketClearing, sectorSites } from '../../core/galaxy/sectorSites.js';
+import type { FieldClearing } from '../../core/terrain/fieldLayout.js';
 import { HOME_POCKET_HALF_EXTENT, SOLAR_SECTORS, sectorSpace } from '../../shared-types/sectorBounds.js';
 import { SLOT_X_OFF, SLOT_Y_OFF, slotBase } from '../../shared-types/sabLayout.js';
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
@@ -65,6 +67,32 @@ export interface NpcBaseSpec {
   /** T1 — a full profile (a galaxy sector's `baseProfileFor`); overrides the
    *  tier defaults above. */
   profile?: BaseProfile;
+  /** On a deck room: grow dense (every plate packed, as in an asteroid-field
+   *  clearing, slice 25). Test rooms set it (`?room=deck-bases`); galaxy
+   *  seeding passes its field signal to `grow` instead. */
+  dense?: boolean;
+}
+
+/** The profile a spec describes (its `profile`, else the tier defaults). Pure. */
+export function npcBaseProfile(spec: NpcBaseSpec): BaseProfile {
+  if (spec.profile) return spec.profile;
+  const [w0, w1] = TIER_WEALTH[spec.tier];
+  const [, l1] = TIER_LEVEL_CAP[spec.tier];
+  return {
+    tier: spec.tier,
+    role: spec.role,
+    ownerFaction: spec.side ?? 'traders',
+    wealth: spec.wealth ?? Math.round((w0 + w1) / 2),
+    levelCap: l1,
+    fenced: spec.fenced ?? true,
+  };
+}
+
+/** Grow the base a spec describes, on plates when `deck` (pure; nothing
+ *  placed). `dense` (default `spec.dense`) packs every plate. */
+export function growNpcBase(spec: NpcBaseSpec, deck: boolean, dense = spec.dense ?? false): GrownBase {
+  const opts = deck ? (dense ? { deck: true, dense: true } : { deck: true }) : {};
+  return growBase(npcBaseProfile(spec), spec.seed, spec.features ?? [], opts);
 }
 
 export interface NpcBaseHooks {
@@ -105,36 +133,34 @@ export class NpcBaseSubsystem {
 
   /** The profile a spec describes (its `profile`, else the tier defaults). */
   profileOf(spec: NpcBaseSpec): BaseProfile {
-    if (spec.profile) return spec.profile;
-    const [w0, w1] = TIER_WEALTH[spec.tier];
-    const [, l1] = TIER_LEVEL_CAP[spec.tier];
-    return {
-      tier: spec.tier,
-      role: spec.role,
-      ownerFaction: spec.side ?? 'traders',
-      wealth: spec.wealth ?? Math.round((w0 + w1) / 2),
-      levelCap: l1,
-      fenced: spec.fenced ?? true,
-    };
+    return npcBaseProfile(spec);
   }
 
   /** Grow the base a spec describes (pure; nothing placed). Lets a caller
-   *  pick a site from its extent before seeding (T1). */
-  grow(spec: NpcBaseSpec): GrownBase {
-    return growBase(this.profileOf(spec), spec.seed, spec.features ?? []);
+   *  pick a site from its extent before seeding (T1). On a deck room
+   *  (`registry.deck`, base platforms) the base is grown on plates; `dense`
+   *  (a base in an asteroid-field clearing, slice 25; default `spec.dense`)
+   *  packs every plate. */
+  grow(spec: NpcBaseSpec, dense = spec.dense ?? false): GrownBase {
+    return growNpcBase(spec, this.h.registry.deck, dense);
   }
 
-  /** Place a base with its Capital at (spec.x, spec.y). `grown` may come from
+  /** Place a base with its Capital (a deck base: its origin plate) at (spec.x, spec.y). `grown` may come from
    *  `grow(spec)`; otherwise it is grown here. */
   seed(spec: NpcBaseSpec, grownIn?: GrownBase): SeededNpcBase {
     const profile = this.profileOf(spec);
     const grown = grownIn ?? this.grow(spec);
     const owner = npcOwner(profile.ownerFaction, spec.baseId);
+    // A deck base is grown round its origin plate: seed it on the nearest
+    // plate centre, so its plates sit on the world's deck lattice. A galaxy
+    // site is already a plate centre (`chooseBaseSite` with `deck`): this
+    // returns it unchanged; it only moves a hand-placed spec (test rooms).
+    const at = this.h.registry.deck ? deckBaseOriginInto(spec.x, spec.y, { x: 0, y: 0 }) : spec;
 
     const ids: Array<string | null> = [];
     let rejectedPlace = 0;
     for (const p of grown.placements) {
-      const id = this.h.place(owner, p.kind, spec.x + p.x, spec.y + p.y, p.rot ?? 0);
+      const id = this.h.place(owner, p.kind, at.x + p.x, at.y + p.y, p.rot ?? 0);
       ids.push(id);
       if (id === null) {
         rejectedPlace++;
@@ -296,6 +322,15 @@ export function seedGalaxyBase(h: NpcBaseSeedHost, sectorKey: string): void {
   h.structureGridTick();
 }
 
+/** The rock-free clearing a galaxy base's pocket (home, or `at`) sits in, or
+ *  null outside an asteroid field. In a cut field the base stays inside it
+ *  (the square's corners reach past the outer pocket's rim), and a base in a
+ *  clearing grows dense (base platforms 25): space there is dear, so its deck
+ *  packs every plate and clears less rock. */
+export function galaxyBaseClearing(sectorKey: string, at: { x: number; y: number } | null, solar = SOLAR_SECTORS): FieldClearing | null {
+  return pocketClearing(sectorKey, solar, at?.x ?? 0, at?.y ?? 0);
+}
+
 /** Seed one planned galaxy base; returns its footprint box, inflated by the
  *  gap a later base must keep, or null when no site fits. */
 function seedOneGalaxyBase(
@@ -313,7 +348,8 @@ function seedOneGalaxyBase(
     baseId: plan.baseId, role: profile.role, tier: profile.tier, seed, x: 0, y: 0,
     side: profile.ownerFaction, features: [...features], profile,
   };
-  const grown = sub.grow(spec);
+  const clearing = galaxyBaseClearing(sectorKey, at);
+  const grown = sub.grow(spec, clearing !== null);
   const hard: SiteBox[] = [...seededBases];
   for (const r of h.structureRegistry.all()) hard.push({ x: r.x, y: r.y, hw: r.halfW ?? r.radius, hh: r.halfH ?? r.radius });
   for (const p of h.lingeringPoseCache.values()) hard.push({ x: p.x, y: p.y, hw: 150, hh: 150 });
@@ -325,16 +361,17 @@ function seedOneGalaxyBase(
     rocks.push(rec);
     soft.push({ x: h.sabF32()[b + SLOT_X_OFF]!, y: h.sabF32()[b + SLOT_Y_OFF]!, r: rec.radius });
   }
-  const ext = grownExtent(grown.placements);
-  // In a cut field the base also stays inside its pocket's rock-free
-  // clearing (the square's corners reach past the outer pocket's rim).
-  const clearing = pocketClearing(sectorKey, SOLAR_SECTORS, at?.x ?? 0, at?.y ?? 0);
+  // A deck base reserves its whole deck (empty plates' floor too) and sits
+  // on a plate centre (base platforms 24).
+  const deck = h.structureRegistry.deck;
+  const ext = deck ? deckExtent(grown.placements) : grownExtent(grown.placements);
   const site = chooseBaseSite(ext, hard, soft, {
     // The home pocket (today's whole sector; the same bound when solar-system
     // sectors are off).
     halfExtent: HOME_POCKET_HALF_EXTENT, margin: 250, step: sectorSpace(250), seed,
     ...(at ? { centreX: at.x, centreY: at.y } : {}),
     ...(clearing ? { within: clearing } : {}),
+    ...(deck ? { deck: true } : {}),
   });
   if (site === null) {
     h.logger.warn({ sectorKey, baseId: plan.baseId, tier: profile.tier, role: profile.role }, 'npc base: no site fits; base skipped');

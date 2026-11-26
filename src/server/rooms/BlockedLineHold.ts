@@ -20,7 +20,7 @@
  */
 import { BlockedLineTimers, holdsOnBlockedLine, shotPassesThrough } from '../../core/combat/blockedLineHold.js';
 import type { WeaponId } from '../../core/combat/WeaponCatalogue.js';
-import { isLootPod, isWreckPiece } from '../net/SwarmEntityRegistry.js';
+import { isWeaponTransparent, isWreckPiece } from '../net/SwarmEntityRegistry.js';
 
 /** A body on a line: what the skip rules read. */
 export interface LineBody { kind: number; shipKind?: string | null; id: string }
@@ -30,9 +30,10 @@ export interface LineQuery<R extends LineBody> {
   firstOnLine(fx: number, fy: number, tx: number, ty: number, skipId: string, targetId: string, blocks: (rec: R) => boolean): string;
 }
 
-/** A beam stops on anything but a loot pod; a slug flies through wreck too. */
-const beamBlocks = (rec: LineBody): boolean => !isLootPod(rec);
-const slugBlocks = (rec: LineBody): boolean => !isLootPod(rec) && !isWreckPiece(rec);
+/** A beam stops on anything but a loot pod or a road (`isWeaponTransparent`);
+ *  a slug flies through wreck too. */
+const beamBlocks = (rec: LineBody): boolean => !isWeaponTransparent(rec);
+const slugBlocks = (rec: LineBody): boolean => !isWeaponTransparent(rec) && !isWreckPiece(rec);
 
 export class BlockedLineHold {
   /** The shared per-mount timers (core, the client mirror steps the same). */

@@ -23,6 +23,8 @@ import type { GridObstacle } from '@core/structures/Grid';
 import type { PlacementRejection } from '@core/structures/placementRules';
 import { PlacementGhostVerdict, type GhostPose } from '../../structures/placementGhostVerdict.js';
 import { StructureHologram } from './structureHologram.js';
+import { ghostDeckAngle, ghostDeckContext, snapGhostToDeck } from './placementDeckSnap.js';
+const DEG_TO_RAD = Math.PI / 180;
 
 export interface PlacementGhostCtx {
   /** Structure placement ghost (Issue 5) — the plan as a bright hologram
@@ -120,21 +122,34 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
     }
     // Live ghost: draw at the pointer-chosen world point once positioned,
     // else the ahead-of-ship preview pose. Pending ghost: the SENT point.
-    const gx = pendingGhost ? preview.x : (ctx.input._placementChosenX ?? preview.x);
-    const gy = pendingGhost ? preview.y : (ctx.input._placementChosenY ?? preview.y);
+    let gx = pendingGhost ? preview.x : (ctx.input._placementChosenX ?? preview.x);
+    let gy = pendingGhost ? preview.y : (ctx.input._placementChosenY ?? preview.y);
+    // Base platforms: on a deck room the live ghost sits on its kind's deck
+    // slot (the server snaps the same way); a chosen point snaps in place too,
+    // so the centre seed and the ahead-of-ship pose land on a slot.
+    // The snap's turn too (a small building faces its rhombus, slice 18).
+    const snap = snapGhostToDeck(preview, gx, gy);
+    let angle = pendingGhost ? ghostDeckAngle(preview) : preview.angle;
+    if (snap) {
+      gx = snap.x; gy = snap.y; angle = snap.rot * DEG_TO_RAD;
+      if (ctx.input._placementChosenX !== null) { ctx.input._placementChosenX = gx; ctx.input._placementChosenY = gy; }
+    }
     ctx.placementGhost.visible = true;
     ctx.placementGhost.x = gx;
     ctx.placementGhost.y = -gy; // Y-flip
-    ctx.placementGhost.rotation = -preview.angle;
+    ctx.placementGhost.rotation = -angle;
     // Build mirror (4B): flip in the local frame, then rotate (structureLocalToWorld).
     ctx.placementGhost.scale.x = preview.mirror === true ? -1 : 1;
+    // The slot outline under the ghost (after the turn + mirror it undoes).
+    // A connector on a plate's middle hex snaps to the anchor: the whole 7-hex plate outline.
+    ctx.placementGhost.setDeckSlot(snap ? snap.slot : null, snap ? snap.rhombus : -1);
     // Red / green before the click: the server's own overlap rule at the drawn
-    // pose (structures, landing pads, rocks). The pending ghost is already sent.
+    // pose (structures, landing pads, rocks; off-deck on a deck room). The pending ghost is already sent.
     let rejection: PlacementRejection | null = null;
     if (!pendingGhost && !heldGhost && mirror.swarm) {
       const pose = ctx.pose;
-      pose.kind = preview.kind; pose.x = gx; pose.y = gy; pose.angle = preview.angle; pose.mirror = preview.mirror === true;
-      rejection = ctx.verdict.check(pose, mirror.structures, mirror.swarm, ctx.obstacles);
+      pose.kind = preview.kind; pose.x = gx; pose.y = gy; pose.angle = angle; pose.mirror = preview.mirror === true;
+      rejection = ctx.verdict.check(pose, mirror.structures, mirror.swarm, ctx.obstacles, ghostDeckContext(preview));
     }
     ctx.feedback.placementPreviewRejection = rejection;
     // Cyan when clear, red when blocked; the pending ghost is dimmer and still

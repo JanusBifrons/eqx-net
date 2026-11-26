@@ -23,12 +23,13 @@
  * the result is buildable by construction; `growBase.test.ts` re-checks it.
  */
 import { COASTAL_DEFENCE_KINDS, getStructureKind, structureHalfExtents, type StructureKindId } from '../../shared-types/structureKinds.js';
-import { RECIPES, packRecipeFor, recipesFor, type RecipeId } from '../../shared-types/recipes.js';
+import { RECIPES, packRecipeFor } from '../../shared-types/recipes.js';
 import { BASE_PRICES } from '../../shared-types/economy.js';
-import { IDLE_DRAW_FRAC } from '../../shared-types/structurePower.js';
 import { keepClearBox } from '../structures/placementRules.js';
 import { MIN_CABLE_LENGTH } from '../structures/structureGridConstants.js';
 import { Builder, leafReach, linkGap, RELAY_SPAN, tallestFrom, upDownGunReach, type GrownPlacement } from './growBuilder.js';
+import { expectedDraw, summariseGrown, type GrownBase } from './grownSummary.js';
+import { deckFencePieces, deckHexesPerPlate, layDeckBase, type GrowBaseOptions } from './growDeck.js';
 import { powerShareCost } from './powerShareCost.js';
 import { roleUnits, type Want } from './roleUnits.js';
 import { seededRandom, type BaseProfile, type BaseTier } from './baseProfile.js';
@@ -36,6 +37,8 @@ import type { SectorFeature } from '../galaxy/galaxy.js';
 import type { GoodId } from '../../shared-types/goods.js';
 
 export type { GrownPlacement } from './growBuilder.js';
+export { EXPECTED_ACTIVE, expectedDraw, type GrownBase } from './grownSummary.js';
+export type { GrowBaseOptions } from './growDeck.js';
 
 /** Bump on ANY change to the generator's output (NPC bases regenerate from the
  *  seed, so a change moves every base).
@@ -63,8 +66,15 @@ export type { GrownPlacement } from './growBuilder.js';
  *  19→20: landing pads solid to cables, no socket on their side: the spine detours round the Capital's pad up column 1; an unlinkable connector is taken back.
  *  20→21 (restyle F2): wider gate (416), airlock (392) and pylons (120×120); fence pylons 660 apart, each half-side spaced to the gate end (no pylon on a gate).
  *  21→22: one cable per connector socket (max 6): leaf gaps fit the face turned at the leaf; a bastion steps off a fence post on its line.
- *  22→23: cables a body width apart (fan-outs too), min cable 67 u box edge to edge; relays a cable length clear. */
-export const BASE_GROWTH_VERSION = 23;
+ *  22→23: cables a body width apart (fan-outs too), min cable 67 u box edge to edge; relays a cable length clear.
+ *  23→24 (base platforms 23): growth option `deck` lays the base on plates (`growDeck.ts`); without it the output is unchanged.
+ *  24→25 (base platforms 24): a deck plate holds buildings on at most `DECK_HEXES_PER_PLATE` (3) outer hexes, every other hex first (mostly empty deck); rows unchanged.
+ *  25→26 (base platforms 25): growth option `dense` (a base in an asteroid-field clearing) fills all 6 outer hexes (`DECK_HEXES_PER_PLATE_DENSE`); sparse decks and rows unchanged.
+ *  26→27 (base platforms 26): a fenced deck base rings its plates with seam pylons + road gates (`growDeckFence.ts`), guns on bastion plates outside; unfenced decks and rows unchanged.
+ *  27→28 (base platforms 32): a fenced deck base joins its gate roads into one road network inside the ring (`growDeckRoads.ts`).
+ *  28→29 (base platforms 34): roads take no cable (no anchor link); placements unchanged.
+ *  29→30 (base platforms 36): every gate road joins the one road network (re-layouts lay the reserved roads' plates, keep gate hexes, up to 2 more inside plates; re-plan at lay time; an unjoinable gate is not laid). */
+export const BASE_GROWTH_VERSION = 30;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
@@ -78,20 +88,6 @@ export const TIER_MAX_STRUCTURES: Readonly<Record<BaseTier, number>> = Object.fr
   stronghold: 160,
   citadel: 260,
 });
-
-export interface GrownBase {
-  placements: GrownPlacement[];
-  /** Index pairs into `placements`, in an order every `canConnect` passes. */
-  edges: Array<readonly [number, number]>;
-  /** Wealth actually spent. */
-  spent: number;
-  /** Net power with everything built. */
-  netPower: number;
-  fencePylons: number;
-  fenceGates: number;
-  /** Chain stages the base runs (0 raw … 3 end products). */
-  stages: number[];
-}
 
 const PITCH_X = 640;
 const GAP = 20;
@@ -117,37 +113,6 @@ export function generatedCost(kind: StructureKindId): number {
   let v = 0;
   for (const [g, n] of Object.entries(RECIPES[pack].inputs)) v += BASE_PRICES[g as GoodId] * (n ?? 0);
   return base + v;
-}
-
-/**
- * Expected power draw of a structure on a typical day (user ruling
- * 2026-11-01): it draws full power only while active, a small idle trickle
- * otherwise (`structurePower.ts`), and no base runs everything at 100 %.
- * Processors are sized as busy ALL the time: an NPC base is stocked with
- * inputs, so its processors run back to back (sizing them at 60 % browned the
- * stronghold out every other pulse and dropped its fence — user report
- * 2026-11-02, `npcBasePowerStable.test.ts`). Drills 80 %, turrets 15 %;
- * shield emitters hold their walls on the trickle (a fence under fire is paid
- * from surplus and batteries). Generation is sized for this, not for peak.
- */
-export const EXPECTED_ACTIVE: Readonly<Partial<Record<StructureKindId, number>>> = Object.freeze({
-  miner: 0.8, gas_collector: 0.8, deep_core_rig: 0.8,
-  reclaimer: 1, smelter: 1, refinery: 1, silicon_works: 1, hydroponics: 1,
-  fabricator: 1, munitions_works: 1, ore_processing_complex: 1, assembly_plant: 1,
-  turret: 0.15, laser_bolt_turret: 0.15, missile_turret: 0.15, autocannon_turret: 0.15,
-  // Coastal defences: guns draw full power only while engaged, like turrets.
-  aa_quad_40mm: 0.15, dp_mount_5in: 0.15, coastal_casemate_8in: 0.15, coastal_turret_11in: 0.15,
-  coastal_barbette_16in: 0.15, coastal_lindemann: 0.15, siege_gun_80cm: 0.15,
-  // A mine layer lays only until its field is full.
-  mine_layer: 0.2,
-  // D3 — residents live there around the clock.
-  habitat_module: 0.9, tower_module: 0.9,
-});
-
-export function expectedDraw(kind: StructureKindId): number {
-  const cons = getStructureKind(kind).powerConsumption;
-  const u = EXPECTED_ACTIVE[kind] ?? 0;
-  return cons * (u + (1 - u) * IDLE_DRAW_FRAC);
 }
 
 const HUGE: ReadonlySet<StructureKindId> = new Set(['deep_core_rig', 'ore_processing_complex', 'assembly_plant']);
@@ -214,18 +179,6 @@ const BASTION_OUT = 220;
  *  and below the hub (half-width up to this) fit beside a big battery. */
 const OUTWARD_CLEAR = 130;
 
-/** Stage each processor kind's main output belongs to (for the coverage rule). */
-function stageOf(kind: StructureKindId, recipe: RecipeId | undefined): number | null {
-  if (kind === 'miner' || kind === 'gas_collector' || kind === 'deep_core_rig') return 0;
-  if (recipe === undefined) return null;
-  const o = RECIPES[recipe].outputs[0];
-  if (!o || !('good' in o)) return null;
-  const g = o.good;
-  if (g === 'alloy' || g === 'fuel' || g === 'polymer' || g === 'silicon' || g === 'provisions' || g === 'minerals') return 1;
-  if (g === 'components' || g === 'electronics' || g === 'munitions') return 2;
-  return 3;
-}
-
 /** The build list: what the base buys, within its wealth and tier budget. */
 function planBuild(profile: BaseProfile, features: readonly SectorFeature[], rnd: () => number, drnd: () => number): { wants: Want[]; spent: number } {
   const wants: Want[] = [];
@@ -283,30 +236,34 @@ function planBuild(profile: BaseProfile, features: readonly SectorFeature[], rnd
  * Grow a base. `features` are the sector's (refinery recipes, gas). Pure and
  * deterministic per (profile, seed).
  */
-export function growBase(profile: BaseProfile, seed: number, features: readonly SectorFeature[] = []): GrownBase {
+export function growBase(profile: BaseProfile, seed: number, features: readonly SectorFeature[] = [], opts: GrowBaseOptions = {}): GrownBase {
   // Lay out, measure the real draw (the fence size depends on the layout),
   // then lay out again with enough Solars. Converges in a few passes.
   // A base that comes out over its tier's budget spends less and regrows.
   let p = profile;
-  let out = balanced(p, seed, features);
-  for (let pass = 0; pass < 8 && out.placements.length > TIER_MAX_STRUCTURES[profile.tier]; pass++) {
+  // Outer hexes per plate on a deck (dense field bases use all 6); 0 = rows.
+  const deck = opts.deck === true ? deckHexesPerPlate(opts) : 0;
+  let out = balanced(p, seed, features, deck);
+  // A deck fence is left out of the count (slice 26, `deckFencePieces`).
+  const counted = (b: GrownBase): number => b.placements.length - (deck > 0 ? deckFencePieces(b.placements) : 0);
+  for (let pass = 0; pass < 8 && counted(out) > TIER_MAX_STRUCTURES[profile.tier]; pass++) {
     p = { ...p, wealth: Math.floor(p.wealth * 0.85) };
-    out = balanced(p, seed, features);
+    out = balanced(p, seed, features, deck);
   }
   return out;
 }
 
-function balanced(profile: BaseProfile, seed: number, features: readonly SectorFeature[]): GrownBase {
+function balanced(profile: BaseProfile, seed: number, features: readonly SectorFeature[], deck: number): GrownBase {
   let extra = 0;
-  let out = growOnce(profile, seed, features, extra);
+  let out = growOnce(profile, seed, features, extra, deck);
   for (let pass = 0; pass < 6 && out.netPower < 0; pass++) {
     extra += Math.ceil(-out.netPower / getStructureKind('solar').powerOutput) + 1;
-    out = growOnce(profile, seed, features, extra);
+    out = growOnce(profile, seed, features, extra, deck);
   }
   return out;
 }
 
-function growOnce(profile: BaseProfile, seed: number, features: readonly SectorFeature[], extraSolars: number): GrownBase {
+function growOnce(profile: BaseProfile, seed: number, features: readonly SectorFeature[], extraSolars: number, deck: number): GrownBase {
   const rnd = seededRandom(seed ^ 0x5bd1e995);
   const { wants, spent } = planBuild(profile, features, rnd, seededRandom(seed ^ DEFENCE_STREAM));
   // v4 H — one teleporter per transit link this base ends (outside the budget:
@@ -339,6 +296,11 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
   const batteries = Math.max(1, Math.round(wants.length / 6)) + (profile.fenced ? 2 : 0);
   if (batteries >= 5) normal.push({ kind: 'battery_bank' });
   else for (let b = 0; b < batteries; b++) normal.push({ kind: 'battery' });
+  // Base platforms: on a deck the base stands on plates; a fenced one rings its deck and puts its guns outside.
+  if (deck > 0) {
+    const d = layDeckBase([...normal, ...huge], deck, profile.fenced ? posts : null);
+    return summariseGrown(d.B, profile, rnd, spent, d.fencePylons, d.fenceGates);
+  }
 
   // A row gap fits the tallest leaves facing in: on the inner row's side (`${row}:${side}`), or still to place.
   const reach = Math.max(0, ...normal.map((w) => leafReach(w.kind)));
@@ -627,29 +589,5 @@ function growOnce(profile: BaseProfile, seed: number, features: readonly SectorF
 
   }
 
-  // Levels: wealthy bases upgrade processors and turrets up to their level cap.
-  const upgradeable = new Set<StructureKindId>(['turret', 'smelter', 'refinery', 'fabricator', 'miner', 'solar']);
-  for (const p of B.placements) {
-    if (upgradeable.has(p.kind) && profile.levelCap > 1) p.level = 1 + Math.floor(rnd() * profile.levelCap);
-  }
-
-  let netPower = 0;
-  for (const p of B.placements) {
-    const k = getStructureKind(p.kind);
-    netPower += k.powerOutput - expectedDraw(p.kind);
-  }
-  const stages = new Set<number>();
-  for (const p of B.placements) {
-    const s = stageOf(p.kind, p.recipe ?? (recipesFor as (k: string) => RecipeId[])(p.kind)?.[0]);
-    if (s !== null) stages.add(s);
-  }
-  return {
-    placements: B.placements,
-    edges: B.edges,
-    spent,
-    netPower: Math.round(netPower),
-    fencePylons,
-    fenceGates,
-    stages: [...stages].sort(),
-  };
+  return summariseGrown(B, profile, rnd, spent, fencePylons, fenceGates);
 }

@@ -1,5 +1,5 @@
 import { selectControlMode, useUIStore } from '../../state/store.js';
-import { resolvePlacementPreviewStatus } from '../../structures/structurePlacementClient.js';
+import { resolvePlacementPreviewStatus, writePreviewDeck } from '../../structures/structurePlacementClient.js';
 import { placementChosen, setPlacementHeld } from '../../structures/placementChosen.js';
 import {
   setSwarmDisplayDelayMode, stepSwarmDisplayDelay, getSwarmSteadyDisplayDelayMs,
@@ -66,6 +66,8 @@ export function updateSpectatorPlacement(ctx: MirrorPassCtx, localId: string | n
       placementChosen.worldY,
     );
     // The next ghost right after Place: dim, no verdict, Place refused (held).
+    // Base platforms: the live ghost snaps to its deck slot on a deck room.
+    writePreviewDeck(ctx.placementPreviewScratch, useUIStore.getState().deck, ctx.plates, ctx.mirror.localPlayerId ?? null);
     setPlacementHeld(status === 'active' && ctx.placementPreviewScratch.held === true);
     if (status === 'active' || status === 'pending') {
       ctx.mirror.pendingPlacementPreview = ctx.placementPreviewScratch;

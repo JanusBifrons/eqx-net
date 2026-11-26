@@ -15,7 +15,7 @@
  */
 import type { SwarmRenderState, StructureRenderState } from '../../core/contracts/IRenderer.js';
 import type { GridObstacle } from '../../core/structures/Grid.js';
-import { placementRejection, type PlacementFootprint, type PlacementRejection } from '../../core/structures/placementRules.js';
+import { placementRejection, type PlacementDeck, type PlacementFootprint, type PlacementRejection } from '../../core/structures/placementRules.js';
 import {
   getStructureKind,
   isStructureKindId,
@@ -42,13 +42,15 @@ export class PlacementGhostVerdict {
   /**
    * Why the ghost can't go at `ghost`, or `null` when it can. `structures` and
    * `swarm` are the render mirror's (a structure's pose rides the swarm wire);
-   * `obstacles` the rocks around the ghost.
+   * `obstacles` the rocks around the ghost; `deck` the local player's deck on
+   * a deck room (base platforms, the server's `off-deck` rule), else null.
    */
   check(
     ghost: GhostPose,
     structures: ReadonlyMap<number, StructureRenderState> | undefined,
     swarm: ReadonlyMap<number, SwarmRenderState>,
     obstacles: readonly GridObstacle[] | null,
+    deck: PlacementDeck | null = null,
   ): PlacementRejection | null {
     if (!isStructureKindId(ghost.kind)) return null;
     const fps = this.footprints;
@@ -58,6 +60,7 @@ export class PlacementGhostVerdict {
         const e = swarm.get(id);
         if (e === undefined || e.shipKind === undefined || !isStructureKindId(e.shipKind)) continue;
         const rot = normaliseStructureRotation(e.angle * RAD_TO_DEG);
+        // The nearest-quarter box + rot: placementRejection tests the turned box from them.
         const ext = structureHalfExtents(e.shipKind, rot);
         let fp = fps[n];
         if (fp === undefined) {
@@ -76,6 +79,6 @@ export class PlacementGhostVerdict {
       }
     }
     fps.length = n;
-    return placementRejection(ghost.kind, ghost.x, ghost.y, fps, obstacles, normaliseStructureRotation(ghost.angle * RAD_TO_DEG), ghost.mirror === true);
+    return placementRejection(ghost.kind, ghost.x, ghost.y, fps, obstacles, normaliseStructureRotation(ghost.angle * RAD_TO_DEG), ghost.mirror === true, deck);
   }
 }

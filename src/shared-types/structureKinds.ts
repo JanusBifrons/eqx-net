@@ -56,6 +56,8 @@ export {
   COASTAL_LINDEMANN, SIEGE_GUN_80CM, COASTAL_DEFENCE_KINDS,
 } from './structureKinds/coastal.js';
 
+export { ROAD } from './structureKinds/deckTiles.js';
+
 export { STRUCTURE_KINDS_LIST } from './structureKinds/catalogueOrder.js';
 export {
   STRUCTURE_KINDS,
@@ -63,6 +65,11 @@ export {
   DEFAULT_STRUCTURE_KIND,
   UNBUILDABLE_STRUCTURE_KINDS,
   isBuildableStructureKind,
+  isConnectorKind,
+  FLAT_DECK_STRUCTURE_KINDS,
+  isFlatDeckKind,
+  DECK_ONLY_STRUCTURE_KINDS,
+  isDeckOnlyStructureKind,
   getStructureKind,
   isStructureKindId,
   structureKindToIndex,
@@ -82,9 +89,21 @@ export type { StructureSocket, MutStructureSocket } from './structureKinds/struc
 export {
   structureHullPoints,
   STRUCTURE_ROTATIONS,
+  STRUCTURE_ROTATION_STEP_DEG,
   normaliseStructureRotation,
+  normaliseStructureQuarterTurn,
+  playerStructureRotationStep,
+  snapPlayerStructureRotation,
+  isStructureQuarterTurnOnly,
+  structureTurnedBoxInto,
+  pointInOrientedBox,
   structureHalfExtents,
   structureHalfExtentsInto,
+  structureRotationCosSinInto,
+  isStructureQuarterTurn,
+  orientedBoxBoundsInto,
+  orientedBoxesOverlap,
+  orientedBoxOverlapsCircle,
   structureLocalToWorld,
   structureWorldToLocal,
 } from './structureKinds/geometry.js';

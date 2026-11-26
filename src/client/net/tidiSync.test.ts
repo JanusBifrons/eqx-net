@@ -30,3 +30,17 @@ describe('syncTidiFromRoom — unchanged rate', () => {
     expect(useUIStore.getState().clockRate).toBe(0.5);
   });
 });
+
+/** Base-platforms room flag: the per-snapshot state read mirrors `state.deck`. */
+describe('syncTidiFromRoom — deck room flag', () => {
+  beforeEach(() => {
+    useUIStore.setState({ clockRate: 1, sectorAlert: null, deck: false });
+  });
+
+  it('mirrors state.deck into the store, absent = false', () => {
+    syncTidiFromRoom({ state: { clockRate: 1, deck: true } } as unknown as Room, null);
+    expect(useUIStore.getState().deck).toBe(true);
+    syncTidiFromRoom({ state: { clockRate: 1 } } as unknown as Room, null);
+    expect(useUIStore.getState().deck).toBe(false);
+  });
+});

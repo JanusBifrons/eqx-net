@@ -7,7 +7,7 @@ import type { HitPredictionLedger } from '@core/combat/HitPrediction';
 import type { AiController } from '@core/ai/AiController';
 import type { GhostManager } from '../../combat/GhostProjectile.js';
 import type { DisplayPoseHitscan } from '../../combat/displayPoseHitscan.js';
-import type { PlacementPreview, PendingPlacement, ShipPose } from '../../structures/structurePlacementClient.js';
+import type { PlacementPreview, PendingPlacement, PreviewPlateSource, ShipPose } from '../../structures/structurePlacementClient.js';
 import type { InterpolatedPose } from '../swarmInterpolation.js';
 import type { RemoteShipOffset } from '../remoteLerpOffsets.js';
 
@@ -34,6 +34,8 @@ export interface MirrorPassCtx {
   pendingPlacement: PendingPlacement | null;
   readonly placementShipScratch: ShipPose;
   readonly placementPreviewScratch: PlacementPreview;
+  /** The derived plate set (base platforms), for the ghost's deck rule. */
+  readonly plates: PreviewPlateSource;
   /** Two-Set swap for the swarm-near diagnostic (written back each frame). */
   swarmNearbyIds: Set<number>;
   swarmNearbySwapScratch: Set<number>;

@@ -321,6 +321,11 @@ export function buildSceneLayers(deps: SceneLayerDeps): SceneLayers {
   // per-frame layer.
   shipContainer.addChild(connectorRenderer.staticGfx);
   shipContainer.addChild(connectorRenderer.gfx);
+  // The cables (static half, then their per-frame flow) carry their own
+  // zIndex (CABLE_UNDER_Z): over the deck plates and zone paint, under road
+  // tiles, rig pads and every body. Rings, walls and fence beams stay above.
+  shipContainer.sortableChildren = true;
+  shipContainer.addChild(connectorRenderer.cableStaticGfx, connectorRenderer.cableGfx);
   // Warp-to visuals (Phase 4): engine build-up, blur streak, burning trails.
   // Cheap sprites, under the hulls; drawn for every render mode.
   shipContainer.addChild(deps.warpFxCtx.warpFx.layer);

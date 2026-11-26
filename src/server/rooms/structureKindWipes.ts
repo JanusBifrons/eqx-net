@@ -18,7 +18,10 @@
 /** Catalogue version → the structure kind ids whose record changed at it. */
 export type StructureKindWipes = Readonly<Record<number, readonly string[]>>;
 
-export const STRUCTURE_KIND_WIPES: StructureKindWipes = Object.freeze({});
+export const STRUCTURE_KIND_WIPES: StructureKindWipes = Object.freeze({
+  // 16→17 (base platforms): every kind gained `deckSlot`; no size or stat changed.
+  17: [],
+});
 
 export interface StructureMigration<T> {
   kept: T[];

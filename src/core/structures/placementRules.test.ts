@@ -154,6 +154,9 @@ describe('placementRejectionNotice — the refused-placement notice', () => {
       'overlap-structure': "Can't build here: too close to another structure",
       'overlap-obstacle': "Can't build here: blocked by an asteroid or wreck",
       'overlap-pad': "Can't build here: keep the landing pad clear",
+      'off-deck': "Can't build here: off your deck",
+      'plate-blocked': "Can't build here: plate area not clear",
+      'no-road': "Can't build here: a gate goes where a road meets the fence",
     };
     expect(Object.keys(PLACEMENT_REJECTION_TEXT).sort()).toEqual(Object.keys(expected).sort());
     for (const r of Object.keys(expected) as PlacementRejection[]) expect(placementRejectionNotice(r)).toBe(expected[r]);

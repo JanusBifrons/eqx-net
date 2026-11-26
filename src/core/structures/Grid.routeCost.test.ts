@@ -5,7 +5,7 @@
  * scale and re-ran for every damaged/blueprint structure. Counted, not timed.
  */
 import { describe, expect, it } from 'vitest';
-import { getStructureKind } from '../../shared-types/structureKinds.js';
+import { getStructureKind, isConnectorKind } from '../../shared-types/structureKinds.js';
 import { Grid, type GridNode } from './Grid.js';
 import { Connection } from './Connection.js';
 import { buildStructureLattice } from './structureLattice.js';
@@ -18,7 +18,7 @@ describe('Grid.route — one search per source per topology change', () => {
       const k = getStructureKind(p.kind);
       nodes.set('s' + i, {
         id: 's' + i, kind: p.kind, x: p.x, y: p.y, rot: ((p.rot ?? 0) * Math.PI) / 180, radius: k.radius, isHub: k.isHub,
-        isCapital: p.kind === 'capital', isConnector: p.kind === 'connector', isShieldPylon: p.kind === 'shield_pylon',
+        isCapital: p.kind === 'capital', isConnector: isConnectorKind(p.kind), isShieldPylon: p.kind === 'shield_pylon',
         maxConnections: k.maxConnections, powerOutput: k.powerOutput, powerConsumption: k.powerConsumption, isConstructed: true,
       });
     });

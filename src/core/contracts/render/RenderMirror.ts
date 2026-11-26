@@ -64,6 +64,10 @@ export interface RenderMirror {
    *  from `SnapshotMessage.structures[]`. The renderer joins by entityId to draw
    *  the connector web + scaffolding fill + dim unbuilt blueprints. */
   structures?: Map<number, StructureRenderState>;
+  /** Base platforms — the deck plates to floor, written by the structure row
+   *  sync (`StructureRowSync`) beside `structures`, from the same derived
+   *  plate set. Absent / count 0 ⇒ no deck (the room's `deck` flag off). */
+  deckPlates?: DeckPlatesMirror;
   /** Capital destruction S2b — each live wreck's fracture inputs, keyed by
    *  wreckId, mirrored from the `wrecks[]` snapshot descriptor. Small plain
    *  records: the renderer rebuilds each piece's shape from them with the
@@ -240,8 +244,13 @@ export interface RenderMirror {
    * discrete `placementKind` id stays in Zustand. `null`/absent ⇒ no preview.
    * `kind` is a StructureKindId; `x`/`y` are GAME-space (Y-up); `angle` rad.
    * Structured-cloneable (plain object) so it crosses the worker boundary.
+   * `deck` = the room's base-platforms flag: the live ghost snaps to its
+   * kind's deck slot (`snapPlacementToDeck`, same as the server).
+   * `deckOwner` / `deckPlates` (deck rooms only): the local player and their
+   * plates as flat (i, j) pairs (`PlateSet.platesInto`), so the ghost runs
+   * the server's `off-deck` rule (`placementRejection`'s deck context).
    */
-  pendingPlacementPreview?: { kind: string; x: number; y: number; angle: number; mirror?: boolean; pending?: boolean; held?: boolean } | null;
+  pendingPlacementPreview?: { kind: string; x: number; y: number; angle: number; mirror?: boolean; pending?: boolean; held?: boolean; deck?: boolean; deckOwner?: string; deckPlates?: number[] } | null;
   /**
    * Helm move marker (owner 2026-11-12): the local pilot's active helm course
    * point, GAME-space, while they fly a capital under a helm order (never for
@@ -363,4 +372,19 @@ export interface RenderMirror {
      *  the renderer aims at `toX/toY` instead. */
     dist?: number;
   }>>;
+}
+
+/**
+ * Base platforms — the deck plates on the render mirror (`RenderMirror.deckPlates`).
+ * One reused object, rewritten only when the plate set changes: `ij` holds
+ * `count` plates as (i, j) lattice pairs; `version` changes with the set (the
+ * renderer rebuilds only on a new version: the mirror is a fresh clone each
+ * frame in a worker, so it can never key on identity). Structured-cloneable.
+ */
+export interface DeckPlatesMirror {
+  version: number;
+  count: number;
+  ij: Int32Array;
+  /** The room's deck flag (deck links draw their seam path). Absent ⇒ off. */
+  deck?: boolean;
 }

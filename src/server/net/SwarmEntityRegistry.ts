@@ -41,7 +41,7 @@ export function fieldRockOnWire(rec: { fieldAwake?: boolean; fieldMoved?: boolea
 }
 
 /** A loot pod (the shared predicate): nobody's shot lands on it. */
-export { isLootPod } from '../../shared-types/swarmWireFormat.js';
+export { isLootPod, isWeaponTransparent } from '../../shared-types/swarmWireFormat.js';
 
 export interface SwarmEntityRecord {
   id: string;
@@ -54,9 +54,14 @@ export interface SwarmEntityRecord {
   /** Collision radius — shipped on the wire and used by the server hitscan path. */
   radius: number;
   /** Structures (kind 2, phase V): the rotated footprint's half extents —
-   *  weapon hit tests use the box, not the bounding circle `radius`. */
+   *  weapon hit tests use the box, not the bounding circle `radius`. The
+   *  NEAREST-QUARTER box (`structureHalfExtents`); at a 30° step `turnDeg`
+   *  turns it into the real box. */
   halfW?: number;
   halfH?: number;
+  /** A structure's turn in degrees, set ONLY at a 30° (non-quarter) step:
+   *  ray hits pass it to `rayHitsBox` for the real turned box. */
+  turnDeg?: number;
   /** Gates (phase V): the solid parts' world-axis boxes as flat
    *  `[offsetX, offsetY, halfW, halfH, ...]` from the centre. When set, weapon
    *  hits test these (a shot through the open gap passes) instead of the full

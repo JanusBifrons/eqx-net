@@ -22,6 +22,7 @@ export const TERRITORY_LOCK: StructureKind = {
   description: 'Locks a sector your side holds: nobody can take it while this stands. One per sector. A leaf node.',
   radius: 250, // bounding circle of the 400×300 footprint
   footprint: { w: 400, h: 300 },
+  deckSlot: 'hex',
   maxHealth: 4000,
   maxConnections: 1,
   isHub: false,

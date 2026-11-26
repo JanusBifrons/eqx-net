@@ -3433,3 +3433,8 @@ Running the e2e CLI (`pnpm exec playwright test …`, even `--list`) under Node 
 ## 2026-11-26 — Showcase: a phone take can come back as a black frame with the game in its top-left quarter
 
 Chrome's screencast sometimes reports a capture surface twice the page (`deviceWidth` 1688×780 for an 844×390 page at 2× DPR) while the page itself still reads 844×390 at DPR 2. The game paints only the top-left quarter and the rest of every frame is black. It hit every take of the Sol Prime alien-gate shot; a bare test page never shows it. The recorder now reads the first frame's metadata and stores a crop in `frames.json` (`showcase/captureCrop.ts`); the encode crops each frame back to the page. Check a take's raw frame size against its `deviceWidth` before you blame the camera or the shot.
+
+### Phone showcase takes: first-tap full screen broke the capture (2026-11-26)
+- **Symptom:** a `phone-landscape` take switched mid-clip from full frames to the whole page (HUD too) drawn in the top-left quarter with black elsewhere. Raw screencast frames went from 844×390 to 1688×780 at the moment the shot's first finger lifted.
+- **Cause:** the game asks for full screen on the first touch lift (`useFirstTapFullscreen`). In headless capture Chrome that changes the screencast surface mid-take. Not a game bug: on a real phone the emulated viewport already is the whole screen.
+- **Fix:** the recorder grants `requestFullscreen` as a no-op on phone takes. Check raw frame sizes (`ffprobe` on `clips/<id>/frames/*.jpg`) when a phone clip looks cropped.

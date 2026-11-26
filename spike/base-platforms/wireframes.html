@@ -1,0 +1,1228 @@
+<title>Base Platforms Spike</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: one reading column of concept sections; wide canvases scroll inside their own frame. Single dark look: it is a space-game deck at night. */
+:root{
+  color-scheme:dark;
+  --void:#070a10;      /* space */
+  --panel:#0f141c;     /* page cards */
+  --line:#253040;      /* rules, frames */
+  --ink:#d9e1ea;       /* body text */
+  --dim:#8794a5;       /* captions */
+  --amber:#f2b33d;     /* runway / hazard accent */
+  --cyan:#5cc8e0;      /* power conduits */
+  --red:#e0524a; --green:#4fd27a;
+  --display:"Chakra Petch","Segoe UI",system-ui,sans-serif;
+  --body:"IBM Plex Sans","Segoe UI",system-ui,sans-serif;
+  --mono:"IBM Plex Mono",ui-monospace,Consolas,monospace;
+}
+body{background:var(--void);color:var(--ink);font-family:var(--body);font-size:15px;line-height:1.55}
+.wrap{max-width:1120px;margin:0 auto;padding-block:28px 64px;padding-left:max(16px,env(safe-area-inset-left,0px));padding-right:max(16px,env(safe-area-inset-right,0px));display:flex;flex-direction:column;gap:44px}
+h1,h2,h3{font-family:var(--display);letter-spacing:.02em;text-wrap:balance;margin:0}
+h1{font-size:2.3rem;font-weight:700}
+h2{font-size:1.5rem;font-weight:600;display:flex;gap:.6rem;align-items:baseline}
+h2 .tag{font-family:var(--mono);font-size:.75rem;color:var(--amber);border:1px solid var(--amber);padding:1px 6px;border-radius:3px;font-weight:500}
+h3{font-size:1.05rem;font-weight:600}
+p{margin:0;max-width:68ch}
+.eyebrow{font-family:var(--mono);font-size:.75rem;letter-spacing:.14em;text-transform:uppercase;color:var(--amber)}
+.lede{color:var(--dim);font-size:1.02rem}
+section{display:flex;flex-direction:column;gap:16px}
+.frame{background:#000;border:1px solid var(--line);border-radius:4px;overflow-x:auto}
+.frame canvas{display:block;margin-inline:auto}
+.frame{width:fit-content;max-width:100%}
+.cap{font-family:var(--mono);font-size:.78rem;color:var(--dim)}
+.grid3{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:18px;margin-block:14px}
+.grid4{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:14px;display:flex;flex-direction:column;gap:10px;min-width:0}
+.card.pick{border-color:var(--amber)}
+.card canvas{width:100%;height:auto;border-radius:2px;background:#000}
+.verdict{font-family:var(--mono);font-size:.75rem;text-transform:uppercase;letter-spacing:.1em}
+.verdict.no{color:var(--red)} .verdict.maybe{color:var(--amber)} .verdict.yes{color:var(--green)}
+ul{margin:0;padding-left:1.1rem;display:flex;flex-direction:column;gap:4px}
+li{max-width:66ch}
+.pro::marker{content:"+  ";color:var(--green)} .con::marker{content:"−  ";color:var(--red)}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.toolbar .sep{width:1px;height:22px;background:var(--line);margin-inline:4px}
+button.t{font-family:var(--mono);font-size:.78rem;background:var(--panel);color:var(--ink);border:1px solid var(--line);border-radius:3px;padding:5px 10px;cursor:pointer}
+button.t[aria-pressed="true"]{border-color:var(--amber);color:var(--amber)}
+button.t:focus-visible{outline:2px solid var(--cyan);outline-offset:2px}
+.kit{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:12px}
+.kit .card canvas{aspect-ratio:1}
+.rules{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}
+.rules .card p{font-size:.92rem;color:var(--ink)}
+.rules .card h3{color:var(--amber)}
+table{border-collapse:collapse;font-size:.9rem;font-variant-numeric:tabular-nums;width:100%}
+td,th{border-bottom:1px solid var(--line);padding:6px 10px;text-align:left}
+th{font-family:var(--mono);font-size:.75rem;color:var(--dim);text-transform:uppercase;letter-spacing:.08em;font-weight:500}
+.note{border-left:2px solid var(--amber);padding-left:12px;color:var(--dim)}
+@media (prefers-reduced-motion:reduce){.anim-note{display:none}}
+h3.sub{margin:22px 0 8px;font-size:15px}
+</style>
+
+<div class="wrap">
+<header style="display:flex;flex-direction:column;gap:10px">
+  <div class="eyebrow">Design spike · not committed · branch spike/base-platforms</div>
+  <h1>Base Platforms</h1>
+  <p class="lede">Bases stop being loose buildings over the starfield. You lay a deck of tiles, the deck carries power, ships fly down its streets, and buildings sit on top. These are wireframes: shapes, layout and rules, not final art.</p>
+</header>
+
+<section id="decided">
+  <h2>Decided so far <span class="tag">25 Nov</span></h2>
+  <div style="overflow-x:auto"><table>
+    <tr><th>Question</th><th>Answer</th></tr>
+    <tr><td>Tile shape</td><td><b>Hexagons</b>, 820 u flat to flat: the smallest hex that fits today's 1-tile buildings. A plate is a flower of 7 hexes, or 19 hexes on a huge base. <span class="cap">(replaces squares and 3 × 3 plates)</span></td></tr>
+    <tr><td>Building sizes</td><td><b>Small (3 per hex), 1 hex, 7 hexes</b>, then 19 or 49 (open). Buildings keep today's shapes and must fit inside their slot; nothing hangs over an edge. The 8 biggest take a plate and are redesigned round the plate's connector.</td></tr>
+    <tr><td>Roads</td><td><b>Road tiles the player lays</b>, wherever they want. Gates appear where a road reaches the fence.</td></tr>
+    <tr><td>Cost of space</td><td><b>Deck and fence are cheap.</b> Most bases have plenty of empty deck to grow into. Only bases in asteroid fields are packed. The real cost of a big base is defending a long fence.</td></tr>
+    <tr><td>Building placement on deck</td><td><b>Snaps to hex slots</b>: a third of a hex, a whole hex, or a whole plate. A building fits if its footprint fits inside its slot. <span class="cap">(replaces square size classes)</span></td></tr>
+    <tr><td>Shield fence</td><td><b>A deck tile you choose to lay</b>: a fence tile, or a fence tile with a tower. You decide where your fences go; it isn't automatically the edge. Segments can be hit.</td></tr>
+    <tr><td>Gates</td><td><b>Automatic wherever a road crosses a fence line</b></td></tr>
+    <tr><td>Landing pads</td><td><b>Are teleporters</b></td></tr>
+    <tr><td>How bases get bigger</td><td>More breathing room between buildings, filled with roads and the things that tie a base together. Building sizes don't change for this.</td></tr>
+    <tr><td>Repair and rebuild</td><td>One anchor per 3 × 3 plate, selectable like a connector</td></tr>
+    <tr><td>Power and flow</td><td><b>Connectors and cables stay, and stay visible.</b> The deck does not carry power on its own. You see each connector and the cables between them, and you can follow power and minerals along them, like the lights. <b>One connector in the middle of each plate, and it is the plate's anchor.</b> <span class="cap">(replaces "tiles carry the power")</span></td></tr>
+    <tr><td>Turrets</td><td><b>Leaning towards tower tiles</b> (a fence tile with a tower in it), not fully decided. Other options kept below for comparison.</td></tr>
+    <tr><td>Floor concept</td><td>Open: wireframes for review first, no prototype yet</td></tr>
+  </table></div>
+</section>
+
+<section id="v8">
+  <h2>Buildings keep their shape, inside a hex <span class="tag">round 8b · new</span></h2>
+  <p class="lede">Buildings keep today's shapes. Each one sits inside a slot (a third of a hex, a whole hex, or a 7-hex plate), and nothing hangs over the slot's edge. The hex is sized to fit today's buildings, so nothing is redrawn except the biggest few. Those take a whole plate and get redesigned to be built round the plate's connector. Roads are tiles you lay yourself.</p>
+  <div class="frame"><canvas id="hxLadder8"></canvas></div>
+  <p class="cap">Everything is drawn at today's footprint, to scale. A hex 820 u flat to flat is the smallest that fits the reactor, battery bank, capital and super battery, so all of those stay 1 hex. In a plate building, the ringed diamond in the middle is the plate's connector, part of the building: cables plug into it, and it is still the plate's anchor.</p>
+  <h3 class="sub">Every structure in the game today, in its slot</h3>
+  <div class="frame"><canvas id="hxFit8"></canvas></div>
+  <p class="cap">Measured from the structure catalogue. 14 structures are small, 19 fit one hex, and 8 are too big for a hex, so they go plate-sized. Those 8 are drawn as today's footprint over the plate for now. Their redesign builds the connector into the middle. The siege gun is long and thin (300 × 900 u): it is too long for any hex, so it takes a plate too.</p>
+  <h3 class="sub">The next size after a 7-hex plate: you choose</h3>
+  <div class="frame"><canvas id="hxNext8"></canvas></div>
+  <p class="cap">Two ways to fit something bigger than a plate (today only the large teleporter, 2 120 u across, which just misses a 7-hex plate: a plate fits about 1 890 u; later, bigger buildings) on a normal base. <b>A, 19 hexes:</b> one connector, and the building is no bigger than it needs to be, but it takes 2 hexes from each of the 6 plates round it. Those plates are left 5 hexes each, with odd shapes. <b>B, 49 hexes:</b> exactly 7 whole plates, so nothing round it is cut. It covers 7 connectors, all built into it, so it can be repaired plate by plate. It is much bigger: the large teleporter would leave a lot of room inside. On a huge base the plates are already 19 hexes, so A is exactly one plate there.</p>
+  <div class="frame"><canvas id="hxBase8"></canvas></div>
+  <p class="cap">A normal base, 7-hex plates. The roads wind where the player laid them, and gates (green) appear where a road reaches the fence. The capital is now a 1-hex building. An assembly plant, a shipyard and a teleporter each take a whole plate with the connector built in. Elsewhere, buildings sit in their own hexes round the plate's connector. Most of the deck is still empty.</p>
+  <div class="frame"><canvas id="hxHuge8"></canvas></div>
+  <p class="cap">A huge base with 19-hex plates, drawn smaller. Fewer, bigger plates mean fewer connectors to look after. A 7-hex building can still sit on a 19-hex plate: it centres over the connector and leaves a ring of 12 hexes round it for 1-hex buildings. Here the deep core rig and the shipyard do that, and the large teleporter takes a whole 19-hex plate.</p>
+  <div class="grid2">
+    <div class="card"><h3>What changes from round 8</h3><ul>
+      <li class="pro">No redraw: every building keeps today's art and shape. Only the 8 biggest are redesigned, round their connector.</li>
+      <li class="pro">The capital, reactor and battery bank stay 1 hex, so they don't become plate-sized.</li>
+      <li class="pro">Plate buildings and connectors are one object: tap the shipyard to see its plate's health.</li>
+      <li class="con">Small buildings leave space round them in their hex, since rectangles don't fill a hex. That gap is the price of keeping today's shapes.</li>
+      <li class="con">The jump from 1 hex to 7 is still big: the ore processing complex (840 u) only just misses one hex.</li></ul></div>
+    <div class="card"><h3>Sizes in numbers</h3><ul>
+      <li>1 hex: 820 u flat to flat (today's tiles are 640 u).</li>
+      <li>Small slot (a third of a hex): fits up to about 300 × 300 u.</li>
+      <li>7-hex plate: about 2 460 u across.</li>
+      <li>19 hexes: about 4 100 u across. 49 hexes: about 5 700 u across.</li>
+      <li>Too big for one hex today: shipyard 960 × 600, freight dock 1000 × 400, assembly plant 900 × 640, ore processing 840 × 600, deep core rig 760, teleporter and transit pad 800, siege gun 300 × 900.</li></ul></div>
+  </div>
+</section>
+
+<section id="v7">
+  <h2>Hexagons, cheap deck, room to grow <span class="tag">round 7 · new</span></h2>
+  <p class="lede">Space is cheap, so deck and fence are cheap. What makes a big base expensive is defending a long fence, not building it. Most bases are mostly empty deck, ready to grow into; only bases squeezed into an asteroid field end up packed. And the grid is hexagons.</p>
+  <div class="frame"><canvas id="hxBase"></canvas></div>
+  <p class="cap">A young base in open space. The fence was laid wide and cheap, so most of the deck inside is empty and waiting. Buildings cluster round the capital and thin out towards the rim. Each plate is a flower of 7 hexes with its connector in the middle, and every hex in a plate touches its connector, so building cables are one short hop. Cables join each plate to all of its neighbours. Cyan pulses are power from the capital. Red-cored hexes are towers in the fence line, and green marks gates where the three roads leave.</p>
+  <div class="grid2">
+    <div class="card"><canvas id="hxDense" width="380" height="300"></canvas><h3>The same rules in an asteroid field</h3><p class="cap">The clearing is small, so the deck is too, and the base fills every hex. Dense packing comes from where you are, not from the rules.</p></div>
+    <div class="card"><h3>Why hexagons</h3>
+      <ul><li class="pro">All six neighbours are the same distance away, so cables, fences and roads need no diagonal special case. The corner cuts on the square fence go away.</li>
+        <li class="pro">Fences and deck edges come out rounded rather than boxy.</li>
+        <li class="pro">A 7-hex plate has one middle hex touching all the others, which suits the connector you picked.</li>
+        <li class="pro">Round things fit better: teleporters, the alien gate, reactors.</li>
+        <li class="con">Rectangular buildings (shipyard, freight dock, solar) leave more spare deck at their corners than they would on squares.</li>
+        <li class="con">Roads run in three directions, 60° apart, so the street pattern is a triangle net rather than city blocks.</li></ul></div>
+  </div>
+  <h3>The hex size ladder</h3>
+  <div class="frame"><canvas id="hxLadder"></canvas></div>
+  <p class="note">Earlier rounds below are drawn on squares. Their rules carry over to hexes: fence and tower tiles, gates where a road crosses a fence, and one connector in the middle of each plate, now a 7-hex plate.</p>
+</section>
+
+<section id="v6">
+  <h2>Connectors and cables you can follow <span class="tag">round 6 · new</span></h2>
+  <p class="lede">The deck is the floor, not the wiring. Power and minerals still travel on connectors and cables, today's cable look and flow colours, laid out on the deck's grid so the web is tidy and you can trace where everything goes.</p>
+  <div class="toolbar">
+    <button class="t" id="cbMid" aria-pressed="true">Connector in the middle of each plate</button>
+    <button class="t" id="cbCorner" aria-pressed="false">Connectors on plate corners</button>
+    <span class="sep"></span>
+    <button class="t" id="cbFlow" aria-pressed="true">Show flow</button>
+  </div>
+  <div class="frame"><canvas id="cCable"></canvas></div>
+  <p class="cap">Same base as the fence picture below. Diamonds: connectors. Thick lines: cables between connectors, drawn overhead with their cradles. Thin lines: each building's own short cable to its nearest connector. <span style="color:var(--cyan)">Cyan pulses</span>: power spreading out from the capital. <span style="color:#ee8844">Orange pulses</span>: ore from the mining annex heading to processing, crossing the fence line. Switch between the two layouts with the buttons.</p>
+  <div class="grid2">
+    <div class="card pick"><h3>Middle of each plate</h3><div class="verdict yes">Your pick</div>
+      <ul><li class="pro">The plate's connector <b>is</b> its anchor: one thing to select, repair and rebuild, so nothing new is added.</li>
+        <li class="pro">A neat square web, one cable per plate edge; easy to follow by eye.</li>
+        <li class="con">The middle tile of each plate stays clear as a small yard for the connector, so one building slot per plate is used up. Where a street runs through the middle, the connector sits on the road's edge and the cable runs along the road.</li></ul></div>
+    <div class="card"><h3>Corners of each plate</h3><div class="verdict maybe">Not picked</div>
+      <ul><li class="pro">Cables run along the seams between plates, framing each block like streetlight lines, and connectors sit at the crossings.</li>
+        <li class="pro">No building slots lost: connectors sit in the gaps where four tiles meet.</li>
+        <li class="con">Each connector is shared by up to four plates, so the plate's anchor becomes a separate thing again: two objects per plate to look after.</li>
+        <li class="con">Buildings in the middle of a block need longer cables out to a corner, so more lines fan out across the block.</li></ul></div>
+  </div>
+  <div class="rules">
+    <div class="card"><h3>Laid with the deck</h3><p>When you lay a plate its connector comes with it and cables to the neighbouring connectors, so you never wire a base by hand. You can still add your own connectors and cables on top, as today.</p></div>
+    <div class="card"><h3>Buildings plug in</h3><p>Each building gets a short cable from its socket to the nearest connector, so you can see what it draws from.</p></div>
+    <div class="card"><h3>Cut a cable, lose the flow</h3><p>Destroy a connector or cable and the pulses stop at the break. Anything cut off from a reactor goes dark, as it does now.</p></div>
+  </div>
+</section>
+
+<section id="v5">
+  <h2>Snap grid, fence tiles, road gates <span class="tag">round 5b</span></h2>
+  <p class="lede">The deck is a grid, so buildings come in sizes that fit it. Fences are a kind of deck tile you lay where you want the wall: plain, or with a tower built in. Wherever a road crosses a fence line it becomes a gate, and ships arrive by teleporter instead of a landing pad.</p>
+
+  <h3>The size ladder</h3>
+  <p>One tile is 640 u, the same as today's row spacing. Every building has a slot size, and it snaps into whole tiles of that size. The footprint only has to fit inside the slot, so the spare deck around it is the breathing room. Small things share a tile, four to a tile.</p>
+  <div class="frame"><canvas id="cLadder"></canvas></div>
+  <div style="overflow-x:auto"><table>
+    <tr><th>Slot</th><th>Size</th><th>Fits (real footprints, u)</th></tr>
+    <tr><td>Small</td><td>320 × 320, 4 per tile</td><td>Turret 160 · Battery 190 · Miner 240 · Gas collector 300 · Silicon works 320</td></tr>
+    <tr><td>1 × 1</td><td>640 × 640</td><td>Capital 560 · Reactor 600 · Battery bank 600 · Fabricator 480×360 · Storage vault 480×320 · Refinery 380×300 · Airlock 392×260</td></tr>
+    <tr><td>2 × 1</td><td>1280 × 640</td><td>Shipyard 960×600 · Assembly plant 900×640 · Ore processing 840×600 · Solar 700×300</td></tr>
+    <tr><td>2 × 2</td><td>1280 × 1280</td><td>Teleporter 800 · Deep core rig 760 · Freight dock 1000×400 with its 900×500 pad</td></tr>
+    <tr><td>3 × 3</td><td>1920 × 1920</td><td>Alien gate 1600</td></tr>
+    <tr><td>4 × 4</td><td>2560 × 2560</td><td>Large teleporter 2120</td></tr>
+  </table></div>
+  <p class="note">Capital buildings growing later just means they move up a rung. Nothing else changes.</p>
+
+  <h3>A whole base, fenced</h3>
+  <div class="toolbar">
+    <button class="t" id="fvSlots" aria-pressed="false">Show slots</button>
+    <button class="t" id="fvBreak" aria-pressed="false">Knock out a fence segment</button>
+  </div>
+  <div class="frame"><canvas id="cFence"></canvas></div>
+  <p class="cap">This owner chose to fence the main base along its rim and leave the mining annex (bottom right) outside, with an inner fence line across. Cyan: the shield wall, running through the middle of each fence tile and cutting corners diagonally where tiles meet at a step, so it isn't a box. Red-cored squares: tower tiles. Green: gates, where the five roads cross the fence. Rings: teleporters. Flashes: shots landing on the wall.</p>
+  <div class="rules">
+    <div class="card"><h3>Fence is a tile</h3><p>A fence tile is a deck tile with a shield emitter in it. Lay a line of them and the wall joins up between them. Nothing to build on it.</p></div>
+    <div class="card"><h3>You choose where</h3><p>Fence the whole rim, just the core, or leave an annex outside. Nothing is fenced unless you put it there.</p></div>
+    <div class="card"><h3>Tower tiles</h3><p>A fence tile with a turret tower built into it. The barrel sits on the outer face of the wall, so it fires out without crossing its own shield.</p></div>
+    <div class="card"><h3>Segments can be hit</h3><p>Each tile's length of wall takes fire and can go down, leaving a gap until it's repaired from that plate's anchor.</p></div>
+    <div class="card"><h3>Gates where roads cross</h3><p>Lay a fence line across a street and that street tile becomes a gate. Friendly ships fly through; hostiles don't.</p></div>
+    <div class="card"><h3>Teleporters, not pads</h3><p>Where the old drawings had landing pads, there are teleporters (a 2 × 2 slot). Ships arrive on the deck through them, or fly in through a gate.</p></div>
+  </div>
+
+  <h3>Turrets: where do the guns go?</h3>
+  <p class="note">Today a fence blocks its owner's own fire as well as the enemy's (your ruling, 2 Nov; locked by a test). So a turret inside the fence can't shoot out, which is why NPC bases put their guns on bastions outside it. You leaned to towers, and said they make more sense as a fence tile type; that's what A now shows. B and C stay for comparison.</p>
+  <div class="grid3">
+    <div class="card pick"><canvas id="tA" width="360" height="250"></canvas><h3>A · Tower tiles in the fence line</h3><div class="verdict yes">Your lean</div>
+      <ul><li class="pro">A tower tile is a fence tile with a turret built into it, like a tower in a castle wall. The barrel sits on the outer face, so the fence rule stays as it is.</li><li class="pro">You place them where you want guns, as part of laying the fence.</li><li class="pro">Guns sit on whatever line you chose to defend.</li><li class="con">They can only shoot outwards. A ship that gets inside through a gap is safe from them.</li><li class="con">They're exposed: the enemy can shoot them without breaking the fence.</li></ul></div>
+    <div class="card"><canvas id="tB" width="360" height="250"></canvas><h3>B · Bastions outside the fence</h3><div class="verdict maybe">Today's NPC pattern</div>
+      <ul><li class="pro">A bastion tile is deck that the fence goes behind, not around. Turrets on it fire freely.</li><li class="pro">Same as NPC bases already do, so the grower barely changes.</li><li class="con">More to place, and bastions stick out of the outline.</li><li class="con">Turrets fully unshielded.</li></ul></div>
+    <div class="card"><canvas id="tC" width="360" height="250"></canvas><h3>C · One-way fence</h3><div class="verdict maybe">Changes your 2 Nov rule</div>
+      <ul><li class="pro">Turrets go anywhere on the deck and shoot out through the fence. Enemy shots still stop at it.</li><li class="pro">Simplest to place: a turret is just another small building.</li><li class="con">Turrets behind a fence with no way to hit them make bases very hard to crack.</li><li class="con">Reverses the rule that a fence blocks its owner's fire.</li></ul></div>
+  </div>
+</section>
+
+<p class="note" style="max-width:none">Earlier rounds follow. Where they show landing pads, free placement or light snapping, round 5 above replaces them.</p>
+
+<section id="today">
+  <h2>What's wrong today <span class="tag">recap</span></h2>
+  <ul>
+    <li class="con">The starfield and nebulae show straight through a base, so it never feels like a place you arrive at.</li>
+    <li class="con">Bases are small and cramped. There's no structure to the layout: no main route in, no back streets.</li>
+    <li class="con">Connectors are a separate chore and draw a web of lines that says nothing about the shape of the base.</li>
+  </ul>
+  <p class="note">Today's NPC bases put rows of buildings 640 u apart, which is barely more than a Reactor is wide (600 u). Cables can be as short as 67 u, so neighbours almost touch.</p>
+</section>
+
+<section id="concepts">
+  <h2>Three ways to give a base a floor <span class="tag">concepts</span></h2>
+  <p>These are the three ideas from the brief, in the order you talked through them. Same buildings in each, so only the floor rule changes.</p>
+  <div class="grid3">
+    <div class="card">
+      <canvas id="cA" width="360" height="260"></canvas>
+      <h3>A · A pad under every building</h3>
+      <div class="verdict no">Drop</div>
+      <ul>
+        <li class="con">Gaps everywhere. It reads as many small rafts, not one place.</li>
+        <li class="con">Connectors still needed between pads.</li>
+        <li class="pro">Nothing new to place.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <canvas id="cB" width="360" height="260"></canvas>
+      <h3>B · Connectors grow the slab</h3>
+      <div class="verdict maybe">Keep one part</div>
+      <ul>
+        <li class="con">Round blobs from connector ranges. Hard to make look built rather than grown.</li>
+        <li class="con">No streets unless the player fakes them with gaps.</li>
+        <li class="pro">The good part: the core lays a big starter slab, so a new base already has ground.</li>
+      </ul>
+    </div>
+    <div class="card pick">
+      <canvas id="cC" width="360" height="260"></canvas>
+      <h3>C · Lay deck tiles, build on top</h3>
+      <div class="verdict yes">Recommended</div>
+      <ul>
+        <li class="pro">Square grid, no overlaps, edges join up. Always looks tidy.</li>
+        <li class="pro">Tiles carry the power, so connectors go away as a separate thing.</li>
+        <li class="pro">Street tiles make the main avenue and back alleys you described.</li>
+        <li class="con">A new thing to place, and a new rule: only build on deck.</li>
+      </ul>
+    </div>
+  </div>
+</section>
+
+<section id="kit">
+  <h2>The tile kit <span class="tag">concept C</span></h2>
+  <p>One tile is one grid square. Street tiles join automatically to the street tiles next to them, so you paint a line and it becomes a lit road with a centre line. Every tile has conduits in it, so anything touching the network gets power.</p>
+  <div class="kit" id="kitGrid"></div>
+</section>
+
+<section id="base">
+  <h2>A whole base <span class="tag">wireframe</span></h2>
+  <p>A main avenue runs east to west between two landing pads, cross streets feed back alleys, and buildings cram into the blocks. The deck is opaque and casts a shadow on the starfield behind, so it reads as a slab floating in space.</p>
+  <div class="toolbar" id="baseTools">
+    <button class="t" id="ovPower" aria-pressed="false">Show power</button>
+    <button class="t" id="ovLanes" aria-pressed="false">Show flight lanes</button>
+    <button class="t" id="ovBuild" aria-pressed="false">Show where you can build</button>
+  </div>
+  <div class="frame"><canvas id="cBase"></canvas></div>
+  <p class="cap">Red and green lights mark each side of a street, like taxiway edge lights; the white chase on the avenue points traffic in. Small triangles are ships using the streets.</p>
+</section>
+
+<section id="sandbox">
+  <h2>Try laying tiles <span class="tag">sandbox</span></h2>
+  <p>Pick a tool and click or drag on the grid. Knock a tile out with Destroy and watch power drop for anything cut off from the core. Drag a Fence line across the street to see the gate appear.</p>
+  <div class="toolbar" id="sbTools">
+    <button class="t" data-tool="S" aria-pressed="true">Street</button>
+    <button class="t" data-tool="P" aria-pressed="false">Block</button>
+    <button class="t" data-tool="L" aria-pressed="false">Landing pad</button>
+    <button class="t" data-tool="B" aria-pressed="false">Building 2×2</button>
+    <button class="t" data-tool="F" aria-pressed="false">Fence</button>
+    <button class="t" data-tool="T" aria-pressed="false">Tower</button>
+    <span class="sep"></span>
+    <button class="t" data-tool="X" aria-pressed="false">Destroy</button>
+    <button class="t" data-tool="E" aria-pressed="false">Remove</button>
+    <span class="sep"></span>
+    <button class="t" id="sbReset">Reset</button>
+  </div>
+  <div class="frame"><canvas id="cSand"></canvas></div>
+  <p class="cap" id="sbStatus">Core online.</p>
+</section>
+
+<section id="damage">
+  <h2>When the deck is hit <span class="tag">destruction</span></h2>
+  <p>Tiles are part of the base, so they take damage like anything else. The deck never shrinks by itself; it only loses tiles that are destroyed.</p>
+  <div class="grid4" id="dmgGrid"></div>
+</section>
+
+<section id="anchors">
+  <h2>Anchors: what you click to repair and rebuild <span class="tag">new</span></h2>
+  <p>The deck is floor, so you can't easily tap it, target it or see its health. Every piece of deck therefore hangs off an anchor: a small structure in the same layer as connectors and buildings. You select it, repair it, see its health bar, and rebuild from it. The question is how much deck one anchor holds.</p>
+  <div class="grid3">
+    <div class="card"><canvas id="anTile" width="360" height="250"></canvas><h3>One anchor per tile</h3><div class="verdict no">Too many</div>
+      <ul><li class="pro">Damage is exact: one hit, one tile.</li><li class="con">A citadel needs about 420 anchors, more than the 400 NPC structures a sector allows today.</li><li class="con">Floor is covered in sockets.</li></ul></div>
+    <div class="card"><canvas id="anCorner" width="360" height="250"></canvas><h3>Pylons at tile corners</h3><div class="verdict maybe">Closest to your first idea</div>
+      <ul><li class="pro">Connectors lay the floor between them, as in your first idea.</li><li class="con">Even more entities (about 465 for a citadel).</li><li class="con">Lose one pylon and four tiles are in doubt. Hard to read.</li></ul></div>
+    <div class="card pick"><canvas id="anPlate" width="360" height="250"></canvas><h3>One anchor per plate</h3><div class="verdict yes">Recommended</div>
+      <ul><li class="pro">A plate is 3 × 3 tiles (about 1.9 km). A citadel is about 50 plates, so 50 anchors.</li><li class="pro">The anchor is the plate's health bar, its power node and its rebuild point.</li><li class="con">Damage is coarser: a plate dies as a whole.</li></ul></div>
+  </div>
+  <h3>Rebuilding a plate</h3>
+  <div class="grid4" id="rebuildGrid"></div>
+  <h3>Light snapping</h3>
+  <div class="grid3">
+    <div class="card"><canvas id="snapA" width="360" height="230"></canvas><p class="cap">Near a tile edge or centre line (within about 40 u), the ghost pulls onto it and an amber guide shows what it lined up with.</p></div>
+    <div class="card"><canvas id="snapB" width="360" height="230"></canvas><p class="cap">Anywhere else it stays where you put it. Snapping never stops a placement; it only helps.</p></div>
+  </div>
+</section>
+
+<section id="rules">
+  <h2>Rules for the prototype <span class="tag">proposal</span></h2>
+  <div class="rules">
+    <div class="card"><h3>Ground first</h3><p>Everything except deck must sit fully on deck. Buildings are placed freely with light snapping to tile edges and centres, and can span tiles. They can't hang off the edge or sit on a street.</p></div>
+    <div class="card"><h3>Plates have anchors</h3><p>Deck is laid in plates, each held by one anchor you can select, repair and rebuild. Destroy the anchor and the plate breaks; rebuild the anchor and the plate comes back as a blueprint.</p></div>
+    <div class="card"><h3>Core lays a starter slab</h3><p>Placing the first core drops a ready-made slab with a short avenue and a pad, so a new base has somewhere to build straight away.</p></div>
+    <div class="card"><h3>Cables stay visible</h3><p>Power flows from the core along connectors and cables laid with the deck (round 6), not invisibly through the tiles. Anything with no cable path to a core is unpowered and shows it.</p></div>
+    <div class="card"><h3>Grid, no overlap</h3><p>Tiles snap to one grid per base and edges join. Tiles can only be laid touching existing deck, so a base is always one piece when built.</p></div>
+    <div class="card"><h3>Streets are for flying</h3><p>Street tiles can't be built on. They're the lanes AI pilots and the navigation map prefer through a base.</p></div>
+    <div class="card"><h3>Ships fly over the deck</h3><p>The deck is floor, not a wall. Ships cross it freely and only hit buildings, as now.</p></div>
+  </div>
+</section>
+
+<section id="scale">
+  <h2>Breathing room <span class="tag">same buildings</span></h2>
+  <p>The same 22 buildings, drawn to one scale and the same sizes. On top, packed the way bases are today. Below, laid out on a deck: an avenue and two cross streets between the blocks, a gap between each building and the street, and open forecourts where ships load and unload. The base covers more ground because of the space between buildings, not bigger buildings.</p>
+  <div class="frame"><canvas id="cScale"></canvas></div>
+  <p class="cap">One tile = 640 u, today's connector spacing, so a sub-cap fits down a street. Building sizes are the real footprints from the structure catalogue.</p>
+  <h3>What fills the room</h3>
+  <div style="overflow-x:auto"><table>
+    <tr><th>Piece</th><th>What it does</th></tr>
+    <tr><td>Avenue</td><td>The main way in, between two landing pads, lit with the white chase.</td></tr>
+    <tr><td>Streets and alleys</td><td>Feed the blocks and keep a clear flying lane between buildings.</td></tr>
+    <tr><td>Setback</td><td>A strip of plain deck between a building and the street, about a quarter tile (160 u).</td></tr>
+    <tr><td>Forecourts</td><td>Marked open deck in front of the Capital, Freight Dock and Shipyard: room to land, load and queue.</td></tr>
+    <tr><td>Edge lights</td><td>Red and green runs along every street, so the road layout reads at any zoom.</td></tr>
+  </table></div>
+</section>
+
+<section id="fit">
+  <h2>How it fits the code we have <span class="tag">no parallel systems</span></h2>
+  <p>Every piece below extends something the game already does. A hostile review checks this list against the code before any prototype work.</p>
+  <div style="overflow-x:auto"><table>
+    <tr><th>New idea</th><th>Extends</th><th>What changes</th></tr>
+    <tr><td>Deck tile</td><td>Structure kind catalogue</td><td>New kinds appended (Block, Street, Pad). Placed, built, damaged and repaired like any structure.</td></tr>
+    <tr><td>Connectors laid with the deck</td><td>Connector kind, grid link graph, cable look and flow pulses</td><td>A plate places a normal connector and links it to its neighbours. Same cables, same flow colours, same BFS and power. Only the placement is automatic.</td></tr>
+    <tr><td>Ships fly over deck</td><td>Structure physics</td><td>Deck tiles get no collision body. Buildings on them keep theirs.</td></tr>
+    <tr><td>Build only on deck</td><td>placementRejection</td><td>One more rule in the shared function, so the ghost and the server agree.</td></tr>
+    <tr><td>Streets as lanes</td><td>Navigation map</td><td>Street tiles count as cheaper to cross for AI pilots.</td></tr>
+    <tr><td>Hiding the starfield</td><td>Backdrop layers</td><td>Nothing new: the deck is drawn opaque in the world layer, above the backdrop.</td></tr>
+    <tr><td>NPC bases</td><td>growBase</td><td>The grower lays tiles first (avenue, then streets, then blocks), then places buildings on blocks.</td></tr>
+    <tr><td>Destroyed tiles</td><td>Structure break-up</td><td>A tile breaks into slabs like any structure, leaving a hole.</td></tr>
+    <tr><td>Size-class slots</td><td>placementRejection + placement ghost</td><td>Each kind gets a slot size; the ghost snaps to whole tiles of it. One rule, shared by client and server.</td></tr>
+    <tr><td>Fence tile</td><td>Shield Pylon + fence segments</td><td>A fence tile is a pylon on a deck tile; neighbouring fence tiles link like pylons do today (today's pylon step is 660 u, about a tile). Same segments, same hits, same blocking.</td></tr>
+    <tr><td>Tower tile</td><td>Turret kinds + fence tile</td><td>A fence tile carrying a turret mount on its outer face. Fire rule unchanged.</td></tr>
+    <tr><td>Road gates</td><td>Shield Gate kind</td><td>A street tile with fence tiles on both sides becomes a gate automatically, instead of being placed by hand.</td></tr>
+    <tr><td>Teleporter pads</td><td>Teleporter kinds</td><td>No new pad kind: the existing teleporters take the 2 × 2 and 4 × 4 slots.</td></tr>
+  </table></div>
+</section>
+</div>
+
+<script>
+(()=>{
+const COL={void:'#070a10',deck:'#2a313b',deckHi:'#38414d',deckLo:'#1d232b',seam:'#151a21',street:'#161b22',streetLine:'#e8edf2',amber:'#f2b33d',cyan:'#5cc8e0',red:'#e0524a',green:'#4fd27a',bld:'#4a5566',bldTop:'#5d6a7d',bldEdge:'#9aa8ba',dim:'#8794a5'};
+const reduce=matchMedia('(prefers-reduced-motion: reduce)').matches;
+function rng(seed){let s=seed>>>0||1;return()=>{s^=s<<13;s^=s>>>17;s^=s<<5;return((s>>>0)%100000)/100000;};}
+
+// ---------- starfield ----------
+function makeStars(w,h,seed){
+  const c=document.createElement('canvas');c.width=w;c.height=h;const g=c.getContext('2d');const r=rng(seed);
+  g.fillStyle=COL.void;g.fillRect(0,0,w,h);
+  const neb=[['rgba(110,60,170,.22)',.25,.3,.45],['rgba(40,120,170,.18)',.75,.65,.5],['rgba(170,70,90,.12)',.6,.15,.3]];
+  for(const[cl,x,y,rad] of neb){const gr=g.createRadialGradient(x*w,y*h,0,x*w,y*h,rad*Math.max(w,h));gr.addColorStop(0,cl);gr.addColorStop(1,'rgba(0,0,0,0)');g.fillStyle=gr;g.fillRect(0,0,w,h);}
+  for(let i=0;i<w*h/350;i++){const a=r();g.fillStyle=`rgba(${200+r()*55|0},${210+r()*45|0},255,${.25+a*.75})`;const s=a>.97?2:1;g.fillRect(r()*w|0,r()*h|0,s,s);}
+  return c;
+}
+
+// ---------- tile map model ----------
+// '.' space, 'S' street, 'P' block, 'L' landing pad. state: 0 ok,1 damaged,2 destroyed
+function parse(rows){return rows.map(r=>r.split(''));}
+const isDeck=(m,x,y)=>y>=0&&y<m.length&&x>=0&&x<m[0].length&&m[y][x]!=='.';
+const isStreetish=(m,x,y)=>isDeck(m,x,y)&&(m[y][x]==='S'||m[y][x]==='L');
+
+function fillBuildings(m,seed,core,density=.86){
+  const r=rng(seed),H=m.length,W=m[0].length,used=m.map(row=>row.map(()=>false)),out=[];
+  if(core){out.push(core);for(let y=core.y;y<core.y+core.h;y++)for(let x=core.x;x<core.x+core.w;x++)used[y][x]=true;}
+  const kinds=['Refinery','Factory','Storage','Generator','Shield','Habitat','Depot','Battery'];
+  const sizes=[[3,2],[2,3],[2,2],[2,2],[2,1],[1,2],[1,1],[1,1]];
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    if(m[y][x]!=='P'||used[y][x]||r()>density)continue;
+    for(const[w,h] of sizes.slice(Math.floor(r()*3))){
+      let ok=true;for(let yy=y;yy<y+h&&ok;yy++)for(let xx=x;xx<x+w&&ok;xx++)if(!isDeck(m,xx,yy)||m[yy][xx]!=='P'||used[yy][xx])ok=false;
+      if(!ok)continue;
+      for(let yy=y;yy<y+h;yy++)for(let xx=x;xx<x+w;xx++)used[yy][xx]=true;
+      const edge=[[-1,0],[1,0],[0,-1],[0,1]].some(([dx,dy])=>!isDeck(m,x+dx,y+dy));
+      out.push({x,y,w,h,kind:w*h===1&&edge?'Turret':kinds[(r()*kinds.length)|0]});break;
+    }
+  }
+  return out;
+}
+
+// power: BFS from core over deck tiles that aren't destroyed
+function powered(m,st,core){
+  const H=m.length,W=m[0].length,seen=m.map(r=>r.map(()=>false));if(!core)return seen;
+  const q=[[core.x,core.y]];seen[core.y][core.x]=true;
+  while(q.length){const[x,y]=q.shift();for(const[dx,dy] of [[1,0],[-1,0],[0,1],[0,-1]]){const nx=x+dx,ny=y+dy;if(isDeck(m,nx,ny)&&!seen[ny][nx]&&!(st&&st[ny][nx]===2)){seen[ny][nx]=true;q.push([nx,ny]);}}}
+  return seen;
+}
+
+// ---------- drawing ----------
+function drawDeck(g,m,cs,ox,oy,t,opt={}){
+  const H=m.length,W=m[0].length,st=opt.state;
+  const live=(x,y)=>isDeck(m,x,y)&&!(st&&st[y][x]===2);
+  // drop shadow onto space
+  g.fillStyle='rgba(0,0,0,.7)';
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++)if(live(x,y))g.fillRect(ox+x*cs+cs*.18,oy+y*cs+cs*.28,cs,cs);
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    if(!live(x,y))continue;const k=m[y][x],px=ox+x*cs,py=oy+y*cs;
+    if(k==='P'){
+      g.fillStyle=COL.deck;g.fillRect(px,py,cs,cs);
+      g.strokeStyle=COL.seam;g.lineWidth=1;g.strokeRect(px+.5,py+.5,cs-1,cs-1);
+      // greeble panels: borg-ish plating
+      const r=rng(x*928+y*131+7);g.fillStyle=COL.deckLo;
+      for(let i=0;i<3;i++){const w=cs*(.15+r()*.35),h=cs*(.1+r()*.25);g.fillRect(px+cs*.08+r()*(cs*.84-w),py+cs*.08+r()*(cs*.84-h),w,h);}
+      g.fillStyle=COL.deckHi;g.fillRect(px+2,py+2,cs*.25,1);
+    }else if(k==='F'||k==='T'){ // fence / tower tile: plain plate, the wall is drawn by drawFenceTiles
+      g.fillStyle=COL.deckLo;g.fillRect(px,py,cs,cs);g.strokeStyle=COL.seam;g.lineWidth=1;g.strokeRect(px+.5,py+.5,cs-1,cs-1);
+    }else if(k==='B'){ // bastion: deck outside the fence, hazard-striped
+      g.fillStyle=COL.deck;g.fillRect(px,py,cs,cs);g.save();g.beginPath();g.rect(px,py,cs,cs);g.clip();g.strokeStyle='rgba(242,179,61,.28)';g.lineWidth=cs*.08;
+      for(let i=-cs;i<cs*2;i+=cs*.3){g.beginPath();g.moveTo(px+i,py+cs);g.lineTo(px+i+cs,py);g.stroke();}g.restore();
+    }else if(k==='S'){
+      g.fillStyle=COL.street;g.fillRect(px,py,cs,cs);
+    }else if(k==='L'){
+      g.fillStyle=COL.deck;g.fillRect(px,py,cs,cs);
+      g.strokeStyle=COL.amber;g.lineWidth=Math.max(1,cs*.06);g.beginPath();g.arc(px+cs/2,py+cs/2,cs*.38,0,7);g.stroke();
+      g.fillStyle=COL.amber;g.font=`700 ${cs*.42}px Chakra Petch, sans-serif`;g.textAlign='center';g.textBaseline='middle';g.fillText('H',px+cs/2,py+cs/2+1);
+    }
+    if(st&&st[y][x]===1){ // damage: scorch + cracks
+      g.fillStyle='rgba(0,0,0,.45)';g.beginPath();g.arc(px+cs*.55,py+cs*.5,cs*.35,0,7);g.fill();
+      g.strokeStyle='rgba(242,179,61,.6)';g.lineWidth=1;g.beginPath();g.moveTo(px+cs*.2,py+cs*.3);g.lineTo(px+cs*.5,py+cs*.55);g.lineTo(px+cs*.85,py+cs*.4);g.moveTo(px+cs*.5,py+cs*.55);g.lineTo(px+cs*.45,py+cs*.9);g.stroke();
+    }
+  }
+  // streets: centre lines + edge lights
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    if(!live(x,y)||m[y][x]!=='S')continue;const px=ox+x*cs,py=oy+y*cs,cx=px+cs/2,cy=py+cs/2;
+    const n={E:isStreetish(m,x+1,y)&&live(x+1,y),W:isStreetish(m,x-1,y)&&live(x-1,y),N:isStreetish(m,x,y-1)&&live(x,y-1),Sd:isStreetish(m,x,y+1)&&live(x,y+1)};
+    g.strokeStyle=COL.streetLine;g.lineWidth=Math.max(1,cs*.07);g.setLineDash([cs*.28,cs*.22]);g.lineDashOffset=0;g.beginPath();
+    let any=false;
+    if(n.E){g.moveTo(cx,cy);g.lineTo(px+cs,cy);any=true;} if(n.W){g.moveTo(cx,cy);g.lineTo(px,cy);any=true;}
+    if(n.N){g.moveTo(cx,cy);g.lineTo(cx,py);any=true;} if(n.Sd){g.moveTo(cx,cy);g.lineTo(cx,py+cs);any=true;}
+    if(!any){g.moveTo(px+cs*.25,cy);g.lineTo(px+cs*.75,cy);} g.stroke();g.setLineDash([]);
+    // edge lights on sides that aren't street
+    const lr=Math.max(1.2,cs*.06),blink=(ph)=>reduce?1:.45+.55*Math.max(0,Math.sin(t*3+ph));
+    const dot=(lx,ly,c,a)=>{g.globalAlpha=a;g.fillStyle=c;g.beginPath();g.arc(lx,ly,lr,0,7);g.fill();g.globalAlpha=a*.25;g.beginPath();g.arc(lx,ly,lr*3,0,7);g.fill();g.globalAlpha=1;};
+    const horiz=n.E||n.W||(!n.N&&!n.Sd);
+    if(!n.N&&horiz)for(const f of[.25,.75])dot(px+cs*f,py+cs*.1,COL.green,blink(x*.8+f));
+    if(!n.Sd&&horiz)for(const f of[.25,.75])dot(px+cs*f,py+cs*.9,COL.red,blink(x*.8+f+1.5));
+    if(!n.W&&!horiz)for(const f of[.25,.75])dot(px+cs*.1,py+cs*f,COL.red,blink(y*.8+f));
+    if(!n.E&&!horiz)for(const f of[.25,.75])dot(px+cs*.9,py+cs*f,COL.green,blink(y*.8+f+1.5));
+  }
+  // avenue chase (row given)
+  if(opt.avenueRow!=null&&!reduce){
+    const y=opt.avenueRow,len=W,head=(t*9)%(len+6);
+    for(let x=0;x<W;x++){if(!live(x,y)||m[y][x]!=='S')continue;const d=head-x;if(d<0||d>4)continue;
+      g.globalAlpha=(1-d/4)*.9;g.fillStyle='#ffffff';g.fillRect(ox+x*cs+cs*.42,oy+y*cs+cs*.44,cs*.16,cs*.12);g.globalAlpha=1;}
+  }
+  // rim on outer edges: amber hazard lip
+  g.lineWidth=Math.max(1.5,cs*.08);
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){
+    if(!live(x,y))continue;const px=ox+x*cs,py=oy+y*cs,broken=(xx,yy)=>st&&isDeck(m,xx,yy)&&st[yy][xx]===2;
+    const edges=[[0,-1,px,py,px+cs,py],[0,1,px,py+cs,px+cs,py+cs],[-1,0,px,py,px,py+cs],[1,0,px+cs,py,px+cs,py+cs]];
+    for(const[dx,dy,x1,y1,x2,y2] of edges){if(live(x+dx,y+dy))continue;
+      if(broken(x+dx,y+dy)){g.strokeStyle='#ff7a2e';g.setLineDash([2,3]);}else{g.strokeStyle='#59636f';g.setLineDash([]);}
+      g.beginPath();g.moveTo(x1,y1);g.lineTo(x2,y2);g.stroke();g.setLineDash([]);
+      if(!broken(x+dx,y+dy)){g.strokeStyle=COL.amber;g.globalAlpha=.55;g.lineWidth=1;g.setLineDash([3,4]);g.beginPath();
+        g.moveTo(x1+(dx?-dx*2.5:0),y1+(dy?-dy*2.5:0));g.lineTo(x2+(dx?-dx*2.5:0),y2+(dy?-dy*2.5:0));g.stroke();g.setLineDash([]);g.globalAlpha=1;g.lineWidth=Math.max(1.5,cs*.08);}
+    }
+  }
+}
+
+const KIND_COL={Core:'#f2b33d',Refinery:'#c77d4a',Factory:'#7d8fb3',Storage:'#6f8a6f',Generator:'#5cc8e0',Shield:'#8a7cc9',Turret:'#e0524a',Habitat:'#b3a06b',Depot:'#7aa0a0'};
+function drawBuildings(g,bs,cs,ox,oy,pw,labels){
+  for(const b of bs){
+    const px=ox+b.x*cs+cs*.12,py=oy+b.y*cs+cs*.12,w=b.w*cs-cs*.24,h=b.h*cs-cs*.24,off=b.kind==='Core'?cs*.22:cs*.12;
+    const on=!pw||pw[b.y][b.x];
+    g.fillStyle='rgba(0,0,0,.55)';g.fillRect(px+off,py+off,w,h);
+    g.fillStyle=on?COL.bld:'#33373d';g.fillRect(px,py,w,h);
+    g.fillStyle=on?COL.bldTop:'#3c4046';g.fillRect(px+2,py+2,w-4,h*.45);
+    g.strokeStyle=on?COL.bldEdge:'#555';g.lineWidth=1;g.strokeRect(px+.5,py+.5,w-1,h-1);
+    g.fillStyle=on?KIND_COL[b.kind]||'#999':'#555';
+    if(b.kind==='Turret'){g.beginPath();g.arc(px+w/2,py+h/2,Math.min(w,h)*.3,0,7);g.fill();}
+    else g.fillRect(px+3,py+h-5,w-6,3);
+    if(!on){g.strokeStyle=COL.red;g.globalAlpha=.8;g.beginPath();g.moveTo(px+3,py+3);g.lineTo(px+w-3,py+h-3);g.stroke();g.globalAlpha=1;}
+    if(labels&&b.w*b.h>=2&&cs>=26){g.fillStyle='#e6ecf2';g.font=`500 ${Math.max(9,cs*.3)}px IBM Plex Mono, monospace`;g.textAlign='left';g.textBaseline='top';g.fillText(b.kind,px+4,py+4,w-8);}
+  }
+}
+
+// ---------- the main base ----------
+const BASE=[
+"......PPPPPP....PPPPPPP.......",
+"....PPPPPPPPP..PPPPPPPPPP.....",
+"...PPPPSPPPPPPPPPPSPPPPPPP....",
+"...PPPPSPPPPPPPPPPSPPPPPPPP...",
+"..PPSSSSSSSSSPPPPPSSSSSSSPPP..",
+"..PPPPPSPPPPSPPPPPSPPPPPPPPP..",
+".PPPPPPSPPPPSPPPPPSPPPPPPPPPP.",
+"LSSSSSSSSSSSSSSSSSSSSSSSSSSSSL",
+".PPPPPPSPPPPPPPPSPPPPPPPSPPPP.",
+"..PPPPPSPPPPPPPPSPPPPPPPSPPP..",
+"..PPPPPSSSSSSSSSSPPPPPPPSPPP..",
+"...PPPPSPPPPPPPPPPPPPPPPSPP...",
+"....PPPSPPPPP....PPPPPPPSP....",
+".....PPPPPP.......PPPPPPPP....",
+];
+function baseScene(id){
+  const m=parse(BASE),core={x:10,y:8,w:4,h:2,kind:'Core'},bs=fillBuildings(m,42,core),cs=34,pad=cs*1.5;
+  const W=m[0].length*cs+pad*2,H=m.length*cs+pad*2,cv=document.getElementById(id),dpr=Math.min(2,devicePixelRatio||1);
+  cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';const g=cv.getContext('2d');g.scale(dpr,dpr);
+  const stars=makeStars(W,H,9),pw=powered(m,null,core);
+  const ov={power:false,lanes:false,build:false};
+  const bind=(btn,key)=>document.getElementById(btn).addEventListener('click',e=>{ov[key]=!ov[key];e.currentTarget.setAttribute('aria-pressed',ov[key]);if(reduce)frame(0);});
+  bind('ovPower','power');bind('ovLanes','lanes');bind('ovBuild','build');
+  // ship routes along streets (cell paths)
+  const routes=[{path:[[-2,7],[31,7]],speed:5,off:0},{path:[[31,7],[-2,7]],speed:4,off:9},{path:[[18,-2],[18,4],[25,4]],speed:3,off:2},{path:[[7,14],[7,10],[16,10],[16,7]],speed:3,off:5}];
+  function along(path,d){let acc=0;for(let i=0;i<path.length-1;i++){const[a,b]=[path[i],path[i+1]],L=Math.hypot(b[0]-a[0],b[1]-a[1]);if(d<=acc+L){const f=(d-acc)/L;return[a[0]+(b[0]-a[0])*f,a[1]+(b[1]-a[1])*f,Math.atan2(b[1]-a[1],b[0]-a[0])];}acc+=L;}return null;}
+  function pathLen(p){let L=0;for(let i=0;i<p.length-1;i++)L+=Math.hypot(p[i+1][0]-p[i][0],p[i+1][1]-p[i][1]);return L;}
+  function frame(t){
+    g.drawImage(stars,0,0,W,H);
+    drawDeck(g,m,cs,pad,pad,t,{avenueRow:7});
+    if(ov.build){for(let y=0;y<m.length;y++)for(let x=0;x<m[0].length;x++){if(!isDeck(m,x,y))continue;g.fillStyle=m[y][x]==='P'?'rgba(79,210,122,.22)':'rgba(224,82,74,.25)';g.fillRect(pad+x*cs,pad+y*cs,cs,cs);}}
+    drawBuildings(g,bs,cs,pad,pad,null,true);
+    if(ov.power){g.strokeStyle='rgba(92,200,224,.55)';g.lineWidth=1.5;g.beginPath();
+      for(let y=0;y<m.length;y++)for(let x=0;x<m[0].length;x++){if(!pw[y][x])continue;const cx=pad+x*cs+cs/2,cy=pad+y*cs+cs/2;
+        if(isDeck(m,x+1,y)){g.moveTo(cx,cy);g.lineTo(cx+cs,cy);} if(isDeck(m,x,y+1)){g.moveTo(cx,cy);g.lineTo(cx,cy+cs);} }
+      g.stroke();const c=pad+(core.x+2)*cs,cy=pad+(core.y+1)*cs;const gr=g.createRadialGradient(c,cy,0,c,cy,cs*4);gr.addColorStop(0,'rgba(92,200,224,.35)');gr.addColorStop(1,'rgba(92,200,224,0)');g.fillStyle=gr;g.fillRect(c-cs*4,cy-cs*4,cs*8,cs*8);}
+    if(ov.lanes){g.strokeStyle='rgba(242,179,61,.85)';g.fillStyle='rgba(242,179,61,.85)';g.lineWidth=2;
+      for(let y=0;y<m.length;y++)for(let x=0;x<m[0].length;x++){if(m[y][x]!=='S'||(x+y)%2)continue;const cx=pad+x*cs+cs/2,cy=pad+y*cs+cs/2,h=isStreetish(m,x+1,y)||isStreetish(m,x-1,y);
+        g.save();g.translate(cx,cy);g.rotate(h?(y===7?0:Math.PI):Math.PI/2);g.beginPath();g.moveTo(cs*.2,0);g.lineTo(-cs*.1,-cs*.14);g.lineTo(-cs*.1,cs*.14);g.closePath();g.globalAlpha=.6;g.fill();g.globalAlpha=1;g.restore();}}
+    for(const r of routes){const L=pathLen(r.path),d=((t*r.speed+r.off)%L),p=along(r.path,d);if(!p)continue;const[x,y,a]=p;
+      const sx=pad+x*cs+cs/2+(r.path===routes[1].path?0:0),sy=pad+y*cs+cs/2+(routes.indexOf(r)===1?cs*.18:routes.indexOf(r)===0?-cs*.18:0);
+      g.save();g.translate(sx,sy);g.rotate(a);g.fillStyle='#e9f1f8';g.beginPath();g.moveTo(cs*.32,0);g.lineTo(-cs*.2,-cs*.16);g.lineTo(-cs*.1,0);g.lineTo(-cs*.2,cs*.16);g.closePath();g.fill();
+      g.fillStyle='rgba(92,200,224,.7)';g.fillRect(-cs*.36,-1.5,cs*.14,3);g.restore();}
+  }
+  return frame;
+}
+
+// ---------- concept thumbnails ----------
+function thumb(id,fn){const cv=document.getElementById(id),g=cv.getContext('2d');g.drawImage(makeStars(cv.width,cv.height,id.charCodeAt(1)),0,0);fn(g,cv.width,cv.height);}
+const SAMPLE=[ // shared building set for A/B (cell units on a 12x8 board)
+  {x:5,y:3,w:2,h:2,kind:'Core'},{x:1,y:1,w:2,h:1,kind:'Refinery'},{x:9,y:1,w:2,h:2,kind:'Factory'},{x:2,y:5,w:1,h:1,kind:'Turret'},{x:9,y:5,w:1,h:2,kind:'Storage'},{x:6,y:6,w:1,h:1,kind:'Generator'},{x:3,y:3,w:1,h:1,kind:'Shield'}];
+function conceptA(g){const cs=30,ox=0,oy=10;g.strokeStyle='rgba(92,200,224,.6)';g.lineWidth=1;
+  const c=b=>[ox+(b.x+b.w/2)*cs,oy+(b.y+b.h/2)*cs];const core=SAMPLE[0];g.beginPath();for(const b of SAMPLE.slice(1)){const[a,b2]=c(core),[x,y]=c(b);g.moveTo(a,b2);g.lineTo(x,y);}g.stroke();
+  for(const b of SAMPLE){const p=cs*.35;g.fillStyle='rgba(0,0,0,.6)';g.fillRect(ox+b.x*cs-p+5,oy+b.y*cs-p+7,b.w*cs+p*2,b.h*cs+p*2);g.fillStyle=COL.deck;g.fillRect(ox+b.x*cs-p,oy+b.y*cs-p,b.w*cs+p*2,b.h*cs+p*2);g.strokeStyle='#59636f';g.lineWidth=2;g.strokeRect(ox+b.x*cs-p,oy+b.y*cs-p,b.w*cs+p*2,b.h*cs+p*2);}
+  drawBuildings(g,SAMPLE,cs,ox,oy,null,false);}
+function conceptB(g){const cs=30,ox=0,oy=10;const nodes=[[6,4,3.2],[2.5,2,1.8],[10,2,1.9],[2.5,5.5,1.6],[9.8,6,1.7],[6.5,7,1.4]];
+  g.fillStyle='rgba(0,0,0,.6)';for(const[x,y,r] of nodes){g.beginPath();g.arc(ox+x*cs+5,oy+y*cs+7,r*cs,0,7);g.fill();}
+  g.fillStyle='#59636f';for(const[x,y,r] of nodes){g.beginPath();g.arc(ox+x*cs,oy+y*cs,r*cs+2,0,7);g.fill();}
+  g.fillStyle=COL.deck;for(const[x,y,r] of nodes){g.beginPath();g.arc(ox+x*cs,oy+y*cs,r*cs,0,7);g.fill();}
+  for(const[x,y] of nodes.slice(1)){g.fillStyle=COL.cyan;g.beginPath();g.arc(ox+x*cs,oy+y*cs,4,0,7);g.fill();}
+  drawBuildings(g,SAMPLE,cs,ox,oy,null,false);}
+function conceptC(g){const m=parse(["............","..PPPPPPPP..",".PPPSPPPPPP.",".PPPSPPPPSP.","LSSSSSSSSSSL",".PPPPPSPPPP.",".PPPPPSPPPP.","..PPPPPPP..."]);
+  const core={x:5,y:2,w:2,h:2,kind:'Core'};const bs=fillBuildings(m,5,core,.9);drawDeck(g,m,30,0,10,1.2,{});drawBuildings(g,bs,30,0,10,null,false);}
+
+// ---------- tile kit ----------
+function kit(){
+  const items=[
+    {name:'Block',text:'Plated floor you build on. Panel pattern varies per tile so big areas do not look tiled.',map:["...",".P.","..."]},
+    {name:'Street',text:'Can’t be built on. Joins to neighbours into straights, bends, T-junctions and crossroads.',map:["...","SSS","..."]},
+    {name:'Junction',text:'Not a separate tile: a street tile with street on three or four sides draws itself as a junction.',map:[".S.","SSS",".S."]},
+    {name:'Landing pad',text:'End of an avenue or a dead end. Where ships set down, dock and launch.',map:["...","SL.","..."]},
+    {name:'Edge',text:'Any side facing space gets a hazard lip and casts a shadow on the starfield.',map:["...",".PP",".PP"]},
+  ];
+  const host=document.getElementById('kitGrid');
+  for(const it of items){const card=document.createElement('div');card.className='card';const cv=document.createElement('canvas');cv.width=180;cv.height=180;
+    const h=document.createElement('h3');h.textContent=it.name;const p=document.createElement('p');p.className='cap';p.textContent=it.text;card.append(cv,h,p);host.append(card);
+    const g=cv.getContext('2d');g.drawImage(makeStars(180,180,it.name.length*7),0,0);drawDeck(g,parse(it.map),60,0,0,.8,{});}
+}
+
+// ---------- destruction states ----------
+function damage(){
+  const base=["PPPPP","SSSSS","PPPPP","PPPPP"];const host=document.getElementById('dmgGrid');
+  const states=[
+    {name:'Intact',text:'Lit, powered, buildable.',st:[]},
+    {name:'Damaged',text:'Scorched and cracked, lights out. Still floor, still carries power. Repairable.',st:[[2,1,1],[1,2,1]]},
+    {name:'Destroyed',text:'A hole. Stars show through, the rim glows hot, and anything standing on it is destroyed with it.',st:[[2,1,2],[2,2,2],[3,2,1]]},
+    {name:'Cut off',text:'Lose a whole line and the far side is an island: unpowered until rebuilt or reached another way.',st:[[2,0,2],[2,1,2],[2,2,2],[2,3,2]]},
+  ];
+  for(const s of states){const m=parse(base),st=m.map(r=>r.map(()=>0));for(const[x,y,v] of s.st)st[y][x]=v;
+    const core={x:0,y:2,w:1,h:2,kind:'Core'};const bs=[core,{x:3,y:2,w:2,h:2,kind:'Factory'},{x:3,y:0,w:1,h:1,kind:'Turret'},{x:1,y:0,w:1,h:1,kind:'Generator'}].filter(b=>!(st[b.y][b.x]===2));
+    const pw=powered(m,st,core);
+    const card=document.createElement('div');card.className='card';const cv=document.createElement('canvas');cv.width=230;cv.height=210;
+    const h=document.createElement('h3');h.textContent=s.name;const p=document.createElement('p');p.className='cap';p.textContent=s.text;card.append(cv,h,p);host.append(card);
+    const g=cv.getContext('2d');g.drawImage(makeStars(230,210,s.name.length*13),0,0);drawDeck(g,m,40,15,25,.9,{state:st});drawBuildings(g,bs,40,15,25,pw,false);}
+}
+
+// ---------- sandbox ----------
+function sandbox(){
+  const W=22,H=12,cs=32,cv=document.getElementById('cSand'),dpr=Math.min(2,devicePixelRatio||1),PW=W*cs,PH=H*cs;
+  cv.width=PW*dpr;cv.height=PH*dpr;cv.style.width=PW+'px';cv.style.height=PH+'px';const g=cv.getContext('2d');g.scale(dpr,dpr);
+  const stars=makeStars(PW,PH,77);let m,st,bs,core,tool='S';
+  function reset(){const start=["......................","......................","......................","........PPPPPP........","......LSSSSSSSSL......","........PPPPPP........","........PPPPPP........","......................","......................","......................","......................","......................"];
+    m=parse(start);st=m.map(r=>r.map(()=>0));core={x:10,y:5,w:2,h:2,kind:'Core'};bs=[core];}
+  reset();
+  document.getElementById('sbReset').addEventListener('click',()=>{reset();if(reduce)frame(0);});
+  document.querySelectorAll('#sbTools [data-tool]').forEach(b=>b.addEventListener('click',()=>{tool=b.dataset.tool;document.querySelectorAll('#sbTools [data-tool]').forEach(o=>o.setAttribute('aria-pressed',o===b));}));
+  const status=document.getElementById('sbStatus');
+  const occ=(x,y)=>bs.find(b=>x>=b.x&&x<b.x+b.w&&y>=b.y&&y<b.y+b.h);
+  const touchesDeck=(x,y)=>[[1,0],[-1,0],[0,1],[0,-1]].some(([dx,dy])=>isDeck(m,x+dx,y+dy)&&st[y+dy][x+dx]!==2);
+  function apply(x,y){if(x<0||y<0||x>=W||y>=H)return;
+    if('SPLFT'.includes(tool)){if(st[y][x]===2){st[y][x]=0;m[y][x]=tool;return;} if(occ(x,y))return; if(m[y][x]==='.'&&!touchesDeck(x,y)){status.textContent='Tiles must touch the deck.';return;} m[y][x]=tool;st[y][x]=0;}
+    else if(tool==='E'){const b=occ(x,y);if(b===core)return;if(b)bs=bs.filter(o=>o!==b);else{m[y][x]='.';st[y][x]=0;}}
+    else if(tool==='X'){if(!isDeck(m,x,y))return;const b=occ(x,y);if(b===core&&st[y][x]>=1)return;st[y][x]=Math.min(2,st[y][x]+1);if(st[y][x]===2&&b)bs=bs.filter(o=>o!==b);}
+    else if(tool==='B'){for(let yy=y;yy<y+2;yy++)for(let xx=x;xx<x+2;xx++)if(!isDeck(m,xx,yy)||m[yy][xx]!=='P'||st[yy][xx]===2||occ(xx,yy)){status.textContent='Buildings need 2×2 of free block tiles: not on streets, pads or space.';return;}
+      bs.push({x,y,w:2,h:2,kind:['Factory','Refinery','Storage','Habitat'][bs.length%4]});}
+    const pw=powered(m,st,core),off=bs.filter(b=>!pw[b.y][b.x]).length;status.textContent=off?`${off} building${off>1?'s':''} cut off from the core: no power.`:'Core online. Everything powered.';}
+  let down=false,last='';
+  const cell=e=>{const r=cv.getBoundingClientRect();return[Math.floor((e.clientX-r.left)/r.width*W),Math.floor((e.clientY-r.top)/r.height*H)];};
+  cv.addEventListener('pointerdown',e=>{down=true;const[x,y]=cell(e);last=x+','+y;apply(x,y);if(reduce)frame(0);});
+  cv.addEventListener('pointermove',e=>{if(!down||tool==='B'||tool==='X')return;const[x,y]=cell(e),k=x+','+y;if(k!==last){last=k;apply(x,y);if(reduce)frame(0);}});
+  addEventListener('pointerup',()=>down=false);
+  function frame(t){g.drawImage(stars,0,0,PW,PH);g.strokeStyle='rgba(255,255,255,.05)';g.lineWidth=1;
+    for(let x=0;x<=W;x++){g.beginPath();g.moveTo(x*cs+.5,0);g.lineTo(x*cs+.5,PH);g.stroke();}for(let y=0;y<=H;y++){g.beginPath();g.moveTo(0,y*cs+.5);g.lineTo(PW,y*cs+.5);g.stroke();}
+    drawDeck(g,m,cs,0,0,t,{state:st,avenueRow:4});drawFenceTiles(g,m,cs,0,0,t,{});drawBuildings(g,bs,cs,0,0,powered(m,st,core),true);}
+  return frame;
+}
+
+// ---------- breathing room: same buildings, today vs on a deck (1 px = 12 u) ----------
+function scale(){
+  const cv=document.getElementById('cScale'),U=12,W=760,H=690,dpr=Math.min(2,devicePixelRatio||1);
+  cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';const g=cv.getContext('2d');g.scale(dpr,dpr);
+  g.drawImage(makeStars(W,H,5),0,0);
+  const lab=(t,x,y,c)=>{g.fillStyle=c||'#d9e1ea';g.font='500 12px IBM Plex Mono, monospace';g.textAlign='left';g.textBaseline='top';g.fillText(t,x,y);};
+  const box=(ox,oy,b)=>{const x=ox+b.x/U,y=oy+b.y/U,w=b.w/U,h=b.h/U;g.fillStyle='rgba(0,0,0,.55)';g.fillRect(x+2,y+3,w,h);g.fillStyle=COL.bld;g.fillRect(x,y,w,h);g.fillStyle=COL.bldTop;g.fillRect(x+1,y+1,w-2,h*.45);g.strokeStyle=COL.bldEdge;g.lineWidth=1;g.strokeRect(x+.5,y+.5,w-1,h-1);g.fillStyle=KIND_COL[b.k]||'#999';
+    if(b.k==='Turret'){g.beginPath();g.arc(x+w/2,y+h/2,w*.3,0,7);g.fill();}else g.fillRect(x+2,y+h-3,w-4,2);};
+  const F={Capital:[560,560],Reactor:[600,600],Shipyard:[960,600],Dock:[1000,400],Solar:[700,300],Battery:[190,190],Miner:[240,240],Turret:[140,140]};
+  // deck layout (u from deck origin); the same list is packed for 'today'
+  const P=[['Reactor',300,250],['Battery',1000,250],['Battery',1000,560],['Solar',1500,250],['Miner',2500,250],['Turret',250,1450],['Solar',1500,1300],
+    ['Shipyard',4150,500],['Solar',5650,300],['Solar',5650,800],['Miner',6750,300],['Turret',7150,1550],
+    ['Capital',1600,3050],['Battery',400,2800],['Battery',400,3150],['Miner',400,3650],['Turret',950,4150],['Miner',2700,3050],['Battery',3100,3800],
+    ['Dock',5850,3350],['Miner',5400,3950],['Turret',6650,4150]];
+  const ox=20,oy=34;lab('Today: packed (rows about 640 u apart, cables from 67 u)',ox,12,'#e0524a');
+  let x=0,y=0,rowH=0,prev=null;const placed=[];
+  for(const[k] of P){const[w,h]=F[k];if(x+w>5400){x=0;y+=Math.max(rowH,560)+90;rowH=0;prev=null;}
+    const b={x,y,w,h,k:k==='Dock'?'Storage':k};placed.push(b);
+    if(prev){const cy=oy+(y+Math.min(h,prev.h)/2)/U;g.strokeStyle='rgba(92,200,224,.8)';g.lineWidth=1;g.beginPath();g.moveTo(ox+(prev.x+prev.w)/U,cy);g.lineTo(ox+x/U,cy);g.stroke();g.fillStyle='#5cc8e0';g.fillRect(ox+(x-45)/U-2,cy-2,4,4);}
+    x+=w+90;rowH=Math.max(rowH,h);prev=b;}
+  for(const b of placed)box(ox,oy,b);
+  const dx=20,dy=oy+(y+rowH)/U+52,cs=640/U;lab('On a deck: the same '+P.length+' buildings, with streets and forecourts between them',dx,dy-26,'#f2b33d');
+  const m=parse(['.PPPPSPPPPP.','PPPPPSPPPPPP','PPPPPSPPPPPP','LSSSSSSSSSSL','PPPPPPPSPPPP','PPPPPPPSPPPP','.PPPPPPSPPP.']);
+  drawDeck(g,m,cs,dx,dy,1.1,{avenueRow:3});
+  const court=(x,y,w,h)=>{g.fillStyle='rgba(242,179,61,.08)';g.fillRect(dx+x/U,dy+y/U,w/U,h/U);g.strokeStyle='rgba(242,179,61,.75)';g.setLineDash([4,3]);g.lineWidth=1;g.strokeRect(dx+x/U+.5,dy+y/U+.5,w/U-1,h/U-1);g.setLineDash([]);
+    g.save();g.beginPath();g.rect(dx+x/U,dy+y/U,w/U,h/U);g.clip();g.strokeStyle='rgba(242,179,61,.22)';for(let i=-h;i<w;i+=120){g.beginPath();g.moveTo(dx+(x+i)/U,dy+(y+h)/U);g.lineTo(dx+(x+i+h)/U,dy+y/U);g.stroke();}g.restore();};
+  court(1350,2560,1060,420);court(4000,1180,1260,600);court(5700,2560,1300,700);
+  for(const[k,x,y] of P){const[w,h]=F[k];box(dx,dy,{x,y,w,h,k:k==='Dock'?'Storage':k});}
+  const ly=dy+m.length*cs+14;g.fillStyle='rgba(242,179,61,.75)';g.fillRect(dx,ly+3,14,8);lab('forecourt / landing apron',dx+20,ly);g.fillStyle=COL.street;g.fillRect(dx+230,ly+1,14,12);g.strokeStyle='#e8edf2';g.strokeRect(dx+230.5,ly+1.5,13,11);lab('street: no building',dx+250,ly);lab('1 tile = 640 u',dx+430,ly,'#8794a5');
+}
+
+// ---------- anchors ----------
+function anchorGlyph(g,x,y,r,st){ // st: 'ok' | 'ghost' | 'build'
+  g.save();g.translate(x,y);g.rotate(Math.PI/4);
+  if(st==='ghost'){g.setLineDash([3,3]);g.strokeStyle='rgba(230,236,242,.7)';g.lineWidth=1.5;g.strokeRect(-r,-r,r*2,r*2);g.restore();return;}
+  g.fillStyle='rgba(0,0,0,.6)';g.fillRect(-r+3,-r+3,r*2,r*2);
+  g.fillStyle='#1d232b';g.fillRect(-r,-r,r*2,r*2);g.strokeStyle=st==='build'?'#5cc8e0':'#5cc8e0';g.lineWidth=2;if(st==='build')g.setLineDash([3,2]);g.strokeRect(-r,-r,r*2,r*2);g.setLineDash([]);
+  g.fillStyle=st==='build'?'rgba(92,200,224,.5)':'#5cc8e0';g.fillRect(-r*.35,-r*.35,r*.7,r*.7);g.restore();
+}
+function plateSeams(g,m,cs,ox,oy,P){g.strokeStyle='#0b0e13';g.lineWidth=3;
+  for(let y=0;y<m.length;y++)for(let x=0;x<m[0].length;x++){if(!isDeck(m,x,y))continue;
+    if(x%P===P-1&&isDeck(m,x+1,y)){g.beginPath();g.moveTo(ox+(x+1)*cs,oy+y*cs);g.lineTo(ox+(x+1)*cs,oy+(y+1)*cs);g.stroke();}
+    if(y%P===P-1&&isDeck(m,x,y+1)){g.beginPath();g.moveTo(ox+x*cs,oy+(y+1)*cs);g.lineTo(ox+(x+1)*cs,oy+(y+1)*cs);g.stroke();}}}
+const AN_MAP=["PPPSPPPPP","PPPSPPPPP","SSSSSSSSS","PPPSPPPPP","PPPSPPPPP","PPPSPPPPP"];
+function anchorThumb(id,mode){const cv=document.getElementById(id),g=cv.getContext('2d');g.drawImage(makeStars(cv.width,cv.height,id.length*31),0,0);
+  const m=parse(AN_MAP),cs=36,ox=18,oy=15;drawDeck(g,m,cs,ox,oy,.7,{});
+  if(mode==='tile')for(let y=0;y<m.length;y++)for(let x=0;x<m[0].length;x++)anchorGlyph(g,ox+x*cs+cs/2,oy+y*cs+cs/2,4,'ok');
+  if(mode==='corner')for(let y=0;y<=m.length;y++)for(let x=0;x<=m[0].length;x++)anchorGlyph(g,ox+x*cs,oy+y*cs,4,'ok');
+  if(mode==='plate'){plateSeams(g,m,cs,ox,oy,3);for(let y=1;y<m.length;y+=3)for(let x=1;x<m[0].length;x+=3){const cx=ox+x*cs+cs/2,cy=oy+y*cs+cs/2,on=m[y][x]==='S';anchorGlyph(g,on?cx+cs*.32:cx,on?cy-cs*.32:cy,8,'ok');}}}
+function rebuild(){const host=document.getElementById('rebuildGrid');const map=["PPPPPP","SSSSSS","PPPPPP","PPPPPP"];
+  const steps=[{name:'1 · Intact',text:'Two plates, two anchors. The anchor shows the plate’s health.',hole:false},
+    {name:'2 · Anchor destroyed',text:'The plate breaks into slabs and drifts off. A ghost outline and a ghost anchor mark where it was.',hole:'ghost'},
+    {name:'3 · Rebuild the anchor',text:'Tap the ghost anchor to rebuild it, like any blueprint. The plate reappears as a hologram.',hole:'build'},
+    {name:'4 · Plate restored',text:'Construction fills the plate back in. Buildings on it must be rebuilt separately.',hole:false,after:true}];
+  for(const s of steps){const m=parse(map),st=m.map(r=>r.map(()=>0)),cs=36,ox=7,oy=30;
+    if(s.hole)for(let y=0;y<4;y++)for(let x=3;x<6;x++)st[y][x]=2;
+    const card=document.createElement('div');card.className='card';const cv=document.createElement('canvas');cv.width=230;cv.height=200;const h=document.createElement('h3');h.textContent=s.name;const p=document.createElement('p');p.className='cap';p.textContent=s.text;card.append(cv,h,p);host.append(card);
+    const g=cv.getContext('2d');g.drawImage(makeStars(230,200,s.name.length*3),0,0);drawDeck(g,m,cs,ox,oy,.5,{state:st});
+    const right=[ox+3*cs,oy,3*cs,4*cs];
+    if(s.hole==='ghost'){g.setLineDash([4,4]);g.strokeStyle='rgba(230,236,242,.45)';g.lineWidth=1.5;g.strokeRect(...right);g.setLineDash([]);
+      g.fillStyle='#4a5566';g.save();g.translate(ox+5.6*cs,oy+.3*cs);g.rotate(.5);g.fillRect(0,0,cs*.9,cs*.6);g.restore();g.save();g.translate(ox+6.1*cs,oy+3.2*cs);g.rotate(-.4);g.fillRect(0,0,cs*.7,cs*.5);g.restore();}
+    if(s.hole==='build'){g.fillStyle='rgba(92,200,224,.12)';g.fillRect(...right);g.strokeStyle='rgba(92,200,224,.7)';g.setLineDash([4,3]);g.lineWidth=1.5;g.strokeRect(...right);g.setLineDash([]);
+      g.strokeStyle='rgba(92,200,224,.25)';g.lineWidth=1;for(let i=1;i<3;i++){g.beginPath();g.moveTo(right[0]+i*cs,right[1]);g.lineTo(right[0]+i*cs,right[1]+right[3]);g.stroke();}for(let i=1;i<4;i++){g.beginPath();g.moveTo(right[0],right[1]+i*cs);g.lineTo(right[0]+right[2],right[1]+i*cs);g.stroke();}}
+    if(!s.hole)plateSeams(g,m,cs,ox,oy,3);
+    drawBuildings(g,[{x:0,y:2,w:2,h:2,kind:'Factory'}].concat(s.hole||s.after?[]:[{x:4,y:2,w:2,h:2,kind:'Storage'}]),cs,ox,oy,null,false);
+    anchorGlyph(g,ox+1.5*cs+cs*.32,oy+1.5*cs-cs*.32,8,'ok');anchorGlyph(g,ox+4.5*cs+cs*.32,oy+1.5*cs-cs*.32,8,s.hole==='ghost'?'ghost':s.hole==='build'?'build':'ok');}}
+function snap(id,snapped){const cv=document.getElementById(id),g=cv.getContext('2d');g.drawImage(makeStars(cv.width,cv.height,id.length*17),0,0);
+  const m=parse(["PPPPPPP","PPPPPPP","PPPPPPP","PPPPPPP"]),cs=48,ox=12,oy=18;drawDeck(g,m,cs,ox,oy,0,{});
+  const bx=snapped?ox+2*cs:ox+2.37*cs,by=snapped?oy+1*cs:oy+1.42*cs,w=cs*1.6,h=cs*1.25;
+  g.fillStyle='rgba(92,200,224,.18)';g.fillRect(bx,by,w,h);g.strokeStyle='#5cc8e0';g.lineWidth=1.5;g.setLineDash([5,3]);g.strokeRect(bx,by,w,h);g.setLineDash([]);
+  if(snapped){g.strokeStyle='#f2b33d';g.lineWidth=1.5;g.beginPath();g.moveTo(bx,oy-6);g.lineTo(bx,oy+4*cs+6);g.moveTo(ox-6,by);g.lineTo(ox+7*cs+6,by);g.stroke();
+    g.fillStyle='rgba(92,200,224,.35)';g.fillRect(bx+cs*.22,by+cs*.18,w,h);g.font='500 11px IBM Plex Mono, monospace';g.fillStyle='#f2b33d';g.fillText('snapped to tile edge',bx+w+cs*.3,by+h+18);}
+  else{g.font='500 11px IBM Plex Mono, monospace';g.fillStyle='#d9e1ea';g.fillText('free: no guide nearby',bx+w+8,by+h+16);}}
+
+// ---------- round 5: ladder, fence, gates, teleporters, turret options ----------
+// fence and tower tiles: a shield wall runs through the centres of joined fence tiles
+const isFz=(m,x,y)=>isDeck(m,x,y)&&(m[y][x]==='F'||m[y][x]==='T');
+const isGate=(m,x,y)=>isDeck(m,x,y)&&m[y][x]==='S'&&((isFz(m,x-1,y)&&isFz(m,x+1,y))||(isFz(m,x,y-1)&&isFz(m,x,y+1)));
+const isWall=(m,x,y)=>isFz(m,x,y)||isGate(m,x,y);
+function fenceLinks(m){const L=[];for(let y=0;y<m.length;y++)for(let x=0;x<m[0].length;x++){if(!isWall(m,x,y))continue;
+  if(isWall(m,x+1,y))L.push([x,y,x+1,y]);if(isWall(m,x,y+1))L.push([x,y,x,y+1]);
+  for(const dx of[1,-1])if(isWall(m,x+dx,y+1)&&!isWall(m,x+dx,y)&&!isWall(m,x,y+1))L.push([x,y,x+dx,y+1]);}
+  return L.filter(l=>!(isGate(m,l[0],l[1])&&isGate(m,l[2],l[3])));}
+function drawFenceTiles(g,m,cs,ox,oy,t,opt={}){
+  const L=opt.links||fenceLinks(m),c=(x,y)=>[ox+x*cs+cs/2,oy+y*cs+cs/2];
+  const brk=new Set((opt.broken||[]).map(l=>l+''));
+  // raised emitter rail
+  g.lineCap='round';g.strokeStyle='#10151c';g.lineWidth=cs*.34;g.beginPath();for(const l of L){const[a,b]=c(l[0],l[1]),[p,q]=c(l[2],l[3]);g.moveTo(a,b);g.lineTo(p,q);}g.stroke();
+  g.strokeStyle='#3a4452';g.lineWidth=1;g.beginPath();for(const l of L){const[a,b]=c(l[0],l[1]),[p,q]=c(l[2],l[3]),n=Math.hypot(p-a,q-b),nx=-(q-b)/n*cs*.17,ny=(p-a)/n*cs*.17;g.moveTo(a+nx,b+ny);g.lineTo(p+nx,q+ny);g.moveTo(a-nx,b-ny);g.lineTo(p-nx,q-ny);}g.stroke();g.lineCap='butt';
+  // the shield itself
+  for(const l of L){const[a,b]=c(l[0],l[1]),[p,q]=c(l[2],l[3]),gate=isGate(m,l[0],l[1])||isGate(m,l[2],l[3]);
+    if(brk.has(l+'')){g.strokeStyle='rgba(224,82,74,.9)';g.lineWidth=1.5;g.setLineDash([3,4]);g.beginPath();g.moveTo(a,b);g.lineTo(p,q);g.stroke();g.setLineDash([]);continue;}
+    if(gate){g.strokeStyle='rgba(79,210,122,.95)';g.lineWidth=2;g.setLineDash([cs*.12,cs*.1]);g.lineDashOffset=reduce?0:-t*cs*.4;}
+    else{g.strokeStyle='rgba(92,200,224,.2)';g.lineWidth=7;g.beginPath();g.moveTo(a,b);g.lineTo(p,q);g.stroke();g.strokeStyle='rgba(130,225,245,.95)';g.lineWidth=1.8;}
+    g.beginPath();g.moveTo(a,b);g.lineTo(p,q);g.stroke();g.setLineDash([]);
+    if(!gate&&!reduce){g.strokeStyle='rgba(235,252,255,.8)';g.setLineDash([cs*.2,cs*1.1]);g.lineDashOffset=-t*cs*.9;g.beginPath();g.moveTo(a,b);g.lineTo(p,q);g.stroke();g.setLineDash([]);}}
+  for(const l of opt.broken||[])for(const[x,y] of [c(l[0],l[1]),c(l[2],l[3])]){g.fillStyle='#ff7a2e';g.fillRect(x-3,y-3,6,6);if(!reduce&&Math.sin(t*17+x)>.3){g.fillStyle='rgba(255,200,120,.9)';g.fillRect(x+Math.sin(t*31)*6,y+Math.cos(t*23)*6,2,2);}}
+  // emitter posts, gate posts, towers
+  for(let y=0;y<m.length;y++)for(let x=0;x<m[0].length;x++){const[cx,cy]=c(x,y);
+    if(m[y][x]==='F'){g.fillStyle='#9aa8ba';g.fillRect(cx-3,cy-3,6,6);g.fillStyle=COL.cyan;g.fillRect(cx-1,cy-1,2,2);}
+    if(isGate(m,x,y)){const h=isFz(m,x-1,y);for(const s of[-1,1]){const px=h?cx+s*cs*.42:cx,py=h?cy:cy+s*cs*.42;g.fillStyle='#000';g.fillRect(px-4.5,py-4.5,9,9);g.fillStyle=COL.green;g.fillRect(px-3.5,py-3.5,7,7);}
+      if(opt.gateLabels){g.fillStyle=COL.green;g.font='600 10px IBM Plex Mono, monospace';g.textAlign='center';g.textBaseline='middle';g.fillText('GATE',cx+(h?0:(x===0?-cs*.9:cs*.9)),cy+(h?(y===0?-cs*.75:cs*.75):-cs*.62));}}
+    if(m[y][x]==='T'){const r=cs*.3;g.fillStyle='rgba(0,0,0,.6)';g.fillRect(cx-r+3,cy-r+4,r*2,r*2);g.fillStyle='#1d232b';g.fillRect(cx-r,cy-r,r*2,r*2);g.strokeStyle='#9aa8ba';g.lineWidth=1;g.strokeRect(cx-r+.5,cy-r+.5,r*2-1,r*2-1);
+      g.fillStyle='#4a5566';g.beginPath();g.arc(cx,cy,r*.7,0,7);g.fill();g.fillStyle=COL.red;g.beginPath();g.arc(cx,cy,r*.32,0,7);g.fill();}}
+  // shots landing on the wall
+  if(opt.hits&&!reduce){const seg=L.filter(l=>!isGate(m,l[0],l[1])&&!isGate(m,l[2],l[3]));for(let h=0;h<opt.hits;h++){const ph=t*.55+h*.37,i=Math.floor(ph),f=ph-i,l=seg[(i*7919+h*104729)%seg.length];
+    const[a,b]=c(l[0],l[1]),[p,q]=c(l[2],l[3]),x=(a+p)/2,y=(b+q)/2;g.strokeStyle=`rgba(200,245,255,${(1-f)*.9})`;g.lineWidth=2;g.beginPath();g.arc(x,y,4+f*cs*.7,0,7);g.stroke();}}
+}
+function teleporter(g,cx,cy,r,t){
+  g.fillStyle='rgba(0,0,0,.55)';g.beginPath();g.arc(cx+r*.12,cy+r*.18,r,0,7);g.fill();
+  g.fillStyle='#1d232b';g.beginPath();g.arc(cx,cy,r,0,7);g.fill();
+  g.strokeStyle='#9aa8ba';g.lineWidth=1.5;g.stroke();
+  const gr=g.createRadialGradient(cx,cy,0,cx,cy,r*.78);gr.addColorStop(0,'rgba(140,235,255,.55)');gr.addColorStop(1,'rgba(92,200,224,.05)');g.fillStyle=gr;g.beginPath();g.arc(cx,cy,r*.78,0,7);g.fill();
+  g.strokeStyle=COL.cyan;g.lineWidth=2;for(let i=0;i<3;i++){const a=(reduce?0:t*1.4)+i*2.094;g.beginPath();g.arc(cx,cy,r*.62,a,a+1.3);g.stroke();}
+  g.fillStyle=COL.cyan;for(let i=0;i<8;i++){const a=i*Math.PI/4;g.fillRect(cx+Math.cos(a)*r*.88-1.5,cy+Math.sin(a)*r*.88-1.5,3,3);}
+}
+// a building drawn at its true footprint, centred in its slot (u -> px via U)
+function footprint(g,cx,cy,fw,fh,U,kind,col){
+  const w=fw/U,h=fh/U,x=cx-w/2,y=cy-h/2;
+  g.fillStyle='rgba(0,0,0,.55)';g.fillRect(x+w*.08+1,y+h*.1+1,w,h);
+  g.fillStyle=COL.bld;g.fillRect(x,y,w,h);g.fillStyle=COL.bldTop;g.fillRect(x+1,y+1,w-2,h*.45);
+  g.strokeStyle=COL.bldEdge;g.lineWidth=1;g.strokeRect(x+.5,y+.5,w-1,h-1);
+  g.fillStyle=col||KIND_COL[kind]||'#999';
+  if(kind==='Turret'){g.beginPath();g.arc(cx,cy,Math.min(w,h)*.32,0,7);g.fill();}else g.fillRect(x+2,y+h-3,Math.max(1,w-4),2);
+}
+const SLOT_KINDS={ // [label, w, h, colour]
+  q:[['Turret',160,160,'#e0524a'],['Battery',190,190,'#5cc8e0'],['Miner',240,240,'#c77d4a'],['Gas collector',300,300,'#8a7cc9'],['Silicon works',320,320,'#7aa0a0']],
+  '1x1':[['Reactor',600,600,'#5cc8e0'],['Battery bank',600,600,'#5cc8e0'],['Fabricator',480,360,'#7d8fb3'],['Storage vault',480,320,'#6f8a6f'],['Refinery',380,300,'#c77d4a'],['Airlock',392,260,'#b3a06b']],
+  '2x1':[['Shipyard',960,600,'#7d8fb3'],['Assembly plant',900,640,'#7d8fb3'],['Ore processing',840,600,'#c77d4a'],['Solar',700,300,'#f2d36b']],
+  '2x2':[['Deep core rig',760,760,'#c77d4a'],['Freight dock',1000,900,'#6f8a6f']],
+};
+function drawSlot(g,b,cs,ox,oy,t,showSlot){
+  const U=640/cs,x=ox+b.x*cs,y=oy+b.y*cs,w=b.w*cs,h=b.h*cs,cx=x+w/2,cy=y+h/2;
+  if(showSlot){g.fillStyle='rgba(242,179,61,.07)';g.fillRect(x+2,y+2,w-4,h-4);g.strokeStyle='rgba(242,179,61,.75)';g.setLineDash([4,3]);g.lineWidth=1;g.strokeRect(x+2.5,y+2.5,w-5,h-5);g.setLineDash([]);}
+  if(b.kind==='Teleporter'){teleporter(g,cx,cy,800/U/2,t);return;}
+  if(b.kind==='Large teleporter'){teleporter(g,cx,cy,2120/U/2,t);return;}
+  if(b.kind==='Alien gate'){const r=1600/U/2;g.strokeStyle='#8a7cc9';g.lineWidth=r*.22;g.beginPath();g.arc(cx,cy,r*.85,0,7);g.stroke();g.strokeStyle='rgba(200,180,255,.5)';g.lineWidth=1;g.beginPath();g.arc(cx,cy,r*.62,0,7);g.stroke();return;}
+  if(b.kind==='Capital'){footprint(g,cx,cy,560,560,U,'Core','#f2b33d');return;}
+  if(b.q){const qs=cs/2;b.q.forEach((it,i)=>{if(!it)return;footprint(g,x+(i%2)*qs+qs/2,y+((i/2)|0)*qs+qs/2,it[1],it[2],U,it[0],it[3]);});
+    if(showSlot){g.strokeStyle='rgba(242,179,61,.35)';g.setLineDash([2,3]);g.beginPath();g.moveTo(cx,y+3);g.lineTo(cx,y+h-3);g.moveTo(x+3,cy);g.lineTo(x+w-3,cy);g.stroke();g.setLineDash([]);}return;}
+  if(b.kind==='Freight dock'){const pw=900/U,ph=500/U;g.strokeStyle='rgba(242,179,61,.7)';g.setLineDash([3,3]);g.strokeRect(cx-pw/2,cy-ph/2+200/U,pw,ph);g.setLineDash([]);footprint(g,cx,cy-450/U+200/U/2-60/U,1000,400,U,'Storage','#6f8a6f');return;}
+  const[fw,fh]=b.w>=b.h?[b.fw,b.fh]:[b.fh,b.fw];footprint(g,cx,cy,fw,fh,U,b.kind,b.col);
+}
+function ladder(){
+  const cs=44,U=640/cs,cv=document.getElementById('cLadder'),dpr=Math.min(2,devicePixelRatio||1);
+  const items=[{name:'Small',sub:'4 per tile',w:1,h:1,q:[SLOT_KINDS.q[0],SLOT_KINDS.q[1],SLOT_KINDS.q[2],SLOT_KINDS.q[3]],ex:'turret, battery, miner'},
+    {name:'1 × 1',w:1,h:1,kind:'Reactor',fw:600,fh:600,col:'#5cc8e0',ex:'reactor, refinery'},
+    {name:'2 × 1',w:2,h:1,kind:'Shipyard',fw:960,fh:600,col:'#7d8fb3',ex:'shipyard, solar'},
+    {name:'2 × 2',w:2,h:2,kind:'Teleporter',ex:'teleporter, dock'},
+    {name:'3 × 3',w:3,h:3,kind:'Alien gate',ex:'alien gate'},
+    {name:'4 × 4',w:4,h:4,kind:'Large teleporter',ex:'large teleporter'}];
+  const gap=34,W=items.reduce((s,i)=>s+i.w*cs+gap,gap),H=4*cs+90;
+  cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';const g=cv.getContext('2d');g.scale(dpr,dpr);g.drawImage(makeStars(W,H,31),0,0);
+  let x=gap;const base=24+4*cs;
+  for(const it of items){const oy=base-it.h*cs,m=parse(Array(it.h).fill('P'.repeat(it.w)));drawDeck(g,m,cs,x,oy,0,{});
+    drawSlot(g,{x:0,y:0,...it},cs,x,oy,1.3,true);
+    g.fillStyle='#f2b33d';g.font='600 13px Chakra Petch, sans-serif';g.textAlign='left';g.textBaseline='top';g.fillText(it.name,x,base+12);
+    g.fillStyle='#8794a5';g.font='500 10px IBM Plex Mono, monospace';g.fillText(it.sub||it.ex,x,base+30,Math.max(it.w*cs+gap-6,70));if(it.sub)g.fillText(it.ex,x,base+44,90);
+    x+=it.w*cs+gap;}
+  g.fillStyle='#8794a5';g.font='500 10px IBM Plex Mono, monospace';g.textAlign='right';g.fillText('1 tile = 640 u · footprints to scale',W-gap,8);
+}
+// F fence tile, T fence tile with a tower; a street crossing a fence line is a gate
+const FENCE_MAP=[".....FFTFFSFFFF..FFTFFSFF....","...FFPPPPPSPPPPFFPPPPPSPPFF..","..FPPPPPPPSPPPPPPPPPPPSPPPPF.",".FPPPPPPPPSPPPPPPPPPPPSPPPPT.",".FPPPSSSSSSSSSSSSSSSSSSPPPPF.","FPPPPSPPPPPPPPPPPPPPPPSPPPPPF","FPPPPSPPPPPPPPPPPPPPPPSPPPPPF","SSSSSSSSSSSSSSSSSSSSSSSSSSSSS","FPPPPPPPPSPPPPPPPPPSPPPPPPPPF",".TPPPPPPPSPPPPPPPPPSPPPPPPPT.",".FPPPPPPPSSSSSSSSSSSPPPPPPPF.","..FPPPPPPSPPPPFFFFFFTFFFTFF..","...FFPPPPSPPPF...PPPPPPPPP...",".....FFFFSFFF.....PPPPPP....."];
+function fillSlots(m,seed,fixed){
+  const r=rng(seed),H=m.length,W=m[0].length,used=m.map(row=>row.map(()=>false)),out=[...fixed];
+  for(const b of fixed)for(let y=b.y;y<b.y+b.h;y++)for(let x=b.x;x<b.x+b.w;x++)used[y][x]=true;
+  const free=(x,y,w,h)=>{for(let yy=y;yy<y+h;yy++)for(let xx=x;xx<x+w;xx++)if(!isDeck(m,xx,yy)||m[yy][xx]!=='P'||used[yy][xx])return false;return true;};
+  const pick=a=>a[(r()*a.length)|0];
+  for(let y=0;y<H;y++)for(let x=0;x<W;x++){if(!free(x,y,1,1)||r()>.62)continue; // gaps left on purpose: forecourts and breathing room
+    const roll=r();let b=null;
+    if(roll<.12&&free(x,y,2,2)){const k=pick(SLOT_KINDS['2x2']);b={x,y,w:2,h:2,kind:k[0],fw:k[1],fh:k[2],col:k[3]};}
+    else if(roll<.34&&free(x,y,2,1)){const k=pick(SLOT_KINDS['2x1']);b={x,y,w:2,h:1,kind:k[0],fw:k[1],fh:k[2],col:k[3]};}
+    else if(roll<.44&&free(x,y,1,2)){const k=pick(SLOT_KINDS['2x1']);b={x,y,w:1,h:2,kind:k[0],fw:k[1],fh:k[2],col:k[3]};}
+    else if(roll<.72){const k=pick(SLOT_KINDS['1x1']);b={x,y,w:1,h:1,kind:k[0],fw:k[1],fh:k[2],col:k[3]};}
+    else{b={x,y,w:1,h:1,kind:'small',q:[0,1,2,3].map(()=>r()<.8?pick(SLOT_KINDS.q.slice(1)):null)};}
+    for(let yy=b.y;yy<b.y+b.h;yy++)for(let xx=b.x;xx<b.x+b.w;xx++)used[yy][xx]=true;out.push(b);}
+  return out;
+}
+function fenceScene(){
+  const m=parse(FENCE_MAP),cs=30,pad=cs*2.2,cv=document.getElementById('cFence'),dpr=Math.min(2,devicePixelRatio||1);
+  const W=m[0].length*cs+pad*2,H=m.length*cs+pad*2;cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';const g=cv.getContext('2d');g.scale(dpr,dpr);
+  const stars=makeStars(W,H,23);
+  const bs=fillSlots(m,1105,[{x:14,y:8,w:1,h:1,kind:'Capital'},{x:1,y:5,w:2,h:2,kind:'Teleporter'},{x:26,y:5,w:2,h:2,kind:'Teleporter'},{x:11,y:8,w:2,h:2,kind:'Freight dock'}]);
+  const links=fenceLinks(m),brk=links.filter(l=>l[1]===11&&l[3]===11&&l[0]===17); // one segment on the annex line
+  const ov={slots:false,brk:false};
+  const bind=(id,key)=>document.getElementById(id).addEventListener('click',e=>{ov[key]=!ov[key];e.currentTarget.setAttribute('aria-pressed',ov[key]);if(reduce)frame(0);});
+  bind('fvSlots','slots');bind('fvBreak','brk');
+  const routes=[[[-3,7],[2,7],[2,6]],[[32,7],[14,7],[14,4],[22,4],[22,-3]],[[10,-3],[10,4],[5,4],[5,7],[-3,7]],[[9,17],[9,10],[19,10],[19,7],[32,7]]];
+  const plen=p=>{let L=0;for(let i=0;i<p.length-1;i++)L+=Math.hypot(p[i+1][0]-p[i][0],p[i+1][1]-p[i][1]);return L;};
+  const along=(p,d)=>{let acc=0;for(let i=0;i<p.length-1;i++){const a=p[i],b=p[i+1],L=Math.hypot(b[0]-a[0],b[1]-a[1]);if(d<=acc+L){const f=(d-acc)/L;return[a[0]+(b[0]-a[0])*f,a[1]+(b[1]-a[1])*f,Math.atan2(b[1]-a[1],b[0]-a[0])];}acc+=L;}return null;};
+  function frame(t){
+    g.drawImage(stars,0,0,W,H);drawDeck(g,m,cs,pad,pad,t,{avenueRow:7});
+    for(const b of bs)drawSlot(g,b,cs,pad,pad,t,ov.slots);
+    drawFenceTiles(g,m,cs,pad,pad,t,{links,broken:ov.brk?brk:[],hits:2,gateLabels:true});
+    g.fillStyle='#8794a5';g.font='500 10px IBM Plex Mono, monospace';g.textAlign='center';g.fillText('MINING ANNEX · LEFT OUTSIDE THE FENCE',pad+21.5*cs,pad+14*cs+16);
+    routes.forEach((p,i)=>{const L=plen(p),d=(t*(2.4+i*.3)+i*7)%L,q=along(p,d);if(!q)return;const[x,y,a]=q;
+      g.save();g.translate(pad+x*cs+cs/2,pad+y*cs+cs/2);g.rotate(a);g.fillStyle='#e9f1f8';g.beginPath();g.moveTo(cs*.3,0);g.lineTo(-cs*.2,-cs*.15);g.lineTo(-cs*.1,0);g.lineTo(-cs*.2,cs*.15);g.closePath();g.fill();
+      g.fillStyle='rgba(92,200,224,.7)';g.fillRect(-cs*.34,-1.5,cs*.13,3);g.restore();});
+    if(ov.brk&&brk[0]){const l=brk[0];g.fillStyle='#e0524a';g.font='600 10px IBM Plex Mono, monospace';g.textAlign='center';g.fillText('SEGMENT DOWN',pad+(l[0]+1)*cs,pad+l[1]*cs-4);}
+  }
+  return frame;
+}
+// turret options: deck on top, space below, enemy ship below
+function turretCard(id,mode){
+  const cv=document.getElementById(id),g=cv.getContext('2d'),cs=36,ox=18,oy=-8;g.drawImage(makeStars(cv.width,cv.height,id.charCodeAt(1)*3),0,0);
+  const rows=["PPPPPPPPP","PPPPPPPPP","PPPPPPPPP",mode==='A'?"FFTFFFFTF":"FFFFFFFFF",mode==='B'?".B.....B.":".........","........."];
+  const m=parse(rows);
+  drawDeck(g,m,cs,ox,oy,.6,{});
+  footprint(g,ox+4.5*cs,oy+1.5*cs,600,600,640/cs,'Reactor','#5cc8e0');
+  drawFenceTiles(g,m,cs,ox,oy,0,{});
+  const enemy=[ox+4.5*cs,oy+5.6*cs];
+  const ship=(x,y)=>{g.save();g.translate(x,y);g.rotate(-Math.PI/2);g.fillStyle='#e0524a';g.beginPath();g.moveTo(12,0);g.lineTo(-8,-7);g.lineTo(-4,0);g.lineTo(-8,7);g.closePath();g.fill();g.restore();};
+  const shot=(x1,y1,x2,y2,c)=>{g.strokeStyle=c;g.lineWidth=2;g.beginPath();g.moveTo(x1,y1);g.lineTo(x2,y2);g.stroke();};
+  const turret=(x,y)=>{g.fillStyle='rgba(0,0,0,.6)';g.beginPath();g.arc(x+2,y+3,9,0,7);g.fill();g.fillStyle='#4a5566';g.beginPath();g.arc(x,y,9,0,7);g.fill();g.strokeStyle='#9aa8ba';g.lineWidth=1;g.stroke();g.fillStyle='#e0524a';g.beginPath();g.arc(x,y,4,0,7);g.fill();};
+  const fy=oy+3.5*cs,label=(t,x,y,c)=>{g.fillStyle=c;g.font='500 10px IBM Plex Mono, monospace';g.textAlign='center';g.fillText(t,x,y);};
+  if(mode==='A'){for(const fx of[2,7]){const x=ox+fx*cs+cs/2;shot(x,fy+8,enemy[0]+(fx<4?-6:6),enemy[1]-4,'rgba(79,210,122,.9)');}
+    g.fillStyle='rgba(79,210,122,.12)';g.beginPath();g.moveTo(ox+2.5*cs,fy);g.arc(ox+2.5*cs,fy,cs*1.6,0,Math.PI);g.fill();label('tower tile: fires outward',ox+2.5*cs,fy-cs*.7,'#4fd27a');}
+  if(mode==='B'){for(const bx of[1,7]){const x=ox+bx*cs+cs/2,y=oy+4*cs+cs/2;turret(x,y);shot(x,y+6,enemy[0]+(bx<4?-6:6),enemy[1]-4,'rgba(79,210,122,.9)');}
+    shot(enemy[0]+4,enemy[1]-8,ox+7*cs+cs/2+4,oy+4*cs+cs/2+8,'rgba(224,82,74,.9)');label('exposed',ox+7*cs+cs/2,oy+4*cs-4+cs*1.25,'#e0524a');}
+  if(mode==='C'){for(const tx of[2,7]){const x=ox+tx*cs+cs/2,y=oy+2.5*cs;turret(x,y);shot(x,y+6,enemy[0]+(tx<4?-6:6),enemy[1]-4,'rgba(79,210,122,.9)');g.fillStyle='#4fd27a';g.beginPath();g.arc(x+(enemy[0]-x)*.14,fy,3,0,7);g.fill();}
+    shot(enemy[0]+18,enemy[1]-6,enemy[0]+40,fy+2,'rgba(224,82,74,.9)');g.strokeStyle='rgba(200,245,255,.9)';g.lineWidth=2;g.beginPath();g.arc(enemy[0]+40,fy,8,0,Math.PI);g.stroke();label('own shots pass · enemy shots stop',ox+4.5*cs,oy+.7*cs,'#d9e1ea');}
+  ship(...enemy);
+}
+
+// ---------- round 6: connectors and cables laid with the deck ----------
+// nodes in tile units; 'mid' = one connector per 3x3 plate (its anchor), 'corner' = connectors where plate seams cross
+function cableNet(m,mode,blocked){
+  const P=3,H=m.length,W=m[0].length,nodes=[],edges=[],key=new Map();
+  const add=(u,v,k)=>{key.set(k,nodes.length);nodes.push({u,v});};
+  if(mode==='mid'){
+    for(let py=0;py*P<H;py++)for(let px=0;px*P<W;px++){
+      let best=null,bd=1e9;
+      for(let y=py*P;y<Math.min(H,py*P+P);y++)for(let x=px*P;x<Math.min(W,px*P+P);x++){
+        if(!isDeck(m,x,y)||isFz(m,x,y)||blocked.has(x+','+y))continue;const d=Math.abs(x-(px*P+1))+Math.abs(y-(py*P+1));if(d<bd){bd=d;best=[x,y];}}
+      if(best){const[x,y]=best,S=(a,b)=>isDeck(m,a,b)&&m[b][a]==='S',st=m[y][x]==='S',hz=st&&(S(x-1,y)||S(x+1,y)),vt=st&&(S(x,y-1)||S(x,y+1));add(x+.5+(vt?.36:0),y+.5-(hz?.36:0),px+','+py);}}
+    for(const[k,i]of key){const[px,py]=k.split(',').map(Number);for(const[dx,dy]of[[1,0],[0,1]]){const j=key.get((px+dx)+','+(py+dy));if(j!==undefined)edges.push([i,j]);}}
+  }else{
+    const xs=[];for(let x=0;x<W;x+=P)xs.push(x);xs.push(W);const ys=[];for(let y=0;y<H;y+=P)ys.push(y);ys.push(H);
+    const deckAt=(x,y)=>isDeck(m,x,y)&&!isFz(m,x,y);
+    for(let j=0;j<ys.length;j++)for(let i=0;i<xs.length;i++){const vx=xs[i],vy=ys[j];
+      if(deckAt(vx-1,vy-1)||deckAt(vx,vy-1)||deckAt(vx-1,vy)||deckAt(vx,vy))add(vx,vy,i+','+j);}
+    for(const[k,a]of key){const[i,j]=k.split(',').map(Number),vx=xs[i],vy=ys[j];
+      const r=key.get((i+1)+','+j);if(r!==undefined){let ok=false;for(let x=vx;x<xs[i+1];x++)if(deckAt(x,vy-1)&&deckAt(x,vy))ok=true;if(ok)edges.push([a,r]);}
+      const d=key.get(i+','+(j+1));if(d!==undefined){let ok=false;for(let y=vy;y<ys[j+1];y++)if(deckAt(vx-1,y)&&deckAt(vx,y))ok=true;if(ok)edges.push([a,d]);}}
+  }
+  return{nodes,edges};
+}
+function bfsTree(n,edges,src){const adj=n.map(()=>[]);for(const[a,b]of edges){adj[a].push(b);adj[b].push(a);}
+  const par=n.map(()=>-1),dep=n.map(()=>-1);if(src<0)return{par,dep};dep[src]=0;const q=[src];while(q.length){const a=q.shift();for(const b of adj[a])if(dep[b]<0){dep[b]=dep[a]+1;par[b]=a;q.push(b);}}return{par,dep};}
+function drawCable(g,ax,ay,bx,by,w,cradles){
+  const L=Math.hypot(bx-ax,by-ay);if(L<1)return;const ux=(bx-ax)/L,uy=(by-ay)/L,nx=-uy,ny=ux;
+  g.lineCap='round';g.strokeStyle='rgba(0,0,0,.45)';g.lineWidth=w+1;g.beginPath();g.moveTo(ax+2,ay+3);g.lineTo(bx+2,by+3);g.stroke();
+  g.strokeStyle='#26313a';g.lineWidth=w;g.beginPath();g.moveTo(ax,ay);g.lineTo(bx,by);g.stroke();
+  g.strokeStyle='rgba(110,170,200,.55)';g.lineWidth=1;g.beginPath();g.moveTo(ax+nx*w*.25,ay+ny*w*.25);g.lineTo(bx+nx*w*.25,by+ny*w*.25);g.stroke();g.lineCap='butt';
+  if(cradles){g.strokeStyle='#6b7888';g.lineWidth=1.2;for(let s=9;s<L-6;s+=11){const x=ax+ux*s,y=ay+uy*s;g.beginPath();g.moveTo(x-nx*w*.8,y-ny*w*.8);g.lineTo(x+nx*w*.8,y+ny*w*.8);g.stroke();}}
+}
+function drawComet(g,ax,ay,bx,by,f,col,w){
+  const tail=.38,h=Math.min(1,f),s=Math.max(0,f-tail);if(h<=0||s>=1)return;
+  const x1=ax+(bx-ax)*s,y1=ay+(by-ay)*s,x2=ax+(bx-ax)*h,y2=ay+(by-ay)*h,gr=g.createLinearGradient(x1,y1,x2,y2);
+  gr.addColorStop(0,col+'00');gr.addColorStop(1,col+'ff');g.strokeStyle=gr;g.lineWidth=w;g.lineCap='round';g.beginPath();g.moveTo(x1,y1);g.lineTo(x2,y2);g.stroke();g.lineCap='butt';
+  if(f<=1){g.fillStyle='#fff6d0';g.beginPath();g.arc(x2,y2,w*.55,0,7);g.fill();}
+}
+function cableScene(){
+  const m=parse(FENCE_MAP),cs=30,pad=cs*2.2,cv=document.getElementById('cCable'),dpr=Math.min(2,devicePixelRatio||1);
+  const W=m[0].length*cs+pad*2,H=m.length*cs+pad*2;cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';const g=cv.getContext('2d');g.scale(dpr,dpr);
+  const stars=makeStars(W,H,23),links=fenceLinks(m);
+  const fixed=[{x:14,y:8,w:1,h:1,kind:'Capital'},{x:1,y:5,w:2,h:2,kind:'Teleporter'},{x:26,y:5,w:2,h:2,kind:'Teleporter'},{x:11,y:8,w:2,h:2,kind:'Freight dock'},{x:20,y:12,w:2,h:1,kind:'Ore processing',fw:840,fh:600,col:'#c77d4a'},
+    {x:18,y:13,w:1,h:1,kind:'small',q:[SLOT_KINDS.q[2],SLOT_KINDS.q[2],null,SLOT_KINDS.q[2]]},{x:23,y:12,w:1,h:1,kind:'small',q:[SLOT_KINDS.q[2],null,SLOT_KINDS.q[2],SLOT_KINDS.q[2]]}];
+  const fixedCells=new Set();for(const b of fixed)for(let y=b.y;y<b.y+b.h;y++)for(let x=b.x;x<b.x+b.w;x++)fixedCells.add(x+','+y);
+  function build(mode){
+    const net=cableNet(m,mode,fixedCells);let bs;
+    if(mode==='mid'){const m2=m.map(r=>r.slice());for(const n of net.nodes)m2[Math.floor(n.v)][Math.floor(n.u)]='X';bs=fillSlots(m2,1105,fixed);}
+    else bs=fillSlots(m,1105,fixed);
+    const near=(u,v)=>{let bi=-1,bd=1e9;net.nodes.forEach((n,i)=>{const d=Math.hypot(n.u-u,n.v-v);if(d<bd){bd=d;bi=i;}});return[bi,bd];};
+    const drops=[];for(const b of bs){const u=b.x+b.w/2,v=b.y+b.h/2,[i,d]=near(u,v);if(i>=0&&d<2.6&&d>.05)drops.push({i,u,v});}
+    const src=near(14.5,8.5)[0],tree=bfsTree(net.nodes,net.edges,src);
+    const ore=near(19,13)[0],proc=near(12,9)[0],ot=bfsTree(net.nodes,net.edges,proc),orePath=[];for(let a=ore;a>=0&&a!==proc;a=ot.par[a])if(ot.par[a]>=0)orePath.push([a,ot.par[a]]);
+    return{net,bs,drops,tree,orePath,src};
+  }
+  const nets={mid:build('mid'),corner:build('corner')};let mode='mid',flow=true;
+  const set=(id,on)=>document.getElementById(id).setAttribute('aria-pressed',on);
+  document.getElementById('cbMid').addEventListener('click',()=>{mode='mid';set('cbMid',true);set('cbCorner',false);if(reduce)frame(0);});
+  document.getElementById('cbCorner').addEventListener('click',()=>{mode='corner';set('cbMid',false);set('cbCorner',true);if(reduce)frame(0);});
+  document.getElementById('cbFlow').addEventListener('click',()=>{flow=!flow;set('cbFlow',flow);if(reduce)frame(0);});
+  const px=(u,v)=>[pad+u*cs,pad+v*cs];
+  function frame(t){
+    const N=nets[mode],nd=N.net.nodes;
+    g.drawImage(stars,0,0,W,H);drawDeck(g,m,cs,pad,pad,t,{avenueRow:7});
+    for(const b of N.bs)drawSlot(g,b,cs,pad,pad,t,false);
+    drawFenceTiles(g,m,cs,pad,pad,t,{links});
+    for(const d of N.drops){const[a,b]=px(nd[d.i].u,nd[d.i].v),[c,e]=px(d.u,d.v);drawCable(g,a,b,c,e,2,false);g.fillStyle='#9aa8ba';g.fillRect(c-2,e-2,4,4);}
+    for(const[i,j]of N.net.edges){const[a,b]=px(nd[i].u,nd[i].v),[c,e]=px(nd[j].u,nd[j].v);drawCable(g,a,b,c,e,4.5,true);}
+    if(flow){const tt=reduce?.55:t,{par,dep}=N.tree,fr=x=>(x%1+1)%1*1.3;
+      nd.forEach((n,j)=>{const i=par[j];if(i<0)return;const[a,b]=px(nd[i].u,nd[i].v),[c,e]=px(n.u,n.v);drawComet(g,a,b,c,e,fr(tt*.7-dep[j]*.22),'#44ddff',3);});
+      for(const d of N.drops){if(dep[d.i]<0)continue;const[a,b]=px(nd[d.i].u,nd[d.i].v),[c,e]=px(d.u,d.v);drawComet(g,a,b,c,e,fr(tt*.7-(dep[d.i]+1)*.22),'#44ddff',2);}
+      N.orePath.forEach(([i,j],k)=>{const[a,b]=px(nd[i].u,nd[i].v),[c,e]=px(nd[j].u,nd[j].v);for(const o of[0,.5])drawComet(g,a,b,c,e,fr(tt*.9-k*.3+o),'#ee8844',3.4);});}
+    for(const n of nd){const[a,b]=px(n.u,n.v);anchorGlyph(g,a,b,mode==='mid'?6:4.5,'ok');}
+    if(N.src>=0){const[a,b]=px(nd[N.src].u,nd[N.src].v);g.fillStyle='#f2b33d';g.font='600 10px IBM Plex Mono, monospace';g.textAlign='center';g.fillText('POWER FROM THE CAPITAL',a,b-cs*.55);}
+    g.fillStyle='#ee8844';g.font='600 10px IBM Plex Mono, monospace';g.textAlign='center';g.fillText('ORE FROM THE MINING ANNEX',pad+21*cs,pad+14*cs+16);
+    g.fillStyle='#8794a5';g.font='500 10px IBM Plex Mono, monospace';g.textAlign='right';g.fillText(nd.length+' connectors · '+N.net.edges.length+' cables',W-10,14);
+  }
+  return frame;
+}
+
+// ---------- round 7: hexagons, cheap deck, room to grow ----------
+// pointy-top axial (q,r); one hex = 640 u flat to flat
+const HX={dirs:[[1,0],[1,-1],[0,-1],[-1,0],[-1,1],[0,1]],k:(q,r)=>q+','+r,dist:(a,b,c,d)=>(Math.abs(a-c)+Math.abs(b-d)+Math.abs(a+b-c-d))/2};
+function hexPath(g,x,y,s){g.beginPath();for(let i=0;i<6;i++){const a=Math.PI/180*(60*i-30);g.lineTo(x+s*Math.cos(a),y+s*Math.sin(a));}g.closePath();}
+// plates are 7-hex flowers; centres on the lattice a*(2,1)+b*(-1,3)
+function flowerOf(q,r){for(let a=-12;a<=12;a++)for(let b=-12;b<=12;b++){const cq=2*a-b,cr=a+3*b;if(HX.dist(q,r,cq,cr)<=1)return[cq,cr];}return[q,r];}
+function hexBase(id,o){
+  const cv=document.getElementById(id),dpr=Math.min(2,devicePixelRatio||1),s=o.s,U=640/(s*Math.sqrt(3));
+  const cells=new Map(),r=rng(o.seed);
+  for(const[cq,cr,R]of o.blobs)for(let q=cq-R;q<=cq+R;q++)for(let rr=cr-R;rr<=cr+R;rr++)if(HX.dist(q,rr,cq,cr)<=R)cells.set(HX.k(q,rr),{q,r:rr,t:'P'});
+  const at=(q,rr)=>cells.get(HX.k(q,rr));
+  // streets: straight runs along the three hex axes
+  for(const[q0,r0,dq,dr,n]of o.streets)for(let i=-n;i<=n;i++){const c=at(q0+dq*i,r0+dr*i);if(c)c.t='S';}
+  // fence: the owner lays fence hexes round the rim (towers every few)
+  if(o.fence){let i=0;for(const c of cells.values()){const edge=HX.dirs.some(([dq,dr])=>!at(c.q+dq,c.r+dr));if(edge&&c.t!=='S'){c.t=(i++%o.towerEvery===0)?'T':'F';}}}
+  const isF=c=>c&&(c.t==='F'||c.t==='T');
+  for(const c of cells.values())if(c.t==='S'&&HX.dirs.some(([dq,dr])=>!at(c.q+dq,c.r+dr)))c.gate=true;
+  // plates and their connectors (flower centre; off the road if a street runs through it)
+  const plates=new Map();for(const c of cells.values()){const[fq,fr]=flowerOf(c.q,c.r);c.f=HX.k(fq,fr);if(!plates.has(c.f))plates.set(c.f,{fq,fr,cells:[]});plates.get(c.f).cells.push(c);}
+  for(const p of plates.values()){const cand=p.cells.filter(c=>c.t==='P').sort((a,b)=>HX.dist(a.q,a.r,p.fq,p.fr)-HX.dist(b.q,b.r,p.fq,p.fr));
+    const c0=at(p.fq,p.fr);p.node=(c0&&c0.t==='P')?c0:cand[0]||null;if(p.node)p.node.t='C';}
+  const px=(q,rr)=>[o.ox+s*Math.sqrt(3)*(q+rr/2),o.oy+s*1.5*rr];
+  const W=o.W,H=o.H;cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';const g=cv.getContext('2d');g.scale(dpr,dpr);
+  const stars=makeStars(W,H,o.seed);
+  // buildings: dense near the core, thinning out; o.density scales it
+  const bs=[],used=new Set();const take=c=>used.add(HX.k(c.q,c.r));
+  for(const f of o.fixed||[]){const c=at(f.q,f.r);if(!c)continue;const hexes=f.n===3?[[0,0],[1,0],[0,1]]:f.n===7?[[0,0],...HX.dirs]:[[0,0]];for(const[dq,dr]of hexes){const h=at(f.q+dq,f.r+dr);if(h)take(h);}bs.push({...f,c});}
+  const free=c=>c&&c.t==='P'&&!used.has(HX.k(c.q,c.r));
+  for(const c of cells.values()){if(!free(c))continue;const d=HX.dist(c.q,c.r,o.core[0],o.core[1]);const p=o.density*Math.max(0,1-d/o.reach);if(r()>p)continue;
+    const roll=r(),nb=HX.dirs.map(([dq,dr])=>at(c.q+dq,c.r+dr)).find(free);
+    if(roll<.25&&nb){take(c);take(nb);const k=SLOT_KINDS['2x1'][(r()*4)|0];bs.push({n:2,c,c2:nb,kind:k[0],fw:k[1],fh:k[2],col:k[3]});}
+    else if(roll<.62){take(c);const k=SLOT_KINDS['1x1'][(r()*6)|0];bs.push({n:1,c,kind:k[0],fw:k[1],fh:k[2],col:k[3]});}
+    else{take(c);bs.push({n:1,c,small:[0,1,2].map(()=>r()<.85?SLOT_KINDS.q[1+((r()*4)|0)]:null)});}}
+  // cables between neighbouring plate connectors, and from each building to its own plate's connector
+  const pl=[...plates.values()].filter(p=>p.node),idx=new Map(pl.map((p,i)=>[p,i])),nodes=pl.map(p=>({u:p.node.q,v:p.node.r}));
+  const edges=[];pl.forEach((p,i)=>pl.forEach((p2,j)=>{if(j<=i)return;if(HX.dist(p.fq,p.fr,p2.fq,p2.fr)===3)edges.push([i,j]);}));
+  const nodeOf=c=>{const p=plates.get(c.f);return p&&p.node?idx.get(p):-1;};
+  const cen=b=>{if(b.n===2){const[a,bb]=px(b.c.q,b.c.r),[c,d]=px(b.c2.q,b.c2.r);return[(a+c)/2,(bb+d)/2];}if(b.n===3){const ps=[[0,0],[1,0],[0,1]].map(([dq,dr])=>px(b.c.q+dq,b.c.r+dr));return[(ps[0][0]+ps[1][0]+ps[2][0])/3,(ps[0][1]+ps[1][1]+ps[2][1])/3];}return px(b.c.q,b.c.r);};
+  let srcB=bs.find(b=>b.kind==='Capital');const src=srcB?nodeOf(srcB.c):0,tree=bfsTree(nodes,edges,src);
+  function frame(t){
+    g.drawImage(stars,0,0,W,H);
+    for(const rk of o.rocks||[]){g.fillStyle='rgba(0,0,0,.5)';g.beginPath();g.arc(rk[0]+4,rk[1]+5,rk[2],0,7);g.fill();g.fillStyle='#4b4740';g.beginPath();for(let i=0;i<9;i++){const a=i/9*Math.PI*2,rr=rk[2]*(.8+.2*Math.sin(i*2.7+rk[0]));g.lineTo(rk[0]+Math.cos(a)*rr,rk[1]+Math.sin(a)*rr);}g.closePath();g.fill();g.strokeStyle='#6d665c';g.lineWidth=1;g.stroke();}
+    // deck shadow then hexes
+    g.fillStyle='rgba(0,0,0,.55)';for(const c of cells.values()){const[x,y]=px(c.q,c.r);hexPath(g,x+5,y+7,s+.5);g.fill();}
+    for(const c of cells.values()){const[x,y]=px(c.q,c.r),fl=plates.get(c.f),alt=((fl.fq*7+fl.fr*3)%2+2)%2;
+      hexPath(g,x,y,s-.3);g.fillStyle=c.t==='S'?COL.street:isF(c)?COL.deckLo:alt?COL.deckHi:COL.deck;g.fill();
+      g.strokeStyle='#151a21';g.lineWidth=1;g.stroke();}
+    // plate outlines (thicker seams between flowers)
+    g.strokeStyle='#0b0e13';g.lineWidth=2.5;for(const c of cells.values()){const[x,y]=px(c.q,c.r);HX.dirs.forEach(([dq,dr],i)=>{const n=at(c.q+dq,c.r+dr);if(!n||n.f===c.f)return;const a1=Math.PI/180*(60*(-i)+30-60),a2=a1+Math.PI/3;
+      // edge facing direction i
+      const ang=Math.atan2(...(()=>{const[nx,ny]=px(c.q+dq,c.r+dr);return[ny-y,nx-x];})());g.beginPath();g.moveTo(x+s*Math.cos(ang-Math.PI/6),y+s*Math.sin(ang-Math.PI/6));g.lineTo(x+s*Math.cos(ang+Math.PI/6),y+s*Math.sin(ang+Math.PI/6));g.stroke();});}
+    // streets: centre line to street neighbours, edge lights
+    for(const c of cells.values()){if(c.t!=='S')continue;const[x,y]=px(c.q,c.r);
+      for(const[dq,dr]of HX.dirs){const n=at(c.q+dq,c.r+dr);if(!n||n.t!=='S')continue;const[nx,ny]=px(n.q,n.r);g.strokeStyle='rgba(232,237,242,.75)';g.lineWidth=1.2;g.setLineDash([3,3]);g.lineDashOffset=reduce?0:-t*8;g.beginPath();g.moveTo(x,y);g.lineTo((x+nx)/2,(y+ny)/2);g.stroke();g.setLineDash([]);}
+      for(let i=0;i<6;i++){const n=at(c.q+HX.dirs[i][0],c.r+HX.dirs[i][1]);if(n&&n.t==='S')continue;const[nx,ny]=n?px(n.q,n.r):px(c.q+HX.dirs[i][0],c.r+HX.dirs[i][1]);const mx=x+(nx-x)*.42,my=y+(ny-y)*.42;
+        g.fillStyle=(i<3)?COL.red:COL.green;g.globalAlpha=reduce?.9:.55+.45*Math.sin(t*3+c.q+c.r);g.fillRect(mx-1.2,my-1.2,2.4,2.4);g.globalAlpha=1;}}
+    // fence: shield joins every pair of neighbouring fence hexes (six equal neighbours: no diagonal special case)
+    for(const c of cells.values()){if(!isF(c)&&!c.gate)continue;const[x,y]=px(c.q,c.r);
+      for(const[dq,dr]of HX.dirs.slice(0,3)){const n=at(c.q+dq,c.r+dr);if(!n||!(isF(n)||n.gate))continue;if(c.gate&&n.gate)continue;const[nx,ny]=px(n.q,n.r),gate=c.gate||n.gate;
+        if(gate){g.strokeStyle='rgba(79,210,122,.95)';g.lineWidth=1.8;g.setLineDash([3,3]);}else{g.strokeStyle='rgba(92,200,224,.22)';g.lineWidth=6;g.beginPath();g.moveTo(x,y);g.lineTo(nx,ny);g.stroke();g.strokeStyle='rgba(130,225,245,.95)';g.lineWidth=1.6;}
+        g.beginPath();g.moveTo(x,y);g.lineTo(nx,ny);g.stroke();g.setLineDash([]);}
+      if(c.t==='F'){g.fillStyle='#9aa8ba';g.fillRect(x-2,y-2,4,4);}
+      if(c.t==='T'){g.fillStyle='#1d232b';hexPath(g,x,y,s*.55);g.fill();g.strokeStyle='#9aa8ba';g.lineWidth=1;g.stroke();g.fillStyle=COL.red;g.beginPath();g.arc(x,y,s*.2,0,7);g.fill();}
+      if(c.gate){g.fillStyle=COL.green;g.fillRect(x-3,y-3,6,6);}}
+    // buildings
+    for(const b of bs){const[x,y]=cen(b);
+      if(b.kind==='Teleporter'){teleporter(g,x,y,800/U/2,t);continue;}
+      if(b.kind==='Capital'){footprint(g,x,y,560,560,U,'Core','#f2b33d');continue;}
+      if(b.small){b.small.forEach((it,i)=>{if(!it)return;const a=Math.PI/2+i*2.094,d=s*.42;footprint(g,x+Math.cos(a)*d,y-Math.sin(a)*d,it[1]*.85,it[2]*.85,U,it[0],it[3]);});continue;}
+      if(b.n===2){const[a,bb]=px(b.c.q,b.c.r),[c,d]=px(b.c2.q,b.c2.r);g.save();g.translate(x,y);g.rotate(Math.atan2(d-bb,c-a));footprint(g,0,0,b.fw,b.fh,U,b.kind,b.col);g.restore();continue;}
+      footprint(g,x,y,b.fw||480,b.fh||360,U,b.kind,b.col);}
+    // cables + flow
+    for(const b of bs){const i=nodeOf(b.c);if(i<0)continue;const[a,bb]=px(nodes[i].u,nodes[i].v),[c,d]=cen(b);drawCable(g,a,bb,c,d,1.8,false);}
+    for(const[i,j]of edges){const[a,b]=px(nodes[i].u,nodes[i].v),[c,d]=px(nodes[j].u,nodes[j].v);drawCable(g,a,b,c,d,4,true);}
+    const tt=reduce?.55:t,fr=x=>(x%1+1)%1*1.3;
+    nodes.forEach((n,j)=>{const i=tree.par[j];if(i<0)return;const[a,b]=px(nodes[i].u,nodes[i].v),[c,d]=px(n.u,n.v);drawComet(g,a,b,c,d,fr(tt*.7-tree.dep[j]*.22),'#44ddff',2.6);});
+    for(const b of bs){const i=nodeOf(b.c);if(i<0||tree.dep[i]<0)continue;const[a,bb]=px(nodes[i].u,nodes[i].v),[c,d]=cen(b);drawComet(g,a,bb,c,d,fr(tt*.7-(tree.dep[i]+1)*.22),'#44ddff',1.8);}
+    for(const n of nodes){const[a,b]=px(n.u,n.v);anchorGlyph(g,a,b,5,'ok');}
+    // ships on the avenue
+    if(o.ships)for(let k=0;k<3;k++){const L=o.ships.length,d=((tt*1.6+k*L/3)%L),i=Math.floor(d),f=d-i,A=o.ships[i],B=o.ships[(i+1)%L];if(!A||!B)continue;const[a,b]=px(...A),[c,e]=px(...B),x=a+(c-a)*f,y=b+(e-b)*f;
+      g.save();g.translate(x,y);g.rotate(Math.atan2(e-b,c-a));g.fillStyle='#e9f1f8';g.beginPath();g.moveTo(s*.55,0);g.lineTo(-s*.35,-s*.28);g.lineTo(-s*.18,0);g.lineTo(-s*.35,s*.28);g.closePath();g.fill();g.restore();}
+    if(o.label){g.fillStyle='#8794a5';g.font='500 10px IBM Plex Mono, monospace';g.textAlign='right';const used=bs.reduce((n,b)=>n+(b.n||1),0),deck=[...cells.values()].filter(c=>c.t==='P').length;
+      g.fillText(`${cells.size} hexes · ${Math.round(100*used/Math.max(1,deck))}% of building deck used · ${nodes.length} connectors`,W-10,H-10);}
+  }
+  return frame;
+}
+function hexLadder(){
+  const cv=document.getElementById('hxLadder'),dpr=Math.min(2,devicePixelRatio||1),s=26,W=760,H=250;cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';
+  const g=cv.getContext('2d');g.scale(dpr,dpr);g.drawImage(makeStars(W,H,77),0,0,W,H);const U=640/(s*Math.sqrt(3));
+  const shapes=[{name:'Small',sub:'3 per hex',hs:[[0,0]],ex:'turret, battery, miner'},{name:'1 hex',hs:[[0,0]],ex:'reactor, refinery, vault'},
+    {name:'2 hexes',hs:[[0,0],[1,0]],ex:'shipyard, solar, assembly'},{name:'3 hexes',hs:[[0,0],[1,0],[0,1]],ex:'teleporter, deep core rig'},
+    {name:'7 hexes',hs:[[0,0],...HX.dirs],ex:'alien gate, freight dock'}];
+  let x0=40;const y0=95;
+  for(const sh of shapes){const pts=sh.hs.map(([q,r])=>[x0+s*Math.sqrt(3)*(q+r/2),y0+s*1.5*r]);
+    for(const[x,y]of pts){hexPath(g,x+3,y+4,s);g.fillStyle='rgba(0,0,0,.5)';g.fill();hexPath(g,x,y,s-.4);g.fillStyle=COL.deck;g.fill();g.strokeStyle='rgba(242,179,61,.6)';g.lineWidth=1;g.stroke();}
+    const cx=pts.reduce((a,p)=>a+p[0],0)/pts.length,cy=pts.reduce((a,p)=>a+p[1],0)/pts.length;
+    if(sh.name==='Small')[SLOT_KINDS.q[0],SLOT_KINDS.q[1],SLOT_KINDS.q[2]].forEach((it,i)=>{const a=Math.PI/2+i*2.094;footprint(g,cx+Math.cos(a)*s*.42,cy-Math.sin(a)*s*.42,it[1]*.85,it[2]*.85,U,it[0],it[3]);});
+    if(sh.name==='1 hex')footprint(g,cx,cy,600,600,U,'Reactor','#5cc8e0');
+    if(sh.name==='2 hexes')footprint(g,cx,cy,960,600,U,'Shipyard','#7d8fb3');
+    if(sh.name==='3 hexes')teleporter(g,cx,cy,800/U/2,1.2);
+    if(sh.name==='7 hexes'){const r=1600/U/2;g.strokeStyle='#8a7cc9';g.lineWidth=r*.2;g.beginPath();g.arc(cx,cy,r*.86,0,7);g.stroke();}
+    const left=Math.min(...pts.map(p=>p[0]))-s;g.fillStyle='#f2b33d';g.font='600 13px Chakra Petch, sans-serif';g.textAlign='left';g.fillText(sh.name,left,y0+3.1*s+(sh.name==='7 hexes'||sh.name==='3 hexes'?0:0));
+    g.fillStyle='#8794a5';g.font='500 10px IBM Plex Mono, monospace';[...(sh.sub?[sh.sub]:[]),...sh.ex.split(', ')].forEach((t,i)=>g.fillText(t,left,y0+3.1*s+16+i*13));
+    x0=Math.max(...pts.map(p=>p[0]))+s*3.4;}
+  g.fillStyle='#8794a5';g.font='500 10px IBM Plex Mono, monospace';g.textAlign='right';g.fillText('1 hex = 640 u flat to flat · footprints to scale · large teleporter: 19 hexes',W-10,14);
+}
+
+// ---------- round 8: hex footprints, buildings that snap over a plate, player-laid roads ----------
+// plates of radius n (n=1: 7 hexes, n=2: 19 hexes); centres on the lattice i*(n+1,n)+j*(-n,2n+1)
+function plateOf(q,r,n){let best=null,bd=1e9;for(let i=-14;i<=14;i++)for(let j=-14;j<=14;j++){const cq=i*(n+1)-j*n,cr=i*n+j*(2*n+1),d=HX.dist(q,r,cq,cr);if(d<=n)return[cq,cr];if(d<bd){bd=d;best=[cq,cr];}}return best;}
+function hexRing(n){const out=[];for(let q=-n;q<=n;q++)for(let r=-n;r<=n;r++)if(HX.dist(q,r,0,0)<=n)out.push([q,r]);return out;}
+function hexLine(a,b){const N=HX.dist(a[0],a[1],b[0],b[1]),out=[];for(let i=0;i<=N;i++){const f=N?i/N:0,x=a[0]+(b[0]-a[0])*f+1e-6,z=a[1]+(b[1]-a[1])*f+1e-6,y=-x-z;
+  let rx=Math.round(x),ry=Math.round(y),rz=Math.round(z);const dx=Math.abs(rx-x),dy=Math.abs(ry-y),dz=Math.abs(rz-z);if(dx>dy&&dx>dz)rx=-ry-rz;else if(dy<=dz)rz=-rx-ry;out.push([rx,rz]);}return out;}
+// ---------- round 8b: real footprints inside the hex (hex = 820 u flat to flat) ----------
+const HEX_F=820;
+const uPer=s=>HEX_F/(s*Math.sqrt(3)); // world units per px for hex circumradius s
+const fitF=(w,h)=>Math.max(w,(Math.sqrt(3)*h+w)/2);
+// slot outline: the hexes a building claims, faint amber dashes
+function slotHex(g,x,y,s){hexPath(g,x,y,s*.94);g.fillStyle='rgba(242,179,61,.06)';g.fill();g.strokeStyle='rgba(242,179,61,.55)';g.setLineDash([3,3]);g.lineWidth=1;g.stroke();g.setLineDash([]);}
+// a 1-hex building: today's footprint, turned whichever way fits, centred in the hex
+function hexBld(g,x,y,s,it,slot){const[kind,w,h,col]=it,U=uPer(s);if(slot)slotHex(g,x,y,s);
+  if(kind==='Capital'){footprint(g,x,y,w,h,U,'Core',col);g.strokeStyle=col;g.lineWidth=Math.max(1,s*.08);g.beginPath();g.arc(x,y,w/U*.3,0,7);g.stroke();return;}
+  const[fw,fh]=fitF(w,h)<=fitF(h,w)?[w,h]:[h,w];footprint(g,x,y,fw,fh,U,kind,col);}
+// small buildings: one per third of the hex (a diamond), turned with their diamond
+function smallTrio(g,x,y,s,items,slot){const U=uPer(s);if(slot)slotHex(g,x,y,s);
+  if(slot){g.strokeStyle='rgba(242,179,61,.35)';g.setLineDash([2,3]);g.lineWidth=1;g.beginPath();for(let k=0;k<3;k++){const a=Math.PI/180*(-90+120*k);g.moveTo(x,y);g.lineTo(x+s*.94*Math.cos(a+Math.PI/3),y+s*.94*Math.sin(a+Math.PI/3));}g.stroke();g.setLineDash([]);}
+  items.forEach((it,i)=>{if(!it)return;g.save();g.translate(x,y);g.rotate(i*2*Math.PI/3);footprint(g,0,-s*.5,it[1],it[2],U,it[0],it[3]);g.restore();});}
+// a plate-sized building: today's footprint (to be redesigned) centred on the plate, built round the plate's connector
+const PLATE_KINDS={Shipyard:[960,600,'#7d8fb3'],'Freight dock':[1000,400,'#6f8a6f'],'Assembly plant':[900,640,'#7d8fb3'],'Ore processing':[840,600,'#c77d4a'],'Deep core rig':[760,760,'#c77d4a'],Teleporter:[800,800,'#5cc8e0'],'Transit pad':[800,800,'#5cc8e0'],'Siege gun':[300,900,'#e0524a'],'Large teleporter':[2120,2120,'#5cc8e0'],'Alien gate':[1600,1600,'#8a7cc9']};
+function plateBld(g,cx,cy,s,n,kind,col,t,slot){const U=uPer(s),[w,h]=PLATE_KINDS[kind]||[900,600];
+  if(slot!==false)for(const[q,r]of hexRing(n))slotHex(g,cx+s*Math.sqrt(3)*(q+r/2),cy+s*1.5*r,s);
+  if(kind.includes('eleporter')||kind==='Transit pad')teleporter(g,cx,cy,w/U/2,t);
+  else if(kind==='Alien gate'){const r=w/U/2;g.strokeStyle='#8a7cc9';g.lineWidth=r*.22;g.beginPath();g.arc(cx,cy,r*.85,0,7);g.stroke();}
+  else{footprint(g,cx,cy,w,h,U,kind,col);
+    if(kind==='Shipyard'){g.fillStyle='#10151c';g.fillRect(cx-w/U*.42,cy-h/U*.2,w/U*.84,h/U*.4);g.strokeStyle=col;g.lineWidth=1;g.strokeRect(cx-w/U*.42,cy-h/U*.2,w/U*.84,h/U*.4);}}
+  // the connector, now part of the building: a hub in its middle
+  const hr=Math.max(3.5,s*.36);g.fillStyle='#10151c';g.beginPath();g.arc(cx,cy,hr*1.55,0,7);g.fill();g.strokeStyle=COL.cyan;g.lineWidth=1.3;g.stroke();anchorGlyph(g,cx,cy,hr,'ok');}
+const HEX_ONE=[['Reactor',600,600,'#5cc8e0'],['Battery bank',600,600,'#5cc8e0'],['Fabricator',480,360,'#7d8fb3'],['Storage vault',480,320,'#6f8a6f'],['Refinery',380,300,'#c77d4a'],['Solar',700,300,'#f2d36b'],['Smelter',360,260,'#c77d4a'],['Habitat',360,240,'#b3a06b']];
+const SMALL8=[['Turret',140,140,'#e0524a'],['Battery',190,190,'#5cc8e0'],['Miner',240,240,'#c77d4a'],['Gas collector',300,300,'#8a7cc9'],['Missile turret',190,190,'#e0524a'],['Cargo bay',320,200,'#6f8a6f']];
+function hexBase8(id,o){
+  const cv=document.getElementById(id),dpr=Math.min(2,devicePixelRatio||1),n=o.n,r=rng(o.seed);let s=o.s;
+  const cells=new Map();for(const[cq,cr,R]of o.blobs)for(let q=cq-R;q<=cq+R;q++)for(let rr=cr-R;rr<=cr+R;rr++)if(HX.dist(q,rr,cq,cr)<=R)cells.set(HX.k(q,rr),{q,r:rr,t:'P'});
+  const at=(q,rr)=>cells.get(HX.k(q,rr));
+  // roads: tiles the player laid, hex by hex along their own route
+  for(const route of o.roads)for(let i=0;i+1<route.length;i++)for(const[q,rr]of hexLine(route[i],route[i+1])){const c=at(q,rr);if(c)c.t='S';}
+  let ti=0;for(const c of cells.values()){const edge=HX.dirs.some(([dq,dr])=>!at(c.q+dq,c.r+dr));if(!edge)continue;if(c.t==='S')c.gate=true;else c.t=(ti++%o.towerEvery===0)?'T':'F';}
+  const isF=c=>c&&(c.t==='F'||c.t==='T');
+  const plates=new Map();for(const c of cells.values()){const[fq,fr]=plateOf(c.q,c.r,n);c.f=HX.k(fq,fr);if(!plates.has(c.f))plates.set(c.f,{fq,fr,cells:[]});plates.get(c.f).cells.push(c);}
+  // plate-sized buildings snap over the plate nearest where they were dropped; the plate must be whole, fence-free and road-free
+  const bigs=[];for(const b of o.big||[]){const sz=b.size??n;const order=[...plates.values()].sort((a,c)=>HX.dist(a.fq,a.fr,...b.near)-HX.dist(c.fq,c.fr,...b.near));
+    for(const p of order){if(p.big)continue;const cov=p.cells.filter(c=>HX.dist(c.q,c.r,p.fq,p.fr)<=sz);if(cov.length!==hexRing(sz).length||cov.some(c=>c.t!=='P'||HX.dirs.some(([dq,dr])=>{const nb=at(c.q+dq,c.r+dr);return !nb||nb.t==='S';})))continue;p.big=b;for(const c of cov)c.t='B';bigs.push({...b,sz,p});break;}}
+  for(const p of plates.values()){if(p.big){p.node={q:p.fq,r:p.fr};continue;}
+    const cand=p.cells.filter(c=>c.t==='P').sort((a,b)=>HX.dist(a.q,a.r,p.fq,p.fr)-HX.dist(b.q,b.r,p.fq,p.fr));
+    const c0=at(p.fq,p.fr);p.node=(c0&&c0.t==='P')?c0:cand[0]||null;if(p.node)p.node.t='C';}
+  let x0=1e9,x1=-1e9,y0=1e9,y1=-1e9;for(const c of cells.values()){const x=Math.sqrt(3)*(c.q+c.r/2),y=1.5*c.r;x0=Math.min(x0,x);x1=Math.max(x1,x);y0=Math.min(y0,y);y1=Math.max(y1,y);}
+  s=Math.min(o.s,(o.W-40)/(x1-x0+2),(o.H-50)/(y1-y0+2));const ox=o.W/2-s*(x0+x1)/2,oy=(o.H-14)/2-s*(y0+y1)/2;
+  const px=(q,rr)=>[ox+s*Math.sqrt(3)*(q+rr/2),oy+s*1.5*rr];
+  const W=o.W,H=o.H;cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';const g=cv.getContext('2d');g.scale(dpr,dpr);
+  const stars=makeStars(W,H,o.seed);
+  const bs=[];{const cc=[...cells.values()].filter(c=>c.t==='P').sort((a,b)=>HX.dist(a.q,a.r,...o.core)-HX.dist(b.q,b.r,...o.core))[0];if(cc){bs.push({c:cc,it:['Capital',560,560,'#f2b33d'],cap:true});cc.t='b';}}
+  for(const c of cells.values()){if(c.t!=='P')continue;const d=HX.dist(c.q,c.r,o.core[0],o.core[1]),p=o.density*Math.max(0,1-d/o.reach);if(r()>p)continue;
+    if(r()<.7){const k=HEX_ONE[(r()*HEX_ONE.length)|0];bs.push({c,it:k});}else bs.push({c,small:[0,1,2].map(()=>r()<.85?SMALL8[(r()*SMALL8.length)|0]:null)});c.t='b';}
+  const pl=[...plates.values()].filter(p=>p.node),idx=new Map(pl.map((p,i)=>[p,i])),nodes=pl.map(p=>({u:p.node.q,v:p.node.r}));
+  const edges=[];pl.forEach((p,i)=>pl.forEach((p2,j)=>{if(j>i&&HX.dist(p.fq,p.fr,p2.fq,p2.fr)===2*n+1)edges.push([i,j]);}));
+  const nodeOf=c=>{const p=plates.get(c.f);return p&&p.node?idx.get(p):-1;};
+  const capB=bs.find(b=>b.cap),src=capB?Math.max(0,nodeOf(capB.c)):0,tree=bfsTree(nodes,edges,src);
+  function frame(t){
+    g.drawImage(stars,0,0,W,H);
+    for(const rk of o.rocks||[]){g.fillStyle='#4b4740';g.beginPath();for(let i=0;i<9;i++){const a=i/9*Math.PI*2,rr=rk[2]*(.8+.2*Math.sin(i*2.7+rk[0]));g.lineTo(rk[0]+Math.cos(a)*rr,rk[1]+Math.sin(a)*rr);}g.closePath();g.fill();}
+    g.fillStyle='rgba(0,0,0,.55)';for(const c of cells.values()){const[x,y]=px(c.q,c.r);hexPath(g,x+4,y+6,s+.5);g.fill();}
+    for(const c of cells.values()){const[x,y]=px(c.q,c.r),fl=plates.get(c.f),alt=((fl.fq*7+fl.fr*3)%2+2)%2;
+      hexPath(g,x,y,s-.3);g.fillStyle=c.t==='S'?COL.street:isF(c)?COL.deckLo:alt?COL.deckHi:COL.deck;g.fill();g.strokeStyle='#151a21';g.lineWidth=1;g.stroke();}
+    g.strokeStyle='#0b0e13';g.lineWidth=Math.max(1.5,s*.18);for(const c of cells.values()){const[x,y]=px(c.q,c.r);for(const[dq,dr]of HX.dirs){const nb=at(c.q+dq,c.r+dr);if(!nb||nb.f===c.f)continue;const[nx,ny]=px(nb.q,nb.r),ang=Math.atan2(ny-y,nx-x);
+      g.beginPath();g.moveTo(x+s*Math.cos(ang-Math.PI/6),y+s*Math.sin(ang-Math.PI/6));g.lineTo(x+s*Math.cos(ang+Math.PI/6),y+s*Math.sin(ang+Math.PI/6));g.stroke();}}
+    // road tiles: kerb lights where the road meets deck, dashed centre line between joined road tiles
+    g.lineCap='round';g.strokeStyle='#0d1116';g.lineWidth=s*1.25;g.beginPath();for(const c of cells.values()){if(c.t!=='S')continue;const[x,y]=px(c.q,c.r);g.moveTo(x,y);g.lineTo(x+.01,y);for(const[dq,dr]of HX.dirs.slice(0,3)){const nb=at(c.q+dq,c.r+dr);if(nb&&nb.t==='S'){const[nx,ny]=px(nb.q,nb.r);g.moveTo(x,y);g.lineTo(nx,ny);}}}g.stroke();
+    g.strokeStyle='rgba(242,179,61,.35)';g.lineWidth=1;g.lineCap='butt';
+    for(const c of cells.values()){if(c.t!=='S')continue;const[x,y]=px(c.q,c.r);
+      for(const[dq,dr]of HX.dirs){const nb=at(c.q+dq,c.r+dr);const[nx,ny]=px(c.q+dq,c.r+dr);
+        if(nb&&nb.t==='S'){g.strokeStyle='rgba(232,237,242,.85)';g.lineWidth=Math.max(1,s*.1);g.setLineDash([3,3]);g.lineDashOffset=reduce?0:-t*8;g.beginPath();g.moveTo(x,y);g.lineTo((x+nx)/2,(y+ny)/2);g.stroke();g.setLineDash([]);}
+        else if(s>8){const mx=x+(nx-x)*.46,my=y+(ny-y)*.46;g.fillStyle='rgba(242,179,61,.95)';g.fillRect(mx-1.3,my-1.3,2.6,2.6);}}}
+    for(const c of cells.values()){if(!isF(c)&&!c.gate)continue;const[x,y]=px(c.q,c.r);
+      for(const[dq,dr]of HX.dirs.slice(0,3)){const nb=at(c.q+dq,c.r+dr);if(!nb||!(isF(nb)||nb.gate))continue;if(c.gate&&nb.gate)continue;const[nx,ny]=px(nb.q,nb.r),gate=c.gate||nb.gate;
+        if(gate){g.strokeStyle='rgba(79,210,122,.95)';g.lineWidth=1.6;g.setLineDash([3,3]);}else{g.strokeStyle='rgba(92,200,224,.22)';g.lineWidth=Math.max(3,s*.45);g.beginPath();g.moveTo(x,y);g.lineTo(nx,ny);g.stroke();g.strokeStyle='rgba(130,225,245,.95)';g.lineWidth=1.4;}
+        g.beginPath();g.moveTo(x,y);g.lineTo(nx,ny);g.stroke();g.setLineDash([]);}
+      if(c.t==='T'){g.fillStyle=COL.red;g.beginPath();g.arc(x,y,Math.max(1.8,s*.24),0,7);g.fill();}
+      if(c.gate){g.fillStyle=COL.green;g.fillRect(x-2.5,y-2.5,5,5);}}
+    // cables under the plate buildings' hubs, buildings on top
+    for(const b of bs){const i=nodeOf(b.c);if(i<0)continue;const[a,bb]=px(nodes[i].u,nodes[i].v),[c,d]=px(b.c.q,b.c.r);drawCable(g,a,bb,c,d,Math.max(1.2,s*.13),false);}
+    for(const[i,j]of edges){const[a,b]=px(nodes[i].u,nodes[i].v),[c,d]=px(nodes[j].u,nodes[j].v);drawCable(g,a,b,c,d,Math.max(2.4,s*.3),s>9);}
+    for(const b of bs){const[x,y]=px(b.c.q,b.c.r);if(b.small)smallTrio(g,x,y,s,b.small);else hexBld(g,x,y,s,b.it);}
+    for(const b of bigs){const[x,y]=px(b.p.fq,b.p.fr);plateBld(g,x,y,s,b.sz,b.kind,b.col,t);}
+    const tt=reduce?.55:t,fr=x=>(x%1+1)%1*1.3;
+    nodes.forEach((nd,j)=>{const i=tree.par[j];if(i<0)return;const[a,b]=px(nodes[i].u,nodes[i].v),[c,d]=px(nd.u,nd.v);drawComet(g,a,b,c,d,fr(tt*.7-tree.dep[j]*.22),'#44ddff',Math.max(1.8,s*.2));});
+    for(const b of bs){const i=nodeOf(b.c);if(i<0||tree.dep[i]<0)continue;const[a,bb]=px(nodes[i].u,nodes[i].v),[c,d]=px(b.c.q,b.c.r);drawComet(g,a,bb,c,d,fr(tt*.7-(tree.dep[i]+1)*.22),'#44ddff',Math.max(1.2,s*.13));}
+    pl.forEach(p=>{if(p.big)return;const[a,b]=px(p.node.q,p.node.r);anchorGlyph(g,a,b,Math.max(3,s*.38),'ok');});
+    if(o.names)for(const b of bigs){const[x,y]=px(b.p.fq,b.p.fr);g.fillStyle='#f2b33d';g.font='600 10px IBM Plex Mono, monospace';g.textAlign='center';g.fillText(b.kind.toUpperCase(),x,y+s*(1.5*b.sz+1)+12);}
+    g.fillStyle='#8794a5';g.font='500 10px IBM Plex Mono, monospace';g.textAlign='right';const deck=[...cells.values()].filter(c=>c.t!=='F'&&c.t!=='T'&&c.t!=='S').length,used=bs.length+bigs.reduce((a,b)=>a+hexRing(b.sz).length,0);
+    g.fillText(`${cells.size} hexes · ${hexRing(n).length}-hex plates · ${Math.round(100*used/Math.max(1,deck))}% of building deck used · ${nodes.length} connectors`,W-10,H-10);
+  }
+  return frame;
+}
+function canvasOf(id,W,H){const cv=document.getElementById(id),dpr=Math.min(2,devicePixelRatio||1);cv.width=W*dpr;cv.height=H*dpr;cv.style.width=W+'px';cv.style.height=H+'px';const g=cv.getContext('2d');g.scale(dpr,dpr);return g;}
+function deckHexes(g,cx,cy,s,n,stroke){for(const[q,r]of hexRing(n)){const x=cx+s*Math.sqrt(3)*(q+r/2),y=cy+s*1.5*r;hexPath(g,x,y,s-.4);g.fillStyle=COL.deck;g.fill();g.strokeStyle=stroke||'#151a21';g.lineWidth=1;g.stroke();}}
+function hexLadder8(){
+  const W=760,H=300,s=24,g=canvasOf('hxLadder8',W,H);g.drawImage(makeStars(W,H,78),0,0,W,H);
+  const lab=(x,name,lines)=>{g.textAlign='left';g.fillStyle='#f2b33d';g.font='600 13px Chakra Petch, sans-serif';g.fillText(name,x,226);g.fillStyle='#8794a5';g.font='500 10px IBM Plex Mono, monospace';lines.forEach((t,i)=>g.fillText(t,x,244+i*13));};
+  const y0=118;
+  deckHexes(g,56,y0,34,0);smallTrio(g,56,y0,34,[SMALL8[0],SMALL8[1],SMALL8[2]],true);lab(30,'Small',['3 per hex','turrets, batteries','miner, cargo bay']);
+  deckHexes(g,170,y0,34,0);hexBld(g,170,y0,34,['Reactor',600,600,'#5cc8e0'],true);lab(144,'1 hex',['reactor, capital','factories, vault','solar, habitat']);
+  deckHexes(g,340,y0,s,1);plateBld(g,340,y0,s,1,'Shipyard','#7d8fb3',.4);lab(272,'7 hexes = 1 plate',['shipyard, docks','assembly, ore plant','teleporter, siege gun']);
+  deckHexes(g,590,y0,s*.62,2);plateBld(g,590,y0,s*.62,2,'Large teleporter','#5cc8e0',.4);lab(510,'Next size: 19 or 49?',['large teleporter','see the comparison','below']);
+  g.fillStyle='#8794a5';g.font='500 10px IBM Plex Mono, monospace';g.textAlign='right';g.fillText("today's footprints to scale · amber dashes = the slot it claims · hex = 820 u flat to flat",W-10,14);
+}
+// every structure in the game today, in the slot it would take
+function hexFit8(){
+  const W=760,H=520,g=canvasOf('hxFit8',W,H);g.fillStyle='#0a0d13';g.fillRect(0,0,W,H);
+  const head=(y,t,sub)=>{g.textAlign='left';g.fillStyle='#f2b33d';g.font='600 13px Chakra Petch, sans-serif';g.fillText(t,14,y);const w=g.measureText(t).width;g.fillStyle='#8794a5';g.font='500 10px IBM Plex Mono, monospace';g.fillText(sub,14+w+12,y);};
+  const name=(x,y,t)=>{g.textAlign='center';g.fillStyle='#b8c2cf';g.font='500 9px IBM Plex Mono, monospace';t.split('\n').forEach((l,i)=>g.fillText(l,x,y+i*10));};
+  let s=28;head(22,'Small','3 to a hex, each in a third of it');
+  const sm=[['Turret',140,140,'#e0524a'],['Bolt turret',150,150,'#e0524a'],['AA gun',150,150,'#e0524a'],['Autocannon',160,160,'#e0524a'],['Shield pylon',120,120,'#8a7cc9'],['Battery',190,190,'#5cc8e0'],['Missile turret',190,190,'#e0524a'],['5 in gun',200,200,'#e0524a'],['Mine layer',220,220,'#e0524a'],['Mining tower',240,240,'#c77d4a'],['Res. spire',240,240,'#b3a06b'],['Reclaimer',240,200,'#c77d4a'],['Cargo bay',320,200,'#6f8a6f'],['Gas collector',300,300,'#8a7cc9']];
+  for(let i=0;i<5;i++){const x=70+i*150,y=72,its=sm.slice(i*3,i*3+3);deckHexes(g,x,y,s,0);smallTrio(g,x,y,s,its,true);name(x,y+s+14,its.map(a=>a[0]).join('\n'));}
+  s=25;head(160,'1 hex','820 u flat to flat; each turned whichever way fits');
+  const one=[['Capital',560,560,'#f2b33d'],['Reactor',600,600,'#5cc8e0'],['Battery bank',600,600,'#5cc8e0'],['Super battery',640,560,'#e0524a'],['16 in gun',520,520,'#e0524a'],['11 in gun',420,420,'#e0524a'],['8 in gun',360,300,'#e0524a'],['Solar',700,300,'#f2d36b'],['Fabricator',480,360,'#7d8fb3'],['Storage vault',480,320,'#6f8a6f'],
+    ['Munitions',400,300,'#7d8fb3'],['Research lab',400,300,'#7d8fb3'],['Refinery',380,300,'#c77d4a'],['Silicon works',320,320,'#7aa0a0'],['Airlock',392,260,'#b3a06b'],['Hydroponics',420,200,'#4fd27a'],['Smelter',360,260,'#c77d4a'],['Shield gate',416,72,'#8a7cc9'],['Habitat',360,240,'#b3a06b']];
+  one.forEach((it,i)=>{const col=i%10,row=(i/10)|0,x=44+col*74,y=204+row*84;deckHexes(g,x,y,s,0);hexBld(g,x,y,s,it,true);name(x,y+s+14,it[0]);});
+  head(380,'7-hex plate',"today's footprint for now; redesigned round the connector in its middle");
+  s=13;const pk=['Shipyard','Freight dock','Assembly plant','Ore processing','Deep core rig','Teleporter','Transit pad','Siege gun'];
+  pk.forEach((k,i)=>{const x=50+i*94,y=438;deckHexes(g,x,y,s,1);plateBld(g,x,y,s,1,k,PLATE_KINDS[k][2],.4);name(x,y+s*2.5+14,k);});
+}
+// next size up after a 7-hex plate: a 19-hex building or a 49-hex one (7 whole plates), each on a normal base of 7-hex plates
+function hexNext8(){
+  const W=760,H=430,s=10.5,g=canvasOf('hxNext8',W,H);g.drawImage(makeStars(W,H,31),0,0,W,H);
+  const panel=(cx,cy,mode)=>{const px=(q,r)=>[cx+s*Math.sqrt(3)*(q+r/2),cy+s*1.5*r];
+    const inB=(q,r)=>{if(mode===19)return HX.dist(q,r,0,0)<=2;const p=plateOf(q,r,1);return HX.dist(p[0],p[1],0,0)<=3;};
+    const cells=hexRing(10).filter(([q,r])=>{const p=plateOf(q,r,1);return HX.dist(p[0],p[1],0,0)<=6;});
+    for(const[q,r]of cells){const[x,y]=px(q,r),p=plateOf(q,r,1),alt=((p[0]*7+p[1]*3)%2+2)%2;hexPath(g,x,y,s-.3);g.fillStyle=alt?COL.deckHi:COL.deck;g.fill();g.strokeStyle='#151a21';g.lineWidth=1;g.stroke();}
+    g.strokeStyle='#0b0e13';g.lineWidth=2;const set=new Set(cells.map(c=>c[0]+','+c[1]));
+    for(const[q,r]of cells){const[x,y]=px(q,r),f=plateOf(q,r,1)+'';for(const[dq,dr]of HX.dirs){if(!set.has((q+dq)+','+(r+dr))||plateOf(q+dq,r+dr,1)+''===f)continue;const[nx,ny]=px(q+dq,r+dr),a=Math.atan2(ny-y,nx-x);
+      g.beginPath();g.moveTo(x+s*Math.cos(a-Math.PI/6),y+s*Math.sin(a-Math.PI/6));g.lineTo(x+s*Math.cos(a+Math.PI/6),y+s*Math.sin(a+Math.PI/6));g.stroke();}}
+    if(mode===19)for(const[q,r]of cells){const p=plateOf(q,r,1),d=HX.dist(p[0],p[1],0,0);if(d===3&&!inB(q,r)){const[x,y]=px(q,r);hexPath(g,x,y,s*.9);g.fillStyle='rgba(224,82,74,.16)';g.fill();g.strokeStyle='rgba(224,82,74,.7)';g.setLineDash([2,2]);g.lineWidth=1;g.stroke();g.setLineDash([]);}}
+    for(const[q,r]of cells)if(inB(q,r)){const[x,y]=px(q,r);hexPath(g,x,y,s+.3);g.fillStyle='rgba(74,85,102,.7)';g.fill();slotHex(g,x,y,s);}
+    const centres=cells.filter(([q,r])=>{const p=plateOf(q,r,1);return p[0]===q&&p[1]===r;});
+    centres.forEach((a,i)=>centres.forEach((b,j)=>{if(j<=i||HX.dist(a[0],a[1],b[0],b[1])!==3||(inB(a[0],a[1])&&inB(b[0],b[1])))return;const[x1,y1]=px(a[0],a[1]),[x2,y2]=px(b[0],b[1]);drawCable(g,x1,y1,x2,y2,2.2,false);}));
+    teleporter(g,cx,cy,2120/uPer(s)/2,.4);
+    for(const c of centres){const[x,y]=px(c[0],c[1]);if(inB(c[0],c[1])){g.fillStyle='#10151c';g.beginPath();g.arc(x,y,s*.55,0,7);g.fill();g.strokeStyle=COL.cyan;g.lineWidth=1.3;g.stroke();}anchorGlyph(g,x,y,Math.max(3.2,s*.36),'ok');}
+  };
+  panel(195,190,19);panel(568,190,49);
+  const lab=(x,t,lines)=>{g.textAlign='center';g.fillStyle='#f2b33d';g.font='600 14px Chakra Petch, sans-serif';g.fillText(t,x,366);g.fillStyle='#8794a5';g.font='500 10px IBM Plex Mono, monospace';lines.forEach((l,i)=>g.fillText(l,x,384+i*13));};
+  lab(195,'A · 19 hexes',['one connector, in its middle','bites 2 hexes off each of the 6 plates round it (red)','about 4 100 u across']);
+  lab(568,'B · 49 hexes = 7 whole plates',['7 connectors under it, all built in','the plates round it are untouched','about 5 700 u across']);
+  g.fillStyle='#8794a5';g.font='500 10px IBM Plex Mono, monospace';g.textAlign='right';g.fillText("same scale, today's large teleporter (2 120 u) in the middle of each · normal base of 7-hex plates",W-10,14);
+}
+
+// ---------- boot ----------
+const rocks=[];{const r=rng(9);for(let i=0;i<46;i++){const a=r()*Math.PI*2,d=125+r()*70;rocks.push([190+Math.cos(a)*d*1.15,150+Math.sin(a)*d*.85,6+r()*14]);}}
+hexLadder();hexLadder8();hexFit8();hexNext8();
+const f8=hexBase8('hxBase8',{s:12,n:1,W:760,H:490,ox:370,oy:238,seed:73,blobs:[[0,0,9],[10,-5,6],[-9,4,6],[-3,9,4]],towerEvery:7,core:[4,-1],density:.55,reach:9,names:true,
+  roads:[[[-15,6],[-8,3],[-3,1],[0,-2],[6,-5],[15,-8]],[[0,-2],[2,4],[-2,12]],[[6,-5],[9,-1],[13,0]]],
+  big:[{near:[5,-1],kind:'Assembly plant',col:'#7d8fb3'},{near:[-6,6],kind:'Shipyard',col:'#7d8fb3'},{near:[11,-6],kind:'Teleporter',col:'#5cc8e0'}]});
+const fH=hexBase8('hxHuge8',{s:8,n:2,W:760,H:470,ox:375,oy:235,seed:12,blobs:[[0,0,15],[20,-4,9],[-20,4,9],[-5,15,6],[6,-15,6]],towerEvery:9,core:[0,0],density:.5,reach:20,names:true,
+  roads:[[[-31,6],[-14,3],[0,0],[14,-3],[31,-6]],[[0,0],[-3,9],[-7,22]],[[0,0],[4,-10],[8,-22]]],
+  big:[{near:[3,3],kind:'Deep core rig',col:'#c77d4a',size:1},{near:[-20,6],kind:'Large teleporter',col:'#5cc8e0',size:2},{near:[18,-8],kind:'Shipyard',col:'#7d8fb3',size:1}]});
+const fh=hexBase('hxBase',{s:13,W:660,H:480,ox:330,oy:205,seed:71,blobs:[[0,0,8],[9,-4,5],[-8,3,5],[-2,8,4]],streets:[[0,0,1,0,14],[0,0,0,1,12],[0,0,1,-1,12]],fence:true,towerEvery:7,core:[1,1],density:.62,reach:8.5,
+  fixed:[{q:1,r:1,n:1,kind:'Capital'},{q:-10,r:2,n:3,kind:'Teleporter'},{q:10,r:-2,n:3,kind:'Teleporter'}],ships:[[-12,0],[13,0],[-12,0]],label:true});
+const fd=hexBase('hxDense',{s:12,W:380,H:300,ox:178,oy:150,seed:5,blobs:[[0,0,4],[4,-2,3]],streets:[[0,0,1,0,9]],fence:true,towerEvery:5,core:[1,0],density:2,reach:14,rocks,
+  fixed:[{q:1,r:1,n:1,kind:'Capital'}],ships:[[-5,0],[8,0],[-5,0]]});
+
+ladder();turretCard('tA','A');turretCard('tB','B');turretCard('tC','C');
+const ff=fenceScene(),fc=cableScene();
+anchorThumb('anTile','tile');anchorThumb('anCorner','corner');anchorThumb('anPlate','plate');rebuild();snap('snapA',true);snap('snapB',false);
+scale();
+thumb('cA',conceptA);thumb('cB',conceptB);thumb('cC',conceptC);kit();damage();
+const fb=baseScene('cBase'),fs=sandbox();
+if(reduce){f8(0);fH(0);fb(0);fs(0);ff(0);fc(0);fh(0);fd(0);}else{const loop=ts=>{const t=ts/1000;f8(t);fH(t);fb(t);fs(t);ff(t);fc(t);fh(t);fd(t);requestAnimationFrame(loop);};requestAnimationFrame(loop);}
+})();
+</script>

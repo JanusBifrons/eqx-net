@@ -52,8 +52,10 @@ describe('Territory Lock catalogue record', () => {
       if (k.id !== 'territory_lock') expect(k.constructionCost).toBeLessThan(TERRITORY_LOCK_COST);
     }
     expect(STARTER_STRUCTURE_KINDS).toContain('territory_lock');
-    // Appended last (wire subtype index, invariant #11).
-    expect(STRUCTURE_KINDS_LIST.at(-1)!.id).toBe('territory_lock');
+    // Appended after every kind before it (wire subtype index, invariant #11);
+    // only later appends (the deck road) follow it.
+    const LATER_APPENDS = ['road'];
+    expect(STRUCTURE_KINDS_LIST.at(-1 - LATER_APPENDS.length)!.id).toBe('territory_lock');
   });
 });
 

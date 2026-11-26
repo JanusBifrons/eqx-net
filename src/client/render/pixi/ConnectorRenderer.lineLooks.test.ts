@@ -78,7 +78,7 @@ describe('ConnectorRenderer line looks (structure restyle 1g)', () => {
     const r = new ConnectorRenderer();
     expect(r.lineLook).toBeNull();
     r.update(row(false), 0.5, 0);
-    const strokes = instructions(r.staticGfx).filter((i) => i.action === 'stroke');
+    const strokes = instructions(r.cableStaticGfx).filter((i) => i.action === 'stroke');
     expect(strokes).toHaveLength(2);
     for (const s of strokes) {
       expect(s.data.style.color).toBe(CONNECTOR_IDLE_COLOR);
@@ -90,7 +90,7 @@ describe('ConnectorRenderer line looks (structure restyle 1g)', () => {
   it('default flowing edge keeps glow + core + comet on the per-frame layer', () => {
     const r = new ConnectorRenderer();
     r.update(row(true), 0.5, 100);
-    expect(instructions(r.gfx).filter((i) => i.action === 'stroke')).toHaveLength(3);
+    expect(instructions(r.cableGfx).filter((i) => i.action === 'stroke')).toHaveLength(3);
   });
 
   for (const look of LINE_LOOKS) {
@@ -98,18 +98,18 @@ describe('ConnectorRenderer line looks (structure restyle 1g)', () => {
       const r = new ConnectorRenderer();
       r.lineLook = look;
       expect(() => r.update(row(true), 0.5, 100)).not.toThrow();
-      const body = instructions(r.staticGfx).filter((i) => i.action === 'stroke');
+      const body = instructions(r.cableStaticGfx).filter((i) => i.action === 'stroke');
       expect(body.length).toBeGreaterThan(2 * 3);
       for (const s of body) {
         expect(Number.isFinite(s.data.style.width) && s.data.style.width > 0).toBe(true);
       }
-      expect(instructions(r.gfx).filter((i) => i.action === 'stroke').length).toBeGreaterThan(0);
+      expect(instructions(r.cableGfx).filter((i) => i.action === 'stroke').length).toBeGreaterThan(0);
       // Idle web: no flow drawn per frame.
       const idle = new ConnectorRenderer();
       idle.lineLook = look;
       idle.update(row(false), 0.05, 0);
-      expect(instructions(idle.gfx).filter((i) => i.action === 'stroke')).toHaveLength(0);
-      expect(instructions(idle.staticGfx).length).toBeGreaterThan(0);
+      expect(instructions(idle.cableGfx).filter((i) => i.action === 'stroke')).toHaveLength(0);
+      expect(instructions(idle.cableStaticGfx).length).toBeGreaterThan(0);
     });
   }
 
@@ -120,7 +120,7 @@ describe('ConnectorRenderer line looks (structure restyle 1g)', () => {
       const r = new ConnectorRenderer();
       r.lineLook = look;
       r.update(row(flowing), scale, 100);
-      for (const g of [r.staticGfx, r.gfx]) {
+      for (const g of [r.cableStaticGfx, r.cableGfx]) {
         for (const i of instructions(g)) {
           if (i.action !== 'stroke') continue;
           const s = i.data.style;
@@ -143,12 +143,12 @@ describe('cable look upgrade (structure restyle 1i)', () => {
       const r = new ConnectorRenderer();
       r.lineLook = 'cable';
       expect(() => r.update(row(true), scale, 100)).not.toThrow();
-      const body = instructions(r.staticGfx).filter((i) => i.action === 'stroke');
+      const body = instructions(r.cableStaticGfx).filter((i) => i.action === 'stroke');
       for (const s of body) {
         expect(Number.isFinite(s.data.style.width) && s.data.style.width > 0).toBe(true);
         expect(Number.isFinite(s.data.style.alpha)).toBe(true);
       }
-      const flow = instructions(r.gfx).filter((i) => i.action === 'stroke');
+      const flow = instructions(r.cableGfx).filter((i) => i.action === 'stroke');
       expect(flow.length).toBeGreaterThanOrEqual(3); // bleed, lit core, band
     }
   });
@@ -157,11 +157,11 @@ describe('cable look upgrade (structure restyle 1i)', () => {
     const r = new ConnectorRenderer();
     r.lineLook = 'cable';
     r.update(row(false), 0.5, 0);
-    const perEdge = instructions(r.staticGfx).filter((i) => i.action === 'stroke').length / 2;
+    const perEdge = instructions(r.cableStaticGfx).filter((i) => i.action === 'stroke').length / 2;
     // 2 shadows + 6 cradle + 9 strand + 2 lashing + 4 clamp + 4 collar.
     expect(perEdge).toBe(27);
     // The bundle is wider on screen than the old cable (~12 world units).
-    const widest = Math.max(...instructions(r.staticGfx).filter((i) => i.action === 'stroke').map((i) => i.data.style.width));
+    const widest = Math.max(...instructions(r.cableStaticGfx).filter((i) => i.action === 'stroke').map((i) => i.data.style.width));
     expect(widest).toBeGreaterThan(16);
   });
 
@@ -171,7 +171,7 @@ describe('cable look upgrade (structure restyle 1i)', () => {
     const r = new ConnectorRenderer();
     r.lineLook = 'cable';
     r.update(mirror, 0.5, 0);
-    const perEdge = instructions(r.staticGfx).filter((i) => i.action === 'stroke').length / 2;
+    const perEdge = instructions(r.cableStaticGfx).filter((i) => i.action === 'stroke').length / 2;
     expect(perEdge).toBe(1 + 9);
   });
 });
@@ -237,11 +237,11 @@ describe('socket cables (structure-restyle 0d slice 8)', () => {
     expect(Array.from(c.poly)).toEqual(expected);
     // The bundle's centre strand (outline + core sheath) runs that polyline,
     // stud to stud.
-    const drawn = strokedPaths(r.staticGfx, CABLE_POINTS).filter((p) => p[0] === expected[0] && p[1] === expected[1]);
+    const drawn = strokedPaths(r.cableStaticGfx, CABLE_POINTS).filter((p) => p[0] === expected[0] && p[1] === expected[1]);
     expect(drawn.length).toBeGreaterThanOrEqual(2);
     for (const p of drawn) p.forEach((v, i) => expect(v).toBeCloseTo(expected[i]!, 6));
     // It is the cable line look (bundle, frames, collars), not a thin tube.
-    expect(instructions(r.staticGfx).filter((i) => i.action === 'stroke').length).toBeGreaterThan(20);
+    expect(instructions(r.cableStaticGfx).filter((i) => i.action === 'stroke').length).toBeGreaterThan(20);
     // It leaves the socket along the socket's outward normal.
     const n = { x: 0, y: 0, nx: 0, ny: 0 };
     structureSocketToWorld(structureSockets('solar')[sa]!, 0, 0, Math.PI / 2, n);
@@ -297,7 +297,7 @@ describe('socket cables (structure-restyle 0d slice 8)', () => {
     r.socketCables = true;
     r.update(mirror, 0.5, 100);
     const c = r.cables.peek(1 * 65536 + 2)!;
-    const flow = strokedPaths(r.gfx, CABLE_POINTS);
+    const flow = strokedPaths(r.cableGfx, CABLE_POINTS);
     expect(flow.length).toBeGreaterThanOrEqual(1); // the bleed (the lit core shows between the frames)
     for (const p of flow) expect(p).toEqual(Array.from(c.poly));
     expect(r.cables.flattens).toBe(2);
@@ -308,7 +308,7 @@ describe('socket cables (structure-restyle 0d slice 8)', () => {
     const r = new ConnectorRenderer();
     r.update(mirror, 0.5, 0);
     expect(r.cables.size).toBe(0);
-    expect(instructions(r.staticGfx).filter((i) => i.action === 'stroke')).toHaveLength(2);
+    expect(instructions(r.cableStaticGfx).filter((i) => i.action === 'stroke')).toHaveLength(2);
   });
 
   it('slice 9: flow frames redraw only the animated layer; the receiving collar flashes as comets arrive', () => {
@@ -324,7 +324,7 @@ describe('socket cables (structure-restyle 0d slice 8)', () => {
     const c = r.cables.peek(key)!;
     // The flash: the receiving end collar (just off the solar's stud) lit in
     // a band wider than any other flow stroke.
-    const flashed = (): boolean => (r.gfx.context as unknown as { instructions: Array<PathInstr & { data: { style: { width: number } } }> }).instructions
+    const flashed = (): boolean => (r.cableGfx.context as unknown as { instructions: Array<PathInstr & { data: { style: { width: number } } }> }).instructions
       .some((i) => i.action === 'stroke' && i.data.style.width > 14 && i.data.path.instructions.length === 2
         && Math.hypot((i.data.path.instructions[0]!.data[0]! + i.data.path.instructions[1]!.data[0]!) / 2 - c.poly[0]!,
           (i.data.path.instructions[0]!.data[1]! + i.data.path.instructions[1]!.data[1]!) / 2 - c.poly[1]!) < 12);
@@ -347,7 +347,7 @@ describe('socket cables (structure-restyle 0d slice 8)', () => {
     r.update(mirror, 0.5, 100);
     expect(r.cables.size).toBe(0);
     // Glow, line and comet stay straight two-point strokes; nothing runs a cable.
-    expect(strokedPaths(r.gfx, 2).length).toBeGreaterThanOrEqual(3);
-    expect(strokedPaths(r.gfx, CABLE_POINTS)).toHaveLength(0);
+    expect(strokedPaths(r.cableGfx, 2).length).toBeGreaterThanOrEqual(3);
+    expect(strokedPaths(r.cableGfx, CABLE_POINTS)).toHaveLength(0);
   });
 });

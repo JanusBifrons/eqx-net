@@ -64,6 +64,7 @@ describe('structureKinds catalogue', () => {
       'coastal_lindemann',
       'siege_gun_80cm',
       'territory_lock',
+      'road', // base platforms deck tile — appended
     ]);
   });
 
@@ -217,7 +218,10 @@ describe('structureKinds catalogue', () => {
     expect(structureHalfExtents('solar', 180)).toEqual({ hw: 350, hh: 150 });
     expect(structureHalfExtents('solar', 270)).toEqual({ hw: 150, hh: 350 });
     expect(normaliseStructureRotation(-90)).toBe(270);
-    expect(normaliseStructureRotation(44)).toBe(0);
-    expect(normaliseStructureRotation(46)).toBe(90);
+    // Base platforms: 30° steps (the quarter turns keep their values).
+    expect(normaliseStructureRotation(14)).toBe(0);
+    expect(normaliseStructureRotation(16)).toBe(30);
+    expect(normaliseStructureRotation(46)).toBe(60);
+    expect(normaliseStructureRotation(90)).toBe(90);
   });
 });

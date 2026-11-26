@@ -7,6 +7,10 @@ import type { Server } from 'colyseus';
 import { SectorRoom } from '../SectorRoom.js';
 import { BASE_BUILD_PREBUILT, GATE_TEST_PREBUILT, PREBUILT_ADOPT_OWNER, RIG_SANDBOX_E2E_SCENE, RIG_SANDBOX_PREBUILT, RIG_HOME, RIG_UNLOAD, rigSandboxScene, SCENARIO, STRUCTURE_SCENARIO_PREBUILT } from '../scenarioLayouts.js';
 import { SHOWCASE_PILOT_ID } from '../showcaseRooms.js';
+import { DECK_HEX_SIZE, deckHexCentreInto, plateCentreWorldInto } from '../../../core/hex/plates.js';
+import { hexCornerInto } from '../../../core/hex/hex.js';
+import { snapPlacementToDeck } from '../../../core/structures/deckPlacement.js';
+import { DECK_BASES_OPTS } from './deckBasesRoom.js';
 
 /**
  * `?room=base-build-test` (Sunday base loop): stills and films of building.
@@ -40,6 +44,72 @@ export const BASE_BUILD_TEST_OPTS = {
   defaultSpawnX: -1000,
   defaultSpawnY: 150,
   maxClients: 4,
+};
+
+/**
+ * `?room=deck` (base-platforms prototype): `base-build-test`'s setup with the
+ * `deck` flag on (`state.deck`). The first pilot to join adopts ONE Connector
+ * at the world origin (the first plate's anchor) and a Capital centred in the
+ * plate's lower-right outer hex (axial (1,-1), 1300 u away), sitting in its
+ * hex slot; the plate-connector deck link rule cables and powers it.
+ */
+const DECK_CAPITAL_AT = deckHexCentreInto(1, -1, { x: 0, y: 0 });
+
+export const DECK_TEST_OPTS = {
+  ...BASE_BUILD_TEST_OPTS,
+  sectorKey: 'deck',
+  deck: true,
+  prebuiltStructures: [
+    { kind: 'capital' as const, x: DECK_CAPITAL_AT.x, y: DECK_CAPITAL_AT.y, rot: SCENARIO.capital.rot },
+    { kind: 'connector' as const, x: 0, y: 0 },
+  ],
+  scenarioAsteroids: [],
+  defaultSpawnX: -1000,
+  defaultSpawnY: 150 - SCENARIO.connectorN.y,
+};
+
+/** Base-platforms stills: the deck room plus a fuller staged plate (buildings on
+ *  outer hexes, one at 30°) and a neighbouring plate, to show seam cables. */
+const hexAt = (q: number, r: number, ox = 0, oy = 0): { x: number; y: number } => {
+  const p = deckHexCentreInto(q, r, { x: 0, y: 0 });
+  return { x: p.x + ox, y: p.y + oy };
+};
+const DECK_SHOW_P2 = plateCentreWorldInto(1, 0, { x: 0, y: 0 });
+/** Plate 3 (slice 22): anchored by a Large Teleporter, not a connector. */
+const DECK_SHOW_P3 = plateCentreWorldInto(-1, 0, { x: 0, y: 0 });
+/** A fence ring round plate 2's middle hex: a shield pylon on each corner, and a
+ *  gate on the east seam where a road tile (on the east hex) meets it. Positions
+ *  and the gate's turn come from the player's deck snap, so they sit exactly
+ *  where a player would put them. */
+const DECK_SHOW_FENCE = ((): Array<{ kind: 'shield_pylon' | 'shield_gate' | 'road'; x: number; y: number; rot?: number }> => {
+  const out: Array<{ kind: 'shield_pylon' | 'shield_gate' | 'road'; x: number; y: number; rot?: number }> = [];
+  const c = { x: 0, y: 0 };
+  for (let i = 0; i < 6; i++) {
+    hexCornerInto(DECK_SHOW_P2.x, DECK_SHOW_P2.y, DECK_HEX_SIZE, i, c);
+    out.push({ kind: 'shield_pylon', x: c.x, y: c.y });
+  }
+  const road = hexAt(1, 0, DECK_SHOW_P2.x, DECK_SHOW_P2.y);
+  const gate = snapPlacementToDeck('shield_gate', (DECK_SHOW_P2.x + road.x) / 2, (DECK_SHOW_P2.y + road.y) / 2, { x: 0, y: 0, q: 0, r: 0, rhombus: -1, rot: -1, slot: 'edge' });
+  out.push({ kind: 'road', ...road, rot: 30 });
+  out.push({ kind: 'shield_gate', x: gate.x, y: gate.y, rot: gate.rot });
+  return out;
+})();
+export const DECK_SHOW_OPTS = {
+  ...DECK_TEST_OPTS,
+  prebuiltStructures: [
+    ...DECK_TEST_OPTS.prebuiltStructures,
+    { kind: 'solar' as const, ...hexAt(-1, 0) },
+    { kind: 'solar' as const, ...hexAt(0, 1) },
+    { kind: 'smelter' as const, ...hexAt(-1, 1), rot: 30 },
+    { kind: 'refinery' as const, ...hexAt(0, -1) },
+    { kind: 'connector' as const, x: DECK_SHOW_P2.x, y: DECK_SHOW_P2.y },
+    { kind: 'solar' as const, ...hexAt(0, 1, DECK_SHOW_P2.x, DECK_SHOW_P2.y) },
+    ...DECK_SHOW_FENCE,
+    // Slice 22: a plate building. The Large Teleporter on plate (-1,0)'s
+    // centre IS that plate's connector (it anchors the plate, west of the
+    // spawn, and seam-links to plate (0,0)).
+    { kind: 'teleporter_large' as const, x: DECK_SHOW_P3.x, y: DECK_SHOW_P3.y },
+  ],
 };
 
 /** Registers this group's rooms. Called from `index.ts` inside the
@@ -451,4 +521,7 @@ export function defineEngineeringRooms(gameServer: Server): void {
     })
     .filterBy(['testId']);
   gameServer.define('base-build-test', SectorRoom, { ...BASE_BUILD_TEST_OPTS }).filterBy(['testId']);
+  gameServer.define('deck', SectorRoom, { ...DECK_TEST_OPTS }).filterBy(['testId']);
+  gameServer.define('deck-show', SectorRoom, { ...DECK_SHOW_OPTS }).filterBy(['testId']);
+  gameServer.define('deck-bases', SectorRoom, { ...DECK_BASES_OPTS }).filterBy(['testId']);
 }

@@ -141,7 +141,7 @@ export function adoptPrebuiltBase(reg: StructureRegistry, playerId: string): num
     rec.owner = playerId;
     n++;
   }
-  if (n > 0) reg.topologyDirty = true;
+  if (n > 0) { reg.topologyDirty = true; reg.syncPlateOwners(); }
   return n;
 }
 

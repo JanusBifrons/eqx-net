@@ -28,9 +28,10 @@ function pair(): RenderMirror {
   return { swarm, structures } as unknown as RenderMirror;
 }
 
-/** Strokes on the per-frame layer: 3 (glow, core, comet) while flowing, 0 idle. */
+/** Strokes on the per-frame cable-flow layer (`cableGfx`, the band under roads and
+ *  bodies): 3 (glow, core, comet) while flowing, 0 idle. */
 const flowStrokes = (r: ConnectorRenderer): number =>
-  (r.gfx.context as unknown as { instructions: { action: string }[] }).instructions.filter((i) => i.action === 'stroke').length;
+  (r.cableGfx.context as unknown as { instructions: { action: string }[] }).instructions.filter((i) => i.action === 'stroke').length;
 
 function rig(speed: number) {
   let wall = 10_000;

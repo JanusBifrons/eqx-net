@@ -32,7 +32,7 @@ import {
 } from './connectorVisual.js';
 import { drawLineLookFlow, type LineLook } from './connectorLineLooks.js';
 import {
-  LinkCableCache, drawPreviewCable, drawSocketCableFlow, fillLinkCable, fillStraight, makeLinkCable, noteCableFlow,
+  LinkCableCache, drawPreviewCable, drawSocketCableFlow, fillPreviewCable, makeLinkCable, noteCableFlow,
 } from './connectorCables.js';
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import {
@@ -48,13 +48,10 @@ import {
   CONNECTION_MAX_RANGE,
 } from '../../../core/structures/structureGridConstants.js';
 import type { Connection } from '../../../core/structures/Connection.js';
-import {
-  CABLE_NO_SOCKET,
-  linkReachBoxAdd,
-  linkReachBoxStart,
-  makeCableSocketPick,
-} from '../../../core/structures/cableCurve.js';
+import { CABLE_NO_SOCKET, linkReachBoxAdd, linkReachBoxStart, makeCableSocketPick } from '../../../core/structures/cableCurve.js';
+import { ghostPlateReachBoxAdd } from './placementDeckSnap.js';
 import { makeCableReseat } from '../../../core/structures/socketReseat.js';
+import { DECK_LINK_NONE, deckLinkKind } from '../../../core/structures/deckLinks.js';
 import { drawMines, drawNoPowerBolt, drawStatusBar } from './structureStatusMarks.js';
 import { hasBodyStatus } from './structureSocketNubs.js';
 import { visitDerivedWalls, type DerivedWallVisitor } from '../../structures/derivedWalls.js';
@@ -95,6 +92,9 @@ export class ConnectorRenderer {
   readonly staticLayer: ConnectorStaticLayer = new ConnectorStaticLayer(this);
   /** The static layer's scene node (one Graphics child per chunk). */
   readonly staticGfx = this.staticLayer.container;
+  /** The cable band (under roads, rig pads, bodies): the static cables, then their per-frame flow (cleared each frame). */
+  readonly cableStaticGfx = this.staticLayer.cableContainer;
+  readonly cableGfx = this.staticLayer.cableFlow;
   /** Test hooks: frames that redrew any static chunk, and structures redrawn on it. */
   get staticRebuilds(): number { return this.staticLayer.rebuilds; }
   get staticStructuresDrawn(): number { return this.staticLayer.structuresDrawn; }
@@ -352,6 +352,8 @@ export class ConnectorRenderer {
   update(mirror: RenderMirror, scale: number, nowMs: number): void {
     const g = this.gfx;
     g.clear();
+    const cg = this.cableGfx.clear();
+    this.cables.deck = mirror.deckPlates?.deck === true; // base platforms: deck links draw their seam path
     const structures = mirror.structures;
     const swarm = mirror.swarm;
     // The preview can run even with zero PLACED structures (the ghost still
@@ -380,7 +382,7 @@ export class ConnectorRenderer {
     // The new fences take over the walls once ready (and cables replace the
     // thin lines): fold both into the signature so the static layer redraws.
     const vb = this.viewBounds;
-    this.staticLayer.refresh(structures, swarm, scale, vb, (this._fxWallsOn ? 0.5 : 0) + (this.socketCables ? 0.25 : 0));
+    this.staticLayer.refresh(structures, swarm, scale, vb, (this._fxWallsOn ? 0.5 : 0) + (this.socketCables ? 0.25 : 0) + (this.cables.deck ? 0.125 : 0));
     this.builtTurretRangeCount = this.staticLayer.ringCount;
     this.lastBuiltTurretRangeRadius = this.staticLayer.ringRadius;
     this.lastBuiltTurretRangeWidth = this.staticLayer.ringWidth;
@@ -423,34 +425,34 @@ export class ConnectorRenderer {
         // (repair→green / minerals→orange / construction→cyan). Absent ⇒ minerals.
         const material = codeToFlowMaterial(flowMat ? flowMat.get(key) : undefined);
         const v = connectorVisualInto(this._edgeVisual, flashUntil, nowMs, scale, phaseOffset, material);
-        if (!v.pulseActive) continue; // idle: drawn on the static layer
+        if (!v.pulseActive || this.cables.isFenceBeam(a, b)) continue; // idle / a deck fence beam: drawn on the static layer
         const bx = b.x;
         const by = -b.y;
         if (this.socketCables) {
           const cab = linkCableOf(this.cables, id, st, ci, a, b, structures);
           // Off screen: only keep the flow train's clock running.
-          if (cableInView(cab, CULL_PAD, vb)) drawSocketCableFlow(g, cab, v, src === undefined || src === id, scale, nowMs, material, a.radius, b.radius);
+          if (cableInView(cab, CULL_PAD, vb)) drawSocketCableFlow(cg, cab, v, src === undefined || src === id, scale, nowMs, material, a.radius, b.radius);
           else noteCableFlow(cab, nowMs);
           continue;
         }
         if (!isSegmentInView(ax, ay, bx, by, CULL_PAD + Math.max(a.radius, b.radius), vb)) continue;
-        if (this.lineLook) { drawLineLookFlow(g, this.lineLook, v, this._comet, src === undefined || src === id, ax, ay, bx, by, scale, a.radius, b.radius); continue; }
+        if (this.lineLook) { drawLineLookFlow(cg, this.lineLook, v, this._comet, src === undefined || src === id, ax, ay, bx, by, scale, a.radius, b.radius); continue; }
         // Glow underlay first (so the core line sits on top).
         if (v.glowAlpha > 0) {
-          g.moveTo(ax, ay).lineTo(bx, by);
-          g.stroke({ color: v.color, alpha: v.glowAlpha, width: v.glowWidth });
+          cg.moveTo(ax, ay).lineTo(bx, by);
+          cg.stroke({ color: v.color, alpha: v.glowAlpha, width: v.glowWidth });
         }
-        g.moveTo(ax, ay).lineTo(bx, by);
-        g.stroke({ color: v.color, alpha: v.alpha, width: v.width });
+        cg.moveTo(ax, ay).lineTo(bx, by);
+        cg.stroke({ color: v.color, alpha: v.alpha, width: v.width });
         // R2.2 — the travelling-comet flow pulse (always runs source→dest).
         // sourceIsLo ⇒ the flow source is the lower-id endpoint (id = the (ax,ay)
         // end); default forward when the direction wasn't recorded.
         if (v.pulseActive && (v.pulseAlpha ?? 0) > 0) {
           const sourceIsLo = src === undefined || src === id;
           const c = cometSegment(this._comet, v.pulseT ?? 0, sourceIsLo, ax, ay, bx, by, scale);
-          g.moveTo(c.x0, c.y0);
-          g.lineTo(c.x1, c.y1);
-          g.stroke({ color: v.pulseColor ?? 0, alpha: v.pulseAlpha ?? 0, width: v.pulseWidth ?? 0 });
+          cg.moveTo(c.x0, c.y0);
+          cg.lineTo(c.x1, c.y1);
+          cg.stroke({ color: v.pulseColor ?? 0, alpha: v.pulseAlpha ?? 0, width: v.pulseWidth ?? 0 });
         }
       }
 
@@ -562,6 +564,7 @@ export class ConnectorRenderer {
     const ghostX = this.ghostWorldX ?? preview.x;
     const ghostY = this.ghostWorldY ?? preview.y;
     const ghost = ghostToGridNode(preview, this._ghostNode, ghostX, ghostY); // keeps the ghost's angle
+    const deck = preview.deck === true; // base platforms: the room deck flag (server: `StructureRegistry.deck`)
 
     // Build the node map + adjacency + obstacle list (asteroids) for the
     // SAME canConnect the server uses, all into reused scratch.
@@ -569,7 +572,7 @@ export class ConnectorRenderer {
     // shared in core): the ghost plus every own partner in range, each padded
     // by its extent + the cable tail.
     const box = this._previewBox;
-    linkReachBoxStart(ghost, box);
+    linkReachBoxStart(ghost, box); if (preview.deck === true) ghostPlateReachBoxAdd(preview.kind, ghostX, ghostY, box); // laying a plate: rocks over all of it
     const nodes = this._previewNodes;
     nodes.clear();
     const adjacency = this._previewAdjacency;
@@ -597,7 +600,7 @@ export class ConnectorRenderer {
         structureMirrorToGridNode(sid, st, entry, node);
         nodes.set(sid, node);
         this._nodeCandidate[poolIdx] = candidate;
-        if (candidate) linkReachBoxAdd(ghost, node, CONNECTION_MAX_RANGE, box);
+        if (candidate) linkReachBoxAdd(ghost, node, deck && deckLinkKind(ghost, node) !== DECK_LINK_NONE ? Infinity : CONNECTION_MAX_RANGE, box);
         // REAL adjacency: one pooled connection-like entry per `st.connTo` link,
         // carrying `aId`/`bId` so `shieldPylonRejection`'s `c.getOtherNode(...)`
         // resolves (a sparse length-only array threw on the `undefined` element —
@@ -698,7 +701,7 @@ export class ConnectorRenderer {
     for (let k = 0; k < poolIdx; k++) {
       if (this._nodeCandidate[k] !== true) continue;
       const node = this._nodePool[k]!;
-      const res = canConnect(ghost, node, adjacency, nodes, obstacles, pick, this._reseat);
+      const res = canConnect(ghost, node, adjacency, nodes, obstacles, pick, this._reseat, deck);
       let v = verdicts[vn];
       if (v === undefined) {
         v = { id: '', ok: false, reason: null, sockA: CABLE_NO_SOCKET, sockB: CABLE_NO_SOCKET };
@@ -775,8 +778,7 @@ export class ConnectorRenderer {
     lineKind: PreviewLineKind, scale: number,
   ): void {
     const c = this._previewCable;
-    if (this.socketCables && sockA !== CABLE_NO_SOCKET && sockB !== CABLE_NO_SOCKET) fillLinkCable(c, ghost, sockA, node, sockB);
-    else fillStraight(c, ax, ay, node.x, -node.y); // Pixi screen space is Y-down; world is Y-up.
+    fillPreviewCable(c, this.socketCables, this.cables.deck, ghost, sockA, node, sockB, ax, ay);
     drawPreviewCable(this.gfx, c, previewLineVisualParams(lineKind, scale));
   }
 

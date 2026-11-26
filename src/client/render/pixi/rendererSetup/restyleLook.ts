@@ -12,33 +12,46 @@ import type { Container } from 'pixi.js';
 import type { ArtOptions } from '../../art/artMode.js';
 import { DEFAULT_LINE_LOOK, readLineLook, type LineLook } from '../connectorLineLooks.js';
 import { readRigsFlag, StructureRigs } from '../structureRigs.js';
+import { StructureDeckPlates } from '../structureDeckPlates.js';
+import { DEFAULT_DECK_TEX, readDeckTex, type DeckTex } from '../structureDeckTexture.js';
+import { DEFAULT_FENCE_LOOK, readFenceLook, type FenceLook } from '../connectorFenceBeam.js';
+import { readZonesFlag } from '../structureDeckZones.js';
 
 export interface RestyleLook {
   /** Grid line look; null = the pre-restyle thin line. */
   lineLook: LineLook | null;
   /** Draw structure rig parts (pad, crane, hatches). */
   rigs: boolean;
+  /** Deck floor look (`?deckTex=plain|a|b`, base platforms). */
+  deckTex: DeckTex;
+  /** Deck fence link look (`?fenceLook=old|new`, base platforms slice 30). */
+  fenceLook: FenceLook;
+  /** Deck zone markings (`?zones=on|off`, base platforms slice 33). */
+  zones: boolean;
 }
 
 /** The restyle scene options from a URL query string. */
 export function readRestyleLook(search: string): RestyleLook {
-  return { lineLook: readLineLook(search), rigs: readRigsFlag(search) };
+  return { lineLook: readLineLook(search), rigs: readRigsFlag(search), deckTex: readDeckTex(search), fenceLook: readFenceLook(search), zones: readZonesFlag(search) };
 }
 
 /** What a renderer draws: `ArtOptions` first, else the URL (`search`, null in a worker), else the defaults. */
 export function resolveRestyleLook(art: ArtOptions, search: string | null): RestyleLook {
-  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true };
+  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, zones: true };
   return {
     lineLook: art.lineLook !== undefined ? art.lineLook : fromUrl.lineLook,
     rigs: art.rigs ?? fromUrl.rigs,
+    deckTex: art.deckTex ?? fromUrl.deckTex,
+    fenceLook: art.fenceLook ?? fromUrl.fenceLook,
+    zones: art.zones ?? fromUrl.zones,
   };
 }
 
 /** Init step (`initSceneAndOverlays`): set the connector line look and build the
- *  one `StructureRigs` the swarm updater poses, on either renderer path. */
+ *  one `StructureRigs` the swarm updater poses (and the deck floor), on either renderer path. */
 export function applyRestyleLook(
-  connectorRenderer: { lineLook: LineLook | null; socketCables?: boolean },
-  swarmUpdaterCtx: { structureRigs?: StructureRigs; socketNubs?: boolean },
+  connectorRenderer: { lineLook: LineLook | null; socketCables?: boolean; cables?: { fenceBeams: boolean } },
+  swarmUpdaterCtx: { structureRigs?: StructureRigs; deckPlates?: StructureDeckPlates; socketNubs?: boolean },
   shipContainer: Container,
   art: ArtOptions,
   search: string | null,
@@ -47,8 +60,12 @@ export function applyRestyleLook(
   connectorRenderer.lineLook = look.lineLook;
   // 0d slice 8: links drawn as socket cables on the server's curve.
   connectorRenderer.socketCables = art.fx === true;
+  // Base platforms slice 30: deck fence links as a shield beam (`?fenceLook=new`).
+  if (connectorRenderer.cables) connectorRenderer.cables.fenceBeams = look.fenceLook === 'new';
   // 0d slice 10: socket nubs on the structures, same flag.
   swarmUpdaterCtx.socketNubs = art.fx === true;
   if (look.rigs) swarmUpdaterCtx.structureRigs = new StructureRigs(shipContainer);
+  // Base platforms: the deck floor (drawn only while the room's deck flag is on).
+  swarmUpdaterCtx.deckPlates = new StructureDeckPlates(shipContainer, look.deckTex, look.zones);
   return look;
 }

@@ -259,4 +259,7 @@ export class SectorState extends Schema {
   @type({ map: MineState }) mines = new MapSchema<MineState>();
   @type('number') tick: number = 0;
   @type('number') clockRate: number = 1.0;
+  /** Base-platforms prototype: this room builds on hex deck plates (room opt
+   *  `deck`, testMode only). Synced so join + snapshots carry it (invariant 16). */
+  @type('boolean') deck: boolean = false;
 }

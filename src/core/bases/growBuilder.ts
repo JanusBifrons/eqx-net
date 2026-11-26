@@ -1,13 +1,14 @@
 /** The base generator's placement checker (`growBase.ts`, step 2: "Lay
  *  out"): every placement passes the real `placementRejection` and every
  *  edge the real `canConnect`, AS the base is built. */
-import { getStructureKind, structureHalfExtents, structureSockets, type StructureKindId } from '../../shared-types/structureKinds.js';
+import { getStructureKind, isConnectorKind, structureHalfExtents, structureSockets, type StructureKindId } from '../../shared-types/structureKinds.js';
 import { canConnect, type GridNode } from '../structures/Grid.js';
 import { Connection } from '../structures/Connection.js';
 import {
   CABLE_CURVE_FLOATS, cablePolylineHitsAabb, flattenLinkCable, makeCableBox, makeCableSocketPick,
 } from '../structures/cableCurve.js';
-import { keepClearBox, placementRejection } from '../structures/placementRules.js';
+import { keepClearBox, placementRejection, type PlacementDeck } from '../structures/placementRules.js';
+import type { PlateSet } from '../hex/plateSet.js';
 import { isShieldEmitterKind } from '../structures/gateGeometry.js';
 import { MIN_CABLE_LENGTH } from '../structures/structureGridConstants.js';
 import type { RecipeId } from '../../shared-types/recipes.js';
@@ -39,6 +40,8 @@ const CONN_HALF = getStructureKind('connector').footprint.h / 2;
  *  spine's and `reachOut`'s step; under the 600 u link range). */
 export const RELAY_SPAN = 560;
 const linkPick = makeCableSocketPick();
+/** The owner a deck base's own plate set is kept under (one base per Builder). */
+const DECK_BASE_OWNER = 'base';
 const linkPoly = new Float64Array(CABLE_CURVE_FLOATS);
 const linkBox = makeCableBox();
 
@@ -52,11 +55,23 @@ export class Builder {
    *  between (`Connection.socketA` / `socketB`). */
   readonly edgeSockets: Array<readonly [number, number]> = [];
   private cid = 0;
+  /** Base platforms: the deck rule for this base's own plates, or null. */
+  private readonly deck: PlacementDeck | null;
+
+  /** `plates` given = a deck base (`growDeck.ts`): once its first plate is
+   *  laid, every placement passes the player's deck rule (`placementRejection`
+   *  with `deck`), every link the deck `canConnect` rule, and placements skip
+   *  the cable check (deck cables ride the seams; a player's placement on the
+   *  server has no cable check either). */
+  constructor(readonly plates: PlateSet<number> | null = null) {
+    this.deck = plates === null ? null : { plates, owner: DECK_BASE_OWNER };
+  }
 
   /** Place if the real overlap rule allows; returns the index or -1. */
   tryPlace(p: GrownPlacement): number {
     const rot = p.rot ?? 0;
-    if (placementRejection(p.kind, p.x, p.y, this.placed, null, rot) !== null) return -1;
+    const deck = this.plates !== null && this.plates.plateCount(DECK_BASE_OWNER) > 0 ? this.deck : null;
+    if (placementRejection(p.kind, p.x, p.y, this.placed, null, rot, undefined, deck) !== null) return -1;
     const k = getStructureKind(p.kind);
     const { hw, hh } = structureHalfExtents(p.kind, rot);
     // Never on top of an existing link's cable: the curve between the
@@ -66,7 +81,7 @@ export class Builder {
     const pad = keepClearBox(p.kind, p.x, p.y, rot);
     const px0 = pad === null ? 0 : pad.x - pad.hw, px1 = pad === null ? 0 : pad.x + pad.hw;
     const py0 = pad === null ? 0 : pad.y - pad.hh, py1 = pad === null ? 0 : pad.y + pad.hh;
-    for (let e = 0; e < this.edges.length; e++) {
+    for (let e = 0; this.plates === null && e < this.edges.length; e++) {
       const [ea, eb] = this.edges[e]!;
       const s = this.edgeSockets[e]!;
       flattenLinkCable(this.nodes.get(`s${ea}`)!, s[0], this.nodes.get(`s${eb}`)!, s[1], linkPoly, linkBox);
@@ -80,18 +95,19 @@ export class Builder {
     this.placed.push({ x: p.x, y: p.y, radius: k.radius, halfW: hw, halfH: hh, kind: p.kind, rot });
     this.nodes.set(`s${i}`, {
       id: `s${i}`, kind: p.kind, x: p.x, y: p.y, rot: (rot * Math.PI) / 180, radius: k.radius, halfW: hw, halfH: hh,
-      isHub: k.isHub, isCapital: p.kind === 'capital', isConnector: p.kind === 'connector',
+      isHub: k.isHub, isCapital: p.kind === 'capital', isConnector: isConnectorKind(p.kind),
       isShieldPylon: isShieldEmitterKind(p.kind), maxConnections: k.maxConnections,
       connectionRange: k.connectionRange, powerOutput: k.powerOutput, powerConsumption: k.powerConsumption,
       isConstructed: true,
     });
+    this.plates?.upsert(i, DECK_BASE_OWNER, p.kind, p.x, p.y);
     return i;
   }
 
-  /** Link if the real connection rule allows. */
+  /** Link if the real connection rule allows (the deck rule on a deck base). */
   tryLink(a: number, b: number): boolean {
     const na = this.nodes.get(`s${a}`)!, nb = this.nodes.get(`s${b}`)!;
-    const r = canConnect(na, nb, this.adj, this.nodes, undefined, linkPick);
+    const r = canConnect(na, nb, this.adj, this.nodes, undefined, linkPick, undefined, this.plates !== null);
     if (!r.ok) return false;
     const c = new Connection(this.cid++, na.id, nb.id, 1, linkPick.a, linkPick.b);
     (this.adj.get(na.id) ?? this.adj.set(na.id, []).get(na.id)!).push(c);
@@ -129,6 +145,7 @@ export class Builder {
     this.placements.pop();
     this.placed.pop();
     this.nodes.delete(`s${i}`);
+    this.plates?.remove(i);
   }
 
   /** Remove the last link (both ends' adjacency, its edge and sockets). */

@@ -69,6 +69,7 @@ import type {
 } from '../../shared-types/messages/missileMessages.js';
 import { GLOBAL_SHIP_TUNING } from '../../shared-types/shipScale/lookup.js';
 import { isTerrainLockKind } from '../../core/combat/lockState.js';
+import { isFlatDeckKind } from '../../shared-types/structureKinds.js';
 
 /** Maximum simultaneous in-flight missiles per sector. 256 = ~4× the
  *  steady-state ceiling under saturation (8 frigates × 3 mounts ×
@@ -172,7 +173,7 @@ export interface PendingImpulse {
  *  based filter is a leaky abstraction). */
 interface SwarmRecLookup {
   get(id: string): { entityId: number; radius: number; kind: number } | null | undefined;
-  all(): Iterable<{ id: string; slot: number; radius: number; kind: number; halfW?: number; halfH?: number; boxes?: Float32Array; wreckParts?: ReadonlyArray<ReadonlyArray<Vec2>>; shipKind?: string | null; shieldDown?: boolean }>;
+  all(): Iterable<{ id: string; slot: number; radius: number; kind: number; halfW?: number; halfH?: number; turnDeg?: number; boxes?: Float32Array; wreckParts?: ReadonlyArray<ReadonlyArray<Vec2>>; shipKind?: string | null; shieldDown?: boolean }>;
 }
 
 export interface MissileSimulationDeps {
@@ -764,13 +765,14 @@ export class MissileSimulation {
     // home on rock, you just can't fly through it).
     for (const rec of this.deps.swarmRegistry.all()) {
       if (rec.id === m.ownerId) continue;
+      if (rec.kind === 2 && isFlatDeckKind(rec.shipKind)) continue; // a road (flat deck tile): flown over (`isWeaponTransparent`)
       const b = slotBase(rec.slot);
       const cx = this.deps.sabF32[b + SLOT_X_OFF]!;
       const cy = this.deps.sabF32[b + SLOT_Y_OFF]!;
       const sweep = rec.kind === 4 || rec.wreckParts !== undefined
         ? wreckSweepHit(rec.wreckParts, rec.radius, m.x, m.y, stepX, stepY, mr, cx, cy, this.deps.sabF32[b + SLOT_ANGLE_OFF]!)
         : rec.halfW !== undefined && rec.halfH !== undefined
-          ? projectileSweepBox(m.x, m.y, stepX, stepY, mr, cx, cy, rec.halfW, rec.halfH, rec.boxes)
+          ? projectileSweepBox(m.x, m.y, stepX, stepY, mr, cx, cy, rec.halfW, rec.halfH, rec.boxes, rec.turnDeg)
           : rec.kind === 1 && rec.shipKind
             ? shipSweepHit(rec.shipKind, !rec.shieldDown, m.x, m.y, stepX, stepY, mr, cx, cy, this.deps.sabF32[b + SLOT_ANGLE_OFF]!)
             : projectileSweepCircle(m.x, m.y, stepX, stepY, mr, cx, cy, rec.radius);

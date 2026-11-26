@@ -1,5 +1,6 @@
 import { RendererCommandRouting } from './rendererCommandRouting.js';
 import { decidePlacementPointer } from '../placementPointerDecision.js';
+import { snapGhostToDeck } from './placementDeckSnap.js';
 import { setCanvasPointerCapture } from '../pointerCapture.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import type { HoverBracket } from '../HoverBracket';
@@ -263,8 +264,12 @@ export class RendererInputController extends RendererCommandRouting {
     pointerType: string,
   ): void {
     const w = this.camera.screenToWorld(screenX, screenY);
-    const gameX = w.x;
-    const gameY = -w.y;
+    let gameX = w.x;
+    let gameY = -w.y;
+    // Base platforms: on a deck room the chosen point is the kind's deck slot
+    // (the same core snap the server's place_structure handler runs).
+    const snap = snapGhostToDeck(this._lastMirror?.pendingPlacementPreview, gameX, gameY);
+    if (snap) { gameX = snap.x; gameY = snap.y; }
     // Pure state machine (placementPointerDecision.ts) — the load-bearing rule
     // is that `pointerleave` does NOT park the follow (P3.5 follow-still-broken):
     // desktop hover-follow has no pointer capture, so leaving the canvas (over

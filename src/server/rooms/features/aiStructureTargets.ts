@@ -1,6 +1,6 @@
 import type { AiStructureView } from '../../../core/contracts/IAiBehaviour.js';
 import { relationOf, type RelationContext } from '../../../shared-types/relations.js';
-import { getStructureKind, type StructureKindId } from '../../../shared-types/structureKinds.js';
+import { getStructureKind, isFlatDeckKind, type StructureKindId } from '../../../shared-types/structureKinds.js';
 import type { StructureRecord } from '../../structures/StructureRegistry.js';
 
 /** Wave-system Phase 2 — drone target priority by structure kind (higher =
@@ -78,6 +78,7 @@ export class AiStructureTargets {
     let nc = 0;
     for (const rec of reg.all()) {
       if (!rec.isConstructed) continue;
+      if (isFlatDeckKind(rec.kind)) continue; // a road: no weapon touches it (`isWeaponTransparent`)
       const raid = this.h.isHostileToDrones(rec.owner);
       if (!raid && !this.foeOfAnyOwner(rec.owner)) continue;
       let v = this.viewPool[nv];

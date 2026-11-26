@@ -1172,7 +1172,7 @@ export class ColyseusGameClient {
     get pendingPlacement() { return c._pendingPlacement; },
     set pendingPlacement(v) { c._pendingPlacement = v; },
     get placementShipScratch() { return c._placementShipScratch; },
-    get placementPreviewScratch() { return c._placementPreviewScratch; },
+    get placementPreviewScratch() { return c._placementPreviewScratch; }, get plates() { return c._structureRows.plates; },
     get swarmNearbyIds() { return c._swarmNearbyIds; }, set swarmNearbyIds(v) { c._swarmNearbyIds = v; },
     get swarmNearbySwapScratch() { return c._swarmNearbySwapScratch; },
     set swarmNearbySwapScratch(v) { c._swarmNearbySwapScratch = v; },
@@ -2118,6 +2118,8 @@ export class ColyseusGameClient {
   private readonly _mines = new MineSync(this.mirror, this._structureOwners, () => this.room);
   /** A2 — room-state `structures` into `mirror.structures` (`mirror/structureRowSync.ts`). */
   private readonly _structureRows = new StructureRowSync(this.mirror, this._structureOwners);
+  /** Base platforms — the derived plate set (`core/hex/plateSet.ts`), kept from room state. */
+  get plates(): StructureRowSync['plates'] { return this._structureRows.plates; }
 
   /** Beam links (shared-types/beamLinksWire.ts): structure turret / mining
    *  targets onto their rows; ship tractor links go to the tractor client

@@ -72,6 +72,18 @@ describe('holograms and the nav obstacle map (3F2)', () => {
     nav.detach();
   });
 
+  it('a road (flat deck tile) is never a nav obstacle, even built (base platforms 20)', () => {
+    obstacles.clear();
+    const registry = new StructureRegistry();
+    const nav = hostedNav(registry);
+    const road: Rec = { ...rec('road', 0, true), kind: 'road', subtypeIndex: structureKindToIndex('road') };
+    registry.add(road);
+    road.isConstructed = true;
+    expect(settleBlueprintBody(road, { shipHulls: () => [], solidify: () => {}, registry })).toBe(true);
+    expect(obstacles.size, 'ships fly over a road').toBe(0);
+    nav.detach();
+  });
+
   it('a built structure is a nav obstacle from placement (unchanged)', () => {
     obstacles.clear();
     const registry = new StructureRegistry();

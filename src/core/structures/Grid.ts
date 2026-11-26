@@ -20,6 +20,7 @@
  */
 import { Connection } from './Connection.js';
 import { CONNECTION_MAX_RANGE } from './structureGridConstants.js';
+import { isFlatDeckKind } from '../../shared-types/structureKinds.js';
 import { clampLinksToSockets } from '../leveling/structureLevel.js';
 import { rayHitsConvexPolygon } from '../combat/Weapons.js';
 import { convexHullCCW } from '../swarm/asteroidShape.js';
@@ -28,7 +29,9 @@ import { GraphSearch, type SearchGoal, type SearchGraph } from '../nav/search.js
 // reads the other at load time.
 import { addDraw, addNodePower, supplyFraction, type PowerTally } from './gridSupply.js';
 import { CABLE_NO_SOCKET, gridNodePadBox, linkSocketMask, pickCableSocketPair, type CableSocketPick } from './cableCurve.js';
+import { edgeDistance, segmentHitsGridNodeBox, segmentIntersectsAabb, segmentIntersectsOrientedBox } from './gridNodeBox.js';
 import { pickWithReseat, type CableReseat } from './socketReseat.js';
+import { DECK_LINK_NONE, deckCapExempt, deckCapLinkCount, deckLinkKind, deckSeamVerdict, isDeckFenceOffSeam } from './deckLinks.js';
 
 /** The grid's abstract view of a structure. The server projects each
  *  `StructureRecord` (+ its catalogue kind) into one of these. */
@@ -110,7 +113,10 @@ export type CanConnectReason =
   | 'pylon-rule'
   /** Owner rule: every free pair's cable would cross or run within a cable body
    *  width of a stored cable (fan-outs too; fence links never count; `cableCrossesExisting`). */
-  | 'crosses-cable';
+  | 'crosses-cable'
+  /** Base platforms slice 19: two deck fence posts not on one hex seam (deck
+   *  pylons pair only along hex edges, `deckLinks.ts`). */
+  | 'off-seam';
 
 export type CanConnectResult = { ok: true } | { ok: false; reason: CanConnectReason };
 
@@ -162,43 +168,8 @@ export function rockObstacleParts(
 /** A world box (a placement footprint's bounds) to gather obstacles near. */
 export interface ObstacleBox { x0: number; y0: number; x1: number; y1: number }
 
-/** Edge-to-edge distance between two nodes' square AABBs (half-extent =
- *  radius). Returns 0 when the boxes overlap or touch — eqx-peri's
- *  `edgeDistance`. */
-export function edgeDistance(a: GridNode, b: GridNode): number {
-  const dx = Math.max(0, Math.abs(a.x - b.x) - ((a.halfW ?? a.radius) + (b.halfW ?? b.radius)));
-  const dy = Math.max(0, Math.abs(a.y - b.y) - ((a.halfH ?? a.radius) + (b.halfH ?? b.radius)));
-  return Math.hypot(dx, dy);
-}
-
-/** Segment (x0,y0)-(x1,y1) vs AABB [minX,minY]-[maxX,maxY] (Liang–Barsky slab
- *  clip). */
-export function segmentIntersectsAabb(
-  x0: number, y0: number, x1: number, y1: number,
-  minX: number, minY: number, maxX: number, maxY: number,
-): boolean {
-  const dx = x1 - x0;
-  const dy = y1 - y0;
-  let t0 = 0;
-  let t1 = 1;
-  const clip = (p: number, q: number): boolean => {
-    if (p === 0) return q >= 0; // parallel: inside iff q >= 0
-    const r = q / p;
-    if (p < 0) {
-      if (r > t1) return false;
-      if (r > t0) t0 = r;
-    } else {
-      if (r < t0) return false;
-      if (r < t1) t1 = r;
-    }
-    return true;
-  };
-  if (!clip(-dx, x0 - minX)) return false;
-  if (!clip(dx, maxX - x0)) return false;
-  if (!clip(-dy, y0 - minY)) return false;
-  if (!clip(dy, maxY - y0)) return false;
-  return t0 <= t1;
-}
+// Footprint box rules (turned at a 30° step) live in `gridNodeBox.ts`.
+export { edgeDistance, segmentIntersectsAabb } from './gridNodeBox.js';
 
 /** Does segment (x0,y0)-(x1,y1) cross an obstacle? Its box (half-extent =
  *  `radius`) is the broad phase; with `parts` (C5c) the segment must also
@@ -231,17 +202,9 @@ export function isConnectionLineBlocked(
 ): boolean {
   for (const n of nodes.values()) {
     if (n.id === a.id || n.id === b.id) continue;
-    if (
-      segmentIntersectsAabb(
-        a.x, a.y, b.x, b.y,
-        n.x - (n.halfW ?? n.radius), n.y - (n.halfH ?? n.radius),
-        n.x + (n.halfW ?? n.radius), n.y + (n.halfH ?? n.radius),
-      )
-    ) {
-      return true;
-    }
+    if (segmentHitsGridNodeBox(a.x, a.y, b.x, b.y, n)) return true;
     const pad = gridNodePadBox(n);
-    if (pad !== null && segmentIntersectsAabb(a.x, a.y, b.x, b.y, pad.x - pad.hw, pad.y - pad.hh, pad.x + pad.hw, pad.y + pad.hh)) return true;
+    if (pad !== null && segmentIntersectsOrientedBox(a.x, a.y, b.x, b.y, pad.x, pad.y, pad.lhw, pad.lhh, pad.cos, pad.sin)) return true;
   }
   if (obstacles) {
     for (let i = 0; i < obstacles.length; i++) {
@@ -296,6 +259,9 @@ function shieldPylonRejection(
  * (the build preview draws both red). A fence link (shield emitter to emitter) keeps its straight post-to-post
  * rule (edge range + centre line of sight) and writes `CABLE_NO_SOCKET` for both ends. With `reseat`, a refused
  * pick may move one connector link to another face (`pickWithReseat`; the caller applies it).
+ * With `deck` (the room's base-platforms flag) a plate-anchor link (`deckLinks.ts`) skips range and the anchor's cap, takes no
+ * socket and skips the overlap + crossing refusals: its cable is the seam path (`deckSeamVerdict`); other links ignore deck cables.
+ * Deck fence posts (slice 19) link only along one hex seam, past range (`DECK_LINK_SEAM_FENCE`), else `'off-seam'`.
  */
 export function canConnect(
   a: GridNode,
@@ -305,6 +271,7 @@ export function canConnect(
   obstacles?: readonly GridObstacle[],
   sockets?: CableSocketPick,
   reseat?: CableReseat,
+  deck = false,
 ): CanConnectResult {
   if (reseat) reseat.conn = null;
   if (a.id === b.id) return { ok: false, reason: 'self' };
@@ -326,6 +293,11 @@ export function canConnect(
     return { ok: false, reason: 'connector-required' };
   }
 
+  // A flat deck tile (a road) takes no cable at any level: it belongs to the
+  // deck it sits on (`structureKinds/deckTiles.ts`).
+  if (isFlatDeckKind(a.kind)) return { ok: false, reason: 'a-full' };
+  if (isFlatDeckKind(b.kind)) return { ok: false, reason: 'b-full' };
+
   const aConns = adjacency.get(a.id) ?? [];
   if (aConns.some((c) => c.getOtherNode(a.id) === b.id)) {
     return { ok: false, reason: 'duplicate' };
@@ -345,19 +317,17 @@ export function canConnect(
   }
 
   // Generic per-kind cap — SKIPPED for a pylon endpoint (its dual-cap above is the
-  // authority; the pylon's `maxConnections` of 3 is less than its true 1+3=4 max).
-  // A socket-bound kind never holds more links than it has sockets (one cable
-  // per socket), whatever its levelled cap.
-  if (a.isShieldPylon !== true && aConns.length >= clampLinksToSockets(a.maxConnections, a.kind)) return { ok: false, reason: 'a-full' };
+  // authority) and for a plate anchor's deck link (its deck links never count).
+  // A socket-bound kind never holds more links than it has sockets, whatever its level.
+  const dk = deck ? deckLinkKind(a, b) : DECK_LINK_NONE;
+  if (deck && isDeckFenceOffSeam(a, b)) return { ok: false, reason: 'off-seam' }; // deck fences: seams only
+  if (a.isShieldPylon !== true && !deckCapExempt(a, dk) && deckCapLinkCount(a, aConns, nodes, deck) >= clampLinksToSockets(a.maxConnections, a.kind)) return { ok: false, reason: 'a-full' };
   const bConns = adjacency.get(b.id) ?? [];
-  if (b.isShieldPylon !== true && bConns.length >= clampLinksToSockets(b.maxConnections, b.kind)) return { ok: false, reason: 'b-full' };
+  if (b.isShieldPylon !== true && !deckCapExempt(b, dk) && deckCapLinkCount(b, bConns, nodes, deck) >= clampLinksToSockets(b.maxConnections, b.kind)) return { ok: false, reason: 'b-full' };
 
-  // P3.2 — UNIFORM range: every kind uses the global CONNECTION_MAX_RANGE (the
-  // R2.10 Capital short-reach was reverted, "everything has the same range").
-  // `connectionRange` stays an optional per-kind override seam (the `min` of the
-  // two endpoints, symmetric) but no kind sets it today, so this collapses to
-  // the global for every pair.
-  const maxRange = Math.min(
+  // P3.2 — UNIFORM range: the global CONNECTION_MAX_RANGE (`connectionRange` is an
+  // optional per-kind override seam, the `min` of the two ends); a deck link has none.
+  const maxRange = dk !== DECK_LINK_NONE ? Infinity : Math.min(
     a.connectionRange ?? CONNECTION_MAX_RANGE,
     b.connectionRange ?? CONNECTION_MAX_RANGE,
   );
@@ -369,11 +339,11 @@ export function canConnect(
     if (isConnectionLineBlocked(a, b, nodes, obstacles)) return { ok: false, reason: 'blocked' };
     return { ok: true };
   }
+  if (dk !== DECK_LINK_NONE) return deckSeamVerdict(sockets);
   // One cable per stud: the sockets each end's links already hold.
   const usedA = a.usedSockets ?? linkSocketMask(a.id, aConns), usedB = b.usedSockets ?? linkSocketMask(b.id, bConns);
-  const refusal = pickCableSocketPair(a, b, maxRange, nodes, obstacles, sockets, usedA, usedB, adjacency);
-  if (refusal === null || (reseat && pickWithReseat(a, b, maxRange, adjacency, nodes, obstacles, sockets, usedA, usedB, reseat))) return { ok: true };
-  return { ok: false, reason: refusal };
+  const refusal = pickCableSocketPair(a, b, maxRange, nodes, obstacles, sockets, usedA, usedB, adjacency, undefined, deck);
+  return refusal === null || (reseat && pickWithReseat(a, b, maxRange, adjacency, nodes, obstacles, sockets, usedA, usedB, reseat)) ? { ok: true } : { ok: false, reason: refusal };
 }
 
 interface ComponentInfo extends PowerTally {
