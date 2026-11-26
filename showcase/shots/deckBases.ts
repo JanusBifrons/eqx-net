@@ -92,7 +92,7 @@ async function followRoute(ctx: ShotContext, f: Finger, anchor: Pt, route: Reado
   }
 }
 
-/** Fighter's-eye view (the game's normal fighter zoom): fly along the base's
+/** Fighter's-eye view (0.7: twice the fighter's start zoom, owner's pick): fly along the base's
  *  road so the deck's scale reads against the ship. Touch stick only. */
 export const deckBasesRoadPhone: Shot = {
   id: 'deck-bases-road-phone',
@@ -104,7 +104,7 @@ export const deckBasesRoadPhone: Shot = {
   reel: false,
   server: 'lean',
   viewport: 'phone-landscape',
-  target: { room: 'deck-bases', params: { shipKind: 'fighter', spawnX: -3900, spawnY: 0, initialHull: 1_000_000 } },
+  target: { room: 'deck-bases', params: { shipKind: 'fighter', spawnX: -3900, spawnY: 0, zoom: 0.7, initialHull: 1_000_000 } },
   hud: 'full',
   durationMs: 30_000,
   async run(ctx) {
