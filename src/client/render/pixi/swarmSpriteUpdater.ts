@@ -410,6 +410,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     } else if (entry.kind === 2) {
       // Build mirror (4C): flip in the local frame before the rig follows it.
       structMirrored = applyStructureMirror(sprite, mirror.structures?.get(entityId)?.mirror === true);
+      ctx.deckPlates?.zones?.note(entityId, entry.shipKind, lerped.x, lerped.y, lerped.angle); // slice 33 floor paint
       // Restyle 2c: pose the structure's rig (visible structures only); its
       // parts hang off this sprite and `shipContainer` (structureRigs.ts).
       let rigView: StructureRigView | null = null;
