@@ -7,9 +7,10 @@ import { describe, it, expect } from 'vitest';
 import { Container, type Graphics } from 'pixi.js';
 import {
   APPROACH_FLASH_MS, APPROACH_LAMP_COUNT, APPROACH_LAMP_SPACING, APPROACH_LAMP_START, APPROACH_LAMP_Z, APPROACH_PERIOD_MS,
-  APPROACH_EDGE_OFFSET, APPROACH_STEP_MS, DeckApproachLights, approachEdgeContext, approachEdgeInto, approachFlash, approachLampInto, gateOutsideSign, readApproachFlag,
+  APPROACH_EDGE_COUNT, APPROACH_EDGE_OFFSET, APPROACH_STEP_MS, DeckApproachLights, approachEdgeContext, approachEdgeInto, approachFlash, approachLampInto, gateOutsideSign, readApproachFlag,
 } from './deckApproachLights.js';
 import { StructureDeckPlates } from './structureDeckPlates.js';
+import { ROAD_HALF_W } from './structureStyleC.transport.road.js';
 import { DECK_HEX_INRADIUS } from '../../../core/hex/deckCorners.js';
 import { deckHexCentreInto } from '../../../core/hex/plates.js';
 import { DECK_FENCE_GATE_KIND } from '../../../core/structures/deckLinks.js';
@@ -80,8 +81,18 @@ describe('approachLampInto', () => {
     expect(approachEdgeContext(true)).not.toBe(approachEdgeContext(false));
   });
 
-  it('spacing ~120–150 u, about six lamps', () => {
-    expect(APPROACH_LAMP_COUNT).toBe(6);
+  it('edge rows sit on the exact road edges, inside the gate (owner: line up with the road)', () => {
+    expect(APPROACH_EDGE_OFFSET).toBe(ROAD_HALF_W);
+    expect(APPROACH_EDGE_OFFSET).toBeLessThan(416 / 2);
+  });
+
+  it('the white centre row runs on past the shorter red/green edge rows', () => {
+    expect(APPROACH_LAMP_COUNT).toBeGreaterThan(APPROACH_EDGE_COUNT);
+    expect(APPROACH_EDGE_COUNT).toBeGreaterThanOrEqual(3);
+  });
+
+  it('spacing ~120–150 u; the rabbit run fits its period', () => {
+    expect((APPROACH_LAMP_COUNT - 1) * APPROACH_STEP_MS + APPROACH_FLASH_MS).toBeLessThan(APPROACH_PERIOD_MS);
     expect(APPROACH_LAMP_SPACING).toBeGreaterThanOrEqual(120);
     expect(APPROACH_LAMP_SPACING).toBeLessThanOrEqual(150);
   });
@@ -98,7 +109,7 @@ describe('approachFlash (the rabbit)', () => {
   it('walks from the farthest lamp toward the gate, one step at a time', () => {
     const order: number[] = [];
     for (let s = 0; s < n; s++) order.push(lit(s * APPROACH_STEP_MS));
-    expect(order).toEqual([5, 4, 3, 2, 1, 0]);
+    expect(order).toEqual(Array.from({ length: n }, (_, i) => n - 1 - i));
   });
 
   it('repeats every period, also before time zero', () => {
@@ -134,7 +145,7 @@ describe('DeckApproachLights', () => {
     const c = lights.containerOf(7)!;
     expect(c.zIndex).toBe(APPROACH_LAMP_Z);
     expect(c.position.x).toBe(100);
-    expect(c.children.length).toBe(4 * APPROACH_LAMP_COUNT); // centre base + flash, then port + starboard
+    expect(c.children.length).toBe(2 * APPROACH_LAMP_COUNT + 2 * APPROACH_EDGE_COUNT); // centre base + flash, then port + starboard
     // Outside is game +y ⇒ Pixi −y, the first lamp just off the seam.
     expect(c.children[0]!.position.y).toBeCloseTo(-APPROACH_LAMP_START);
     expect(c.children[2 * (APPROACH_LAMP_COUNT - 1)]!.position.y)

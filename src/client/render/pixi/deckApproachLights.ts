@@ -14,7 +14,7 @@
  * off the seam. A white "rabbit" strobe walks lamp by lamp TOWARD the gate
  * every {@link APPROACH_PERIOD_MS} of effect time (`fxNow`, invariant 20);
  * between pulses each lamp is a steady white lamp. Two edge rows flank the
- * centre line like an airfield's side lights, in navigation colours for a ship
+ * centre line on the road's exact edges (shorter than it, like an airfield's side lights), in navigation colours for a ship
  * flying IN: red to port (its left), green to starboard (owner: "red and green
  * for starboard and port"). A gate with plates on
  * both sides of its seam (or neither) has no outside and gets no lamps.
@@ -34,7 +34,10 @@ export function readApproachFlag(search: string): boolean {
   return /[?&]approach=on\b/.test(search);
 }
 
-export const APPROACH_LAMP_COUNT = 6;
+/** Centre (white) row: longer than the edge rows, so it reaches out and draws you in. */
+export const APPROACH_LAMP_COUNT = 10;
+/** Edge (red/green) rows: the first lamps of the centre row's positions, nearest the gate. */
+export const APPROACH_EDGE_COUNT = 5;
 /** World units between lamps, and from the seam to the first lamp. */
 export const APPROACH_LAMP_SPACING = 135;
 export const APPROACH_LAMP_START = 140;
@@ -55,8 +58,10 @@ export const LAMP_HOUSING = 0x1a1d22;
 export const LAMP_CENTRE = 0xeef2ff;
 export const LAMP_BASE_ALPHA = 0.8;
 export const LAMP_FLASH = 0xffffff;
-/** Edge rows: lateral offset from the centre line (world units; inside the gate opening, ~±370) and colours. */
-export const APPROACH_EDGE_OFFSET = 300;
+/** Edge rows: lateral offset from the centre line (world units) = the road's carriageway edge
+ *  (`ROAD_HALF_W`, a number here: the road art imports the deck plates; a test locks them equal),
+ *  inside the gate's towers (416 wide). Then colours. */
+export const APPROACH_EDGE_OFFSET = 175;
 export const LAMP_PORT = 0xff3b30;
 export const LAMP_STARBOARD = 0x30ff6a;
 
@@ -229,6 +234,7 @@ export class DeckApproachLights {
       approachLampInto(0, 0, angle, e.sign, k, this.pt);
       lamps[2 * k]!.position.set(this.pt[0]!, -this.pt[1]!);
       lamps[2 * k + 1]!.position.set(this.pt[0]!, -this.pt[1]!);
+      if (k >= APPROACH_EDGE_COUNT) continue;
       const lx = this.pt[0]!, ly = this.pt[1]!;
       approachEdgeInto(lx, ly, angle, e.sign, true, this.pt);
       lamps[2 * APPROACH_LAMP_COUNT + 2 * k]!.position.set(this.pt[0]!, -this.pt[1]!);
@@ -257,7 +263,7 @@ export class DeckApproachLights {
       c.addChild(f);
       flashes.push(f);
     }
-    for (let k = 0; k < APPROACH_LAMP_COUNT; k++) { // edge rows after the centre line
+    for (let k = 0; k < APPROACH_EDGE_COUNT; k++) { // edge rows after the centre line
       c.addChild(new Graphics(approachEdgeContext(true)));
       c.addChild(new Graphics(approachEdgeContext(false)));
     }
