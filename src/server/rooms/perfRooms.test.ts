@@ -8,6 +8,7 @@ import { wreckPieceGeometry } from '../../core/destruction/wreckPieces.js';
 import { FIELD_LIVE_CAP } from './wreckFifos.js';
 import { hullPieceCounts, worstRing } from '../../core/terrain/wreckFieldTestKit.js';
 import type { WreckFieldRoomOpts } from './WreckFieldSource.js';
+import { DECK_BASES_OPTS, DECK_BASES_SPECS } from './testRooms/deckBasesRoom.js';
 
 describe('perfRoomOptions', () => {
   it('galaxy-field gets the live sector cut field; EQX_SCENE_GALAXY_FIELD=0 leaves it off', () => {
@@ -51,6 +52,23 @@ describe('perfRoomOptions', () => {
       for (const h of field.hulls) expect(Math.hypot(h.x - scene.spawn.x, h.y - scene.spawn.y), `${id}: spawn clear of ${h.kindId}`).toBeGreaterThan(h.footprint);
     }
   });
+  it('deck-bases / deck-bases-rows: the deck-bases room pair, deck flag on vs off, same camera', () => {
+    const deck = perfSceneById('deck-bases')!, rows = perfSceneById('deck-bases-rows')!;
+    expect(deck).toBeDefined();
+    expect(rows).toBeDefined();
+    const on = perfRoomOptions(deck, {}), off = perfRoomOptions(rows, {});
+    expect(on['deck']).toBe(true);
+    expect(off['deck']).not.toBe(true);
+    // The deck flag is honoured only in testMode (SectorRoom), which perf rooms set.
+    expect(on['testMode']).toBe(true);
+    expect(on['npcBases']).toEqual(DECK_BASES_SPECS);
+    expect(off['npcBases']).toEqual(DECK_BASES_SPECS);
+    expect(on['persistSector']).toBe(false);
+    expect(rows.camera).toEqual(deck.camera);
+    expect(rows.durationMs).toBe(deck.durationMs);
+    for (const s of [deck, rows]) expect(s.spawn).toEqual({ x: DECK_BASES_OPTS.defaultSpawnX, y: DECK_BASES_OPTS.defaultSpawnY });
+  });
+
   it('base-flow: the room gets the working base and its rocks from scenarioLayouts', () => {
     const o = perfRoomOptions(perfSceneById('base-flow')!, {});
     const kinds = (o['prebuiltStructures'] as { kind: string }[]).map((p) => p.kind);

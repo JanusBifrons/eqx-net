@@ -7,8 +7,19 @@ import type { Server } from 'colyseus';
 import { PERF_SCENES, type PerfScene } from '../../shared-types/perf/perfScenes.js';
 import { resolveSectorConfig } from '../galaxy/GalaxyRegistry.js';
 import { BASE_FLOW_OPTS, BASE_LOOP_OPTS } from './scenarioLayouts.js';
+import { DECK_BASES_OPTS } from './testRooms/deckBasesRoom.js';
 
-const PREBUILT_LAYOUTS = { 'base-flow': BASE_FLOW_OPTS, 'base-loop': BASE_LOOP_OPTS } as const;
+/** The `?room=deck-bases` pair's world, less the deck flag (the scene's
+ *  `room.deck` picks hex deck or straight rows) and its own room identity. */
+const DECK_BASES_LAYOUT = {
+  persistSector: DECK_BASES_OPTS.persistSector,
+  asteroidConfig: DECK_BASES_OPTS.asteroidConfig,
+  droneCount: DECK_BASES_OPTS.droneCount,
+  peacefulDrones: DECK_BASES_OPTS.peacefulDrones,
+  npcBases: DECK_BASES_OPTS.npcBases,
+};
+
+const PREBUILT_LAYOUTS = { 'base-flow': BASE_FLOW_OPTS, 'base-loop': BASE_LOOP_OPTS, 'deck-bases': DECK_BASES_LAYOUT } as const;
 
 /** The room options for one perf scene. */
 export function perfRoomOptions(scene: PerfScene, env: NodeJS.ProcessEnv = process.env): Record<string, unknown> {
