@@ -145,6 +145,8 @@ export function updateHudOverlays(mirror: RenderMirror, ctx: RendererFrameCtx): 
 
   // Phase 1 — name labels above remote ships and drones (skip self).
   r.labels?.update(mirror);
+  // Junction sign boards (`?signs=on`): the view rect is this frame's, from the cut-field line above.
+  r.signBoard?.update(mirror, r.spectator, r.fxNow(), ctx.swarmViewScratch);
 
   // Dying capitals: hand over to wreck pieces drawn this frame, or give up
   // at the deadline; the rest keep their light frame at the last pose.

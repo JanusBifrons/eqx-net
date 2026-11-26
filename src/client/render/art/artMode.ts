@@ -59,6 +59,8 @@ export interface ArtOptions {
   fenceLook?: import('../pixi/connectorFenceBeam.js').FenceLook;
   /** Base platforms deck zone markings (`?zones=on|off`). Absent = the URL / on. */
   zones?: boolean;
+  /** Junction sign boards (`?signs=on`). Absent = the URL / off. */
+  signs?: boolean;
   /** Cut-field ore look (`?ore=off|tint|veins|seams`, F1c); absent = veins (owner's pick). */
   ore?: FieldOreLook;
   /** Graphics quality (edge smoothing, render scale, texture softening);

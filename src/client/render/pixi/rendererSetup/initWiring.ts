@@ -45,6 +45,7 @@ import type { MissileSpriteCtx } from '../missileSpriteUpdater.js';
 import type { BeamCtx } from '../beamUpdater.js';
 import type { HudDrainCtx } from '../hudDrainUpdater.js';
 import type { RendererFrameRefs } from '../frameCtx.js';
+import type { DeckSignBoard } from '../deckSignBoard.js';
 import { buildSpriteUpdaterCtxs } from './initUpdaterCtxs.js';
 import { buildFxWeapons, buildBeamPoolsAndEffects, buildBeamCtx } from './initFx.js';
 import { setupMachinedArt, applyStartZoom, logInitFrameDiag, buildSceneLayers, buildOverlays, type InitTarget } from './initScene.js';
@@ -61,6 +62,8 @@ export interface RendererInitState {
   connectorRenderer: ConnectorRenderer;
   fleetOverlay: FleetOverlay | null;
   labels: LabelManager | null;
+  /** Junction sign boards (`?signs=on`), else null. */
+  signBoard: DeckSignBoard | null;
   selectionBracket: SelectionBracket | null;
   /** Experimental HUD aim feedback (lock bracket / aim line / ship arcs). */
   aimFeedback: AimFeedbackRenderer | null;
@@ -143,7 +146,7 @@ export interface RendererInitState {
 export function createRendererInitState(): RendererInitState {
   return {
     curtain: null!, backgroundGrid: null, shipContainer: null!, connectorRenderer: null!,
-    fleetOverlay: null, labels: null, selectionBracket: null, aimFeedback: null, hoverBracket: null, backdrop: null,
+    fleetOverlay: null, labels: null, signBoard: null, selectionBracket: null, aimFeedback: null, hoverBracket: null, backdrop: null,
     beamsDisabled: false, cleanWorld: false,
     projectileSprites: new Map(), missileSprites: new Map(), missileExplosionsActive: [],
     updateMissileSeenScratch: new Set(), updateProjSeenScratch: new Set(),
@@ -301,12 +304,12 @@ export function initSceneAndOverlays(s: RendererInitState, h: InitSceneHost, r: 
   if (effects) h.effects = effects;
   // Structure restyle (both renderer paths), on by default: 1g cable line look
   // (`?lineLook=off|pipe|conduit`) and 2c rig parts (`?rigs=0` off).
-  applyRestyleLook(s.connectorRenderer, s.swarmUpdaterCtx, s.shipContainer, h.artOpts, target.isDom ? window.location.search : null);
+  const look = applyRestyleLook(s.connectorRenderer, s.swarmUpdaterCtx, s.shipContainer, h.artOpts, target.isDom ? window.location.search : null);
   ({
     fleetOverlay: s.fleetOverlay, labels: s.labels, selectionBracket: s.selectionBracket,
-    hoverBracket: s.hoverBracket, aimFeedback: s.aimFeedback,
+    hoverBracket: s.hoverBracket, aimFeedback: s.aimFeedback, signBoard: s.signBoard,
   } = buildOverlays({
     app: r.app, camera: r.camera, world: r.world, incomingFire: r.incomingFire,
-    helmMarker: r.helmMarker, halo: r.halo, hudCtx: r.hudCtx, cleanWorld: s.cleanWorld,
+    helmMarker: r.helmMarker, halo: r.halo, hudCtx: r.hudCtx, cleanWorld: s.cleanWorld, signs: look.signs,
   }));
 }

@@ -126,8 +126,8 @@ export function scrapHeatTint(ageMs: number): number | undefined {
 export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): void {
   // Base platforms: the deck floor follows the plate set (one version compare per frame).
   ctx.deckPlates?.sync(mirror.deckPlates);
-  // Slice 31: road joins, rebuilt only when a road or gate changed.
-  if (mirror.deckPlates?.deck === true && ctx.socketNubs === true) syncRoadJoins(mirror.structures, mirror.swarm);
+  // Slice 31: road joins, rebuilt only when a road or gate changed (nubs draw the arms; sign boards read its junction cache, so either feeds it).
+  if (mirror.deckPlates?.deck === true && (ctx.socketNubs === true || ctx.signBoards === true)) syncRoadJoins(mirror.structures, mirror.swarm);
   if (!mirror.swarm) return;
   const now = performance.now();
   // Pose-ring arrivals are main-thread stamps: interpolate on that clock.

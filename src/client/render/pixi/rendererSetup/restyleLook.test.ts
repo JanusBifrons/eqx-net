@@ -26,6 +26,7 @@ function bootFrom(art: ArtOptions): BootMsg {
     ...(art.deckTex !== undefined ? { deckTex: art.deckTex } : {}),
     ...(art.fenceLook !== undefined ? { fenceLook: art.fenceLook } : {}),
     ...(art.zones !== undefined ? { zones: art.zones } : {}),
+    ...(art.signs !== undefined ? { signs: art.signs } : {}),
   };
 }
 
@@ -71,7 +72,7 @@ describe('structure restyle on the worker renderer', () => {
   });
 
   it('a worker renderer booted without the fields falls back to the defaults (on)', () => {
-    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a', fenceLook: 'new', zones: true });
+    expect(resolveRestyleLook({ mode: 'classic' }, null)).toEqual({ lineLook: 'cable', rigs: true, deckTex: 'a', fenceLook: 'new', zones: true, signs: false });
   });
 });
 
@@ -147,5 +148,22 @@ describe('deck zone markings (base platforms slice 33, `?zones=`)', () => {
     const on: { deckPlates?: StructureDeckPlates } = {};
     applyRestyleLook({ lineLook: null }, on, new Container(), { mode: 'machined' }, '?zones=on');
     expect(on.deckPlates!.zones).toBeDefined();
+  });
+});
+
+describe('junction sign boards (`?signs=on`)', () => {
+  it('defaults to off; on rides BOOT to the worker and feeds the road-join cache', () => {
+    expect(readRestyleLook('').signs).toBe(false);
+    expect(readRestyleLook('?signs=off').signs).toBe(false);
+    expect(readRestyleLook('?room=sector&signs=on').signs).toBe(true);
+    const art: ArtOptions = { mode: 'machined', ...readRestyleLook('?room=sector&signs=on') };
+    const [, workerArt] = rendererArgsFromBoot(structuredClone(bootFrom(art)));
+    expect(workerArt.signs).toBe(true);
+    const on: { signBoards?: boolean } = {};
+    expect(applyRestyleLook({ lineLook: null }, on, new Container(), workerArt, null).signs).toBe(true);
+    expect(on.signBoards).toBe(true);
+    const off: { signBoards?: boolean } = {};
+    applyRestyleLook({ lineLook: null }, off, new Container(), { mode: 'machined' }, '');
+    expect(off.signBoards).toBe(false);
   });
 });

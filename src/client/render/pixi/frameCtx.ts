@@ -52,6 +52,7 @@ import type { ArtHandle } from '../art/ArtService.js';
 import { newSpeedFxSample, type SpeedFxSample } from '../camera/speedFxSample';
 import { LegacyExplosionSprites } from './legacyExplosionSprites.js';
 import type { DeathBlast } from './deathBlast.js';
+import type { DeckSignBoard } from './deckSignBoard.js';
 
 /** The renderer's members the frame passes read. Getters for what `init` (re)assigns. */
 export interface RendererFrameRefs {
@@ -66,6 +67,7 @@ export interface RendererFrameRefs {
   readonly starfield: StarfieldBackground | null;
   readonly backgroundGrid: BackgroundGrid | null;
   readonly labels: LabelManager | null;
+  readonly signBoard: DeckSignBoard | null;
   readonly selectionBracket: SelectionBracket | null;
   readonly hoverBracket: HoverBracket | null;
   readonly aimFeedback: AimFeedbackRenderer | null;

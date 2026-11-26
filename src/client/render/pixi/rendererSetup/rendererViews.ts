@@ -143,7 +143,7 @@ export function frameRefsView(h: RendererViewHost): RendererFrameRefs {
     get app() { return h.app; }, get camera() { return h.camera; }, get world() { return h.world; },
     get shipContainer() { return s.shipContainer; }, get connectorRenderer() { return s.connectorRenderer; },
     get effects() { return h.effects; }, get fxExplosions() { return s.fxExplosions; }, get backdrop() { return s.backdrop; },
-    get starfield() { return h.starfield; }, get backgroundGrid() { return s.backgroundGrid; }, get labels() { return s.labels; },
+    get starfield() { return h.starfield; }, get backgroundGrid() { return s.backgroundGrid; }, get labels() { return s.labels; }, get signBoard() { return s.signBoard; },
     get selectionBracket() { return s.selectionBracket; }, get hoverBracket() { return s.hoverBracket; },
     get aimFeedback() { return s.aimFeedback; }, get tractorBeamPool() { return s.tractorBeamPool; },
     get shipUpdaterCtx() { return s.shipUpdaterCtx; }, get swarmUpdaterCtx() { return s.swarmUpdaterCtx; },
@@ -170,7 +170,7 @@ export function teardownRefsView(h: RendererViewHost): RendererTeardownRefs {
   return {
     get initialized() { return h.initialized; }, set initialized(v: boolean) { h.initialized = v; },
     get effects() { return h.effects; }, set effects(v: EffectsService | null) { h.effects = v; },
-    get app() { return h.app; }, get curtain() { return s.curtain; }, get labels() { return s.labels; },
+    get app() { return h.app; }, get curtain() { return s.curtain; }, get labels() { return s.labels; }, get signBoard() { return s.signBoard; },
     get selectionBracket() { return s.selectionBracket; }, get hoverBracket() { return s.hoverBracket; }, get fleetOverlay() { return s.fleetOverlay; },
     get backgroundGrid() { return s.backgroundGrid; }, get starfield() { return h.starfield; }, get fxExplosions() { return s.fxExplosions; },
     get fxShields() { return s.fxShields; }, get fxFences() { return s.fxFences; }, get halo() { return h.halo; },
