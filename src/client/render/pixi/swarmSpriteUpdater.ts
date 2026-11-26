@@ -125,7 +125,7 @@ export function scrapHeatTint(ageMs: number): number | undefined {
 
 export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): void {
   // Base platforms: the deck floor follows the plate set (one version compare per frame).
-  ctx.deckPlates?.sync(mirror.deckPlates);
+  ctx.deckPlates?.sync(mirror.deckPlates, ctx.fxNowMs, ctx.viewBounds); // + gate approach strobe (effect time)
   // Slice 31: road joins, rebuilt only when a road or gate changed.
   if (mirror.deckPlates?.deck === true && ctx.socketNubs === true) syncRoadJoins(mirror.structures, mirror.swarm);
   if (!mirror.swarm) return;
@@ -410,7 +410,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     } else if (entry.kind === 2) {
       // Build mirror (4C): flip in the local frame before the rig follows it.
       structMirrored = applyStructureMirror(sprite, mirror.structures?.get(entityId)?.mirror === true);
-      ctx.deckPlates?.zones?.note(entityId, entry.shipKind, lerped.x, lerped.y, lerped.angle); // slice 33 floor paint
+      ctx.deckPlates?.note(entityId, entry.shipKind, lerped.x, lerped.y, lerped.angle); // floor paint + gate approach lights
       // Restyle 2c: pose the structure's rig (visible structures only); its
       // parts hang off this sprite and `shipContainer` (structureRigs.ts).
       let rigView: StructureRigView | null = null;
