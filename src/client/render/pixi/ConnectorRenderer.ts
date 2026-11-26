@@ -63,6 +63,7 @@ import {
   RockObstacleShapes, type FieldRockBodySource,
 } from '../../structures/mirrorToGridNode.js';
 import { makePreviewConn, type PreviewConn } from './previewConn.js';
+import { drawPendingRun } from './pendingRunGhosts.js';
 import { ConnectorStaticLayer, cableInView, linkCableOf, staticSignature } from './connectorStaticLayer.js';
 import { isSegmentInView, isSpriteInView } from '../spriteUpdateDecisions.js';
 
@@ -559,6 +560,7 @@ export class ConnectorRenderer {
     // normal placed-structure `connTo` web (update()'s st.connTo loop) once the
     // server echoes the connection. The counts were reset to 0 by the caller, so
     // an early return correctly publishes 0 green / 0 overflow / 0 ring radius.
+    drawPendingRun(this.gfx, preview?.run, scale); // fence run: the sent posts + beams, pending or not
     if (!preview || preview.pending === true) return;
 
     const ghostX = this.ghostWorldX ?? preview.x;

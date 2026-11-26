@@ -152,11 +152,8 @@ import {
 import { updateAnchor } from './clockAnchor';
 import { AiController, type AiIntentSink } from '@core/ai/AiController';
 import { getShipKind, type WeaponMount } from '@shared-types/shipKinds';
-import {
-  type PlacementPreview,
-  type PendingPlacement,
-  type ShipPose,
-} from '../structures/structurePlacementClient.js';
+import { type PlacementPreview, type PendingPlacement, type ShipPose } from '../structures/structurePlacementClient.js';
+import { pendingAfterSend } from '../structures/pendingPlacementRun.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 
 export interface ColyseusClientCallbacks {
@@ -503,13 +500,11 @@ export class ColyseusGameClient {
 
   /** Record a confirmed structure placement so `updateMirror` keeps a dim ghost
    *  at the sent point until the structure lands (playtest 2026-06-10 Issue 7).
-   *  Called from `placeStructureAt` right after `place_structure` is sent. */
-  notePendingPlacement(kind: StructureKindId, x: number, y: number, rot = 0, mirror = false): void {
-    this._pendingPlacement = {
-      kind, x, y, rot, mirror,
-      sentAtMs: Date.now(),
-      baselineStructureCount: this.mirror.structures?.size ?? 0,
-    };
+   *  Called from `placeStructureAt` right after `place_structure` is sent;
+   *  `run` = a fence-run place (joins the run record, `pendingAfterSend`). */
+  notePendingPlacement(kind: StructureKindId, x: number, y: number, rot = 0, mirror = false, run: readonly number[] | null = null): void {
+    this._pendingPlacement = pendingAfterSend(this._pendingPlacement, kind, x, y, rot, mirror,
+      Date.now(), this.mirror.structures?.size ?? 0, run);
   }
 
   /** The ctx the room commands (`connection/roomCommands.ts`) run with, built once (#14). */

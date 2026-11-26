@@ -78,6 +78,7 @@ export function handlePlacementKey(key: string): boolean {
 }
 const DEG = Math.PI / 180;
 import { getGameClient } from '../net/clientSingleton.js';
+import { writePreviewRun } from './pendingPlacementRun.js';
 import { placementChosen, setPlacementHeld } from './placementChosen.js';
 import { logEvent } from '../debug/ClientLogger.js';
 
@@ -130,6 +131,9 @@ export interface PlacementPreview {
   deckOwner?: string;
   /** …and their plates, flat (i, j) pairs ({@link writePreviewDeck}). */
   deckPlates?: number[];
+  /** Fence run: the sent posts not yet landed (`PendingPlacement.run`), flat
+   *  (x, y) corners, a NaN pair between clicks. Empty when none. */
+  run?: number[];
 }
 
 /** The plate source the preview copies from (`ColyseusClient.plates`). */
@@ -175,6 +179,11 @@ export interface PendingPlacement {
   /** `mirror.structures.size` at send time — the dim ghost clears once it grows
    *  (a new structure appeared) without needing the assigned entityId back. */
   baselineStructureCount: number;
+  /** Fence run (`fenceRun.ts`): places sent since the baseline (absent = 1);
+   *  the record resolves once that many structures landed. */
+  sent?: number;
+  /** Fence run: the run's corners to draw (`PlacementPreview.run`). */
+  run?: number[];
 }
 
 /** Window to hold the dim "sent, awaiting server" ghost before giving up.
@@ -204,7 +213,7 @@ export function pendingPlacementResolved(
   currentStructureCount: number,
   allStructuresRenderable: boolean,
 ): boolean {
-  if (currentStructureCount > pending.baselineStructureCount && allStructuresRenderable) return true;
+  if (currentStructureCount >= pending.baselineStructureCount + (pending.sent ?? 1) && allStructuresRenderable) return true;
   return nowMs - pending.sentAtMs >= PENDING_PLACEMENT_TIMEOUT_MS;
 }
 
@@ -241,6 +250,8 @@ export function resolvePlacementPreviewStatus(
     out.mirror = placementMirror;
     out.pending = false;
     out.held = isHeldOnSent(placementKind, pending, chosenX, chosenY);
+    const live = pending !== null && !pendingPlacementResolved(pending, nowMs, currentStructureCount, allStructuresRenderable);
+    writePreviewRun(out, live ? pending : null);
     return 'active';
   }
   if (pending) {
@@ -254,6 +265,7 @@ export function resolvePlacementPreviewStatus(
     out.mirror = pending.mirror === true;
     out.pending = true;
     out.held = false;
+    writePreviewRun(out, pending);
     return 'pending';
   }
   return 'none';
@@ -313,9 +325,11 @@ export function placeStructureAhead(kindId: StructureKindId): boolean {
 /**
  * Place a structure of `kindId` at an EXPLICIT world position (the tap/drag-
  * positioned blueprint ghost — 2026-06-07). Returns true if the message was
- * sent (false when there's no live room yet).
+ * sent (false when there's no live room yet). `run` (fence run only): this
+ * place is part of a run, with the corners to add to its pending ghost
+ * (`pendingAfterSend`).
  */
-export function placeStructureAt(kindId: StructureKindId, x: number, y: number): boolean {
+export function placeStructureAt(kindId: StructureKindId, x: number, y: number, run: readonly number[] | null = null): boolean {
   const client = getGameClient();
   if (!client) return false;
   const room = client.getRoom();
@@ -324,7 +338,7 @@ export function placeStructureAt(kindId: StructureKindId, x: number, y: number):
   room.send('place_structure', { type: 'place_structure', kind: kindId, x, y, rot, mirror: placementMirror });
   // Keep a dim ghost at the sent point until the structure lands, so the
   // blueprint doesn't vanish for ~1 s (playtest 2026-06-10 Issue 7).
-  client.notePendingPlacement(kindId, x, y, rot, placementMirror);
+  client.notePendingPlacement(kindId, x, y, rot, placementMirror, run);
   return true;
 }
 
