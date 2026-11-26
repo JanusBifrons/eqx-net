@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest';
 import { Container, type Graphics } from 'pixi.js';
 import {
   APPROACH_FLASH_MS, APPROACH_LAMP_COUNT, APPROACH_LAMP_SPACING, APPROACH_LAMP_START, APPROACH_LAMP_Z, APPROACH_PERIOD_MS,
-  APPROACH_STEP_MS, DeckApproachLights, approachFlash, approachLampInto, gateOutsideSign, readApproachFlag,
+  APPROACH_EDGE_OFFSET, APPROACH_STEP_MS, DeckApproachLights, approachEdgeContext, approachEdgeInto, approachFlash, approachLampInto, gateOutsideSign, readApproachFlag,
 } from './deckApproachLights.js';
 import { StructureDeckPlates } from './structureDeckPlates.js';
 import { DECK_HEX_INRADIUS } from '../../../core/hex/deckCorners.js';
@@ -64,6 +64,22 @@ describe('approachLampInto', () => {
     expect(out[1]).toBeCloseTo(gy - ny * APPROACH_LAMP_START);
   });
 
+  it('puts red on the inbound pilot left and green on the right, level with each centre lamp', () => {
+    for (const a of [0, 0.7, -2.1]) for (const sign of [1, -1]) {
+      // Inbound heading: toward the gate, i.e. −sign along the road axis (−sin a, cos a).
+      const hx = sign * Math.sin(a), hy = -sign * Math.cos(a);
+      approachLampInto(0, 0, a, sign, 2, out);
+      const lx = out[0]!, ly = out[1]!;
+      const port = new Float64Array(2), star = new Float64Array(2);
+      approachEdgeInto(lx, ly, a, sign, true, port);
+      approachEdgeInto(lx, ly, a, sign, false, star);
+      const cross = (px: number, py: number): number => hx * (py - ly) - hy * (px - lx); // > 0: left of heading
+      expect(cross(port[0]!, port[1]!)).toBeCloseTo(APPROACH_EDGE_OFFSET);
+      expect(cross(star[0]!, star[1]!)).toBeCloseTo(-APPROACH_EDGE_OFFSET);
+    }
+    expect(approachEdgeContext(true)).not.toBe(approachEdgeContext(false));
+  });
+
   it('spacing ~120–150 u, about six lamps', () => {
     expect(APPROACH_LAMP_COUNT).toBe(6);
     expect(APPROACH_LAMP_SPACING).toBeGreaterThanOrEqual(120);
@@ -118,7 +134,7 @@ describe('DeckApproachLights', () => {
     const c = lights.containerOf(7)!;
     expect(c.zIndex).toBe(APPROACH_LAMP_Z);
     expect(c.position.x).toBe(100);
-    expect(c.children.length).toBe(2 * APPROACH_LAMP_COUNT);
+    expect(c.children.length).toBe(4 * APPROACH_LAMP_COUNT); // centre base + flash, then port + starboard
     // Outside is game +y ⇒ Pixi −y, the first lamp just off the seam.
     expect(c.children[0]!.position.y).toBeCloseTo(-APPROACH_LAMP_START);
     expect(c.children[2 * (APPROACH_LAMP_COUNT - 1)]!.position.y)

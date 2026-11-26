@@ -13,7 +13,10 @@
  * lamps {@link APPROACH_LAMP_SPACING} apart from {@link APPROACH_LAMP_START}
  * off the seam. A white "rabbit" strobe walks lamp by lamp TOWARD the gate
  * every {@link APPROACH_PERIOD_MS} of effect time (`fxNow`, invariant 20);
- * between pulses each lamp is a steady dim amber base. A gate with plates on
+ * between pulses each lamp is a steady amber glow. Two edge rows flank the
+ * centre line like an airfield's side lights, in navigation colours for a ship
+ * flying IN: red to port (its left), green to starboard (owner: "red and green
+ * for starboard and port"). A gate with plates on
  * both sides of its seam (or neither) has no outside and gets no lamps.
  *
  * Static geometry (a Container per gate, a base + a flash Graphics per lamp on
@@ -49,8 +52,25 @@ export const APPROACH_LAMP_Z = -1.03125;
 /** Lamp look (world units). */
 export const LAMP_HOUSING = 0x1a1d22;
 export const LAMP_AMBER = 0xffc060;
-export const LAMP_BASE_ALPHA = 0.6;
+export const LAMP_BASE_ALPHA = 0.95;
 export const LAMP_FLASH = 0xffffff;
+/** Edge rows: lateral offset from the centre line (world units) and colours. */
+export const APPROACH_EDGE_OFFSET = 150;
+export const LAMP_PORT = 0xff3b30;
+export const LAMP_STARBOARD = 0x30ff6a;
+
+/**
+ * Edge lamp beside lamp position (lx, ly) (game) of a gate turned `angleRad`
+ * whose outside is `sign`: port (`port` true, the inbound pilot's left) or
+ * starboard, written into `out` as [x, y]. Inbound heading is −sign × the
+ * road axis (−sin a, cos a); its left is sign × (cos a, sin a).
+ */
+export function approachEdgeInto(lx: number, ly: number, angleRad: number, sign: number, port: boolean, out: Float64Array): Float64Array {
+  const d = (port ? 1 : -1) * sign * APPROACH_EDGE_OFFSET;
+  out[0] = lx + Math.cos(angleRad) * d;
+  out[1] = ly + Math.sin(angleRad) * d;
+  return out;
+}
 
 /**
  * Which side of the gate's seam is outside: +1 = the gate's local +y (game
@@ -90,13 +110,29 @@ export function approachFlash(k: number, count: number, nowMs: number): number {
 
 let baseCtx: GraphicsContext | undefined;
 let flashCtx: GraphicsContext | undefined;
+let portCtx: GraphicsContext | undefined;
+let starCtx: GraphicsContext | undefined;
 
-/** The shared steady lamp: a dark housing with a dim amber lens (built once). */
+/** A steady coloured lamp: soft halo, housing, bright lens. */
+function steadyLamp(color: number): GraphicsContext {
+  return new GraphicsContext()
+    .circle(0, 0, 70).fill({ color, alpha: 0.12 })
+    .circle(0, 0, 42).fill({ color, alpha: 0.22 })
+    .circle(0, 0, 24).fill({ color: LAMP_HOUSING })
+    .circle(0, 0, 16).fill({ color, alpha: LAMP_BASE_ALPHA })
+    .circle(0, 0, 7).fill({ color: 0xffffff, alpha: 0.7 });
+}
+
+/** The shared edge lamps (built once): red to port, green to starboard. */
+export function approachEdgeContext(port: boolean): GraphicsContext {
+  if (port) return (portCtx ??= steadyLamp(LAMP_PORT));
+  return (starCtx ??= steadyLamp(LAMP_STARBOARD));
+}
+
+/** The shared steady centre lamp: amber, glowing (built once). */
 export function approachBaseContext(): GraphicsContext {
   if (baseCtx === undefined) {
-    baseCtx = new GraphicsContext()
-      .circle(0, 0, 20).fill({ color: LAMP_HOUSING })
-      .circle(0, 0, 12).fill({ color: LAMP_AMBER, alpha: LAMP_BASE_ALPHA });
+    baseCtx = steadyLamp(LAMP_AMBER);
   }
   return baseCtx;
 }
@@ -105,15 +141,15 @@ export function approachBaseContext(): GraphicsContext {
 export function approachFlashContext(): GraphicsContext {
   if (flashCtx === undefined) {
     flashCtx = new GraphicsContext()
-      .circle(0, 0, 75).fill({ color: LAMP_FLASH, alpha: 0.1 })
-      .circle(0, 0, 40).fill({ color: LAMP_FLASH, alpha: 0.25 })
-      .circle(0, 0, 16).fill({ color: LAMP_FLASH, alpha: 1 });
+      .circle(0, 0, 130).fill({ color: LAMP_FLASH, alpha: 0.12 })
+      .circle(0, 0, 70).fill({ color: LAMP_FLASH, alpha: 0.3 })
+      .circle(0, 0, 26).fill({ color: LAMP_FLASH, alpha: 1 });
   }
   return flashCtx;
 }
 
 /** Half the lamp line's length plus the halo: the cull radius round its middle. */
-const CULL_R = ((APPROACH_LAMP_COUNT - 1) * APPROACH_LAMP_SPACING) / 2 + 80;
+const CULL_R = ((APPROACH_LAMP_COUNT - 1) * APPROACH_LAMP_SPACING) / 2 + APPROACH_EDGE_OFFSET + 140;
 const MID_D = APPROACH_LAMP_START + ((APPROACH_LAMP_COUNT - 1) * APPROACH_LAMP_SPACING) / 2;
 
 interface GateEntry {
@@ -194,6 +230,11 @@ export class DeckApproachLights {
       approachLampInto(0, 0, angle, e.sign, k, this.pt);
       lamps[2 * k]!.position.set(this.pt[0]!, -this.pt[1]!);
       lamps[2 * k + 1]!.position.set(this.pt[0]!, -this.pt[1]!);
+      const lx = this.pt[0]!, ly = this.pt[1]!;
+      approachEdgeInto(lx, ly, angle, e.sign, true, this.pt);
+      lamps[2 * APPROACH_LAMP_COUNT + 2 * k]!.position.set(this.pt[0]!, -this.pt[1]!);
+      approachEdgeInto(lx, ly, angle, e.sign, false, this.pt);
+      lamps[2 * APPROACH_LAMP_COUNT + 2 * k + 1]!.position.set(this.pt[0]!, -this.pt[1]!);
     }
     e.mx = x - Math.sin(angle) * e.sign * MID_D;
     e.my = -(y + Math.cos(angle) * e.sign * MID_D);
@@ -204,7 +245,7 @@ export class DeckApproachLights {
     this.entries.forEach(this.sweepFn);
   }
 
-  /** Build time: a gate's Container with a base + a flash per lamp. */
+  /** Build time: a gate's Container with a base + a flash per lamp, then a port + starboard edge lamp per lamp. */
   private build(id: number): GateEntry {
     const c = new Container();
     c.label = 'deckApproach';
@@ -216,6 +257,10 @@ export class DeckApproachLights {
       f.visible = false;
       c.addChild(f);
       flashes.push(f);
+    }
+    for (let k = 0; k < APPROACH_LAMP_COUNT; k++) { // edge rows after the centre line
+      c.addChild(new Graphics(approachEdgeContext(true)));
+      c.addChild(new Graphics(approachEdgeContext(false)));
     }
     this.shipContainer.sortableChildren = true;
     this.shipContainer.addChild(c);
