@@ -197,14 +197,8 @@ export class DeckLayout {
     return !this.hexFull.has(key) && (this.smallHeld.get(key) ?? 0) === 0;
   }
 
-  /** The anchor of the laid plate holding hex (q, r). */
-  anchorAt(q: number, r: number): number {
-    plateOfHexInto(q, r, plate);
-    return this.laid.find((l) => l.i === plate.i && l.j === plate.j)!.anchor;
-  }
-
   /** A `'hex'` kind on the centre of hex (q, r), turned `rotDeg`, linked to
-   *  `anchor` (a gate's road). Returns its index or -1. */
+   *  `anchor` (-1: no link, a road takes no cable). Returns its index or -1. */
   placeOnHex(w: Want, q: number, r: number, rotDeg: number, anchor: number): number {
     deckHexCentreInto(q, r, pt);
     const li = this.tryAt(w, pt.x, pt.y, rotDeg, anchor);
@@ -212,7 +206,7 @@ export class DeckLayout {
     return li;
   }
 
-  /** `w` at the player's snap of (x, y) turned `rotDeg`, linked to `anchor`. */
+  /** `w` at the player's snap of (x, y) turned `rotDeg`, linked to `anchor` (-1: none). */
   private tryAt(w: Want, x: number, y: number, rotDeg: number, anchor: number): number {
     snapPlacementToDeck(w.kind, x, y, snap, rotDeg);
     const p: GrownPlacement = { kind: w.kind, x: snap.x, y: snap.y };
@@ -221,7 +215,7 @@ export class DeckLayout {
     if (w.link) p.link = w.link;
     const li = this.B.tryPlace(p);
     if (li < 0) return -1;
-    if (!this.B.tryLink(anchor, li)) { this.B.undoLast(); return -1; }
+    if (anchor >= 0 && !this.B.tryLink(anchor, li)) { this.B.undoLast(); return -1; }
     return li;
   }
 }

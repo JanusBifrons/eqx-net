@@ -10,6 +10,8 @@ import { StructureRegistry } from '../../structures/StructureRegistry.js';
 import { StructurePlacementSubsystem } from '../../structures/StructurePlacementSubsystem.js';
 import { NpcBaseSubsystem } from '../../bases/NpcBaseSubsystem.js';
 import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from '../../../core/structures/deckLinks.js';
+import { connectorOnRoadHex, DECK_ROAD_KIND } from '../../../core/structures/deckGateRoad.js';
+import { isConnectorKind, structureHalfExtents } from '../../../shared-types/structureKinds.js';
 import { DECK_BASES_DENSE_AT, DECK_BASES_DENSE_EXT, DECK_BASES_GAP, DECK_BASES_OPTS, DECK_BASES_SPARSE_AT, DECK_BASES_SPARSE_EXT, DECK_BASES_SPECS } from './deckBasesRoom.js';
 
 function seedRoomBases() {
@@ -62,6 +64,15 @@ describe('deck-bases test room (base platforms 27)', () => {
       const other = rec.owner === sOwner ? dOwner : sOwner;
       expect(onOwnDeck(registry, rec.owner, rec.kind, rec.x, rec.y), `${rec.kind} on its plate`).toBe(true);
       expect(registry.plates.plateAtWorld(other, rec.x, rec.y), `${rec.kind} off the other deck`).toBe(false);
+    }
+    // Roads can't go through a connector: no connector reaches into a road's hex.
+    const all = [...registry.all()];
+    const roads = all.filter((r) => r.kind === DECK_ROAD_KIND);
+    expect(roads.length).toBeGreaterThan(0);
+    for (const c of all) {
+      if (!isConnectorKind(c.kind)) continue;
+      const e = structureHalfExtents(c.kind, 0);
+      for (const r of roads) expect(connectorOnRoadHex(c.x, c.y, e.hw, e.hh, r.x, r.y), `${c.kind} ${c.id} in road ${r.id}'s hex`).toBe(false);
     }
     // Whole-deck extents (every plate's 7 hexes) keep the gap.
     expect(DECK_BASES_DENSE_AT.x + DECK_BASES_DENSE_EXT.x0 - (DECK_BASES_SPARSE_AT.x + DECK_BASES_SPARSE_EXT.x1)).toBeGreaterThanOrEqual(DECK_BASES_GAP);

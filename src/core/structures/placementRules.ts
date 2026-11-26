@@ -32,7 +32,7 @@ import type { GridObstacle } from './Grid.js';
 import { plateOverlapsObstacle } from './plateClearance.js';
 import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from './deckLinks.js';
 import { isOnDeckCorner, isOnDeckEdgeMid } from '../hex/deckCorners.js';
-import { isRoadBesideDeckGate } from './deckGateRoad.js';
+import { connectorOnRoadHex, DECK_ROAD_KIND, isRoadBesideDeckGate } from './deckGateRoad.js';
 
 /** A circular footprint to test against (a placed structure or the ghost). */
 export interface PlacementFootprint {
@@ -317,7 +317,9 @@ export function onOwnDeck(kindId: string, x: number, y: number, deck: PlacementD
  * that lays a NEW plate needs the whole plate clear (owner ruling, no rock
  * clearing): no obstacle touching any of its 7 hexes and no structure
  * centred on it, else `plate-blocked`. On a deck a shield gate needs a road
- * tile on one side of its seam (`deckGateRoad.ts`), else `no-road`.
+ * tile on one side of its seam (`deckGateRoad.ts`), else `no-road`. A road
+ * and a connector never share a hex (`connectorOnRoadHex`: the road paves
+ * its whole hex, past its footprint box), else `overlap-structure`.
  */
 export function placementRejection(
   kindId: string,
@@ -355,6 +357,7 @@ export function placementRejection(
       structureRotationCosSinInto(s.rot, theirTurn);
       tcos = theirTurn.cos; tsin = theirTurn.sin;
     }
+    if (roadMeetsConnector(kindId, x, y, hw, hh, s, shw, shh)) return 'overlap-structure';
     if (turned || theirTurned) {
       if (orientedBoxesOverlap(s.x, s.y, thw, thh, tcos, tsin, x, y, mhw, mhh, mcos, msin)) return 'overlap-structure';
     } else if (boxesOverlap(s.x, s.y, shw, shh, x, y, hw, hh)) return 'overlap-structure';
@@ -398,4 +401,12 @@ export function canPlaceStructureAt(
   deck?: PlacementDeck | null,
 ): boolean {
   return placementRejection(kindId, x, y, structures, obstacles, rotDeg, mirror, deck) === null;
+}
+
+/** A road on one side and a connector on the other, the connector reaching
+ *  into the road's hex (`connectorOnRoadHex`). `hw`/`hh`: the new
+ *  footprint's nearest-quarter half extents; `shw`/`shh`: `s`'s. */
+function roadMeetsConnector(kindId: string, x: number, y: number, hw: number, hh: number, s: PlacementFootprint, shw: number, shh: number): boolean {
+  if (kindId === DECK_ROAD_KIND) return isConnectorKind(s.kind) && connectorOnRoadHex(s.x, s.y, shw, shh, x, y);
+  return s.kind === DECK_ROAD_KIND && isConnectorKind(kindId) && connectorOnRoadHex(x, y, hw, hh, s.x, s.y);
 }

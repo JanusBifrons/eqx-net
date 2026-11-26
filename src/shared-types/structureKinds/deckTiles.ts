@@ -8,7 +8,10 @@
  * never turns solid: `isFlatDeckKind`, `server/structures/blueprintBody.ts`),
  * so ships fly over it, it is no nav obstacle, and no weapon touches it
  * (`isWeaponTransparent`). Its hex is still taken: placement overlap-checks
- * the registry, so no other building stands on a road.
+ * the registry, so no other building stands on a road. It takes NO cable
+ * (`maxConnections` 0, `canConnect` refuses it at any level): it belongs to
+ * the base whose deck it sits on, and builds from that plate's anchor
+ * (`server/structures/deckTileFunding.ts`).
  */
 import type { StructureKind } from './types.js';
 
@@ -25,7 +28,7 @@ export const ROAD: StructureKind = {
   footprint: { w: 800, h: 692 },
   deckSlot: 'hex',
   maxHealth: 400,
-  maxConnections: 1,
+  maxConnections: 0, // no cable: a road belongs to the deck it sits on
   isHub: false,
   powerOutput: 0,
   powerConsumption: 0,

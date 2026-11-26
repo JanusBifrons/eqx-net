@@ -24,8 +24,8 @@
  *     only when it joins more gates and loses nothing (at most one more
  *     inside plate).
  * The fence lays the gate roads (each before its gate) at their planned
- * turns, then the rest once the ring is up (`layDeckRoads`), every one
- * linked to its plate's anchor (the deck on-plate link: no socket, no cap).
+ * turns, then the rest once the ring is up (`layDeckRoads`). A road takes no
+ * cable: it belongs to the base whose deck it sits on.
  * Deterministic: no random draws; every order is fixed.
  */
 import { HEX_DIRS, pixelToAxialInto, type AxialHex, type HexPoint } from '../hex/hex.js';
@@ -147,15 +147,14 @@ export function plannedTurn(plan: readonly PlannedRoad[], q: number, r: number):
 }
 
 /** Lay the planned joining roads (the gate roads are the fence's), each at
- *  its turn or, refused there, another; linked to its plate's anchor. A road
+ *  its turn or, refused there, another; no cable (a road takes none). A road
  *  the rules refuse is left out. Returns how many were laid. */
 export function layDeckRoads(L: DeckLayout, plan: readonly PlannedRoad[]): number {
   let n = 0;
   for (const p of plan) {
     if (p.gate || !L.isHexFree(p.q, p.r)) continue;
-    const anchor = L.anchorAt(p.q, p.r);
     for (const rot of [p.rot, ...ROAD_TURNS.filter((t) => t !== p.rot)]) {
-      if (L.placeOnHex({ kind: DECK_ROAD_KIND }, p.q, p.r, rot, anchor) >= 0) { n++; break; }
+      if (L.placeOnHex({ kind: DECK_ROAD_KIND }, p.q, p.r, rot, -1) >= 0) { n++; break; }
     }
   }
   return n;

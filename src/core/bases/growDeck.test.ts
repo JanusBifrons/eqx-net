@@ -120,7 +120,7 @@ function density(b: GrownBase, cap: number): { plates: number; buildings: number
 
 describe('growBase deck option (base platforms 23)', () => {
   it('bumps the growth version', () => {
-    expect(BASE_GROWTH_VERSION).toBe(28);
+    expect(BASE_GROWTH_VERSION).toBe(29);
   });
 
   it('flag off: output byte-identical to before the slice (default and explicit false)', () => {
@@ -138,7 +138,8 @@ describe('growBase deck option (base platforms 23)', () => {
       const b = growBase(profile(tier, role, fenced), seed, [...FEATURES], dense ? { deck: true, dense: true } : { deck: true });
       const flat = growBase(profile(tier, role, fenced), seed, [...FEATURES]);
       const { plates, reached } = verifyDeck(b);
-      expect(reached, 'every structure reachable from the Capital').toBe(b.placements.length);
+      // A road takes no cable (base platforms 34): it is on the deck, not the grid.
+      expect(reached, 'every structure but the roads reachable from the Capital').toBe(b.placements.filter((p) => p.kind !== 'road').length);
       expect(b.placements.filter((p) => p.kind === 'capital')).toHaveLength(1);
       // Slice 26: a fenced deck rings itself (growDeckFence.test.ts checks the ring).
       if (fenced) expect(b.fencePylons * b.fenceGates).toBeGreaterThan(0);

@@ -71,8 +71,9 @@ export type { GrowBaseOptions } from './growDeck.js';
  *  24→25 (base platforms 24): a deck plate holds buildings on at most `DECK_HEXES_PER_PLATE` (3) outer hexes, every other hex first (mostly empty deck); rows unchanged.
  *  25→26 (base platforms 25): growth option `dense` (a base in an asteroid-field clearing) fills all 6 outer hexes (`DECK_HEXES_PER_PLATE_DENSE`); sparse decks and rows unchanged.
  *  26→27 (base platforms 26): a fenced deck base rings its plates with seam pylons + road gates (`growDeckFence.ts`), guns on bastion plates outside; unfenced decks and rows unchanged.
- *  27→28 (base platforms 32): a fenced deck base joins its gate roads into one road network inside the ring (`growDeckRoads.ts`). */
-export const BASE_GROWTH_VERSION = 28;
+ *  27→28 (base platforms 32): a fenced deck base joins its gate roads into one road network inside the ring (`growDeckRoads.ts`).
+ *  28→29 (base platforms 34): roads take no cable (no anchor link); placements unchanged. */
+export const BASE_GROWTH_VERSION = 29;
 
 /**
  * Most structures a base of each tier may have (fence included). Measured
