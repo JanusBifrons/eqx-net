@@ -45,7 +45,7 @@ describe('teleporter chamber art (T4)', () => {
       expect(status[id], id).toBe(chamberStatus);
       expect(hasBodyStatus(id), id).toBe(true);
     }
-    expect(version).toBe('t5');
+    expect(version).toBe('t5b');
     expect(rigs['tp-doors-large']?.partArt).toBe(rigs['tp-doors']?.partArt);
     expect(structureStyleDrawer('c', 'alien_gate')).toBeUndefined();
   });

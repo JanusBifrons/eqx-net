@@ -57,6 +57,9 @@ const RING_SEGS = 36;
 export const AMBER_FLASH_TICKS = 8;
 
 /** Deck strip depth and gap from the door line (the gatehouse's). */
+/** How far a tower's raised block stands back from the chamber's outer
+ *  edge (at tower side 80): the cable socket plugs into that plinth lip. */
+const TOWER_LIP = 6;
 const STRIP_D = 5;
 const STRIP_GAP = DOOR_LEAF_THICKNESS / 2 + 7;
 
@@ -219,10 +222,18 @@ function walls(c: StyleCtx, g: ChamberGeom): void {
 function towers(c: StyleCtx, g: ChamberGeom): void {
   const { post, k } = g;
   const half = post / 2, cut = post * 0.32;
+  // The cable socket sits on each tower's outer face (padSocketsFor), so the
+  // raised block stands back TOWER_LIP from the chamber's outer edge: a low
+  // plinth at the full tower box carries the socket, never the armour.
+  const lip = TOWER_LIP * k, edge = g.h - 0.5;
   for (let i = 0; i < g.towers.length; i++) {
     const [x, y] = g.towers[i]!;
-    core(c, chamferBox(x - half, y - half, post, post, cut), SLAB, 34, Math.PI / 4);
-    poly(c, chamferBox(x - half + 5 * k, y - half + 5 * k, post - 10 * k, post - 10 * k, cut - 3 * k), SLAB_LIGHT, 'metal', 4, 1.2,
+    poly(c, chamferBox(x - half, y - half, post, post, cut), SLAB_DARK, 'metal', 4, 1);
+    const x0 = x - half + (x - half <= -edge ? lip : 0), x1 = x + half - (x + half >= edge ? lip : 0);
+    const y0 = y - half + (y - half <= -edge ? lip : 0), y1 = y + half - (y + half >= edge ? lip : 0);
+    const w = x1 - x0, hgt = y1 - y0;
+    core(c, chamferBox(x0, y0, w, hgt, cut), SLAB, 34, Math.PI / 4);
+    poly(c, chamferBox(x0 + 5 * k, y0 + 5 * k, w - 10 * k, hgt - 10 * k, cut - 3 * k), SLAB_LIGHT, 'metal', 4, 1.2,
       { seams: 14 * k, seamAngle: 0 });
     poly(c, ngon(x, y, post * 0.37, 16), SLAB_DARK, 'metal', 6, 1.5);
     for (const seg of g.coils[i]!) glow(c, seg, c.live ? COIL_DIM : SIGN_GLASS, 1);
