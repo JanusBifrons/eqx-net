@@ -31,7 +31,6 @@ import { StructureHologram } from './structureHologram.js';
 
 type Preview = NonNullable<RenderMirror['pendingPlacementPreview']>;
 /** The preview's fence-run hover fields (client `PlacementPreview`). */
-type HoverPreview = Preview & { runHover?: number[]; runHoverMark?: number[] };
 
 /** Most post ghosts drawn at once (sent + hover). */
 export const RUN_GHOST_CAP = 24;
@@ -136,7 +135,7 @@ export class PendingRunGhosts {
   }
 
   private drawHover(f: RunGhostFrame, radius: number): void {
-    const pv = f.preview as HoverPreview;
+    const pv = f.preview;
     const hover = pv.runHover, mark = pv.runHoverMark;
     this.hoverPosts = 0; this.hoverBeams = 0; this.hoverStop = -1;
     if (hover === undefined || mark === undefined || hover.length < 2 || pv.pending === true) return;
