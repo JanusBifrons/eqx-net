@@ -208,9 +208,15 @@ const BUCKETS: Record<string, string> = {
   input_intent: 'raf',
   local_pose_predicted: 'raf',
   local_pose_rendered: 'raf',
+  // Build placement (owner playtest 2026-11-27, "Off your deck" everywhere):
+  // every ghost move/verdict, each place try, and the server refusals.
+  build_ghost: 'build',
+  structure_place_confirm: 'build',
+  structure_place_blocked: 'build',
+  place_structure_rejected: 'build',
 };
 
-const ALL_BUCKETS = ['frames', 'perf', 'corrections', 'combat', 'lifecycle', 'population', 'snapshots', 'raf', 'other'] as const;
+const ALL_BUCKETS = ['frames', 'perf', 'corrections', 'combat', 'lifecycle', 'population', 'snapshots', 'raf', 'build', 'other'] as const;
 type BucketName = typeof ALL_BUCKETS[number];
 
 // `captureSchema` + `DIAG_CAPTURE_MAX_LOG_ENTRIES` live in
@@ -487,7 +493,7 @@ diagRouter.post('/capture', async (req: Request, res: Response) => {
 
   // Bucket and write NDJSON siblings.
   const buckets: Record<BucketName, RoutedEntry[]> = {
-    frames: [], perf: [], corrections: [], combat: [], lifecycle: [], population: [], snapshots: [], raf: [], other: [],
+    frames: [], perf: [], corrections: [], combat: [], lifecycle: [], population: [], snapshots: [], raf: [], build: [], other: [],
   };
   for (const e of entries) buckets[routeBucket(e.tag)].push(e);
 

@@ -24,6 +24,11 @@ diag/captures/<ts>-<id>/
                         server: snapshot_broadcast (high vol)
   raf.ndjson          ← client: rafTick, inputSent (highest vol — every frame)
                         server: input_received     (highest vol)
+  build.ndjson        ← client: build_ghost (each new ghost spot or verdict while placing:
+                        snapped point, worker verdict, main-thread re-check, deck owner,
+                        plates, own plate under the point; `taps` counts spots),
+                        structure_place_confirm/blocked
+                        server: place_structure_rejected (raw + snapped point, refusal text)
   other.ndjson        ← anything unmapped (defensive — empty under normal use)
 ```
 

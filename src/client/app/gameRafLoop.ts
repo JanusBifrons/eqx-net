@@ -33,6 +33,7 @@ import {
 } from '../state/store.js';
 import { syncArtBake } from '../state/artBakeUi.js';
 import { placementChosen, resetPlacementChosen, writePlacementChosen } from '../structures/placementChosen.js';
+import { notePlacementGhost, resetPlacementTelemetry } from '../structures/placementTelemetry.js';
 import { updatePlacementHints } from '../structures/placementHints.js';
 import { updateWorldTag } from '../hud/worldTag.js';
 import { commitPlacement } from '../structures/placementCancel.js';
@@ -314,6 +315,9 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     const feedback = (writeE2E || placing) ? renderer.getFeedback() : null;
     if (placing && feedback) {
       writePlacementChosen(feedback); // point, park state and the ghost's verdict
+      // Owner playtest telemetry: one build_ghost line per new spot / verdict.
+      notePlacementGhost(gameClient.mirror.pendingPlacementPreview!, placementChosen.worldX, placementChosen.worldY,
+        placementChosen.stuck, placementChosen.rejection, gameClient.mirror);
       // WS-10 (R2.5) — DESKTOP one-click place: the renderer bumped the confirm
       // seq on a mouse left-click. Commit at the chosen point (just written
       // above, so it's this click's point) via the SAME path the touch Confirm
@@ -343,6 +347,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
         placementChosen.worldX ?? pv.x, placementChosen.worldY ?? pv.y, gameClient.mirror);
     } else if (placementChosen.worldX !== null || placementChosen.stuck || placementChosen.rejection !== null) {
       resetPlacementChosen();
+      resetPlacementTelemetry();
     }
     // Build mode: Command view + camera pulled back while placing; restored after.
     if (typeof window !== 'undefined') stepBuildModeView(useUIStore.getState().buildMode, feedback, gameClient.mirror.localShipInstanceId ?? null,
