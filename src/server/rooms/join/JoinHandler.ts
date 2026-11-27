@@ -44,6 +44,7 @@ import {
 } from './joinConstants.js';
 import { JoinOptionsSchema } from './joinOptions.js';
 import { joinFreshSpawn } from './joinFreshSpawn.js';
+import { seedOwnedFleet } from '../sandboxFleet.js';
 import { drainPendingJoin, handleClientReady } from './joinHandshake.js';
 import type { JoinHandlerDeps } from './joinDeps.js';
 
@@ -358,6 +359,7 @@ export class JoinHandler {
           watchdogTick: tickAtRebind + CLIENT_READY_TIMEOUT_TICKS,
           source: 'rebind',
         });
+        seedOwnedFleet(d, playerId, liveX, liveY); // sandbox: replace grid hulls lost since
         return;
       }
         // Stale entry: ownerlessShips had this player but the slot/ShipState
@@ -369,6 +371,8 @@ export class JoinHandler {
 
 
     joinFreshSpawn(d, client, parsed, playerId, userId, requestedKind, transitToken);
+    const at = d.initialSpawnPositions.get(playerId); // set only when the spawn succeeded
+    if (at !== undefined) seedOwnedFleet(d, playerId, at.x, at.y);
   }
 
   /**

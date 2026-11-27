@@ -5,7 +5,7 @@
  * call the server's hull gate makes, so a tile never promises a launch the
  * server refuses.
  */
-import { PLAYABLE_SHIP_KINDS_LIST, type ShipKind } from '../../../shared-types/shipKinds.js';
+import { PILOT_HULL_KINDS_LIST, type ShipKind } from '../../../shared-types/shipKinds.js';
 import { capitalClassAndFitOf, type CapitalFitName } from '../../../shared-types/shipKinds/capitals/index.js';
 import { sizeClassOf, type SizeClass } from '../../../shared-types/shipScale/tuning.js';
 import { launchVerdict, type LaunchVerdict } from '../../../shared-types/launch.js';
@@ -30,9 +30,9 @@ export const FIT_LABEL: Readonly<Record<CapitalFitName, string>> = {
   naval: 'Guns', rail: 'Railguns', lance: 'Lances', beam: 'Beams',
 };
 
-/** Every hull a pilot can fly: the playable list minus engineering-only test hulls. */
+/** Every hull a pilot can fly: the shared pilot-hull list (shipKinds/pilotHulls.ts). */
 export function hangarKinds(): readonly ShipKind[] {
-  return PLAYABLE_SHIP_KINDS_LIST.filter((k) => !k.engineeringOnly);
+  return PILOT_HULL_KINDS_LIST;
 }
 
 /** The tiles for one tab, in catalogue order, each capital class's fits

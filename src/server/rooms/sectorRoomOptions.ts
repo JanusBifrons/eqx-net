@@ -322,4 +322,7 @@ export interface SectorRoomOptions {
   /** Sandbox: every player build and upgrade is free (normal build time, no
    *  crate, no minerals), and a free structure repacks into nothing. */
   freeBuilds?: boolean;
+  /** Sandbox: each joiner finds one of every base pilot hull parked in their
+   *  own grid lane, owned by them (`sandboxFleet.ts`). Sealed rooms only. */
+  ownedFleet?: boolean;
 }

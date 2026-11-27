@@ -185,7 +185,7 @@ export function joinFreshSpawn(
   if ((d.testMode || ALLOW_DEV_OVERRIDES) && parsed.success) seedTestWallet(playerId, parsed.data.initialWallet ?? d.testWalletSeed);
   // base-build-test: the base is the joiner's, its Capital already holding the starter copies (no grant then).
   const adoptedBase = d.testMode && adoptPrebuiltBase(d.structureRegistry, playerId) > 0;
-  if (!resumedFromStore && d.sectorKey !== null && d.enforceHullGate) chosenKind = gateLaunch(d.launchCostsOn, playerId, chosenKind, (m) => d.sendNotice(client, m));
+  if (!resumedFromStore && d.sectorKey !== null && d.enforceHullGate) chosenKind = gateLaunch(d.launchCostsOn, d.sectorKey, playerId, chosenKind, (m) => d.sendNotice(client, m));
 
   // WS-B (Phase 5): the Limbo restore path is RETIRED. A returning player
   // resumes by shipId — the roster shipId-restore above, which is now the
