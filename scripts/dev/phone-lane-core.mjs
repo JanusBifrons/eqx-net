@@ -103,11 +103,12 @@ export function tunnelArgs(named) {
  * (every lane session streams one, with its frame-time `perf_summary` lines)
  * to `<run>/captures/` instead of the served checkout's `diag/captures/`, so a
  * play session's evidence sits next to `server.log` and survives the
- * checkout's worktree being removed.
+ * checkout's worktree being removed. The sandbox room (`?room=sandbox`) is on;
+ * the test rooms stay off.
  * @param {string} runDir
  */
 export function laneServerEnv(runDir) {
-  return { EQX_ENABLE_TEST_ROOMS: '0', EQX_TEST_SIGNIN: '1', EQX_DIAG_DIR: path.join(runDir, 'captures') };
+  return { EQX_ENABLE_TEST_ROOMS: '0', EQX_ENABLE_SANDBOX_ROOM: '1', EQX_TEST_SIGNIN: '1', EQX_DIAG_DIR: path.join(runDir, 'captures') };
 }
 
 /**

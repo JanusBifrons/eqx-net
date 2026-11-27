@@ -1254,7 +1254,7 @@ export class SectorRoom extends Room<SectorState> {
     // create, so reject oversized seed arrays before they seed the sector.
     assertRoomSeedBounds(roomOpts as Record<string, unknown>);
     this.testMode = roomOpts.testMode ?? false;
-    this.state.deck = this.structureRegistry.deck = this.testMode && roomOpts.deck === true; // base-platforms prototype flag (synced; client-suppliable, so testMode only; the registry feeds canConnect)
+    this.state.deck = this.structureRegistry.deck = (this.testMode || roomOpts.sealed === true) && roomOpts.deck === true; // base-platforms flag (synced; client-suppliable, so testMode or a sealed room only; the registry feeds canConnect)
     this.enforceHullGate = !this.testMode || roomOpts.enforceHullGate === true;
     this.launchCostsOn = this.testMode ? (roomOpts.launchCosts ?? LAUNCH_COSTS_ON) : LAUNCH_COSTS_ON;
     this.disableCollisionDamage = this.testMode && (roomOpts.disableCollisionDamage ?? false);
@@ -2279,7 +2279,7 @@ export class SectorRoom extends Room<SectorState> {
     }), SELECTION_STATS_INTERVAL_MS);
     this.selectionStatsTimer.unref?.();
 
-    if (this.testMode) this.persistSector = roomOpts.persistSector !== false; // cut field before any seeding: placement sees its rocks (C5)
+    if (this.testMode || roomOpts.sealed === true) this.persistSector = roomOpts.sealed !== true && roomOpts.persistSector !== false; // a sealed room is never saved; cut field before any seeding: placement sees its rocks (C5)
     // The chunk-streaming host exists when the sector has ANY chunk source: the field's rocks today; wreck-field sources join `chunkSources` (wreck fields R7).
     // Break-up is ON by default in every room (owner decision 2026-11-14:
     // "land it switched on"). A room opts out with `capitalWrecks: false` /

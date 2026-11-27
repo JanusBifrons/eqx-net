@@ -19,7 +19,7 @@ import type { RecipeId } from '../../shared-types/recipes.js';
 export interface SectorRoomOptions {
   testMode?: boolean;
   /** Base-platforms prototype: the room builds on hex deck plates
-   *  (`state.deck`). Honoured only with testMode; default false. `?room=deck`. */
+   *  (`state.deck`). Honoured only with testMode or `sealed`; default false. `?room=deck`. */
   deck?: boolean;
   asteroidConfig?: ReadonlyArray<AsteroidSpec>;
   /** P2c (testMode) — sector features for a non-galaxy room (asteroid mix,
@@ -304,7 +304,8 @@ export interface SectorRoomOptions {
    *  and an overload shows as slower ticks. testMode-only. */
   perfFixedLoad?: boolean;
   /** testMode — false: never save or restore this sector's snapshot (a
-   *  test room that needs a sectorKey for the roster, not persistence). */
+   *  test room that needs a sectorKey for the roster, not persistence). A
+   *  `sealed` room is never saved, whatever this says. */
   persistSector?: boolean;
   /** testMode — where a WAVE squad lands in this room (the wave E2E;
    *  `LivingWorldRoom.testWaveArrival`). */

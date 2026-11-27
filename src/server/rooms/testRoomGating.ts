@@ -15,3 +15,13 @@
 export function shouldRegisterTestRooms(env: NodeJS.ProcessEnv = process.env): boolean {
   return env['NODE_ENV'] !== 'production' || env['EQX_ENABLE_TEST_ROOMS'] === '1';
 }
+
+/**
+ * Gate for the sandbox room (`?room=sandbox`, docs/features/sandbox.md): on
+ * wherever the test rooms are, and on a production-mode build only with
+ * EQX_ENABLE_SANDBOX_ROOM=1 (the phone lane sets it, test rooms stay off). The
+ * sandbox is not testMode, so it opens no test knobs.
+ */
+export function shouldRegisterSandboxRoom(env: NodeJS.ProcessEnv = process.env): boolean {
+  return shouldRegisterTestRooms(env) || env['EQX_ENABLE_SANDBOX_ROOM'] === '1';
+}

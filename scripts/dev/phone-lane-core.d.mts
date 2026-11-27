@@ -11,4 +11,4 @@ export function parseNamedTunnel(text: string | undefined): NamedTunnel | undefi
 export function laneGoogleEnv(dotenv: Record<string, string>, hostname: string): Record<string, string>;
 export function tunnelArgs(named: { tunnelId: string; credentialsFile: string } | undefined): string[];
 export function resolvePhoneDir(cwd?: string, env?: NodeJS.ProcessEnv): string;
-export function laneServerEnv(runDir: string): { EQX_ENABLE_TEST_ROOMS: string; EQX_TEST_SIGNIN: string; EQX_DIAG_DIR: string };
+export function laneServerEnv(runDir: string): { EQX_ENABLE_TEST_ROOMS: string; EQX_ENABLE_SANDBOX_ROOM: string; EQX_TEST_SIGNIN: string; EQX_DIAG_DIR: string };
