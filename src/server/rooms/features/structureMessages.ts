@@ -82,10 +82,12 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
       { rot, mirror: msg.mirror, requirePacked: true, deck: h.deck() },
     );
     if (id === null) {
-      h.logger.warn({ sessionId: client.sessionId, kind: msg.kind }, 'place_structure rejected');
       // Say why when it was the Capital's packed crate that was missing.
       const kindId = msg.kind;
       const refusal = h.structurePlacement().lastRefusal;
+      // The point and the reason in server.log too: the event ring below is
+      // flooded by tick_budget lines and lost the owner's 2026-11-27 refusals.
+      h.logger.warn({ sessionId: client.sessionId, kind: msg.kind, x: Math.round(px), y: Math.round(py), refusal }, 'place_structure rejected');
       // Diagnostic captures (build bucket): the raw and snapped point and why.
       serverLogEvent('place_structure_rejected', { owner, kind: msg.kind, rawX: msg.x, rawY: msg.y, x: px, y: py, deck: h.deck(), refusal });
       if (refusal !== null) h.sendNotice(client, refusal);
