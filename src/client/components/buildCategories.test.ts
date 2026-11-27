@@ -1,7 +1,10 @@
 import { describe, it, expect } from 'vitest';
 import {
   BUILD_CATEGORIES,
+  DECK_CATEGORY,
+  buildKindText,
   buildableKinds,
+  categoriesFor,
   categoryById,
 } from './buildCategories';
 import { STRUCTURE_KINDS_LIST, isBuildableStructureKind } from '@shared-types/structureKinds';
@@ -33,5 +36,28 @@ describe('buildCategories taxonomy', () => {
     for (const c of BUILD_CATEGORIES) {
       expect(categoryById(c.id)).toBe(c);
     }
+  });
+
+  it('a deck room leads with the Deck tab: plates, shield fences and gates, roads, each shown once', () => {
+    const deck = categoriesFor(true);
+    expect(deck[0]).toBe(DECK_CATEGORY);
+    expect(DECK_CATEGORY.kinds).toEqual(['connector', 'shield_pylon', 'shield_gate', 'shield_airlock', 'road']);
+    const shown = deck.flatMap((c) => buildableKinds(c, true));
+    const all = BUILD_CATEGORIES.flatMap((c) => c.kinds);
+    expect(new Set(shown)).toEqual(new Set(all));
+    expect(shown.length).toBe(all.length);
+    expect(categoryById('core', true).kinds).not.toContain('connector');
+    expect(categoryById('core', true).kinds).toContain('capital');
+  });
+
+  it('off a deck room there is no Deck tab and the taxonomy is unchanged', () => {
+    expect(categoriesFor(false)).toBe(BUILD_CATEGORIES);
+    expect(categoryById('core').kinds).toContain('connector');
+  });
+
+  it('on a deck room the Connector reads as the Deck plate; elsewhere the catalogue name stands', () => {
+    expect(buildKindText('connector', true)?.name).toBe('Deck plate');
+    expect(buildKindText('connector', false)).toBeNull();
+    expect(buildKindText('shield_pylon', true)).toBeNull();
   });
 });

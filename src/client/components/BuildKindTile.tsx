@@ -44,24 +44,27 @@ export interface BuildKindTileProps {
   /** This tile became the detail kind (a tap, or a desktop mouse hover). */
   onShow?: (kind: StructureKindId) => void;
   selected?: boolean;
+  /** This room's name and blurb for the kind (`buildKindText`); null = the catalogue's. */
+  text?: { name: string; description: string } | null;
 }
 
-export const BuildKindTile = memo(function BuildKindTile({ kindId, entry, onPick, onShow, selected = false }: BuildKindTileProps): JSX.Element {
+export const BuildKindTile = memo(function BuildKindTile({ kindId, entry, onPick, onShow, selected = false, text = null }: BuildKindTileProps): JSX.Element {
   const k = getStructureKind(kindId);
+  const name = text?.name ?? k.displayName;
   const power = buildKindPower(kindId);
   const reason = buildLockReason(kindId, entry);
   return (
     <HullTile
       art="structure"
       kind={kindId}
-      name={k.displayName}
+      name={name}
       testId={`build-${kindId}`}
       data={{ locked: entry.locked ? '1' : '0' }}
       edge={selected ? C.autoGlow : undefined}
       locked={entry.locked}
       badge={packedBadge(entry)}
       caption={reason !== null ? { text: 'Needs crate', color: C.inkDim } : undefined}
-      tooltip={reason === null ? entry.label : `${k.displayName}: ${reason}`}
+      tooltip={reason === null ? entry.label : `${name}: ${reason}`}
       onClick={() => { onShow?.(kindId); if (!entry.locked) onPick(kindId); }}
       onPointerEnter={(e) => { if (e.pointerType === 'mouse') onShow?.(kindId); }}
     >
@@ -90,20 +93,23 @@ function signedPower(n: number): string {
 export interface BuildKindDetailsProps {
   kindId: StructureKindId | null;
   entry: BuildEntry | null;
+  /** This room's name and blurb for the kind (`buildKindText`); null = the catalogue's. */
+  text?: { name: string; description: string } | null;
 }
 
 /** The strip under the grid: the hovered or last tapped kind's details. */
-export function BuildKindDetails({ kindId, entry }: BuildKindDetailsProps): JSX.Element {
+export function BuildKindDetails({ kindId, entry, text = null }: BuildKindDetailsProps): JSX.Element {
   if (kindId === null || entry === null) {
     return <Box sx={DETAILS_SX} data-testid="build-details"><Box sx={DIM_SX}>Hover or tap a building for details.</Box></Box>;
   }
   const k = getStructureKind(kindId);
   const power = buildKindPower(kindId);
   const reason = buildLockReason(kindId, entry);
+  const description = text?.description ?? k.description;
   return (
     <Box sx={DETAILS_SX} data-testid="build-details" data-kind={kindId}>
-      <Box sx={DETAILS_NAME_SX}>{k.displayName}</Box>
-      {k.description !== '' && <Box sx={DESC_SX} data-testid="build-details-desc">{k.description}</Box>}
+      <Box sx={DETAILS_NAME_SX}>{text?.name ?? k.displayName}</Box>
+      {description !== '' && <Box sx={DESC_SX} data-testid="build-details-desc">{description}</Box>}
       <Box sx={STATS_SX}>
         <span data-testid="build-details-cost">◆ {k.constructionCost.toLocaleString('en-GB')}</span>
         {power !== 0 && <span data-testid="build-details-power">⚡ {signedPower(power)}</span>}

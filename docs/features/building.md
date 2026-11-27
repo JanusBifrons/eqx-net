@@ -23,7 +23,10 @@ Build mode on its own opens nothing. It is the one place you pick a building:
 
 - A **category rail** runs down its left edge (Core, Economy, Industry,
   Defence, Gun Batteries, Habitation, Transport). Tap an icon to show that
-  category.
+  category. On a deck room a **Deck** tab (hexagon) comes first: the Deck
+  plate (the Connector, which lays a whole new plate anywhere clear: in open
+  space it starts a new deck), the shield fences and gates, and the road tile; those kinds leave
+  their usual categories there.
 - The category shows **picture tiles**, one per building. Under each picture
   are its build cost (◆) and its power (⚡ +N generates, −N draws; none when it
   uses no power). A ×N badge shows packed crates you hold; a building you

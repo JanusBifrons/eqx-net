@@ -1,7 +1,7 @@
 /**
- * Base platforms slice 8 — the player snap lays plates: a connector anywhere
- * in a plate's MIDDLE hex snaps to the plate centre (the anchor); in any
- * other hex it keeps its small slot. Other kinds are unchanged.
+ * Base platforms slice 8 — the player snap lays plates: a connector (the Deck
+ * plate) anywhere snaps to the centre of the plate under it (the anchor).
+ * Other kinds are unchanged.
  */
 import { describe, it, expect } from 'vitest';
 import { snapPlacementToDeck } from './deckPlacement.js';
@@ -30,16 +30,13 @@ describe('snapPlacementToDeck — laying a plate', () => {
     }
   });
 
-  it('a connector in a ring hex keeps the small-slot snap', () => {
+  it('a connector in a ring hex snaps to the centre of the plate under it (never a small slot)', () => {
     for (let k = 1; k <= 6; k++) {
-      const p = ringHex(1, 0, k);
-      const x = p.x + 0.3 * DECK_HEX_SIZE, y = p.y + 0.1 * DECK_HEX_SIZE;
-      const s = snapPlacementToDeck('connector', x, y, out());
-      const want = snapToDeckSlot('small', x, y, out());
-      expect(s.slot, `ring ${k}`).toBe('small');
-      expect(s.x).toBe(want.x);
-      expect(s.y).toBe(want.y);
-      expect(s.rhombus).toBe(want.rhombus);
+      const p = ringHex(1, 0, k), c = centre(1, 0);
+      const s = snapPlacementToDeck('connector', p.x + 0.3 * DECK_HEX_SIZE, p.y + 0.1 * DECK_HEX_SIZE, out());
+      expect(s.slot, 'ring ' + k).toBe('plate');
+      expect(s.x).toBeCloseTo(c.x, 6);
+      expect(s.y).toBeCloseTo(c.y, 6);
     }
   });
 

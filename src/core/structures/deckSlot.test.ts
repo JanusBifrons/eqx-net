@@ -173,7 +173,7 @@ describe('deckSlot (base platforms)', () => {
     },
   );
 
-  it.each(STRUCTURE_KINDS_LIST.filter((k) => k.deckSlot === 'small' && !FENCE_KINDS.includes(k.id)).map((k) => [k.id, k] as const))(
+  it.each(STRUCTURE_KINDS_LIST.filter((k) => k.deckSlot === 'small' && !FENCE_KINDS.includes(k.id) && k.id !== 'connector').map((k) => [k.id, k] as const))(
     '%s fits each rhombus of a hex at its snapped facing (slice 18)',
     (id, k) => {
       for (let rh = 0; rh < 3; rh++) {

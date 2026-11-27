@@ -1,8 +1,8 @@
 /**
  * Base platforms — the `off-deck` placement rule (`placementRejection`'s deck
  * context). On a deck room a player's structure must stand on one of their
- * own plates; a connector may also lay a NEW plate on the centre of a plate
- * bordering theirs. No deck context = no deck rule.
+ * own plates; a connector (the Deck plate) may also lay a NEW plate on the
+ * centre of any clear plate, in open space too. No deck context = no deck rule.
  */
 import { describe, it, expect } from 'vitest';
 import { placementRejection, type PlacementDeck } from './placementRules.js';
@@ -45,10 +45,31 @@ describe('placementRejection — off-deck', () => {
     }
   });
 
-  it('a connector on a plate centre NOT bordering the owner\'s deck is rejected', () => {
-    expect(reject('connector', centre(2, 2), deckOf('alice'))).toBe('off-deck');
-    // Bordering only bob's plate is not alice's deck.
-    expect(reject('connector', centre(5, 0), deckOf('alice'))).toBe('off-deck');
+  it('a connector lays a new plate on ANY plate centre: open space starts a new deck', () => {
+    for (const [i, j] of [[9, -7], [2, 2], [-6, 3], [5, 0]] as const) {
+      expect(reject('connector', centre(i, j), deckOf('alice')), 'alice ' + i + ',' + j).toBeNull();
+      expect(reject('connector', centre(i, j), deckOf('nobody')), 'nobody ' + i + ',' + j).toBeNull();
+    }
+    // Still only a connector, and only on a plate centre.
+    const c = centre(9, -7);
+    expect(reject('reactor', c, deckOf('nobody'))).toBe('off-deck');
+    expect(reject('connector', { x: c.x + 40, y: c.y }, deckOf('nobody'))).toBe('off-deck');
+    // The renderer copy agrees.
+    const list: PlacementDeck = { plates: new OwnerPlateList(), owner: 'nobody' };
+    expect(reject('connector', c, list)).toBeNull();
+    expect(reject('reactor', c, list)).toBe('off-deck');
+  });
+
+  it("another owner's laid plate is taken: its anchor stands on the centre", () => {
+    const b = centre(4, 0);
+    const anchor = { x: b.x, y: b.y, radius: 40, halfW: 40, halfH: 40 };
+    expect(placementRejection('connector', b.x, b.y, [anchor], null, 0, false, deckOf('alice'))).toBe('overlap-structure');
+  });
+
+  it('a new plate in open space still needs clear space', () => {
+    const c = centre(9, -7);
+    const rock = { x: ringHex(9, -7, 3).x, y: ringHex(9, -7, 3).y, radius: 100 };
+    expect(placementRejection('connector', c.x, c.y, [], [rock], 0, false, deckOf('nobody'))).toBe('plate-blocked');
   });
 
   it('a non-connector on an adjacent plate centre is rejected (only connectors lay plates)', () => {
