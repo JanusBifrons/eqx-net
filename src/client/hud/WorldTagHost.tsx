@@ -32,6 +32,18 @@ function focusTypeName(focusId: string | null, focusKind: string | null): string
   return ship === undefined ? undefined : getShipKind(ship.kind)?.displayName;
 }
 
+/** The largest bounding radius (game units) among the selected ships, the
+ *  far-zoom icon rule's measure (`FarZoomIcons`); 0 when none is mirrored. */
+function largestHullRadius(ids: readonly string[]): number {
+  const ships = getGameClient()?.mirror.ships;
+  let r = 0;
+  for (const id of ids) {
+    const ship = ships?.get(id);
+    if (ship !== undefined) r = Math.max(r, getShipKind(ship.kind ?? null).radius);
+  }
+  return r;
+}
+
 export function WorldTagHost() {
   const data = useSelectionPanelData();
   const focusId = useUIStore((s) => s.selection.focusId);
@@ -40,7 +52,9 @@ export function WorldTagHost() {
   const panelOpen = useUIStore(selectRightPanelOpen);
   const fleet = useFleetSelectionView();
   const group = worldTagMode(fleet.active ? fleet.ids : [], focusId) === 'group';
-  useEffect(() => setWorldTagAnchor(group ? 'centroid' : 'focus', focusId), [group, focusId]);
+  // S10: the group's compact switch judges its biggest hull (no per-group diameter).
+  const groupRadiusU = group ? largestHullRadius(fleet.ids) : 0;
+  useEffect(() => setWorldTagAnchor(group ? 'centroid' : 'focus', focusId, groupRadiusU), [group, focusId, groupRadiusU]);
   // S9: edge-stuck, the tag takes taps (the writer turns pointer events on
   // only then) and glides the camera to what it points at.
   const { touchActivate, clickActivate } = useTouchClickActivate();
@@ -53,7 +67,8 @@ export function WorldTagHost() {
     <Slot anchor="fullscreen" pointerEvents="none">
       <div ref={ref} style={WRAP_STYLE} data-testid="world-tag" data-focus-id={focusId ?? undefined} data-tag-mode={group ? 'group' : 'single'}
         onTouchStart={touchActivate(requestWorldTagGlide)} onClick={clickActivate(requestWorldTagGlide)}>
-        <EqxWorldTag title={tag.title} owner={tag.owner} ownerColor={tag.ownerColor} hullPct={tag.hullPct} />
+        <EqxWorldTag title={tag.title} owner={tag.owner} ownerColor={tag.ownerColor} hullPct={tag.hullPct}
+          compactTitle={tag.compactTitle} />
       </div>
     </Slot>
   );

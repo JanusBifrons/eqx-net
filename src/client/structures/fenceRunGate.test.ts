@@ -7,6 +7,7 @@ import { placementChosen, resetPlacementChosen } from './placementChosen.js';
 import { endFenceRun, fenceRunAnchor, newFenceRunPlan, planGateRunInto, type FenceRunWorld } from './fenceRun.js';
 import { commitPlacement } from './placementCancel.js';
 import { pendingAfterSend } from './pendingPlacementRun.js';
+import { snapPlacementToDeck } from '../../core/structures/deckPlacement.js';
 
 // Edge feel P3: a gate in the fence run. Same client fixture as fenceRun.test.ts.
 const send = vi.fn();
@@ -126,6 +127,20 @@ describe('gate in a fence run: Place sends', () => {
     place('shield_pylon', corner(2));
     expect(send.mock.calls.length).toBe(1);
     expect(send.mock.calls[0]![1].x).toBeCloseTo(corner(2).x, 6);
+  });
+
+  // Owner retest 2026-11-27 (build.ndjson): a second tap on a seam whose gate
+  // had just landed showed a red ghost, yet Place still sent the gate and the
+  // server refused it ("place_structure rejected", shield_gate, twice).
+  it('a seam that already has its gate: Place sends nothing (the ghost is red)', () => {
+    const a = corner(0), b = corner(1), m = mid(1);
+    const g = snapPlacementToDeck('shield_gate', m.x, m.y, { x: 0, y: 0, q: 0, r: 0, rhombus: -1, rot: -1, slot: 'hex' });
+    swarm.set(1, { x: a.x, y: a.y, angle: 0, shipKind: 'shield_pylon' }); structures.set(1, {});
+    swarm.set(2, { x: b.x, y: b.y, angle: 0, shipKind: 'shield_pylon' }); structures.set(2, {});
+    swarm.set(3, { x: g.x, y: g.y, angle: (g.rot * Math.PI) / 180, shipKind: 'shield_gate' }); structures.set(3, {});
+    useUIStore.setState({ placementKind: 'shield_gate' });
+    expect(place('shield_gate', m)).toBe(false);
+    expect(send).not.toHaveBeenCalled();
   });
 
   it('the pending record counts the posts and the gate as one run', () => {
