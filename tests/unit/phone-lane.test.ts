@@ -107,6 +107,7 @@ describe('lane server env (play evidence lands in run/)', () => {
     const env = laneServerEnv(run);
     expect(env.EQX_DIAG_DIR).toBe(path.join(run, 'captures'));
     expect(env.EQX_ENABLE_TEST_ROOMS).toBe('0');
+    expect(env.EQX_ENABLE_SANDBOX_ROOM).toBe('1');
     expect(env.EQX_TEST_SIGNIN).toBe('1');
   });
 });

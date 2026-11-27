@@ -281,6 +281,7 @@ export function buildJoinSpec(
     'swarm-soak': 'Swarm Soak (500)',
     'swarm-tidi': 'Swarm TiDi (4000)',
     'swarm-tidi-burn': 'Swarm TiDi (burn 20 ms)',
+    'sandbox': 'Sandbox',
   };
   let prettyName = builtin[roomName];
   if (!prettyName && roomName.startsWith('galaxy-')) {

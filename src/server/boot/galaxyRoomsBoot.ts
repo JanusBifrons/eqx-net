@@ -3,6 +3,8 @@ import type { Logger } from 'pino';
 import type { SectorRoom } from '../rooms/SectorRoom.js';
 import { galaxySectorsToBoot } from '../rooms/galaxyBoot.js';
 import { GALAXY_SECTORS } from '../../core/galaxy/galaxy.js';
+import { shouldRegisterSandboxRoom } from '../rooms/testRoomGating.js';
+import { SANDBOX_ROOM_NAME } from '../rooms/testRooms/sandboxRoom.js';
 
 /**
  * Boot step 4 — eagerly create the galaxy rooms (and the E2E wave room when
@@ -46,6 +48,18 @@ export async function createGalaxyRooms(deps: { logger: Logger }): Promise<Map<s
       logger.info('E2E wave-attack room created + director-managed (EQX_E2E_WAVE=1)');
     } catch (err) {
       logger.error({ err }, 'failed to create E2E wave-attack room');
+    }
+  }
+  // Sandbox (docs/features/sandbox.md): eagerly create the ONE sandbox room so
+  // every joiner finds it (SandboxRoom refuses a second create). NOT added to
+  // `galaxyRooms`: that map feeds the living world, economy and trade, and the
+  // sandbox is sealed from all of them.
+  if (shouldRegisterSandboxRoom()) {
+    try {
+      await matchMaker.createRoom(SANDBOX_ROOM_NAME, {});
+      logger.info('sandbox room created');
+    } catch (err) {
+      logger.error({ err }, 'failed to create the sandbox room');
     }
   }
   return galaxyRooms;
