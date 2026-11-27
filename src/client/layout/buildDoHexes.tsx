@@ -4,7 +4,8 @@
  *
  * - **Placing a structure** (`placingStripItems.tsx`): Place under the thumb
  *   (cell 0; `commitPlacement`, disabled while the ghost is rejected or held),
- *   Rotate, the building (reopens the Build menu), Mirror, Gate (fence runs on
+ *   Rotate, the building (a hex like the rest: its picture at icon size, its
+ *   short name as the word; reopens the Build menu), Mirror, Gate (fence runs on
  *   a deck), and Cancel in the far corner. Rows read
  *   "Mirror Rotate Place / Cancel Build" (with Gate: "Cancel Gate Build").
  * - **Route / target pick** (`routeStripItems.tsx`: Patrol, Escort, Retreat):
@@ -24,6 +25,7 @@
  * Details. Pure: unit-tested; `DoHexesHost` owns the hooks.
  */
 import type { ReactElement } from 'react';
+import { getStructureKind, isStructureKindId } from '@shared-types/structureKinds';
 import { EqxIcon, type EqxIconName } from '../../ui/index.js';
 import type { ManageActionData } from '../components/StructureManageActions.js';
 import type { PanelData } from '../components/selectionPanelData.js';
@@ -60,6 +62,17 @@ function identityHex(a: StripIdentityAction, word: string, testId: string, tone:
   };
 }
 
+/** The longest word that fits under a hex icon (`HUD.hex.wordFont` in a `HUD.hex.w` hex). */
+const HEX_WORD_MAX = 8;
+
+/** The building hex's word: the kind's short name ("Capital", "Solar"; its
+ *  first word), or "Build" when that will not fit or the kind is unknown. */
+export function kindWord(kindId: string | undefined): string {
+  if (kindId === undefined || !isStructureKindId(kindId)) return 'Build';
+  const first = getStructureKind(kindId).displayName.split(' ')[0] ?? '';
+  return first !== '' && first.length <= HEX_WORD_MAX ? first : 'Build';
+}
+
 /** The placing hexes for the placing builder's `actions`; [] while not placing. */
 export function placingDoHexes(actions: readonly StripAction[]): DoHex[] {
   if (actions.length === 0) return [];
@@ -72,7 +85,7 @@ export function placingDoHexes(actions: readonly StripAction[]): DoHex[] {
   const out: DoHex[] = [];
   if (place !== null) out.push(buttonHex(place, 'Place', { tone: 'good', role: 'main' }));
   if (rotate !== null) out.push(buttonHex(rotate, 'Rotate'));
-  if (kind !== null) out.push(identityHex(kind, 'Build', kind.testId, 'primary'));
+  if (kind !== null) out.push(identityHex(kind, kindWord(kind.state), kind.testId, 'neutral'));
   if (mirror !== null) out.push(buttonHex(mirror, 'Mirror'));
   if (gate !== null) out.push(buttonHex(gate, 'Gate'));
   if (cancel !== null) out.push(buttonHex(cancel, 'Cancel', { tone: 'danger', role: 'cancel' }));

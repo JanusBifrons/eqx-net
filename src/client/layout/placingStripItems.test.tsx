@@ -82,7 +82,7 @@ describe('placing tools as do-hexes', () => {
     expect(hexIds()).toEqual(['placement-confirm', 'placement-rotate', 'placement-kind', 'placement-mirror', 'placement-cancel']);
     expect(tool('placement-kind').dataset.state).toBe('solar');
     for (const [id, label, word] of [
-      ['placement-confirm', 'Place', 'Place'], ['placement-rotate', 'Rotate', 'Rotate'], ['placement-kind', 'Solar Array: open the Build menu', 'Build'],
+      ['placement-confirm', 'Place', 'Place'], ['placement-rotate', 'Rotate', 'Rotate'], ['placement-kind', 'Solar Array: open the Build menu', 'Solar'],
       ['placement-mirror', 'Mirror', 'Mirror'], ['placement-cancel', 'Stop placing', 'Cancel'],
     ] as const) {
       expect(tool(id).dataset.variant, id).toBe('hex');
@@ -91,6 +91,15 @@ describe('placing tools as do-hexes', () => {
     }
     expect(tool('placement-kind').getAttribute('aria-label')).toMatch(/: open the Build menu$/);
     expect(screen.queryByTestId('left-strip')).toBeNull();
+  });
+
+  it('the building hex is a normal neutral hex: frame, the kind\'s short name as its word', () => {
+    act(() => { useUIStore.setState({ placementKind: 'capital' }); });
+    mount();
+    const k = tool('placement-kind');
+    expect(k.dataset.variant).toBe('hex');
+    expect(k.dataset.tone).toBe('neutral');
+    expect(screen.getByTestId('placement-kind-word').textContent).toBe('Capital');
   });
 
   it('Place is under the thumb (cell 0), Cancel in the far corner', () => {

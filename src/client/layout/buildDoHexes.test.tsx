@@ -4,7 +4,7 @@
  * the predicate that shows them, and the strip coverage (one place per action).
  */
 import { describe, expect, it, vi } from 'vitest';
-import { buildHexCovers, buildingDoHexes, buildingHexesShow, type BuildingDoHexOptions } from './buildDoHexes';
+import { buildHexCovers, buildingDoHexes, buildingHexesShow, kindWord, type BuildingDoHexOptions } from './buildDoHexes';
 import type { PanelData } from '../components/selectionPanelData';
 import type { StripAction } from './stripActions';
 
@@ -72,6 +72,15 @@ describe('buildingDoHexes', () => {
     expect(hexes.map((h) => h.testId)).toEqual(['do-hex-more']);
     hexes[0]?.onPress();
     expect(o.openMore).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('kindWord', () => {
+  it('the kind\'s first word when it fits, else "Build"', () => {
+    expect(kindWord('capital')).toBe('Capital');
+    expect(kindWord('solar')).toBe('Solar');
+    expect(kindWord('not-a-kind')).toBe('Build');
+    expect(kindWord(undefined)).toBe('Build');
   });
 });
 
