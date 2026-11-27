@@ -21,6 +21,7 @@ import { selectControlMode, useShouldRenderHud, useUIStore } from '../state/stor
 import { selectRightPanelOpen } from '../state/rightPanel';
 import type { TouchInput } from '../input/TouchInput';
 import { Slot } from '../layout/Slot';
+import { DoHexesHost } from '../layout/DoHexesHost';
 import { RAIL_W_CSS } from '../layout/railWidth';
 import { BuildSidebarHost } from '../components/BuildSidebarHost';
 import { FloatingStick } from './FloatingStick';
@@ -89,6 +90,9 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
       {touch && !landscape
         ? <Slot anchor="top-center" order={0} pointerEvents="none"><StatusCapsule scale={scale} /></Slot>
         : <Slot anchor="bottom-center" order={3} pointerEvents="none"><StatusCapsule scale={scale} /></Slot>}
+
+      {/* Selection HUD: the do-hexes (bottom-right honeycomb; Command own ships for now). */}
+      <DoHexesHost />
 
       {/* ── Desktop ─────────────────────────────────────────────────────── */}
       {/* RTS command view: fleet orders, and a running map pick's tools, live on
