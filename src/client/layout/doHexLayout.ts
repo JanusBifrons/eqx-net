@@ -38,6 +38,8 @@ export interface DoHex {
   lit?: boolean;
   /** Faded but still tappable (nothing to act on yet: no lock target, nothing in reach). */
   dim?: boolean;
+  /** Faded and blocked (Place on a rejected ghost, Upgrade at the top level). */
+  disabled?: boolean;
   /** `main` = thumb-nearest cell; `cancel` = the far corner. */
   role?: 'main' | 'cancel';
   onPress: () => void;

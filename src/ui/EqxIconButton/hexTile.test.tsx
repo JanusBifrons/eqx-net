@@ -31,6 +31,14 @@ describe('EqxIconButton variant="hex" (selection HUD)', () => {
     expect(screen.queryByTestId('h-word')).toBeNull();
   });
 
+  it('a picture icon (a building portrait) shrinks to the icon footprint inside the frame', () => {
+    render(<EqxIconButton variant="hex" icon={<img src="x.png" alt="" data-testid="pic" />} tooltip="Capital" word="Capital" data-testid="h" />);
+    const img = getComputedStyle(screen.getByTestId('pic'));
+    expect({ w: img.width, h: img.height }).toEqual({ w: `${HUD.hex.icon}px`, h: `${HUD.hex.icon}px` });
+    expect(img.objectFit).toBe('contain');
+    expect(screen.getByTestId('h-word').textContent).toBe('Capital');
+  });
+
   it('word shows under the icon in the HUD label font with a black outline', () => {
     render(<EqxIconButton variant="hex" icon={<EqxIcon name="move" />} tooltip="Move: tap a point" word="Move" data-testid="h" />);
     const w = screen.getByTestId('h-word');

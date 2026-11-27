@@ -6,7 +6,7 @@
  *   - pick a kind → translucent blueprint GHOST follows the pointer on HOVER
  *   - LEFT-CLICK places the structure at the cursor immediately (RTS-style)
  *   - RIGHT-CLICK or ESCAPE cancels placement
- * Touch keeps the two-step tap-to-position → ✓ Place flow (case B; the left strip's placing tools) — a
+ * Touch keeps the two-step tap-to-position → ✓ Place flow (case B; the placing do-hexes) — a
  * mouse pointerup commits, a touch pointerup only parks the ghost.
  *
  * Tests read the REAL artifacts (the projected ghost `data-placement-screen-x/y`,
@@ -67,7 +67,7 @@ function swarmCount(page: Page): Promise<number> {
 const surfaceAttr = (page: Page, name: string): Promise<string | null> =>
   page.locator('[data-testid="game-surface"]').getAttribute(name);
 
-// The placing tools live on the left strip (U3-7, desktop and touch); the
+// The placing tools are do-hexes (U3-7, desktop and touch); the
 // ghost-path tests read the render signal rather than UI visibility. `data-placement-screen-x` is the render-path-independent signal
 // gameRafLoop publishes while the blueprint ghost is up (set during placement,
 // deleted on commit/cancel). These wait on it instead.
@@ -128,7 +128,7 @@ test('(B) TOUCH: tap-to-position parks the ghost, then confirm is clickable at a
 
     // Tap-to-position (touch keeps the two-step flow): a touch tap on the world
     // canvas positions + PARKS the blueprint (it does NOT one-click place — only
-    // a mouse pointerup commits). ✓ Place is on the left strip.
+    // a mouse pointerup commits). ✓ Place is a do-hex.
     await page.touchscreen.tap(195, 220); // clear of the centred ship
     await page.waitForFunction(
       () => document.querySelector('[data-testid="game-surface"]')?.getAttribute('data-placement-stuck') === '1',
@@ -408,11 +408,11 @@ test('(J) DESKTOP: Escape cancels placement (no structure placed)', async ({ bro
 });
 
 /**
- * (K) U3-7 — on DESKTOP the placing tools sit on the left strip (building icon,
+ * (K) U3-7 — on DESKTOP the placing tools are do-hexes (building icon,
  * ✓ Place, Rotate, Mirror, ✕), the same as touch; there is no floating
  * bottom-middle bar (the old `placement-banner` leaked onto desktop, P3.6).
  */
-test('(K) DESKTOP: placement shows the left-strip tools, no floating bar (U3-7)', async ({ browser }) => {
+test('(K) DESKTOP: placement shows the placing do-hexes, no floating bar (U3-7)', async ({ browser }) => {
   test.setTimeout(60_000);
   const { ctx, page } = await joinAndOpenBuild(browser, { mobile: false });
   try {
@@ -425,8 +425,9 @@ test('(K) DESKTOP: placement shows the left-strip tools, no floating bar (U3-7)'
     await page.waitForTimeout(120);
     await waitPlacementActive(page);
 
-    // ... the left strip shows the placing tools, and no floating bar mounts.
-    const strip = page.locator('[data-testid="left-strip"]');
+    // ... the placing tools are do-hexes (every device, selection HUD S4), and
+    // no floating bar mounts.
+    const strip = page.locator('[data-testid="do-hexes"]');
     await expect(strip.locator('[data-testid="placement-kind"]')).toBeVisible();
     await expect(strip.locator('[data-testid="placement-confirm"]')).toBeVisible();
     await expect(strip.locator('[data-testid="placement-cancel"]')).toBeVisible();
