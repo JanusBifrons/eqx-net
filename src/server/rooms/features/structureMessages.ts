@@ -138,9 +138,9 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
       const refusal = h.structurePlacement().lastRefusal;
       // The point and the reason in server.log too: the event ring below is
       // flooded by tick_budget lines and lost the owner's 2026-11-27 refusals.
-      h.logger.warn({ sessionId: client.sessionId, kind: msg.kind, x: Math.round(px), y: Math.round(py), refusal }, 'place_structure rejected');
+      h.logger.warn({ sessionId: client.sessionId, kind: msg.kind, x: Math.round(it.x), y: Math.round(it.y), refusal }, 'place_structure rejected');
       // Diagnostic captures (build bucket): the raw and snapped point and why.
-      serverLogEvent('place_structure_rejected', { owner, kind: msg.kind, rawX: msg.x, rawY: msg.y, x: px, y: py, deck: h.deck(), refusal });
+      serverLogEvent('place_structure_rejected', { owner, kind: msg.kind, rawX: msg.x, rawY: msg.y, x: it.x, y: it.y, deck: h.deck(), refusal });
       if (refusal !== null) h.sendNotice(client, refusal);
       else if (needsPackedCrate(kindId) && h.findPacked(owner, `structure:${kindId}`) === null) {
         h.sendNotice(client, `You need a Packed ${productName(`structure:${kindId}`)} in your hold or storage here.`);
@@ -184,7 +184,8 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
         e.index = refusedIndex[k]!; e.code = refusedCode[k]!;
         reply.push(e);
         const it = batchView[e.index]!;
-        h.logger.warn({ sessionId: client.sessionId, kind: it.kind, x: it.x, y: it.y, refusal: e.code, index: e.index }, 'place_structures rejected');
+        h.logger.warn({ sessionId: client.sessionId, kind: it.kind, x: Math.round(it.x), y: Math.round(it.y), refusal: e.code, index: e.index }, 'place_structures rejected');
+        serverLogEvent('place_structures_rejected', { owner, kind: it.kind, index: e.index, x: it.x, y: it.y, deck: h.deck(), refusal: e.code });
       }
       try { client.send('place_structures_refused', refusedReply); } catch { /* socket closing */ }
       if (placement.lastRefusal !== null) h.sendNotice(client, placement.lastRefusal);
@@ -200,7 +201,7 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
         const id = placement.place(owner, it.kind, it.x, it.y, { rot: it.rot, mirror: it.mirror, requirePacked: true, deck: h.deck() });
         if (id === null) {
           // Checked legal a moment ago; only a full slot pool lands here.
-          h.logger.warn({ sessionId: client.sessionId, kind: it.kind, x: it.x, y: it.y, refusal: placement.lastRefusalCode, index: i }, 'place_structures commit failed');
+          h.logger.warn({ sessionId: client.sessionId, kind: it.kind, x: Math.round(it.x), y: Math.round(it.y), refusal: placement.lastRefusalCode, index: i }, 'place_structures commit failed');
           continue;
         }
         const src = msg.items[i]!;

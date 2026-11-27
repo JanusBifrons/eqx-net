@@ -214,6 +214,7 @@ const BUCKETS: Record<string, string> = {
   structure_place_confirm: 'build',
   structure_place_blocked: 'build',
   place_structure_rejected: 'build',
+  place_structures_rejected: 'build',
 };
 
 const ALL_BUCKETS = ['frames', 'perf', 'corrections', 'combat', 'lifecycle', 'population', 'snapshots', 'raf', 'build', 'other'] as const;
