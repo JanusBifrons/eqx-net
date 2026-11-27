@@ -2,6 +2,7 @@ import { useUIStore } from '../../state/store.js';
 import { logEvent, isFullDiagMode, isRammingProbeEnabled } from '../../debug/ClientLogger.js';
 import { renderTickElapsedMs } from '../renderTickPhase.js';
 import { resolvePlacementPreviewStatus, writePreviewDeck } from '../../structures/structurePlacementClient.js';
+import { placePop } from '../../structures/placePop.js';
 import { writePreviewHoverRun } from '../../structures/fenceRunHover.js';
 import { placementChosen, setPlacementHeld } from '../../structures/placementChosen.js';
 import type { MirrorPassCtx } from './mirrorPassCtx.js';
@@ -191,6 +192,8 @@ export function updateLocalShipMirror(ctx: MirrorPassCtx, frameNowMs: number | u
       // Fence run: the whole run a click at the hovered corner would place.
       writePreviewHoverRun(ctx.placementPreviewScratch, ctx.mirror, placementStatus === 'active', placementChosen.worldX, placementChosen.worldY);
       setPlacementHeld(placementStatus === 'active' && ctx.placementPreviewScratch.held === true);
+      // Edge feel P4: each placed structure pops as it lands (before a resolved record drops).
+      placePop.update(ctx.pendingPlacement, ctx.mirror);
       if (placementStatus === 'active' || placementStatus === 'pending') {
         ctx.mirror.pendingPlacementPreview = ctx.placementPreviewScratch;
       } else {
