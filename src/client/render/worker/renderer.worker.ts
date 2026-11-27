@@ -176,6 +176,10 @@ self.onmessage = async (e: MessageEvent<MainToWorkerMsg>): Promise<void> => {
             hoveredPickId: fb.hoveredPickId,
             miningBeamCount: fb.miningBeamCount,
             viewX: fb.viewX, viewY: fb.viewY, viewHalf: fb.viewHalf,
+            focusScreenX: fb.focusScreenX, focusScreenY: fb.focusScreenY,
+            focusOnScreen: fb.focusOnScreen, focusScreenDiam: fb.focusScreenDiam,
+            selCentroidScreenX: fb.selCentroidScreenX, selCentroidScreenY: fb.selCentroidScreenY,
+            selCentroidOnScreen: fb.selCentroidOnScreen,
           },
           // Hand the pose buffer back (transferred) for the next post.
           ...(delta?.pose ? { swarmBuf: delta.pose } : {}),

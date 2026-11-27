@@ -4,6 +4,7 @@ import { snapGhostToDeck } from './placementDeckSnap.js';
 import { setCanvasPointerCapture } from '../pointerCapture.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import type { HoverBracket } from '../HoverBracket';
+import { writeSelectionTag } from '../selectionTag.js';
 import { getStructureKind } from '@shared-types/structureKinds';
 
 /** Screen px around the placement ghost that still grabs it with a finger. */
@@ -366,6 +367,8 @@ export class RendererInputController extends RendererCommandRouting {
     // Publish the current selection for the main thread → Zustand bridge.
     this.feedback.selectedPickId = this._focusId;
     this.feedback.selectedPickKind = this._focusKind;
+    // Selection-HUD world tag anchors (focus top-centre, fleet centroid).
+    writeSelectionTag(mirror, this._focusId, this._selShips, this.camera, this.feedback);
 
     // WS-10 (R2.4) — hover outline. Suppress it on the already-SELECTED entity so
     // the two brackets never stack on the same target. If the hovered entity

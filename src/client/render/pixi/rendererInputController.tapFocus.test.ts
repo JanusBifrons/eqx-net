@@ -23,6 +23,10 @@ function setup(pointerScale = 1) {
     onPointerUp: vi.fn(() => ({ wasTap: true })),
     onPointerCancel: vi.fn(),
     onWheel: vi.fn(),
+    // The selection-HUD tag projection (`writeSelectionTag`).
+    toScreenInto: (x: number, y: number, out: { x: number; y: number }) => { out.x = x * pointerScale; out.y = y * pointerScale; },
+    screenWidth: 800,
+    screenHeight: 600,
   };
   const feedback = {
     orderSeq: 0, orderKind: null, orderTargetId: null, orderX: 0, orderY: 0,
