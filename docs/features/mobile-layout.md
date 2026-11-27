@@ -21,7 +21,7 @@ The slot system replaces that with twelve named anchors and a single z-index tab
 | `middle-center` / `middle-right` | Available; unused today. | reserved |
 | `bottom-left` | Column-reverse, growing up. Above safe-area-bottom + `--mobile-edge-inset`. | Joystick zone (touch) |
 | `bottom-center` | Column-reverse, centered. | WeaponSelector (order=5), GalaxyMapToggleButton (order=10) |
-| `bottom-right` | Row-reverse, growing left. Inset by `--mobile-edge-inset`. | FIRE (rightmost), BOOST |
+| `bottom-right` | Row-reverse, growing left. Inset by `--mobile-edge-inset`. | Command: the do-hexes honeycomb (`layout/DoHexesHost.tsx`, its own absolute layout inside one slot, `layout/doHexLayout.ts`); desktop key hint |
 | `middle-left` | Column, vertically centered, left-aligned, beside the left strip. | (free) |
 | `middle-left-over` | Same place as `middle-left`, `overStrip` tier (over the left strip and rail). | HyperspaceOverlay (SPOOLING) |
 | `fullscreen` | Inset 0, overlay tier. | DeathOverlay, in-game GalaxyOverviewScreen (warp-mode) |
