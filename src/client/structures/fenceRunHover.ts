@@ -13,10 +13,11 @@
  * key changes (hovered corner, run anchor, structure count, sent run length,
  * deck plates).
  */
-import { nearestDeckCornerInto } from '../../core/hex/deckCorners.js';
+import { nearestDeckCornerInto, nearestDeckEdgeInto } from '../../core/hex/deckCorners.js';
+import { DECK_FENCE_GATE_KIND } from '../../core/structures/deckLinks.js';
 import type { HexPoint } from '../../core/hex/hex.js';
 import type { RenderMirror } from '../../core/contracts/IRenderer.js';
-import { fenceRunAnchor, isFenceRunKind, mirrorFenceWorld, newFenceRunPlan, planFenceRunInto } from './fenceRun.js';
+import { fenceRunAnchor, isFenceRunKind, mirrorFenceWorld, newFenceRunPlan, planFenceRunInto, planGateRunInto } from './fenceRun.js';
 import type { PlacementPreview } from './structurePlacementClient.js';
 
 const plan = newFenceRunPlan();
@@ -25,7 +26,7 @@ const CORNER: HexPoint = { x: 0, y: 0 };
 /** The last plan's inputs; `valid` false = recompute. */
 const key = {
   valid: false, cx: 0, cy: 0, active: false, ax: 0, ay: 0,
-  structures: 0, run: 0, owner: '', plates: 0, plateSum: 0,
+  gate: false, structures: 0, run: 0, owner: '', plates: 0, plateSum: 0,
 };
 
 /** A cheap order-sensitive sum of the plate list (alloc-free). */
@@ -53,28 +54,31 @@ export function writePreviewHoverRun(
   chosenX: number | null, chosenY: number | null,
 ): boolean {
   const anchor = fenceRunAnchor();
-  if (!active || out.held === true || chosenX === null || chosenY === null || !anchor.active
+  // A gate (edge feel P3) keys on its seam midpoint, a post on its corner;
+  // a gate previews its seam's posts even with no run open.
+  const gate = out.kind === DECK_FENCE_GATE_KIND;
+  if (!active || out.held === true || chosenX === null || chosenY === null || (!anchor.active && !gate)
     || !isFenceRunKind(out.kind, out.deck === true)) {
     clear(out);
     return false;
   }
-  nearestDeckCornerInto(chosenX, chosenY, CORNER);
+  if (gate) nearestDeckEdgeInto(chosenX, chosenY, CORNER); else nearestDeckCornerInto(chosenX, chosenY, CORNER);
   const structures = mirror.structures?.size ?? 0;
   const run = out.run?.length ?? 0;
   const owner = out.deckOwner ?? '';
   const plates = out.deckPlates?.length ?? 0;
   const plateSum = plateChecksum(out.deckPlates);
-  if (key.valid && key.cx === CORNER.x && key.cy === CORNER.y && key.active === anchor.active
+  if (key.valid && key.gate === gate && key.cx === CORNER.x && key.cy === CORNER.y && key.active === anchor.active
     && key.ax === anchor.x && key.ay === anchor.y && key.structures === structures && key.run === run
     && key.owner === owner && key.plates === plates && key.plateSum === plateSum) {
     return false;
   }
-  key.valid = true; key.cx = CORNER.x; key.cy = CORNER.y; key.active = anchor.active;
+  key.valid = true; key.gate = gate; key.cx = CORNER.x; key.cy = CORNER.y; key.active = anchor.active;
   key.ax = anchor.x; key.ay = anchor.y; key.structures = structures; key.run = run;
   key.owner = owner; key.plates = plates; key.plateSum = plateSum;
 
   // Rocks: the click has no rock list either (the renderer adds them to its red).
-  planFenceRunInto(plan, anchor, chosenX, chosenY, out.deckPlates ?? EMPTY, mirrorFenceWorld(mirror, null, out));
+  (gate ? planGateRunInto : planFenceRunInto)(plan, anchor, chosenX, chosenY, out.deckPlates ?? EMPTY, mirrorFenceWorld(mirror, null, out));
   const hover = out.runHover ?? (out.runHover = []);
   const mark = out.runHoverMark ?? (out.runHoverMark = []);
   hover.length = 0; mark.length = 0;

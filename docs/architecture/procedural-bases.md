@@ -129,7 +129,17 @@ cross a road (it blocks it; `deckFenceRoad.test.ts`).
   hover's red corner is the click's refused one, or the first a rock refuses
   in the renderer's ghost check (the single ghost's `obstacles`); nothing past
   it draws.
-- **Ends** on Cancel (right-click, ✕) or any change of `placementKind`.
+- **Gates in the run** (edge feel P3): with a fence post or gate picked on a
+  deck, the placing strip shows a Gate toggle that switches `placementKind`
+  between `shield_pylon` and `shield_gate` without ending the run. A gate
+  click (`planGateRunInto`) snaps to the nearest seam midpoint
+  (`nearestDeckEdgeInto`), fills posts along the run to the seam's nearer end
+  (nearer the run's corner), then the far end's post, then sends the gate
+  last, so the server's gate placement cuts that seam's post link as it lands.
+  The run goes on from the far end. With no run open a gate click still fills
+  both ends. Posts and gate join one pending record (`pendingAfterSend`
+  treats post and gate as one run kind); the hover preview runs the same plan.
+- **Ends** on Cancel (right-click, ✕) or any other change of `placementKind`.
 
 See it in `?room=deck`: pick Shield Pylon and click hex corners of the empty
 west hex (centre (-1300, 0)), e.g. (-650, 375) then (-1950, 375): the post at

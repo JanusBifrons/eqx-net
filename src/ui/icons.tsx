@@ -36,6 +36,7 @@ export const EQX_ICON_NAMES = [
   'pilot',
   // Doing mode (placing, route points)
   'rotate',
+  'gate',
   'mirror',
   'confirm',
   'cancel',
@@ -263,6 +264,8 @@ export const EQX_ICONS = {
   ),
   // new: lumpy rock
   rock: <path d="M7 5l6-2 6 4 2 7-4 6-8 1-5-5 1-7z" />,
+  // new: two fence posts with an open arch between (a gate in a shield fence)
+  gate: <path d="M4 20V5M20 20V5M4 9h3M17 9h3M7 20v-8a5 5 0 0 1 10 0v8" />,
   // new: funnel (show or hide a list's filters)
   filter: <path d="M4 5h16l-6 7.5V19l-4 1.5v-8z" />,
 } as const satisfies Record<EqxIconName, ReactElement>;

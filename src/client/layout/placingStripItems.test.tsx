@@ -177,4 +177,24 @@ describe('placing tools on the left strip', () => {
     expect(buildOpen()).toBe(true);
     expect(screen.getByTestId('build-kinds')).toHaveAttribute('data-category', 'economy');
   });
+
+  it('a fence post on a deck adds Gate, which switches post <-> gate (edge feel P3)', () => {
+    act(() => { useUIStore.setState({ placementKind: 'shield_pylon', deck: true }); });
+    mount();
+    const ids = Array.from(screen.getByTestId('left-strip').querySelectorAll('button')).map((b) => b.dataset.testid);
+    expect(ids).toEqual(['placement-kind', 'placement-confirm', 'placement-rotate', 'placement-mirror', 'placement-gate', 'placement-cancel']);
+    expect(tool('placement-gate').getAttribute('aria-label')).toBe('Gate');
+    fireEvent.click(tool('placement-gate'));
+    expect(useUIStore.getState().placementKind).toBe('shield_gate');
+    fireEvent.click(tool('placement-gate'));
+    expect(useUIStore.getState().placementKind).toBe('shield_pylon');
+  });
+
+  it('no Gate off a deck room or for other kinds', () => {
+    act(() => { useUIStore.setState({ placementKind: 'shield_pylon', deck: false }); });
+    mount();
+    expect(screen.queryByTestId('placement-gate')).toBeNull();
+    act(() => { useUIStore.setState({ placementKind: 'solar', deck: true }); });
+    expect(screen.queryByTestId('placement-gate')).toBeNull();
+  });
 });
