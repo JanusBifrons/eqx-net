@@ -6,14 +6,14 @@
  * Command view (`startMode=command`): the second is a `newShip=1` rejoin,
  * which leaves the first parked (AI-flown) and parks the new one at its
  * arrival flip. Then, as a player would:
- *   box-select both (left-drag) → the left strip shows the fleet fly-outs;
+ *   box-select both (left-drag) → the who-hexes (left) and fleet do-hexes (bottom right) show;
  *   right-click empty space → a move order goes out and the server reports
  *     them moving (a hull actually moves);
- *   strip Stance fly-out → Hold fire: the server echoes it (the trigger names it);
- *   strip Order fly-out → Patrol: click two points, Done → "Patrolling";
- *   ⚙ → the rail Fleet panel lists both ships, Patrol and Hold fire pressed;
+ *   Stance do-hex → Hold fire: the server echoes it (the do-hex names it);
+ *   Patrol do-hex → click two points, Done → "Patrolling";
+ *   rail Fleet orders → the Orders panel lists both ships, Patrol and Hold fire pressed;
  *   Form squad → the panel offers Disband; Disband → gone;
- *   Stop → the server reports them holding ("Guarding"); close the panel;
+ *   Stop → the server reports them holding ("Guarding"); close the panel (the hexes return);
  *   shift-click one ship off the selection, Fly → you pilot it.
  *
  * Every wait is a state predicate (dataset / panel text / mirror), never a
@@ -199,7 +199,9 @@ test.describe('RTS fleet command loop @feature', () => {
     // pick radius).
     await waitRowsActivity(page, /^(?!.*Patrolling).*Guarding/, 'Stop ends the patrol and the ships hold');
     await page.locator('[data-testid="orders-panel-close"]').click();
-    await expect(page.locator('[data-testid="left-strip"]')).toHaveAttribute('data-open', 'true');
+    // The panel closed: the selection HUD is back (who-hexes left, do-hexes bottom right).
+    await expect(page.locator('[data-testid="who-hexes"]')).toHaveAttribute('data-open', 'true');
+    await expect(page.locator('[data-testid="do-hexes"]')).toHaveAttribute('data-set', 'orders');
     const target = (await ownHulls(page))[0]!;
     await page.keyboard.down('Shift');
     await page.mouse.click(target.sx, target.sy);
