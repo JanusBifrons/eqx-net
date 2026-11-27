@@ -116,6 +116,18 @@ const CUT_HOT_SPEED = 0.4;
 const CHIP_LIGHT = 0x8a8682;
 const CHIP_DARK = 0x34302e;
 
+/** Edge feel P4, the place pop (`spawnPlacePop`): a soft flash swelling
+ *  from `POP_FLASH_R0` to `POP_FLASH_R1` × the post radius and a ring of
+ *  sparks flung out to about `POP_RING_REACH` × it, white cooling to the
+ *  tint, all gone in under half a second. Sparks per tier: `PLACE_POP_SPARKS`. */
+export const PLACE_POP_SPARKS: Record<EffectQuality, number> = { high: 14, medium: 10, low: 8, minimal: 0 };
+const POP_FLASH_LIFE_S = 0.26;
+const POP_FLASH_R0 = 0.25;
+const POP_FLASH_R1 = 0.9;
+const POP_SPARK_LIFE_S = 0.38;
+const POP_RING_REACH = 1.6;
+const POP_SPARK_SIZE = 0.09;
+
 interface Particle {
   gfx: Graphics;
   x: number; y: number; vx: number; vy: number;
@@ -197,7 +209,7 @@ export class WreckBreakFx {
     const px = worldX, py = -worldY; // Pixi space
     // The flash: always, even with particles off.
     const f = this.take(2);
-    if (f !== null) this.arm(f, px, py, 0, 0, 0, R * FLASH_R0, R * FLASH_R1 * (opts?.flashScale ?? 1), FLASH_LIFE_S);
+    if (f !== null) { this.arm(f, px, py, 0, 0, 0, R * FLASH_R0, R * FLASH_R1 * (opts?.flashScale ?? 1), FLASH_LIFE_S); f.gfx.tint = 0xffffff; }
     if (!this.particlesDisabled) {
       const dial = WRECK_BREAK_DIAL[this.getQuality()];
       for (let i = 0; i < dial.dust; i++) {
@@ -280,6 +292,33 @@ export class WreckBreakFx {
    * spreading to about the hull's size. The tier's ash count
    * (`WRECK_ASH_DIAL`), none with particles off.
    */
+  /** A structure landed where the player placed it: a tinted flash and a
+   *  ring of sparks at game-space `x, y` (Y up), sized by `radius`
+   *  (the post's footprint radius). The flash shows even with particles off. */
+  spawnPlacePop(x: number, y: number, radius: number, tint: number): void {
+    if (!this.built) this.build();
+    if (this.layer.parent === null) this.world.addChild(this.layer);
+    const R = Math.max(8, radius);
+    const px = x, py = -y; // Pixi space
+    const f = this.take(2);
+    if (f !== null) { this.arm(f, px, py, 0, 0, 0, R * POP_FLASH_R0, R * POP_FLASH_R1, POP_FLASH_LIFE_S); f.gfx.tint = lerpColor(0xffffff, tint, 0.5); }
+    if (this.particlesDisabled) return;
+    const n = PLACE_POP_SPARKS[this.getQuality()];
+    // Even spacing, one random turn: a clean ring, not a spray. Drag (0.9/s)
+    // barely bites in the spark's life, so speed ≈ reach / life.
+    const turn = this.rnd() * Math.PI * 2, sp = (R * POP_RING_REACH) / POP_SPARK_LIFE_S;
+    for (let i = 0; i < n; i++) {
+      const p = this.take(1);
+      if (p === null) break;
+      const a = turn + (i / n) * Math.PI * 2;
+      const c = Math.cos(a), sn = Math.sin(a);
+      this.arm(p, px + c * R * 0.3, py + sn * R * 0.3, c * sp, sn * sp, 0, R * POP_SPARK_SIZE, 0, POP_SPARK_LIFE_S);
+      p.c0 = 0xffffff; p.c1 = tint;
+      p.gfx.tint = p.c0;
+      p.gfx.rotation = a + Math.PI / 2; // the spark's tip points out
+    }
+  }
+
   spawnVaporAsh(x: number, y: number, radius: number, tint: number): void {
     if (this.particlesDisabled) return;
     const n = WRECK_ASH_DIAL[this.getQuality()].ash;

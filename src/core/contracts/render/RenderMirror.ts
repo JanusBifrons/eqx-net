@@ -222,12 +222,16 @@ export interface RenderMirror {
       | 'wall-hit'
       /** A collision touched `entityId`'s shield; (worldX, worldY) is the
        *  other body, which the contact faces. Drawn only on a raised shield. */
-      | 'shield-contact';
+      | 'shield-contact'
+      /** Edge feel P4: a structure the player placed just landed here
+       *  (`structures/placePop.ts`); `radius` = its footprint radius. */
+      | 'place-pop';
     worldX: number;
     worldY: number;
     intensity?: number;
     tint?: number;
     entityId?: string;
+    radius?: number;
   }>;
   /**
    * When present, the renderer draws a semi-transparent ghost at this position to

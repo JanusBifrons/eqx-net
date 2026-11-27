@@ -41,6 +41,7 @@ import { warp } from './shots/warp.js';
 import { scale } from './shots/scale.js';
 import { mobile } from './shots/mobile.js';
 import { deckBasesPhone, deckBasesRoadPhone } from './shots/deckBases.js';
+import { edgePopPhone } from './shots/edgePop.js';
 import { edgeGatePhone } from './shots/edgeGate.js';
 import { loot } from './shots/loot.js';
 import { robots } from './shots/robots.js';
@@ -116,6 +117,7 @@ export const SHOTS: readonly Shot[] = [
   cutFieldRam,
   deckBasesPhone,
   deckBasesRoadPhone,
+  edgePopPhone,
   edgeGatePhone,
   machinedTurrets,
   robots,
