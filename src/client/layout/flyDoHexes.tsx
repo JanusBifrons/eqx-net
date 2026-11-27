@@ -10,7 +10,9 @@
  *   `components/targetLock.ts`): lock / cancel / unlock the tapped thing with
  *   the active weapon group; lit while a lock is building or held; dim with
  *   nothing lockable tapped.
- * - Cargo: opens your hold (the `hold` rail panel).
+ * - Cargo: with a ship with a readable hold tapped, the selection builder's
+ *   cargo Open (that ship's cargo, the same handler the strip had); else
+ *   opens your hold (the `hold` rail panel).
  * - Stance: your weapons' fire mode, the one engage setting a piloted ship has
  *   (the fleet stance is for AI-flown ships): opens the choices IN the
  *   honeycomb, Auto fire / Hold fire (every group `auto` / `manual`) plus
@@ -48,6 +50,22 @@ export interface FlyDoHexOptions {
 
 const noop = (): void => {};
 
+/** The strip actions the Fly hexes carry, so the left strip leaves them out
+ *  while these hexes draw: Target -> Lock, the pod Open -> Salvage, the tapped
+ *  ship's cargo -> Cargo, and the strip's Details (shown only with something
+ *  tapped, when More opens Details) -> More. */
+const FLY_LOCK = { key: 'target', testId: 'fc-target' } as const;
+const FLY_SALVAGE = { key: 'loot', testId: 'pod-open' } as const;
+const FLY_CARGO = { key: 'loot', testId: 'cargo-open-toggle' } as const;
+const FLY_DETAILS = { key: 'details', testId: 'left-strip-details' } as const;
+const FLY_COVERED = [FLY_LOCK, FLY_SALVAGE, FLY_CARGO, FLY_DETAILS] as const;
+
+/** Is `a` carried by the Fly hexes (pure)? */
+export function flyHexCovers(a: StripAction): boolean {
+  if (a.kind === 'separator') return false;
+  return FLY_COVERED.some((c) => c.key === a.key && c.testId === a.testId);
+}
+
 function button(actions: readonly StripAction[], key: string, testId?: string): StripButtonAction | null {
   const a = actions.find((x) => x.key === key && (testId === undefined || (x.kind !== 'separator' && x.testId === testId)));
   return a !== undefined && a.kind === 'button' ? a : null;
@@ -79,8 +97,9 @@ function stanceHexes(o: FlyDoHexOptions): DoHex[] {
  *  "Stance Lock Boost / More Salvage Cargo". */
 export function flyDoHexes(o: FlyDoHexOptions): DoHex[] {
   if (o.sub === 'stance') return stanceHexes(o);
-  const lock = button(o.selection, 'target', 'fc-target');
-  const pod = button(o.selection, 'loot', 'pod-open');
+  const lock = button(o.selection, FLY_LOCK.key, FLY_LOCK.testId);
+  const pod = button(o.selection, FLY_SALVAGE.key, FLY_SALVAGE.testId);
+  const theirCargo = button(o.selection, FLY_CARGO.key, FLY_CARGO.testId);
   const locking = lock?.active === true;
   return [
     {
@@ -94,8 +113,10 @@ export function flyDoHexes(o: FlyDoHexOptions): DoHex[] {
       onPress: lock?.onPress ?? noop, state: lock?.state ?? 'none',
     },
     {
-      key: 'cargo', testId: 'do-hex-cargo', icon: <EqxIcon name="hold" />, word: 'Cargo', tooltip: 'Your hold',
-      tone: 'neutral', onPress: o.openCargo,
+      key: 'cargo', testId: 'do-hex-cargo', icon: <EqxIcon name="hold" />, word: 'Cargo',
+      tooltip: theirCargo !== null ? theirCargo.tooltip : 'Your hold', tone: 'neutral',
+      lit: theirCargo?.active === true, onPress: theirCargo?.onPress ?? o.openCargo,
+      state: theirCargo !== null ? 'theirs' : 'yours',
     },
     {
       key: 'stance', testId: 'do-hex-stance',

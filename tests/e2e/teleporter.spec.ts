@@ -35,7 +35,7 @@ test('pair, charge, load and fire a teleporter from the inspector', async ({ bro
 
   // Select the west teleporter; its panel is in the Details panel.
   await expect.poll(() => page.evaluate(() => (window as unknown as EqxWindow).__eqxSelectAtWorld?.(-1300, 0) ?? null), { timeout: 10_000 }).not.toBeNull();
-  await page.getByTestId('left-strip-cog').click(); // its section is in the Details panel (strip ⚙)
+  await page.getByTestId('left-strip-details').click(); // its section is in the Details panel (strip Details)
   const panel = page.getByTestId('tp-panel');
   await expect(panel).toBeVisible({ timeout: 10_000 });
   await expect(panel).toHaveAttribute('data-paired', '1');
@@ -105,7 +105,7 @@ test('a pilot on the pad is warned, rides the jump, and stays on the far pad', a
   await expect.poll(westDoors, { timeout: 10_000 }).toBe('open');
 
   await expect.poll(() => page.evaluate(() => (window as unknown as EqxWindow).__eqxSelectAtWorld?.(-1300, 250) ?? null), { timeout: 10_000 }).not.toBeNull();
-  await page.getByTestId('left-strip-cog').click(); // its section is in the Details panel (strip ⚙)
+  await page.getByTestId('left-strip-details').click(); // its section is in the Details panel (strip Details)
   const panel = page.getByTestId('tp-panel');
   await expect(panel).toHaveAttribute('data-charge-pct', '100', { timeout: 30_000 });
   await page.getByTestId('tp-fire').click();
@@ -146,7 +146,7 @@ test('a rider is offered the owner’s toll and pays it', async ({ browser }) =>
     { timeout: 90_000 },
   );
   await expect.poll(() => owner.evaluate(() => (window as unknown as EqxWindow).__eqxSelectAtWorld?.(-1300, 250) ?? null), { timeout: 10_000 }).not.toBeNull();
-  await owner.getByTestId('left-strip-cog').click(); // its section is in the Details panel (strip ⚙)
+  await owner.getByTestId('left-strip-details').click(); // its section is in the Details panel (strip Details)
   await expect(owner.getByTestId('tp-panel')).toBeVisible({ timeout: 10_000 });
   await owner.getByTestId('tp-toll').selectOption('50');
 

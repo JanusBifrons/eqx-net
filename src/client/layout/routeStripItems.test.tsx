@@ -109,7 +109,7 @@ describe('left strip route tools (U3-3)', () => {
     fireEvent.click(screen.getByTestId('left-strip-route-cancel'));
     expect(useUIStore.getState().fleetPick).toBeNull();
     for (const t of TOOLS) expect(screen.queryByTestId(t), t).toBeNull();
-    expect(screen.getByTestId('left-strip-order')).toBeTruthy();
+    expect(screen.getByTestId('who-hexes')).toBeTruthy();
     expect(cmd.setMode).not.toHaveBeenCalled();
   });
 
@@ -144,11 +144,11 @@ describe('left strip route tools (U3-3)', () => {
     expect(screen.queryByTestId('left-strip-route')).toBeNull();
   });
 
-  it('a Move pick is not a doing mode: the fleet section stays with Move pressed', () => {
+  it('a Move pick is not a doing mode: no route tools, the who-hexes stay (the Move do-hex shows it armed)', () => {
     mount();
     startPick('move');
     expect(screen.queryByTestId('left-strip-route')).toBeNull();
-    expect(screen.getByTestId('left-strip-move').getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByTestId('who-hexes')).toBeTruthy();
   });
 
   it('starting a pick closes the right panel so the strip (and the map) show', () => {

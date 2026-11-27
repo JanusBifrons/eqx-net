@@ -1,15 +1,17 @@
 /**
- * UI plan U1-8: the left strip host. Shows the selection strip only while
- * something is selected; slides away while a right panel is open and comes
- * back when it closes; ⚙ opens the selection's panel; ✕ deselects through
- * the renderer.
+ * The left strip host (UI plan U1-8; selection HUD S5). In Command with own
+ * ships selected the strip is the who-hex honeycomb (one hex per ship type,
+ * tap keeps that type, "?" overflow opens the orders panel); Fly and Build show
+ * no who-hexes. The selection's actions stay on a slim strip until the
+ * do-hexes take them; ⚙ / ✕ and the identity icons are retired.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { getShipKind, SHIP_KINDS } from '@shared-types/shipKinds';
 import { useUIStore } from '../state/store';
 import type { PanelData } from '../components/selectionPanelData';
 
-// The focus's panel data (its hull ring) and the game client (the personal
+// The focus's panel data and the game client (the ship kinds, the personal
 // Target's lock) are stubbed: the strip's layout is what is under test.
 let panelData: PanelData | null = null;
 vi.mock('../components/selectionPanelData', async (orig) => ({
@@ -17,14 +19,17 @@ vi.mock('../components/selectionPanelData', async (orig) => ({
   useSelectionPanelData: () => panelData,
 }));
 const lockSelected = vi.fn();
+const ships = new Map<string, { kind: string }>();
 vi.mock('../net/clientSingleton', () => ({
-  getGameClient: () => ({ mirror: { localPlayerId: 'me', ships: new Map() }, lockSelected, cancelLock: vi.fn(), getRoom: () => null }),
+  getGameClient: () => ({ mirror: { localPlayerId: 'me', ships }, lockSelected, cancelLock: vi.fn(), getRoom: () => null }),
 }));
 
 import { LayoutProvider } from './LayoutProvider';
-import { LeftStripHost, stripFocusIdentity, stripHealth, stripIdentity } from './LeftStripHost';
-import { STANCE_COLOUR } from '../components/contactRows';
+import { LeftStripHost, stripIdentity } from './LeftStripHost';
+import { WHO_HEX_MAX, WHO_HEX_WORD_CHARS, whoHexBox, whoHexSlot, whoHexTestId, whoHexWord } from './WhoHexes';
 import { HUD } from '../hud/tokens';
+import { doHexSet } from './DoHexesHost';
+import { flyHexCovers } from './flyDoHexes';
 
 function stubMedia(): void {
   vi.stubGlobal('matchMedia', (q: string) => ({
@@ -38,16 +43,24 @@ const selectFleetShips = vi.fn();
 const attackFocus = vi.fn();
 const rendererRef = { current: { selectFleetShips, attackFocus } };
 
-function mount(): void {
-  render(<LayoutProvider><LeftStripHost rendererRef={rendererRef} /></LayoutProvider>);
+function mount(touch = false): void {
+  render(<LayoutProvider><LeftStripHost rendererRef={rendererRef} touch={touch} /></LayoutProvider>);
 }
 
 function select(ids: string[], focusId: string | null = null, focusKind: 'ship' | 'structure' | 'drone' | 'asteroid' | null = null): void {
   act(() => { useUIStore.setState({ selection: { ids, focusId, focusKind } }); });
 }
 
+/** Put ships of the given kinds in the mirror: `{ a: 'fighter' }`. */
+function fleet(kinds: Record<string, string>): void {
+  for (const [id, kind] of Object.entries(kinds)) ships.set(id, { kind });
+}
+
+const KINDS = Object.keys(SHIP_KINDS);
+
 beforeEach(() => {
   stubMedia();
+  ships.clear();
   useUIStore.setState({
     rightPanel: null, travelling: true, pilotMode: 'spectator',
     buildMode: false, placementKind: null, fleetPick: null,
@@ -62,187 +75,228 @@ afterEach(() => {
   selectFleetShips.mockReset(); attackFocus.mockReset(); lockSelected.mockReset();
 });
 
-/** The computed form jsdom gives a colour, so hex tokens compare to computed styles. */
-function computedColor(c: string): string {
-  const probe = document.createElement('div');
-  probe.style.borderColor = c;
-  document.body.appendChild(probe);
-  const v = getComputedStyle(probe).borderTopColor;
-  probe.remove();
-  return v;
-}
+const hexIds = (): string[] =>
+  Array.from(screen.getByTestId('who-hexes').querySelectorAll('[data-variant="hex"]'))
+    .map((b) => b.getAttribute('data-testid') ?? '');
 
-const stripButtons = (): string[] =>
-  Array.from(screen.getByTestId('left-strip').querySelectorAll('[data-testid]'))
-    .map((b) => b.getAttribute('data-testid') ?? '')
-    .filter((t) => t === 'fc-target' || t === 'left-strip-lock' || t === 'left-strip-focus' || t === 'left-strip-identity');
-
-/**
- * Tap rule T2 (UI plan D10): my ships selected + a focus that is not mine.
- * The strip shows the fleet section, a separator, the focus (its identity,
- * ringed by ITS hull) and ONE Lock that orders the ships to attack it. A rock
- * or pod keeps the personal Target; with no ships the strip is unchanged.
- */
-describe('LeftStripHost: ships selected + a not-mine focus (T2)', () => {
-  it('an attackable focus: fleet identity, focus identity, ONE Lock; no personal Target', () => {
-    panelData = { name: 'Raider', hpPct: 20, shieldPct: null };
+describe('who hexes (selection HUD S5)', () => {
+  it('one hex per ship type, its short type name and "×N" under the type icon', () => {
+    const [k1, k2] = KINDS as [string, string];
+    fleet({ a: k1, b: k1, c: k2 });
     mount();
-    select(['a', 'b'], 'swarm-7', 'drone');
-    expect(stripButtons()).toEqual(['left-strip-identity', 'left-strip-focus', 'left-strip-lock']);
-    // The hull ring is the focus's, not the fleet's.
-    expect(screen.getByTestId('left-strip-focus').getAttribute('data-health')).toBe('crit');
-    expect(screen.getByTestId('left-strip-focus').getAttribute('aria-label')).toBe('Raider');
-    expect(screen.getByTestId('left-strip-identity').getAttribute('data-health')).toBe('ok');
-    expect(screen.getByTestId('left-strip-identity').getAttribute('aria-label')).toBe('2 ships selected');
+    select(['a', 'b', 'c']);
+    const hexes = screen.getByTestId('who-hexes');
+    expect(hexes.getAttribute('data-count')).toBe('3');
+    expect(hexes.getAttribute('data-kinds')).toBe('2');
+    const h1 = screen.getByTestId(whoHexTestId(k1));
+    expect(screen.getByTestId(`${whoHexTestId(k1)}-word`).textContent).toBe(whoHexWord(getShipKind(k1).displayName, 2));
+    expect(screen.getByTestId(`${whoHexTestId(k1)}-word`).textContent).toMatch(/ ×2$/);
+    expect(h1.getAttribute('aria-label')).toBe(`${getShipKind(k1).displayName} ×2`);
+    expect(h1.querySelector('svg')?.getAttribute('data-icon')).toBe('ship');
+    expect(screen.getByTestId(`${whoHexTestId(k2)}-word`).textContent).toBe(whoHexWord(getShipKind(k2).displayName, 1));
   });
 
-  it('the focus icon wears its stance colour (the contacts table\'s), and its kind glyph', () => {
-    panelData = { name: 'Raider', hpPct: 100, shieldPct: null, stance: 'hostile' };
+  it('tapping a hex keeps only that type selected, through the renderer', () => {
+    const [k1, k2] = KINDS as [string, string];
+    fleet({ a: k1, b: k2, c: k1 });
     mount();
-    select(['a'], 'swarm-7', 'drone');
-    const focus = screen.getByTestId('left-strip-focus');
-    expect(focus.getAttribute('data-state')).toBe('hostile');
-    expect(STANCE_COLOUR.hostile).toBe('#ff6b6b');
-    expect(getComputedStyle(focus).color).toBe('rgb(255, 107, 107)');
-    expect(focus.querySelector('svg')?.getAttribute('data-icon')).toBe('ship');
-    // The fleet identity keeps its own (gold) look: only the focus is tinted.
-    expect(screen.getByTestId('left-strip-identity').getAttribute('data-state')).toBeNull();
+    select(['a', 'b', 'c']);
+    fireEvent.click(screen.getByTestId(whoHexTestId(k1)));
+    expect(selectFleetShips).toHaveBeenCalledWith(['a', 'c']);
   });
 
-  it('a hostile focus rings in the hostile colour, not the green selected ring', () => {
-    panelData = { name: 'Raider', hpPct: 100, shieldPct: null, stance: 'hostile' };
+  it('the focused ship\'s type is lit', () => {
+    const [k1, k2] = KINDS as [string, string];
+    fleet({ a: k1, b: k2 });
     mount();
-    select(['a'], 'swarm-7', 'drone');
-    const ring = getComputedStyle(screen.getByTestId('left-strip-focus')).borderTopColor;
-    expect(ring).toBe(computedColor(STANCE_COLOUR.hostile));
-    expect(ring).not.toBe(computedColor(HUD.color.hullOk));
+    select(['a', 'b'], 'b', 'ship');
+    expect(screen.getByTestId(whoHexTestId(k2)).getAttribute('data-lit')).toBe('true');
+    expect(screen.getByTestId(whoHexTestId(k1)).getAttribute('data-lit')).toBe('false');
   });
 
-  it('a neutral focus rings in the neutral colour', () => {
-    panelData = { name: 'Depot', hpPct: 100, shieldPct: null, stance: 'neutral' };
+  it('a ship whose kind is not known yet groups under "Ship"', () => {
     mount();
-    select([], 'swarm-9', 'structure');
-    expect(getComputedStyle(screen.getByTestId('left-strip-identity')).borderTopColor).toBe(computedColor(STANCE_COLOUR.neutral));
+    select(['x']);
+    expect(screen.getByTestId('who-hex-unknown').getAttribute('aria-label')).toBe('Ship ×1');
   });
 
-  it('a friendly focus keeps the green (hull) ring', () => {
-    panelData = { name: 'Ally', hpPct: 100, shieldPct: null, stance: 'friendly' };
+  it(`more than ${WHO_HEX_MAX} types: the last slot is "?" with "+N"; it opens the orders panel`, () => {
+    const six = KINDS.slice(0, 6);
+    expect(six).toHaveLength(6);
+    const kinds: Record<string, string> = {};
+    six.forEach((k, i) => { kinds[`s${i}`] = k; });
+    fleet(kinds);
     mount();
-    select(['a'], 'ally-1', 'ship');
-    expect(getComputedStyle(screen.getByTestId('left-strip-focus')).borderTopColor).toBe(computedColor(HUD.color.hullOk));
+    select(Object.keys(kinds));
+    expect(hexIds()).toHaveLength(WHO_HEX_MAX);
+    expect(hexIds().at(-1)).toBe('who-hex-more');
+    // Two types of one ship each overflow.
+    expect(screen.getByTestId('who-hex-more-word').textContent).toBe('+2');
+    fireEvent.click(screen.getByTestId('who-hex-more'));
+    expect(useUIStore.getState().rightPanel).toBe('orders');
+    expect(selectFleetShips).not.toHaveBeenCalled();
   });
 
-  it('a focus-only pick tints the one identity: a neutral structure reads the normal ink (not amber), structure glyph', () => {
-    panelData = { name: 'Depot', hpPct: 100, shieldPct: null, stance: 'neutral' };
+  it('exactly 5 types: five type hexes, no "?"', () => {
+    const kinds: Record<string, string> = {};
+    KINDS.slice(0, 5).forEach((k, i) => { kinds[`s${i}`] = k; });
+    fleet(kinds);
     mount();
-    select([], 'swarm-9', 'structure');
-    const id = screen.getByTestId('left-strip-identity');
-    expect(id.getAttribute('data-state')).toBe('neutral');
-    expect(getComputedStyle(id).color).toBe('rgb(223, 232, 245)');
-    expect(id.querySelector('svg')?.getAttribute('data-icon')).toBe('structure');
+    select(Object.keys(kinds));
+    expect(hexIds()).toHaveLength(5);
+    expect(screen.queryByTestId('who-hex-more')).toBeNull();
   });
 
-  it('Lock orders the selected ships to attack the focus (the renderer, like right-click)', () => {
+  it('slides away while a right panel is open, back when it closes', () => {
+    mount();
+    select(['a']);
+    act(() => { useUIStore.getState().setRightPanel('galaxy'); });
+    expect(screen.getByTestId('who-hexes').getAttribute('data-open')).toBe('false');
+    act(() => { useUIStore.getState().setRightPanel(null); });
+    expect(screen.getByTestId('who-hexes').getAttribute('data-open')).toBe('true');
+  });
+
+  it('Fly and Build: no who-hexes', () => {
+    useUIStore.setState({ pilotMode: 'pilot' });
+    mount();
+    select(['a']);
+    expect(screen.queryByTestId('who-hexes')).toBeNull();
+    act(() => { useUIStore.setState({ pilotMode: 'spectator', buildMode: true }); });
+    expect(screen.queryByTestId('who-hexes')).toBeNull();
+  });
+
+  it('a focus-only pick in Command: no who-hexes', () => {
+    mount();
+    select([], 's1', 'structure');
+    expect(screen.queryByTestId('who-hexes')).toBeNull();
+  });
+});
+
+describe('whoHexWord (the hex word)', () => {
+  it('a short name keeps its whole name plus the count', () => {
+    expect(whoHexWord('Fighter', 2)).toBe('Fighter ×2');
+    expect(whoHexWord('Heavy', 1)).toBe('Heavy ×1');
+  });
+
+  it('a long multi-word name keeps its last word (the hull)', () => {
+    expect(whoHexWord('Mining Barge', 3)).toBe('Barge ×3');
+    expect(whoHexWord('Missile Frigate', 1)).toBe('Frigate ×1');
+  });
+
+  it('a long single word is cut with "…" and never runs past the hex width', () => {
+    expect(whoHexWord('Interceptor', 2)).toBe('Interc… ×2');
+    expect(whoHexWord('Interceptor', 12)).toBe('Inter… ×12');
+    for (const name of ['Interceptor', 'Robot Harvester', 'Supercalifragilistic Dreadnought', 'x'.repeat(40)]) {
+      for (const n of [1, 9, 42, 120]) expect(whoHexWord(name, n).length).toBeLessThanOrEqual(WHO_HEX_WORD_CHARS);
+    }
+  });
+
+  it('an empty name reads "Ship"', () => {
+    expect(whoHexWord('', 1)).toBe('Ship ×1');
+  });
+});
+
+describe('the who-hex column', () => {
+  it('a column down the left edge: each next hex steps down, alternately right then left', () => {
+    expect(HUD.hex).toMatchObject({ w: 52, h: 60 });
+    // Owner 2026-11-27: start top left, hug the left, connect diagonally down.
+    expect([0, 1, 2, 3, 4].map(whoHexSlot)).toEqual([
+      { x: 0, y: 0 }, { x: 26, y: 45 }, { x: 0, y: 90 }, { x: 26, y: 135 }, { x: 0, y: 180 },
+    ]);
+  });
+
+  it('each next hex touches the one before edge to edge (centres one hex width apart)', () => {
+    const c = (i: number): { x: number; y: number } => ({ x: whoHexSlot(i).x + HUD.hex.w / 2, y: whoHexSlot(i).y + HUD.hex.h / 2 });
+    for (let i = 0; i < WHO_HEX_MAX - 1; i++) {
+      expect(Math.hypot(c(i).x - c(i + 1).x, c(i).y - c(i + 1).y)).toBeCloseTo(HUD.hex.w, -0.5);
+    }
+  });
+
+  it('sits in the left-column anchor (top left, under the mode switch), not the mid-left strip anchor', () => {
+    const [k1, k2] = KINDS as [string, string];
+    fleet({ a: k1, b: k2 });
+    mount();
+    select(['a', 'b']);
+    const column = document.querySelector('[data-anchor="left-column"]') as HTMLElement;
+    expect(column.contains(screen.getByTestId('who-hexes'))).toBe(true);
+    expect(document.querySelector('[data-anchor="left-strip"]')?.childElementCount).toBe(0);
+  });
+
+  it('only the hex-shaped button takes taps: the overlapping cell boxes pass them through', () => {
+    const [k1, k2, k3] = KINDS as [string, string, string];
+    fleet({ a: k1, b: k2, c: k3 });
+    mount();
+    select(['a', 'b', 'c']);
+    const cell = screen.getByTestId(whoHexTestId(k1)).closest('.eqx-who-hex-cell') as HTMLElement;
+    expect(cell.style.pointerEvents).toBe('none');
+    expect(screen.getByTestId('who-hexes').style.pointerEvents).toBe('none');
+    expect(screen.getByTestId('who-hexes').querySelector('style')?.textContent)
+      .toContain('[data-open="true"] .eqx-who-hex-cell button { pointer-events: auto; }');
+  });
+
+  it('the column box: 1.5 hexes wide, five hexes 240 px tall', () => {
+    expect(whoHexBox(1)).toEqual({ w: HUD.hex.w, h: HUD.hex.h });
+    expect(whoHexBox(WHO_HEX_MAX)).toEqual({ w: 78, h: 240 });
+    expect(whoHexBox(0)).toEqual({ w: 0, h: 0 });
+  });
+});
+
+const stripTestIds = (): string[] =>
+  Array.from(screen.getByTestId('left-strip').querySelectorAll('[data-testid]')).map((b) => b.getAttribute('data-testid') ?? '');
+
+describe('the action strip (what the do-hexes do not carry)', () => {
+
+  it('⚙, ✕ and the identity icons are gone', () => {
+    mount();
+    select(['a', 'b']);
+    for (const t of ['left-strip-cog', 'left-strip-close', 'left-strip-identity', 'left-strip-focus']) {
+      expect(screen.queryByTestId(t)).toBeNull();
+    }
+  });
+
+  for (const touch of [false, true]) {
+    it(`own ships in Command (${touch ? 'touch' : 'desktop'}): Order, Move, Stance, Stop leave the strip; nothing left, no strip frame`, () => {
+      useUIStore.setState({ phase: 'game' });
+      mount(touch);
+      select(['a', 'b']);
+      for (const t of ['left-strip-order', 'left-strip-move', 'left-strip-stance', 'left-strip-stop']) {
+        expect(screen.queryByTestId(t), t).toBeNull();
+      }
+      expect(screen.queryByTestId('left-strip')).toBeNull();
+      expect(screen.getByTestId('who-hexes')).toBeInTheDocument();
+    });
+  }
+
+  it('ships + an attackable focus: ONE Lock orders the ships to attack it (T2)', () => {
     mount();
     select(['a'], 'p2', 'ship');
+    expect(screen.queryByTestId('fc-target')).toBeNull();
     fireEvent.click(screen.getByTestId('left-strip-lock'));
     expect(attackFocus).toHaveBeenCalledOnce();
     expect(lockSelected).not.toHaveBeenCalled();
   });
 
-  it('a rock with ships selected: the focus shows, with the personal Target (no fleet Lock)', () => {
+  it('a focus-only pick: the personal Target and Details, which opens its Details panel', () => {
+    panelData = { name: 'Depot', hpPct: 100, shieldPct: null };
     mount();
-    select(['a'], 'swarm-4', 'asteroid');
-    expect(stripButtons()).toEqual(['left-strip-identity', 'left-strip-focus', 'fc-target']);
+    select([], 's1', 'structure');
+    expect(stripTestIds()).toEqual(expect.arrayContaining(['fc-target', 'left-strip-details']));
+    expect(screen.getByTestId('left-strip-details').getAttribute('aria-label')).toBe('Depot: details');
+    fireEvent.click(screen.getByTestId('left-strip-details'));
+    expect(useUIStore.getState().rightPanel).toBe('details');
+    expect(screen.getByTestId('left-strip').getAttribute('data-open')).toBe('false');
   });
 
-  it('no ships selected: unchanged (one identity, the personal Target)', () => {
-    panelData = { name: 'Fighter', hpPct: 40, shieldPct: null };
+  it('no Details while ships are selected (the orders panel is the rail\'s / "?")', () => {
     mount();
-    select([], 'p2', 'ship');
-    expect(stripButtons()).toEqual(['left-strip-identity', 'fc-target']);
-    expect(screen.getByTestId('left-strip-identity').getAttribute('data-health')).toBe('warn');
+    select(['a'], 's1', 'structure');
+    expect(screen.queryByTestId('left-strip-details')).toBeNull();
   });
 
-  it('the focus is one of my selected ships: no focus section, no Lock', () => {
-    panelData = { name: 'My fighter', hpPct: 100, shieldPct: null, isOwn: true };
-    mount();
-    select(['a', 'b'], 'a', 'ship');
-    expect(stripButtons()).toEqual(['left-strip-identity']);
-  });
-});
-
-describe('stripFocusIdentity', () => {
-  it('only for a focus that is not one of the selected ships, while ships are selected', () => {
-    expect(stripFocusIdentity({ ids: [], focusId: 'p2', focusKind: 'ship' })).toBeNull();
-    expect(stripFocusIdentity({ ids: ['a'], focusId: 'a', focusKind: 'ship' })).toBeNull();
-    expect(stripFocusIdentity({ ids: ['a'], focusId: null, focusKind: null })).toBeNull();
-    expect(stripFocusIdentity({ ids: ['a'], focusId: 'swarm-3', focusKind: 'structure' })).toMatchObject({ icon: 'structure', tooltip: 'Structure' });
-  });
-});
-
-describe('LeftStripHost (U1-8)', () => {
-  it('nothing selected: no strip', () => {
+  it('nothing selected: no strip, no hexes', () => {
     mount();
     expect(screen.queryByTestId('left-strip')).toBeNull();
-  });
-
-  it('a ship group shows the identity with its count', () => {
-    mount();
-    select(['a', 'b', 'c']);
-    expect(screen.getByTestId('left-strip').getAttribute('data-open')).toBe('true');
-    expect(screen.getByTestId('left-strip-identity').getAttribute('aria-label')).toBe('3 ships selected');
-  });
-
-  it('panel open: strip hidden; panel closed: strip back', () => {
-    mount();
-    select(['a']);
-    act(() => { useUIStore.getState().setRightPanel('galaxy'); });
-    expect(screen.getByTestId('left-strip').getAttribute('data-open')).toBe('false');
-    act(() => { useUIStore.getState().setRightPanel(null); });
-    expect(screen.getByTestId('left-strip').getAttribute('data-open')).toBe('true');
-  });
-
-  it('⚙ opens the selection\'s panel (Fleet for own ships)', () => {
-    mount();
-    select(['a', 'b']);
-    fireEvent.click(screen.getByTestId('left-strip-cog'));
-    expect(useUIStore.getState().rightPanel).toBe('orders');
-    expect(screen.getByTestId('left-strip').getAttribute('data-open')).toBe('false');
-  });
-
-  it('✕ deselects through the renderer (it owns the selection)', () => {
-    mount();
-    select([], 's1', 'structure');
-    fireEvent.click(screen.getByTestId('left-strip-close'));
-    expect(selectFleetShips).toHaveBeenCalledWith([]);
-  });
-
-  it('a focus-only pick: ⚙ opens its Details panel (U3-2)', () => {
-    mount();
-    select([], 's1', 'structure');
-    expect(screen.getByTestId('left-strip-identity').getAttribute('aria-label')).toBe('Structure');
-    fireEvent.click(screen.getByTestId('left-strip-cog'));
-    expect(useUIStore.getState().rightPanel).toBe('details');
-    expect(screen.getByTestId('left-strip').getAttribute('data-open')).toBe('false');
-  });
-
-  it("another player's ship: ⚙ opens Details, not Fleet", () => {
-    mount();
-    select([], 'p2', 'ship');
-    fireEvent.click(screen.getByTestId('left-strip-cog'));
-    expect(useUIStore.getState().rightPanel).toBe('details');
-  });
-});
-
-describe('stripHealth', () => {
-  it('rings the hull by the hull thresholds; ok when unknown or hull-less', () => {
-    expect(stripHealth(null)).toBe('ok');
-    expect(stripHealth({ name: 'x', hpPct: 10, shieldPct: null, pending: true })).toBe('ok');
-    expect(stripHealth({ name: 'x', hpPct: 0, shieldPct: null, noHull: true })).toBe('ok');
-    expect(stripHealth({ name: 'x', hpPct: 80, shieldPct: null })).toBe('ok');
-    expect(stripHealth({ name: 'x', hpPct: 40, shieldPct: null })).toBe('warn');
-    expect(stripHealth({ name: 'x', hpPct: 20, shieldPct: null })).toBe('crit');
+    expect(screen.queryByTestId('who-hexes')).toBeNull();
   });
 });
 
@@ -251,14 +305,6 @@ describe('stripIdentity', () => {
     expect(stripIdentity({ ids: [], focusId: null, focusKind: null })).toBeNull();
     expect(stripIdentity({ ids: ['a'], focusId: 'a', focusKind: 'ship' })).toMatchObject({ icon: 'fleet', count: 1, panel: 'orders' });
     expect(stripIdentity({ ids: [], focusId: 'd', focusKind: 'drone' })).toMatchObject({ icon: 'ship', count: 1, panel: 'details' });
-  });
-
-  it('never names the selection with an icon a strip button uses (one icon, one meaning)', () => {
-    // Target, Cargo/Open pod, Pilot, Stop, cog, close: the buttons a strip can carry.
-    const actions = new Set(['target', 'hold', 'pilot', 'stop', 'cog', 'close']);
-    for (const kind of ['ship', 'lingering', 'drone', 'structure', 'asteroid', 'pod'] as const) {
-      expect(actions.has(stripIdentity({ ids: [], focusId: 'x', focusKind: kind })!.icon)).toBe(false);
-    }
   });
 });
 
@@ -269,17 +315,61 @@ describe('stripIdentity', () => {
  */
 describe('LeftStripHost in Fly (T4)', () => {
   for (const kind of ['structure', 'ship'] as const) {
-    it(`a focused enemy ${kind}: its identity and the personal Lock, which locks with the active group`, () => {
+    it(`a focused enemy ${kind}: the personal Lock, which locks with the active group`, () => {
       useUIStore.setState({ pilotMode: 'pilot' });
       mount();
       select([], kind === 'ship' ? 'p2' : 'swarm-7', kind);
-      expect(stripButtons()).toEqual(['left-strip-identity', 'fc-target']);
       expect(screen.getByTestId('fc-target').getAttribute('data-state')).toBe('lock');
       fireEvent.click(screen.getByTestId('fc-target'));
       expect(lockSelected).toHaveBeenCalledOnce();
       expect(attackFocus).not.toHaveBeenCalled();
     });
   }
+
+  it('on touch the do-hexes carry Target, cargo and Details: only Pilot stays on the strip', () => {
+    panelData = { name: 'Hauler', hpPct: 100, shieldPct: null, entityId: 4, hasCargo: true, pilotShipId: 'h1' };
+    useUIStore.setState({ pilotMode: 'pilot' });
+    mount(true);
+    select([], 'swarm-4', 'ship');
+    // The Pilot button's own badge is a child of it, not a second action.
+    expect(stripTestIds().filter((t) => !t.endsWith('-badge'))).toEqual(['ship-action-pilot']);
+  });
+
+  it('on touch with nothing the strip keeps (an enemy ship tapped): no strip frame at all', () => {
+    useUIStore.setState({ pilotMode: 'pilot' });
+    mount(true);
+    select([], 'p2', 'ship');
+    expect(screen.queryByTestId('left-strip')).toBeNull();
+  });
+
+  it('on desktop Fly (no hexes) the strip keeps Target, cargo and Details', () => {
+    panelData = { name: 'Hauler', hpPct: 100, shieldPct: null, entityId: 4, hasCargo: true };
+    useUIStore.setState({ pilotMode: 'pilot' });
+    mount(false);
+    select([], 'swarm-4', 'ship');
+    expect(stripTestIds()).toEqual(expect.arrayContaining(['fc-target', 'cargo-open-toggle', 'left-strip-details']));
+  });
+});
+
+describe('one place per action: the strip reads the do-hexes\' own predicate and coverage', () => {
+  const st = (pilotMode: 'pilot' | 'spectator', isDead = false, buildMode = false) => ({ pilotMode, isDead, buildMode });
+  it('doHexSet: Fly hexes on touch only, the fleet set off the helm', () => {
+    expect(doHexSet(st('pilot'), true)).toBe('fly');
+    expect(doHexSet(st('pilot'), false)).toBeNull();
+    expect(doHexSet(st('spectator'), false)).toBe('fleet');
+    expect(doHexSet(st('pilot', true), true)).toBe('fleet');
+    expect(doHexSet(st('pilot', false, true), true)).toBe('fleet');
+  });
+
+  it('flyHexCovers: Target, the pod Open, the tapped ship\'s cargo and Details; not the fleet Lock or Pilot', () => {
+    const b = (key: string, testId: string) => ({ kind: 'button' as const, key, testId, icon: 'target' as const, tooltip: '', onPress: () => {} });
+    expect(flyHexCovers(b('target', 'fc-target'))).toBe(true);
+    expect(flyHexCovers(b('loot', 'pod-open'))).toBe(true);
+    expect(flyHexCovers(b('loot', 'cargo-open-toggle'))).toBe(true);
+    expect(flyHexCovers(b('details', 'left-strip-details'))).toBe(true);
+    expect(flyHexCovers(b('target', 'left-strip-lock'))).toBe(false);
+    expect(flyHexCovers(b('pilot', 'ship-action-pilot'))).toBe(false);
+  });
 });
 
 describe('the strip hosts the building section (U3-6)', () => {

@@ -5,7 +5,8 @@
  * under the HUD scales down to fit, fed by the vars leftStripFitVars writes.
  */
 import { describe, expect, it } from 'vitest';
-import { MIN_STRIP_SCALE, leftStripFitVars } from './leftStripFit';
+import { MIN_STRIP_SCALE, leftColumnFit, leftStripFitVars } from './leftStripFit';
+import { ANCHOR_STYLES } from './anchors';
 
 /** The anchor's top rule, evaluated in px for a viewport height. */
 function stripTop(viewportH: number, hudBottom: number, stripH: number): number {
@@ -48,5 +49,29 @@ describe('leftStripFitVars', () => {
 
   it('never shrinks below the floor', () => {
     expect(px(leftStripFitVars(116, 2000, 412)['--left-strip-scale'])).toBe(MIN_STRIP_SCALE);
+  });
+});
+
+describe('the who-hex column (left-column anchor)', () => {
+  it('starts 8px under the whole top-left HUD, in line with it', () => {
+    expect(ANCHOR_STYLES['left-column'].top).toBe('calc(var(--hud-tl-bottom, 0px) + 8px)');
+    expect(ANCHOR_STYLES['left-column'].left).toBe(ANCHOR_STYLES['top-left'].left);
+    expect(ANCHOR_STYLES['left-column'].transformOrigin).toBe('top left');
+  });
+
+  it('five hexes (240 px) fit unscaled at 863×360 under the chip + mode switch', () => {
+    // HUD ends ~73 px: top 81, bottom 321, inside 360 - 8.
+    expect(leftColumnFit(73, 240, 360, 16, 78)).toEqual({ vars: { '--left-column-scale': '1' }, reach: 102 });
+  });
+
+  it('with the cargo chip too (HUD ~116 px) the column scales to keep its bottom on screen', () => {
+    const { vars } = leftColumnFit(116, 240, 360, 16, 78);
+    const scale = px(vars['--left-column-scale']);
+    expect(scale).toBeLessThan(1);
+    expect(116 + 8 + 240 * scale).toBeLessThanOrEqual(360 - 8 + 0.5);
+  });
+
+  it('an empty column reaches nothing (the spool bar keeps its place)', () => {
+    expect(leftColumnFit(73, 0, 360, 16, 0).reach).toBe(0);
   });
 });
