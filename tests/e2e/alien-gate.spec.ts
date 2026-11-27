@@ -37,7 +37,7 @@ test('an alien gate disables a pilot who fires in its zone', async ({ page }) =>
 
   // The gate: owned by the Ancients, no "ask to pair".
   await expect.poll(() => page.evaluate(() => (window as unknown as EqxWindow).__eqxSelectAtWorld?.(0, 0) ?? null), { timeout: 10_000 }).not.toBeNull();
-  await page.getByTestId('left-strip-cog').click(); // the readout is in Details
+  await page.getByTestId('left-strip-details').click(); // the readout is in Details
   await expect(page.getByTestId('entity-stats-panel')).toBeVisible({ timeout: 10_000 });
   await expect(page.getByTestId('entity-stats-owner')).toContainText('Ancients');
   await expect(page.getByTestId('tp-foreign-panel')).toHaveCount(0);

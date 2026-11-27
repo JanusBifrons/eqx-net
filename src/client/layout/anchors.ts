@@ -29,7 +29,8 @@ export type AnchorName =
   | 'transit'
   | 'rotate'
   | 'right-rail'
-  | 'left-strip';
+  | 'left-strip'
+  | 'left-column';
 
 export const ANCHOR_NAMES: readonly AnchorName[] = [
   'top-left',
@@ -48,6 +49,7 @@ export const ANCHOR_NAMES: readonly AnchorName[] = [
   'rotate',
   'right-rail',
   'left-strip',
+  'left-column',
 ] as const;
 
 // The game has no top bar (UI plan U5-3): anchors start under the safe area only.
@@ -263,6 +265,23 @@ export const ANCHOR_STYLES: Record<AnchorName, CSSProperties> = {
     left: 0,
     // Scaled down only when taller than the room under the HUD (leftStripFit.ts).
     transform: 'scale(var(--left-strip-scale, 1))',
+    transformOrigin: 'top left',
+    zIndex: Z.railStrip,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: STACK_GAP,
+    pointerEvents: 'none',
+  },
+  // The who-hex column (selection HUD S5): as high and far left as it can go,
+  // 8px under the whole top-left HUD (sector chip, mode switch, cargo chip,
+  // alert; `--hud-tl-bottom`) and in line with it (SAFE_LEFT). Scaled down
+  // only when taller than the room under the HUD (leftStripFit.ts).
+  'left-column': {
+    position: 'fixed',
+    top: `calc(var(--hud-tl-bottom, 0px) + ${STACK_GAP}px)`,
+    left: SAFE_LEFT,
+    transform: 'scale(var(--left-column-scale, 1))',
     transformOrigin: 'top left',
     zIndex: Z.railStrip,
     display: 'flex',

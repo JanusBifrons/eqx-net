@@ -1,5 +1,5 @@
 /**
- * UI plan U3-4: the left strip's fleet section. Order / Stance fly-outs
+ * UI plan U3-4: the fleet section builder (the Command do-hexes' data). Order / Stance fly-outs
  * and Stop show only for own ships in Command; one pick sends one order through
  * the fleet command seam (the panel's path); Patrol starts the map pick; a
  * mixed selection shows the neutral icon; Esc closes an open fly-out first.
@@ -9,8 +9,10 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useUIStore } from '../state/store';
 import { applyFleetStatus, resetFleetStatus, type FleetStatusUpdate } from '../fleet/fleetStatus';
 import { resetFleetCommands, setFleetCommands } from '../fleet/fleetCommands';
+import { EqxStrip } from '../../ui/index.js';
 import { LayoutProvider } from './LayoutProvider';
-import { LeftStripHost } from './LeftStripHost';
+import { useFleetStripItems } from './fleetStripItems';
+import { renderStripActions } from './stripActions';
 import { MOVE_ORDER_COLOUR, MOVE_ORDER_COLOUR_HEX } from '../render/orderMarkerColours';
 
 function stubMedia(): void {
@@ -26,10 +28,17 @@ const row = (id: string, over: Partial<FleetStatusUpdate> = {}): FleetStatusUpda
 });
 
 const cmd = { setMode: vi.fn(), setStance: vi.fn(), stop: vi.fn(), setSpeed: vi.fn() };
-const rendererRef = { current: { selectFleetShips: vi.fn() } };
+/** The builder's actions drawn as a strip. In the game the Command do-hexes
+ *  carry them (`fleetDoHexes`) and the left strip leaves them out, so the
+ *  builder is tested on its own here. */
+function FleetStrip(): JSX.Element | null {
+  const items = useFleetStripItems();
+  if (items.length === 0) return null;
+  return <EqxStrip aria-label="Fleet" open data-testid="fleet-strip">{renderStripActions(items)}</EqxStrip>;
+}
 
 function mount(): void {
-  render(<LayoutProvider><LeftStripHost rendererRef={rendererRef} /></LayoutProvider>);
+  render(<LayoutProvider><FleetStrip /></LayoutProvider>);
 }
 
 function select(ids: string[], focusId: string | null = null, focusKind: 'ship' | 'structure' | null = null): void {
@@ -78,7 +87,7 @@ describe('left strip fleet section (U3-4)', () => {
     expect(screen.queryByTestId('left-strip-order')).toBeNull();
     act(() => { useUIStore.setState({ buildMode: false }); });
     select([], 's1', 'structure');
-    expect(screen.getByTestId('left-strip')).toBeTruthy();
+    expect(screen.queryByTestId('fleet-strip')).toBeNull();
     expect(screen.queryByTestId('left-strip-order')).toBeNull();
     expect(screen.queryByTestId('left-strip-stop')).toBeNull();
   });

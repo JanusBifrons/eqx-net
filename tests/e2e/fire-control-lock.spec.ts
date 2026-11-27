@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_BASE_URL } from './helpers/ports';
+import { LOCK_BUTTON } from './helpers/fireControl';
 
 /**
  * Fire control — universal target locking (the only HUD since 2026-11-09).
@@ -127,7 +128,7 @@ test.describe('fire control — target locking', () => {
       return null;
     });
     expect(picked).not.toBeNull();
-    const btn = page.locator('[data-testid="fc-target"]');
+    const btn = page.locator(LOCK_BUTTON);
     await expect(btn).toHaveAttribute('data-state', 'lock', { timeout: 5_000 });
     await btn.click();
     await expect(btn).toHaveAttribute('data-state', 'cancel', { timeout: 3_000 });
