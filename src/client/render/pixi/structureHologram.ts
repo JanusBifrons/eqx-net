@@ -49,6 +49,13 @@ export const GHOST_CLEAR_COLOR = HOLOGRAM_COLOR;
 /** Ghost scanner sweep period and pulse period (game ms). */
 const GHOST_SWEEP_MS = 1600;
 const GHOST_PULSE_MS = 1200;
+/** Edge feel P4, the snap pop: when the ghost lands on a new deck slot its
+ *  outline swells by `SNAP_POP_GROW` and flashes full, easing back over
+ *  `SNAP_POP_MS` (game ms); between snaps the outline breathes with the
+ *  ghost pulse between `SLOT_ALPHA_LO` and 1. */
+export const SNAP_POP_MS = 220;
+export const SNAP_POP_GROW = 0.14;
+export const SLOT_ALPHA_LO = 0.55;
 
 /** How a hologram is drawn. `blueprint` = an unbuilt structure's overlay
  *  (cyan baked in, faint panels: the solid art fills in behind it).
@@ -175,8 +182,9 @@ export class StructureHologram extends Container {
    *  ghost awaiting the server: dimmer and still. No allocation. */
   updateGhost(blocked: boolean, sent: boolean, nowMs: number): void {
     this.tint = blocked ? GHOST_BLOCKED_COLOR : GHOST_CLEAR_COLOR;
-    if (sent) { this.alpha = 0.45; this.line.visible = false; return; }
     const t = nowMs < 0 ? 0 : nowMs;
+    this.updateSlot(sent, t);
+    if (sent) { this.alpha = 0.45; this.line.visible = false; return; }
     this.line.visible = true;
     this.line.x = printLineX(this.halfW, (t % GHOST_SWEEP_MS) / GHOST_SWEEP_MS);
     this.alpha = 0.88 + 0.12 * Math.sin((t / GHOST_PULSE_MS) * 2 * Math.PI);
@@ -184,19 +192,58 @@ export class StructureHologram extends Container {
 
   /** The deck slot outline (placement ghost on a deck room); made on first use. */
   private slot: Graphics | null = null;
+  /** The slot pose last shown (a change = a new snap) and its mirror sign. */
+  private slotX = NaN;
+  private slotY = NaN;
+  private slotCtx: GraphicsContext | null = null;
+  private slotM = 1;
+  /** A new snap waits for `updateGhost` (which has the clock); then its start. */
+  private snapPending = false;
+  private snapAtMs = -Infinity;
+
+  /** The slot outline's breath and snap pop (`updateGhost`, game ms). No allocation. */
+  private updateSlot(sent: boolean, t: number): void {
+    const g = this.slot;
+    if (!g || !g.visible) return;
+    if (this.snapPending) { this.snapPending = false; this.snapAtMs = t; }
+    if (sent) { g.alpha = 1; g.scale.set(this.slotM, 1); return; }
+    const u = (t - this.snapAtMs) / SNAP_POP_MS;
+    const k = u >= 0 && u < 1 ? (1 - u) * (1 - u) : 0; // ease out
+    const breath = SLOT_ALPHA_LO + (1 - SLOT_ALPHA_LO) * (0.5 + 0.5 * Math.sin((t / GHOST_PULSE_MS) * 2 * Math.PI));
+    g.alpha = breath + (1 - breath) * k;
+    const s = 1 + SNAP_POP_GROW * k;
+    g.scale.set(this.slotM * s, s);
+  }
+
+  /** Test probe: the outline's alpha and scale (null = no slot shown). */
+  slotLook(): { alpha: number; scale: number } | null {
+    const g = this.slot;
+    return g && g.visible ? { alpha: g.alpha, scale: g.scale.y } : null;
+  }
 
   /** Per frame, the placement ghost only: show the deck slot it snapped to
    *  (null = no deck: hidden). The outline stays square to the deck, so it
    *  undoes this container's turn and build mirror. Call after setting them.
    *  No allocation after the first use of each slot shape. */
   setDeckSlot(slot: DeckSlot | null, rhombus: number): void {
-    if (slot === null) { if (this.slot) this.slot.visible = false; return; }
+    if (slot === null) {
+      if (this.slot) this.slot.visible = false;
+      this.slotCtx = null;
+      return;
+    }
     if (!this.slot) { this.slot = new Graphics(); this.addChildAt(this.slot, 0); }
-    this.slot.context = slotArtFor(slot, rhombus);
+    const art = slotArtFor(slot, rhombus);
+    // A new slot (shape or place) pops; the same slot frame to frame does not.
+    if (art !== this.slotCtx || this.x !== this.slotX || this.y !== this.slotY) {
+      this.snapPending = true;
+      this.slotCtx = art; this.slotX = this.x; this.slotY = this.y;
+    }
+    this.slot.context = art;
     this.slot.visible = true;
     // Parent = R(rot)·S(m): the child R(-rot·m)·S(m) cancels it.
     const m = this.scale.x < 0 ? -1 : 1;
-    this.slot.scale.x = m;
+    this.slotM = m;
+    this.slot.scale.x = m * Math.abs(this.slot.scale.y);
     this.slot.rotation = -this.rotation * m;
   }
 

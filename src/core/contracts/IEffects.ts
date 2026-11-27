@@ -45,7 +45,10 @@ export type ParticleBurstKind =
    *  left the hull), sized by `radius`. Same pool as `wreck-break`.
    *  With no `lineToX`: a vaporised hull's ash, a point puff at the burst
    *  point sized by the hull's `radius`, in `tint` (fracture v11). */
-  | 'wreck-ash';
+  | 'wreck-ash'
+  /** Edge feel P4: a placed structure landed: a tinted flash and a ring of
+   *  sparks sized by `radius` (the footprint radius), in `tint`. */
+  | 'place-pop';
 
 /** Continuous emitter kinds, keyed by entity id. */
 export type ContinuousEffectKind = 'thrust' | 'boost' | 'shield';
