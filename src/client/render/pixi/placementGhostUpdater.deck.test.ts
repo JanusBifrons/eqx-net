@@ -90,7 +90,7 @@ describe('placement ghost on a deck room', () => {
     }
   });
 
-  it('laying a plate: a connector in a middle hex outlines the whole 7-hex plate; in a ring hex, its small slot', () => {
+  it('laying a plate: the Deck plate (connector) outlines the whole 7-hex plate wherever the pointer is', () => {
     const c = plateCentreWorldInto(1, 0, { x: 0, y: 0 });
     const ring = plateHexes(1, 0)[2]!, rp = deckHexCentreInto(ring.q, ring.r, { x: 0, y: 0 });
     const widthAt = (x: number, y: number): number => {
@@ -100,8 +100,8 @@ describe('placement ghost on a deck room', () => {
       expect(slot.visible).toBe(true);
       return slot.getLocalBounds().width;
     };
-    // The plate spans 5 hexes flat to flat (≈ 3 × 1300); a small slot is under one hex.
+    // The plate spans 5 hexes flat to flat (≈ 3 × 1300), from its middle hex or a ring hex alike.
     expect(widthAt(c.x + 200, c.y - 150)).toBeGreaterThan(3 * DECK_HEX_FLAT);
-    expect(widthAt(rp.x + 200, rp.y - 150)).toBeLessThan(DECK_HEX_FLAT);
+    expect(widthAt(rp.x + 200, rp.y - 150)).toBeGreaterThan(3 * DECK_HEX_FLAT);
   });
 });

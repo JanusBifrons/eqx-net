@@ -37,7 +37,7 @@ function fp(kind: string, p: HexPoint, rot = 0): PlacementFootprint {
   return { x: p.x, y: p.y, radius: getStructureKind(kind).radius, halfW: hw, halfH: hh, kind, rot };
 }
 
-const deck: PlacementDeck = { plates: { plateAtWorld: () => true, plateCount: () => 1 }, owner: 'p1' };
+const deck: PlacementDeck = { plates: { plateAtWorld: () => true }, owner: 'p1' };
 
 describe('deck gate edge snap (slice 21)', () => {
   for (let i = 0; i < 6; i++) {

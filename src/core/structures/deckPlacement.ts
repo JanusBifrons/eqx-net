@@ -7,9 +7,10 @@
  * `place()` itself never snaps (NPC seeding, restore and scenarios pass exact
  * centres).
  *
- * Laying a plate (slice 8): a connector-kind dropped anywhere in a plate's
- * MIDDLE hex snaps to the plate centre (its anchor point, `out.slot` =
- * `'plate'`); elsewhere it keeps its own slot.
+ * Laying a plate (slice 8): the Deck plate (a connector) dropped anywhere
+ * snaps to the centre of the plate under it (its anchor point, `out.slot` =
+ * `'plate'`), so its ghost is always the whole plate. Another connector-kind
+ * (a large teleporter) snaps there only from a plate's middle hex.
  *
  * Facing (slice 18): the snap also decides the TURN (`out.rot`, degrees), so
  * ghost and server agree on it too. A small-slot building faces its third of
@@ -36,9 +37,13 @@
  */
 import { getStructureKind, isConnectorKind, snapPlayerStructureRotation } from '../../shared-types/structureKinds.js';
 import { snapToDeckSlot, type DeckSnap } from '../hex/deckSnap.js';
-import { isPlateCentreHex } from '../hex/plates.js';
 import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from './deckLinks.js';
 import { DECK_ROAD_KIND } from './deckGateRoad.js';
+import { isPlateCentreHex } from '../hex/plates.js';
+
+/** The Deck plate (build menu): a connector, which on a deck room always lays
+ *  a whole plate, so it snaps to the centre of the plate under the pointer. */
+export const DECK_PLATE_KIND = 'connector';
 
 /** A road's turn (degrees): the nearest 30° + 60°·k to the player's `deg`
  *  (0..330; an exact tie, e.g. 0 or 60, goes up). The input is rounded to
@@ -50,15 +55,15 @@ export function roadTurnDeg(deg: number): number {
 }
 
 /** Allocation-free: snap a player's requested point for `kind` to the centre
- *  of its deck slot (`kind.deckSlot`, or the plate centre for a connector in
- *  a plate's middle hex), and their requested turn `rotDeg` to the turn the
+ *  of its deck slot (`kind.deckSlot`, or the centre of the plate under it for
+ *  a connector), and their requested turn `rotDeg` to the turn the
  *  building is placed at (`out.rot`, see the header), written into `out`. */
 export function snapPlacementToDeck(kind: string, x: number, y: number, out: DeckSnap, rotDeg = 0): DeckSnap {
   const k = getStructureKind(kind);
   snapToDeckSlot(kind === DECK_FENCE_POST_KIND ? 'corner' : kind === DECK_FENCE_GATE_KIND ? 'edge' : k.deckSlot, x, y, out);
   if (out.slot === 'edge') return out; // the seam's turn, a 30° step already
   if (kind === DECK_ROAD_KIND) { out.rot = roadTurnDeg(rotDeg); return out; }
-  if (out.slot !== 'plate' && isConnectorKind(kind) && isPlateCentreHex(out.q, out.r)) snapToDeckSlot('plate', x, y, out);
+  if (out.slot !== 'plate' && (kind === DECK_PLATE_KIND || (isConnectorKind(kind) && isPlateCentreHex(out.q, out.r)))) snapToDeckSlot('plate', x, y, out);
   const faced = out.rot >= 0 ? out.rot + (k.footprint.h > k.footprint.w ? 90 : 0) : rotDeg;
   out.rot = snapPlayerStructureRotation(faced, true, kind);
   return out;

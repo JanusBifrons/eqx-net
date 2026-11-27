@@ -251,8 +251,4 @@ export class OwnerPlateList {
     for (let n = 0; n + 1 < p.length; n += 2) if (p[n] === PLATE.i && p[n + 1] === PLATE.j) return true;
     return false;
   }
-
-  plateCount(owner: string): number {
-    return owner === this.owner ? this.pairs.length >> 1 : 0;
-  }
 }
