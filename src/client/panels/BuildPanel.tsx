@@ -36,7 +36,7 @@ import { buildEntry } from '@shared-types/packedStock';
 import { HUD } from '../hud/tokens';
 import { useUIStore } from '../state/store';
 import { usePackedStock } from '../structures/usePackedStock';
-import { BUILD_CATEGORIES, CATEGORY_ICON, buildableKinds, categoryById, type BuildCategoryId } from '../components/buildCategories';
+import { CATEGORY_ICON, buildKindText, buildableKinds, categoriesFor, type BuildCategoryId } from '../components/buildCategories';
 import { BuildKindDetails, BuildKindTile } from '../components/BuildKindTile';
 import { BUILD_PANEL_SIZE, SidePanel } from '../components/SidePanel';
 import { WINDOW_ROOT_SX } from '../components/GameWindow';
@@ -48,8 +48,6 @@ export function requestBuildPanel(): void {
   const s = useUIStore.getState();
   if (s.buildMode) s.setRightPanel('build');
 }
-
-const CATEGORY_IDS: readonly BuildCategoryId[] = BUILD_CATEGORIES.map((c) => c.id);
 
 function isTyping(t: EventTarget | null): boolean {
   const el = t as HTMLElement | null;
@@ -63,14 +61,18 @@ export interface BuildPanelProps {
 }
 
 export function BuildPanel({ open, onClose, onPick }: BuildPanelProps): JSX.Element {
-  const [category, setCategory] = useState<BuildCategoryId>(BUILD_CATEGORIES[0]!.id);
+  // null = the room's first category (Deck on a deck room, else Core).
+  const [picked, setCategory] = useState<BuildCategoryId | null>(null);
   // Stock keeps polling while placing: the keep-placing rule reads it (placementCancel.ts).
   const placing = useUIStore((s) => s.placementKind !== null);
   const packedStock = usePackedStock(open || placing);
   const inSector = useUIStore((s) => s.currentSectorKey !== null && !s.freeBuilds); // no sector or a free-build room = no crate rule
   const [shown, setShown] = useState<StructureKindId | null>(null);
-  const deck = useUIStore((s) => s.deck); // a deck-only kind (road) shows on a deck room only
-  const cat = categoryById(category);
+  const deck = useUIStore((s) => s.deck); // a deck room adds the Deck tab (buildCategories.tsx)
+  const cats = categoriesFor(deck);
+  const cat = cats.find((c) => c.id === picked) ?? cats[0]!;
+  const category = cat.id;
+  const categoryIds = useMemo(() => cats.map((c) => c.id), [cats]);
   const kinds = useMemo(() => buildableKinds(cat, deck), [cat, deck]);
   const shownKind = shown !== null && kinds.includes(shown) ? shown : null;
   // 1–9 / Q / E while open (see the header): the old hotbar's number-key path.
@@ -82,7 +84,7 @@ export function BuildPanel({ open, onClose, onPick }: BuildPanelProps): JSX.Elem
       if (!a) return;
       e.preventDefault();
       if (a.kind === 'step') {
-        setCategory(stepCategory(CATEGORY_IDS, category, a.delta));
+        setCategory(stepCategory(categoryIds, category, a.delta));
         return;
       }
       const k = kinds[a.index];
@@ -92,7 +94,7 @@ export function BuildPanel({ open, onClose, onPick }: BuildPanelProps): JSX.Elem
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [open, category, kinds, packedStock, inSector, onPick]);
+  }, [open, category, categoryIds, kinds, packedStock, inSector, onPick]);
   return (
     <SidePanel open={open} onClose={onClose} testId="build-sidebar" size={BUILD_PANEL_SIZE} closeOnEscape
       paperAttrs={{ 'data-open': open ? '1' : '0', 'data-mode': 'full' }} title="Build" headerTestId="build-sidebar-head"
@@ -101,7 +103,7 @@ export function BuildPanel({ open, onClose, onPick }: BuildPanelProps): JSX.Elem
         <Box sx={WINDOW_ROOT_SX}>
           <Box sx={BODY_SX}>
             <Box sx={RAIL_SX} role="tablist" aria-orientation="vertical" data-testid="build-rail">
-              {BUILD_CATEGORIES.map((c) => (
+              {cats.map((c) => (
                 <Box key={c.id} component="button" type="button" role="tab" aria-selected={c.id === category}
                   aria-label={c.label} title={c.label} data-testid={`build-cat-${c.id}`}
                   sx={c.id === category ? RAIL_BTN_ACTIVE_SX : RAIL_BTN_SX} onClick={() => setCategory(c.id)}>
@@ -114,12 +116,12 @@ export function BuildPanel({ open, onClose, onPick }: BuildPanelProps): JSX.Elem
                 <Box sx={CAT_LABEL_SX}>{cat.label}</Box>
                 <Box sx={GRID_SX}>
                   {kinds.map((k) => (
-                    <BuildKindTile key={k} kindId={k} entry={buildEntry(k, packedStock, inSector)} onPick={onPick}
+                    <BuildKindTile key={k} kindId={k} text={buildKindText(k, deck)} entry={buildEntry(k, packedStock, inSector)} onPick={onPick}
                       onShow={setShown} selected={k === shownKind} />
                   ))}
                 </Box>
               </Box>
-              <BuildKindDetails kindId={shownKind} entry={shownKind === null ? null : buildEntry(shownKind, packedStock, inSector)} />
+              <BuildKindDetails kindId={shownKind} text={shownKind === null ? null : buildKindText(shownKind, deck)} entry={shownKind === null ? null : buildEntry(shownKind, packedStock, inSector)} />
             </Box>
           </Box>
         </Box>
