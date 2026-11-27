@@ -17,7 +17,8 @@
  *   while the Fly hexes draw (touch), Target, the pod Open, the tapped ship's
  *   cargo and Details are gone (Lock, Salvage, Cargo, More), leaving Pilot.
  *   While the target hexes draw (own ships + a tapped target, S8), the T2
- *   Lock is their Attack (`targetHexCovers`); the fleet section stays.
+ *   Lock is their Attack (`targetHexCovers`) and the fleet section stays
+ *   gone as in the fleet set (Clear returns to those hexes).
  *   In Build with your own structure selected, its Power and Details are hexes
  *   (`buildHexCovers`). Elsewhere what stays: Power for a building you may not
  *   manage here (`buildingStripItems.tsx`),
@@ -146,7 +147,8 @@ export function LeftStripHost({ rendererRef, touch = false }: Props): JSX.Elemen
         onPress: () => setRightPanel('details') }]
     : [];
   // Leave out what the do-hexes carry in this state (their own predicate and keys).
-  const fleetLeft = hexSet === 'fleet' ? fleetItems.filter((a) => a.kind === 'separator' || !FLEET_HEX_KEYS.has(a.key)) : fleetItems;
+  // The target set (S8) keeps the old fleet strip retired too: Clear is the way back to those orders.
+  const fleetLeft = hexSet === 'fleet' || hexSet === 'target' ? fleetItems.filter((a) => a.kind === 'separator' || !FLEET_HEX_KEYS.has(a.key)) : fleetItems;
   const quick = [...quickItems, ...details];
   const quickLeft = hexSet === 'fly' ? quick.filter((a) => !flyHexCovers(a))
     : hexSet === 'target' ? quick.filter((a) => !targetHexCovers(a, fleetLock !== null)) : quick;

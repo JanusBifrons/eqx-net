@@ -275,6 +275,19 @@ describe('the action strip (what the do-hexes do not carry)', () => {
     expect(lockSelected).not.toHaveBeenCalled();
   });
 
+  for (const touch of [false, true]) {
+    it(`own ships + a target (${touch ? 'touch' : 'desktop'}): the old fleet strip stays retired (S8: Clear is the way back)`, () => {
+      useUIStore.setState({ phase: 'game' });
+      mount(touch);
+      select(['a', 'b'], 'p2', 'ship');
+      for (const t of ['left-strip-order', 'left-strip-move', 'left-strip-stance', 'left-strip-stop', 'left-strip-lock']) {
+        expect(screen.queryByTestId(t), t).toBeNull();
+      }
+      expect(screen.queryByTestId('left-strip')).toBeNull();
+      expect(screen.getByTestId('who-hexes')).toBeInTheDocument();
+    });
+  }
+
   it('a focus-only pick: the personal Target and Details, which opens its Details panel', () => {
     panelData = { name: 'Depot', hpPct: 100, shieldPct: null };
     mount();
