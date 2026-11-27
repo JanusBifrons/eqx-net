@@ -6,7 +6,7 @@
  * that has no switch, and for one you do not own.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { useUIStore } from '../state/store';
 import type { PanelData } from '../components/selectionPanelData';
 
@@ -16,10 +16,11 @@ vi.mock('../net/clientSingleton', () => ({
 }));
 
 import { useBuildingStripItems } from './buildingStripItems';
+import { renderStripActions } from './stripActions';
 import { SetStructurePowerSchema } from '../../shared-types/messages';
 
 function Harness({ data }: { data: PanelData | null }): JSX.Element {
-  return <div data-testid="strip">{useBuildingStripItems(data)}</div>;
+  return <div data-testid="strip">{renderStripActions(useBuildingStripItems(data))}</div>;
 }
 
 const turret = (over: Partial<PanelData> = {}): PanelData => ({
@@ -52,6 +53,12 @@ describe('left strip building section (U3-6)', () => {
     render(<Harness data={turret({ switchedOff: true })} />);
     pick('on');
     expect(send).toHaveBeenCalledWith('set_structure_power', { type: 'set_structure_power', entityId: 9, on: true });
+  });
+
+  it('returns data: one Power fly-out action reading the current value', () => {
+    const { result } = renderHook(() => useBuildingStripItems(turret({ switchedOff: true })));
+    expect(result.current).toHaveLength(1);
+    expect(result.current[0]).toMatchObject({ kind: 'flyout', key: 'power', value: 'off', tooltip: 'Power: Off', testId: 'left-strip-power' });
   });
 
   it('hidden outside Build, without a switch, and for no selection', () => {

@@ -16,10 +16,11 @@
  * - ✕ cancels the pick (`setFleetPick(null)`; Esc does the same, App keydown).
  * - The Move pick (tap rule T3) is not a doing mode: the fleet section's Move
  *   button shows it pressed, and a second tap disarms it.
- * - Returned as a flat element list so EqxStrip sees its allowed children.
+ * - Returned as data (`StripAction`, `stripActions.tsx`); the strip draws it
+ *   with `renderStripActions`.
  */
-import type { ReactElement } from 'react';
-import { EqxIcon, EqxIconButton, EqxStrip, EqxStripIdentity, type EqxIconName } from '../../ui/index.js';
+import type { EqxIconName } from '../../ui/index.js';
+import type { StripAction } from './stripActions.js';
 import { useUIStore } from '../state/store.js';
 import { isTouchDevice } from '../input/TouchInput.js';
 import { canFinishFleetPick, fleetPickHint, type FleetPickKind } from '../fleet/fleetPickView.js';
@@ -32,7 +33,7 @@ const PICK_ICON: Readonly<Record<RoutePickKind, EqxIconName>> = {
 };
 
 /** The route doing-tools, or null when no route / target pick is under way. */
-export function useRouteStripItems(): ReactElement[] | null {
+export function useRouteStripItems(): StripAction[] | null {
   const pick = useUIStore((s) => s.fleetPick);
   const setPick = useUIStore((s) => s.setFleetPick);
   const requestDone = useUIStore((s) => s.requestFleetPickDone);
@@ -45,30 +46,30 @@ export function useRouteStripItems(): ReactElement[] | null {
     setPick(null);
   };
 
-  const items: ReactElement[] = [
-    <EqxStripIdentity key="route-id" icon={<EqxIcon name={PICK_ICON[kind]} />} health="ok"
-      tooltip={fleetPickHint(kind, pick.points, isTouchDevice())}
-      {...(kind === 'patrol' ? { count: pick.points } : {})}
-      data-state={kind} data-testid="left-strip-route" />,
+  const items: StripAction[] = [
+    { kind: 'identity', key: 'route-id', icon: PICK_ICON[kind], health: 'ok',
+      tooltip: fleetPickHint(kind, pick.points, isTouchDevice()),
+      ...(kind === 'patrol' ? { count: pick.points } : {}),
+      state: kind, testId: 'left-strip-route' },
   ];
   if (kind === 'patrol') {
     items.push(
-      <EqxIconButton key="route-done" variant="strip" tone="primary" icon={<EqxIcon name="confirm" />}
-        tooltip="Done" disabled={!canFinishFleetPick(pick)} onClick={requestDone} data-testid="left-strip-route-done" />,
-      <EqxIconButton key="route-undo" variant="strip" icon={<EqxIcon name="undo" />}
-        tooltip="Undo last point" disabled={pick.points === 0} onClick={requestUndo} data-testid="left-strip-route-undo" />,
+      { kind: 'button', key: 'route-done', tone: 'primary', icon: 'confirm',
+        tooltip: 'Done', disabled: !canFinishFleetPick(pick), onPress: requestDone, testId: 'left-strip-route-done' },
+      { kind: 'button', key: 'route-undo', icon: 'undo',
+        tooltip: 'Undo last point', disabled: pick.points === 0, onPress: requestUndo, testId: 'left-strip-route-undo' },
     );
   }
   if (kind === 'retreat') {
     items.push(
-      <EqxIconButton key="route-post" variant="strip" tone="primary" icon={<EqxIcon name="confirm" />}
-        tooltip="Back to post" onClick={onBackToPost} data-testid="left-strip-route-post" />,
+      { kind: 'button', key: 'route-post', tone: 'primary', icon: 'confirm',
+        tooltip: 'Back to post', onPress: onBackToPost, testId: 'left-strip-route-post' },
     );
   }
   items.push(
-    <EqxStrip.Separator key="route-sep" />,
-    <EqxIconButton key="route-cancel" variant="strip" tone="danger" icon={<EqxIcon name="close" />}
-      tooltip="Cancel" onClick={() => setPick(null)} data-testid="left-strip-route-cancel" />,
+    { kind: 'separator', key: 'route-sep' },
+    { kind: 'button', key: 'route-cancel', tone: 'danger', icon: 'close',
+      tooltip: 'Cancel', onPress: () => setPick(null), testId: 'left-strip-route-cancel' },
   );
   return items;
 }

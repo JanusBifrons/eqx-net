@@ -45,6 +45,7 @@ import { useBuildingStripItems } from './buildingStripItems';
 import { useSelectionStripItems } from './selectionStripItems';
 import { usePlacingStripItems } from './placingStripItems';
 import { useRouteStripItems } from './routeStripItems';
+import { renderStripActions } from './stripActions';
 import { useLeftStripFit } from './leftStripFit';
 import { STANCE_COLOUR } from '../components/contactRows';
 
@@ -120,7 +121,7 @@ export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
           open={!panelOpen}
           data-testid="left-strip"
         >
-          {placing ? placingItems : routeItems}
+          {renderStripActions(placing ? placingItems : routeItems ?? [])}
         </EqxStrip>
       </Slot>
     );
@@ -142,14 +143,14 @@ export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
       <EqxStrip aria-label="Selection" open={!panelOpen} data-testid="left-strip">
         <EqxStripIdentity icon={<EqxIcon name={id.icon} />} tooltip={tooltip} health={focus === null ? stripHealth(data) : 'ok'} count={id.count}
           {...(focus === null && selection.ids.length === 0 ? tint : {})} data-testid="left-strip-identity" />
-        {fleetItems}
+        {renderStripActions(fleetItems)}
         {focus !== null && <EqxStrip.Separator key="focus-sep" />}
         {focus !== null && (
           <EqxStripIdentity icon={<EqxIcon name={focus.icon} />} tooltip={named ?? focus.tooltip} health={stripHealth(data)}
             count={1} {...tint} data-testid="left-strip-focus" />
         )}
-        {buildingItems}
-        {quickItems}
+        {renderStripActions(buildingItems)}
+        {renderStripActions(quickItems)}
         <EqxStrip.Separator />
         <EqxIconButton variant="strip" icon={<EqxIcon name="cog" />} tooltip={panel === 'orders' ? 'All orders and details' : 'Details'}
           onClick={() => setRightPanel(panel)} data-testid="left-strip-cog" />

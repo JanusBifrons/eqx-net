@@ -18,12 +18,13 @@
  *   R / F keys' functions; module state the renderer reads);
  * - ✕ → `cancelPlacement` (the ghost goes, Build stays).
  *
- * Returned as a flat element list so EqxStrip sees its allowed children directly.
+ * Returned as data (`StripAction`, `stripActions.tsx`); the strip draws it with
+ * `renderStripActions`.
  */
 import { useState, useSyncExternalStore, type ReactElement } from 'react';
 import type { StructureKindId } from '@shared-types/structureKinds';
 import { getStructureKind } from '@shared-types/structureKinds';
-import { EqxIcon, EqxIconButton, EqxStrip, EqxStripIdentity } from '../../ui/index.js';
+import { EqxIcon } from '../../ui/index.js';
 import { useUIStore } from '../state/store.js';
 import { cyclePlacementRotation, getPlacementMirror, togglePlacementMirror } from '../structures/structurePlacementClient.js';
 import { getPlacementHeld, getPlacementRejection, subscribePlacementHeld, subscribePlacementRejection } from '../structures/placementChosen.js';
@@ -31,6 +32,7 @@ import { cancelPlacement, commitPlacement } from '../structures/placementCancel.
 import { isFenceRunKind } from '../structures/fenceRun.js';
 import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from '../../core/structures/deckLinks.js';
 import { structurePortraitUrl } from '../render/art/shipPortraits.js';
+import type { StripAction } from './stripActions.js';
 
 /** The building's round identity icon: its baked portrait, or the structure icon. */
 function KindIcon({ kind }: { kind: StructureKindId }): ReactElement {
@@ -41,7 +43,7 @@ function KindIcon({ kind }: { kind: StructureKindId }): ReactElement {
 }
 
 /** The placing tools, or [] while nothing is being placed. */
-export function usePlacingStripItems(): ReactElement[] {
+export function usePlacingStripItems(): StripAction[] {
   const kind = useUIStore((s) => s.placementKind);
   const setRightPanel = useUIStore((s) => s.setRightPanel);
   const setPlacementKind = useUIStore((s) => s.setPlacementKind);
@@ -55,21 +57,21 @@ export function usePlacingStripItems(): ReactElement[] {
   const mirrored = getPlacementMirror();
   const name = getStructureKind(kind).displayName;
   return [
-    <EqxStripIdentity key="kind" icon={<KindIcon kind={kind} />} tooltip={`${name}: open the Build menu`} health="ok"
-      onClick={() => setRightPanel('build')} data-state={kind} data-testid="placement-kind" />,
-    <EqxIconButton key="place" variant="strip" tone="primary" icon={<EqxIcon name="confirm" />} tooltip="Place"
-      disabled={rejected || held} onClick={() => { commitPlacement(kind); }} data-testid="placement-confirm" />,
-    <EqxIconButton key="rotate" variant="strip" icon={<EqxIcon name="rotate" />} tooltip="Rotate"
-      onClick={() => { cyclePlacementRotation(); }} data-testid="placement-rotate" />,
-    <EqxIconButton key="mirror" variant="strip" icon={<EqxIcon name="mirror" />} tooltip="Mirror" active={mirrored}
-      onClick={() => { togglePlacementMirror(); bumpMirror((n) => n + 1); }} data-testid="placement-mirror" />,
+    { kind: 'identity', key: 'kind', icon: <KindIcon kind={kind} />, tooltip: `${name}: open the Build menu`, health: 'ok',
+      onPress: () => setRightPanel('build'), state: kind, testId: 'placement-kind' },
+    { kind: 'button', key: 'place', tone: 'primary', icon: 'confirm', tooltip: 'Place',
+      disabled: rejected || held, onPress: () => { commitPlacement(kind); }, testId: 'placement-confirm' },
+    { kind: 'button', key: 'rotate', icon: 'rotate', tooltip: 'Rotate',
+      onPress: () => { cyclePlacementRotation(); }, testId: 'placement-rotate' },
+    { kind: 'button', key: 'mirror', icon: 'mirror', tooltip: 'Mirror', active: mirrored,
+      onPress: () => { togglePlacementMirror(); bumpMirror((n) => n + 1); }, testId: 'placement-mirror' },
     ...(isFenceRunKind(kind, deck) ? [
-      <EqxIconButton key="gate" variant="strip" icon={<EqxIcon name="gate" />} tooltip="Gate" active={kind === DECK_FENCE_GATE_KIND}
-        onClick={() => { setPlacementKind(kind === DECK_FENCE_GATE_KIND ? DECK_FENCE_POST_KIND : DECK_FENCE_GATE_KIND); }}
-        data-testid="placement-gate" />,
+      { kind: 'button', key: 'gate', icon: 'gate', tooltip: 'Gate', active: kind === DECK_FENCE_GATE_KIND,
+        onPress: () => { setPlacementKind(kind === DECK_FENCE_GATE_KIND ? DECK_FENCE_POST_KIND : DECK_FENCE_GATE_KIND); },
+        testId: 'placement-gate' } satisfies StripAction,
     ] : []),
-    <EqxStrip.Separator key="sep" />,
-    <EqxIconButton key="cancel" variant="strip" tone="danger" icon={<EqxIcon name="close" />} tooltip="Stop placing"
-      onClick={cancelPlacement} data-testid="placement-cancel" />,
+    { kind: 'separator', key: 'sep' },
+    { kind: 'button', key: 'cancel', tone: 'danger', icon: 'close', tooltip: 'Stop placing',
+      onPress: cancelPlacement, testId: 'placement-cancel' },
   ];
 }
