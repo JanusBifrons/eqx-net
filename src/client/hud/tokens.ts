@@ -219,6 +219,9 @@ export const HUD = {
     textOutline: '0 0 3px #000, 0 0 2px #000',
     /** Patrol blue: the capital tier edge (`color.tier1`) at full strength. */
     patrol: '#4aa8ff',
+    /** Count badge on a hex corner (Build's planned count): pill side and figures. */
+    badge: 20,
+    badgeFont: 11,
   },
   strip: {
     /** Strip / fly-out box paper. */

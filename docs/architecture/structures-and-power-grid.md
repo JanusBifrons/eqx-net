@@ -80,7 +80,7 @@ word "Build", the planned count as its badge, only while the list is non-empty) 
 structures, rocks and deck marks clashing items refused without a round trip; a
 clean plan goes as one `place_structures` (`sendPlaceStructures`) with the next
 `batchId`. Only a reply with the in-flight `batchId` counts: `place_structures_refused`
-keeps the plan and flags the refused indices; after `place_structures_placed` the
+keeps the plan and flags the refused indices (the in-flight batch and its landing live in the leaf `placementPlanFlight.ts`, which the room handlers import so they never pull in the renderer graph; `tests/unit/roomHandlersBootGraph.test.ts` fails if a handler reaches `structureStyleC*`); after `place_structures_placed` the
 plan stays drawn and locked until the buildings are in the mirror and drawn (the
 sent-Place rule `pendingPlacementResolved`: count over the send-time baseline, all in
 the swarm, or the timeout; `stepLanding`), so nothing blinks out before the

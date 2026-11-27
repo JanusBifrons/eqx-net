@@ -73,6 +73,11 @@ export const hexBadgeSx = {
   ...stripBadgeSx,
   top: 0,
   right: 0,
+  minWidth: H.badge,
+  height: H.badge,
+  borderRadius: `${H.badge / 2}px`,
+  fontSize: H.badgeFont,
+  lineHeight: `${H.badge}px`,
   textAlign: 'center',
   pointerEvents: 'none',
 } as const;

@@ -228,6 +228,10 @@ function FlyHexes({ touchInput }: { touchInput: Pick<TouchInput, 'setBoostHeld'>
 function DoHexGrid({ hexes, label, set }: { hexes: readonly DoHex[]; label: string; set: string }): JSX.Element | null {
   if (hexes.length === 0) return null;
   const layout = doHexLayout(hexes);
+  // A badged hex paints last, so its corner badge draws over the neighbouring hex.
+  const cells = layout.cells.some((c) => c.hex.badge)
+    ? [...layout.cells.filter((c) => !c.hex.badge), ...layout.cells.filter((c) => c.hex.badge)]
+    : layout.cells;
   return (
     <Slot anchor="bottom-right" order={0}>
       <style>{CELL_CSS}</style>
@@ -238,7 +242,7 @@ function DoHexGrid({ hexes, label, set }: { hexes: readonly DoHex[]; label: stri
         data-set={set}
         style={{ position: 'relative', width: layout.width, height: layout.height }}
       >
-        {layout.cells.map(({ hex, cell, right, bottom }) => (
+        {cells.map(({ hex, cell, right, bottom }) => (
           <div
             key={hex.key}
             className={CELL_CLASS}

@@ -44,8 +44,11 @@ function mount(): void {
 const tool = (id: string): HTMLButtonElement => screen.getByTestId(id) as HTMLButtonElement;
 const hexesShown = (): boolean => screen.queryByTestId('placement-kind') !== null
   && screen.getByTestId('do-hexes').dataset.set === 'placing';
+/** The hexes in thumb-nearness order (their cell), not DOM order (a badged hex paints last). */
 const hexIds = (): (string | undefined)[] =>
-  Array.from(screen.getByTestId('do-hexes').querySelectorAll('button')).map((b) => b.dataset.testid);
+  Array.from(screen.getByTestId('do-hexes').querySelectorAll('[data-cell]'))
+    .sort((x, y) => Number(x.getAttribute('data-cell')) - Number(y.getAttribute('data-cell')))
+    .map((c) => c.querySelector('button')?.dataset.testid);
 const cellOf = (testId: string): string | null =>
   screen.getByTestId(testId).closest('[data-cell]')?.getAttribute('data-cell') ?? null;
 const buildOpen = (): boolean => screen.queryByTestId('build-rail') !== null;
@@ -245,6 +248,11 @@ describe('placing tools as do-hexes', () => {
     act(() => { addPlannedPlacement('shield_pylon', 0, 0, 0, false, true); });
     expect(hexIds()).toEqual(['placement-confirm', 'placement-kind', 'placement-gate', 'placement-build', 'placement-cancel']);
     expect(cellOf('placement-cancel')).toBe('4');
+    // Build sits in the bottom row here: its badge must draw over the hex above it, so its cell paints last.
+    expect(cellOf('placement-build')).toBe('3');
+    const cells = screen.getByTestId('do-hexes').querySelectorAll('[data-cell]');
+    expect(cells[cells.length - 1]!.contains(tool('placement-build'))).toBe(true);
+    expect(screen.getByTestId('placement-build-badge').textContent).toBe('1');
     fireEvent.click(tool('placement-gate'));
     expect(useUIStore.getState().placementKind).toBe('shield_gate');
     fireEvent.click(tool('placement-gate'));

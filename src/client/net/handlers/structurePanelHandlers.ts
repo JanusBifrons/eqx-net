@@ -13,7 +13,7 @@ import {
   TeleportCandidatesReplySchema,
   TollPromptSchema,
 } from '../../../shared-types/teleport.js';
-import { onPlaceStructuresPlaced, onPlaceStructuresRefused } from '../../structures/placementCancel.js';
+import { onPlaceStructuresPlaced, onPlaceStructuresRefused } from '../../structures/placementPlanFlight.js';
 
 /** The structure-panel handlers touch only the UI store, so they need no context. */
 export type StructurePanelHandlerCtx = Record<never, never>;

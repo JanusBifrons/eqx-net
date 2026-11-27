@@ -89,4 +89,13 @@ describe('EqxIconButton variant="hex" (selection HUD)', () => {
     fireEvent.click(el());
     expect(onClick).not.toHaveBeenCalled();
   });
+
+  it('a badge is a readable gold pill (20 px, 11 px figures) on the corner, outside the clip, never taking a tap', () => {
+    render(<EqxIconButton variant="hex" icon={<EqxIcon name="build" />} tooltip="Build (4)" badge={4} data-testid="h" />);
+    const b = screen.getByTestId('h-badge');
+    expect(b.textContent).toBe('4');
+    expect(el().contains(b)).toBe(false); // on the unclipped wrapper
+    const bs = getComputedStyle(b);
+    expect({ h: bs.height, font: bs.fontSize, events: bs.pointerEvents }).toEqual({ h: '20px', font: '11px', events: 'none' });
+  });
 });
