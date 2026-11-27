@@ -223,8 +223,7 @@ describe('placing tools as do-hexes', () => {
   it('a road has no Rotate or Mirror: it lines itself up', () => {
     act(() => { useUIStore.setState({ placementKind: 'road', deck: true }); });
     mount();
-    const ids = Array.from(screen.getByTestId('left-strip').querySelectorAll('button')).map((b) => b.dataset.testid);
-    expect(ids).toEqual(['placement-kind', 'placement-confirm', 'placement-cancel']);
+    expect(hexIds()).toEqual(['placement-confirm', 'placement-kind', 'placement-cancel']);
   });
 
   it('no Gate off a deck room or for other kinds', () => {
