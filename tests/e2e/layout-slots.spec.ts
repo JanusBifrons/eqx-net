@@ -56,7 +56,7 @@ test.describe('layout-slots', () => {
     await ctx.close();
   });
 
-  test('mobile landscape: move stick lives in the bottom-left, BOOST in the bottom-right', async ({ browser }) => {
+  test('mobile landscape: move stick lives in the bottom-left, the Boost hex in the bottom-right', async ({ browser }) => {
     const iPhone = devices['iPhone SE'];
     const ctx = await browser.newContext({
       ...iPhone,
@@ -66,9 +66,9 @@ test.describe('layout-slots', () => {
     await bootGame(page);
 
     const joystick = page.locator('[data-testid="hud-move-home"]');
-    // The right thumb is BOOST, bottom-right (the touch lock-line stick was
+    // The right thumb is the do-hexes with Boost under it, bottom-right (the touch lock-line stick was
     // removed 2026-11-27: lock by tapping a ship). There is no FIRE button.
-    const fire = page.locator('[data-testid="hud-boost"]');
+    const fire = page.locator('[data-testid="do-hex-boost"]');
     await expect(page.locator('[data-testid="hud-lock-home"]')).toHaveCount(0);
     await expect(joystick).toBeVisible();
     await expect(fire).toBeVisible();
