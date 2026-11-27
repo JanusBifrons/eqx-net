@@ -45,6 +45,13 @@ describe('worldTagPos', () => {
     expect(worldTagPos(fb, 'focus')).toBe(false);
   });
 
+  it('clamps the tip down so a tag over a screen-filling hull stays on screen', () => {
+    expect(worldTagPos({ focusScreenX: 300, focusScreenY: -871, focusOnScreen: true }, 'focus', 46)).toBe(true);
+    expect(worldTagAt).toEqual({ x: 300, y: 46 });
+    expect(worldTagPos({ focusScreenX: 300, focusScreenY: 120, focusOnScreen: true }, 'focus', 46)).toBe(true);
+    expect(worldTagAt.y).toBe(120);
+  });
+
   it('hidden off screen or with nothing focused (NaN)', () => {
     expect(worldTagPos({ focusScreenX: 10, focusScreenY: 20, focusOnScreen: false })).toBe(false);
     expect(worldTagPos({ focusScreenX: NaN, focusScreenY: NaN, focusOnScreen: true })).toBe(false);

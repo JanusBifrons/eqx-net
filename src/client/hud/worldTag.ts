@@ -64,10 +64,13 @@ export type WorldTagFeedback = Pick<RendererFeedback, 'focusScreenX' | 'focusScr
     | 'focusScreenDiam' | 'viewX' | 'viewY' | 'viewHalf'>>;
 
 /** Pure, alloc-free: should the tag show over its anchor, and where (writes
- *  {@link worldTagAt}). False when the anchor is absent (NaN) or off screen. */
+ *  {@link worldTagAt}). False when the anchor is absent (NaN) or off screen.
+ *  `minY` keeps the pointer tip low enough for the whole tag to stay on
+ *  screen: a hull bigger than the screen has its bracket top far above it. */
 export function worldTagPos(
   fb: WorldTagFeedback,
   anchor: WorldTagAnchor = 'focus',
+  minY = -Infinity,
 ): boolean {
   const group = anchor === 'centroid';
   const x = group ? fb.selCentroidScreenX ?? NaN : fb.focusScreenX;
@@ -75,7 +78,7 @@ export function worldTagPos(
   const on = group ? fb.selCentroidOnScreen === true : fb.focusOnScreen;
   if (!on || !Number.isFinite(x) || !Number.isFinite(y)) return false;
   worldTagAt.x = Math.round(x);
-  worldTagAt.y = Math.round(y);
+  worldTagAt.y = Math.round(Math.max(y, minY));
   return true;
 }
 
@@ -112,6 +115,9 @@ export function worldTagCompactDiam(
   return (groupRadiusU * Math.max(w, h)) / viewHalf;
 }
 
+/** Gap (px) kept between the screen top and a clamped tag. */
+export const WORLD_TAG_TOP_MARGIN_PX = 6;
+
 /** The camera glide a tap on the edge-stuck tag fires (the pilot-swap glide's length). */
 export const WORLD_TAG_GLIDE_MS = 420;
 
@@ -140,6 +146,8 @@ let _dist: HTMLElement | null = null;
 let _pointer: HTMLElement | null = null;
 let _halfW = 0;
 let _halfH = 0;
+/** The tag's full height (px), re-read when it shows or changes shape. */
+let _tagH = 0;
 let _deg = NaN;
 let _distKey = NaN;
 let _glideReq = false;
@@ -238,6 +246,7 @@ function writeCompact(el: HTMLElement, fb: WorldTagFeedback, w: number, h: numbe
   if (c === _compactDom) return;
   _compactDom = c;
   if (_root) _root.setAttribute('data-compact', c === 1 ? '1' : '0');
+  _tagH = el.offsetHeight || 0;
   if (_edge) measure(el);
 }
 
@@ -253,7 +262,7 @@ export function updateWorldTag(fb: WorldTagFeedback, w = 0, h = 0, cam?: WorldTa
   const glide = _glideReq;
   _glideReq = false;
   if (el === null) return null;
-  const on = worldTagPos(fb, _anchor);
+  const on = worldTagPos(fb, _anchor, _tagH + WORLD_TAG_TOP_MARGIN_PX);
   const centre = !on && worldTagCentre(fb, _anchor);
   const cx = worldTagCentreAt.x;
   const cy = worldTagCentreAt.y;
@@ -267,6 +276,7 @@ export function updateWorldTag(fb: WorldTagFeedback, w = 0, h = 0, cam?: WorldTa
   if (show !== _shown) {
     _shown = show;
     el.style.visibility = show ? 'visible' : 'hidden';
+    if (show) _tagH = el.offsetHeight || 0;
   }
   if (!show) return null;
   writeCompact(el, fb, w, h);
