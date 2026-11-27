@@ -163,16 +163,16 @@ test.describe('RTS fleet command loop @feature', () => {
 
     // ── Patrol from the do-hexes: pick two points on the map, Done. ──────────
     await page.locator('[data-testid="do-hex-patrol"]').click();
-    // The strip swaps to its route tools (UI plan U3-3): route icon, ✓, undo, ✕.
-    await expect(page.locator('[data-testid="left-strip-route"]')).toHaveAttribute('data-state', 'patrol');
-    const done = page.locator('[data-testid="left-strip-route-done"]');
+    // The route tools are do-hexes (UI plan U3-3, selection HUD S4): the pick, Done, Undo, Cancel.
+    await expect(page.locator('[data-testid="do-hex-route"]')).toHaveAttribute('data-state', 'patrol');
+    const done = page.locator('[data-testid="do-hex-route-done"]');
     await expect(done).toBeDisabled();
     const py = box.y + Math.max(120, box.height * 0.25);
     await page.mouse.click(box.x + box.width * 0.35, py);
     await page.mouse.click(box.x + box.width * 0.65, py);
     await expect(done, 'two points enable ✓').toBeEnabled({ timeout: 2_000 });
     await done.click();
-    await expect(page.locator('[data-testid="left-strip-route"]')).toHaveCount(0);
+    await expect(page.locator('[data-testid="do-hex-route"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="do-hex-patrol"]')).toHaveAttribute('data-lit', 'true', { timeout: 5_000 });
 
     // ── Rail Fleet orders → the Orders panel: ship list, squad, Stop. ──────────────────────

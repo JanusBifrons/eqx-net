@@ -52,6 +52,8 @@ export function hexTileSx(color: string, lit: boolean, dim: boolean): SxProps<Th
     '&.Mui-disabled': { color, opacity: H.dimOpacity },
     '& > *': { position: 'relative' },
     '& .MuiSvgIcon-root, & svg': { fontSize: H.icon, width: H.icon, height: H.icon },
+    // A picture icon (a building portrait) takes the same icon footprint inside the frame.
+    '& img': { width: H.icon, height: H.icon, objectFit: 'contain', flex: 'none' },
   } as SxProps<Theme>;
 }
 

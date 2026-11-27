@@ -267,14 +267,26 @@ describe('the action strip (what the do-hexes do not carry)', () => {
     });
   }
 
-  it('ships + an attackable focus: ONE Lock orders the ships to attack it (T2)', () => {
+  it('ships + an attackable focus: the T2 Lock is the target do-hexes\' Attack (S8), not on the strip; no personal Target', () => {
     mount();
     select(['a'], 'p2', 'ship');
     expect(screen.queryByTestId('fc-target')).toBeNull();
-    fireEvent.click(screen.getByTestId('left-strip-lock'));
-    expect(attackFocus).toHaveBeenCalledOnce();
+    expect(screen.queryByTestId('left-strip-lock')).toBeNull();
     expect(lockSelected).not.toHaveBeenCalled();
   });
+
+  for (const touch of [false, true]) {
+    it(`own ships + a target (${touch ? 'touch' : 'desktop'}): the old fleet strip stays retired (S8: Clear is the way back)`, () => {
+      useUIStore.setState({ phase: 'game' });
+      mount(touch);
+      select(['a', 'b'], 'p2', 'ship');
+      for (const t of ['left-strip-order', 'left-strip-move', 'left-strip-stance', 'left-strip-stop', 'left-strip-lock']) {
+        expect(screen.queryByTestId(t), t).toBeNull();
+      }
+      expect(screen.queryByTestId('left-strip')).toBeNull();
+      expect(screen.getByTestId('who-hexes')).toBeInTheDocument();
+    });
+  }
 
   it('a focus-only pick: the personal Target and Details, which opens its Details panel', () => {
     panelData = { name: 'Depot', hpPct: 100, shieldPct: null };
@@ -358,7 +370,30 @@ describe('one place per action: the strip reads the do-hexes\' own predicate and
     expect(doHexSet(st('pilot'), false)).toBeNull();
     expect(doHexSet(st('spectator'), false)).toBe('fleet');
     expect(doHexSet(st('pilot', true), true)).toBe('fleet');
-    expect(doHexSet(st('pilot', false, true), true)).toBe('fleet');
+    expect(doHexSet(st('pilot', false, true), true)).toBe('build');
+    expect(doHexSet(st('spectator', false, true), false)).toBe('build');
+  });
+
+  it('doHexSet: placing and a route pick win on every device; a Move pick does not', () => {
+    const pick = (kind: 'patrol' | 'move') => ({ kind, points: 0, doneSeq: 0, undoSeq: 0 }) as never;
+    expect(doHexSet({ ...st('pilot'), placementKind: 'solar' }, false)).toBe('placing');
+    expect(doHexSet({ ...st('spectator', false, true), placementKind: 'solar' }, true)).toBe('placing');
+    expect(doHexSet({ ...st('spectator'), fleetPick: pick('patrol') }, false)).toBe('route');
+    expect(doHexSet({ ...st('spectator'), fleetPick: pick('move') }, false)).toBe('fleet');
+  });
+
+  it('doHexSet: own ships plus a tapped target that is not mine: the target set, just above the fleet set (S8)', () => {
+    const sel = (ids: string[], focusId: string | null) => ({ ids, focusId, focusKind: focusId === null ? null : 'ship' as const });
+    expect(doHexSet({ ...st('spectator'), selection: sel(['a'], 'p2') }, false)).toBe('target');
+    expect(doHexSet({ ...st('spectator'), selection: sel(['a'], 'p2') }, true)).toBe('target');
+    expect(doHexSet({ ...st('spectator'), selection: sel(['a'], null) }, false)).toBe('fleet');
+    expect(doHexSet({ ...st('spectator'), selection: sel([], 'p2') }, false)).toBe('fleet');
+    // Placing, a route pick, Fly and Build still win over it.
+    const pick = { kind: 'patrol', points: 0, doneSeq: 0, undoSeq: 0 } as never;
+    expect(doHexSet({ ...st('spectator'), selection: sel(['a'], 'p2'), fleetPick: pick }, false)).toBe('route');
+    expect(doHexSet({ ...st('spectator'), selection: sel(['a'], 'p2'), placementKind: 'solar' }, false)).toBe('placing');
+    expect(doHexSet({ ...st('pilot'), selection: sel(['a'], 'p2') }, true)).toBe('fly');
+    expect(doHexSet({ ...st('spectator', false, true), selection: sel(['a'], 'p2') }, false)).toBe('build');
   });
 
   it('flyHexCovers: Target, the pod Open, the tapped ship\'s cargo and Details; not the fleet Lock or Pilot', () => {
@@ -373,12 +408,13 @@ describe('one place per action: the strip reads the do-hexes\' own predicate and
 });
 
 describe('the strip hosts the building section (U3-6)', () => {
-  it('your own switchable building in Build shows Power on the strip; not in Command', () => {
+  it('your own switchable building in Build: Power and Details are do-hexes (S4), not on the strip; not in Command', () => {
     panelData = { name: 'Turret', hpPct: 100, shieldPct: null, entityId: 9, isStructure: true, isOwn: true, powerSwitch: true };
     useUIStore.setState({ buildMode: true });
     mount();
     select([], 'swarm-9', 'structure');
-    expect(screen.getByTestId('left-strip-power')).toBeInTheDocument();
+    expect(screen.queryByTestId('left-strip-power')).toBeNull();
+    expect(screen.queryByTestId('left-strip-details')).toBeNull();
     act(() => { useUIStore.setState({ buildMode: false }); });
     expect(screen.queryByTestId('left-strip-power')).toBeNull();
   });

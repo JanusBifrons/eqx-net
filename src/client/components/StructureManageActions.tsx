@@ -83,16 +83,27 @@ function sameManage(a: ManageActionData | null, b: ManageActionData | null): boo
     && a.level === b.level && a.upgradeMinerals === b.upgradeMinerals;
 }
 
-/** The settings panel's Manage tab controls, polled at the panel's cadence. */
-export function StructureManageTab({ entityId, pollMs }: { entityId: number; pollMs: number }): JSX.Element | null {
-  const [d, setD] = useState<ManageActionData | null>(() => readManageData(entityId));
+/** The building's management state (`readManageData`), polled every `pollMs`
+ *  and changed only when it changes; null for no building. The Manage tab and
+ *  the Build do-hexes (`layout/DoHexesHost.tsx`) both read it. */
+export function useManageData(entityId: number | null, pollMs: number): ManageActionData | null {
+  const [d, setD] = useState<ManageActionData | null>(() => (entityId === null ? null : readManageData(entityId)));
   useEffect(() => {
-    const h = window.setInterval(() => setD((prev) => {
-      const next = readManageData(entityId);
+    const read = (): void => setD((prev) => {
+      const next = entityId === null ? null : readManageData(entityId);
       return sameManage(prev, next) ? prev : next;
-    }), pollMs);
+    });
+    read();
+    if (entityId === null) return undefined;
+    const h = window.setInterval(read, pollMs);
     return () => window.clearInterval(h);
   }, [entityId, pollMs]);
+  return d;
+}
+
+/** The settings panel's Manage tab controls, polled at the panel's cadence. */
+export function StructureManageTab({ entityId, pollMs }: { entityId: number; pollMs: number }): JSX.Element | null {
+  const d = useManageData(entityId, pollMs);
   if (d === null) return null;
   return (
     <Box data-testid="structure-settings-manage" sx={MANAGE_SX}>

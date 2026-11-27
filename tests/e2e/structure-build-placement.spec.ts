@@ -6,7 +6,7 @@ import { DEFAULT_BASE_URL } from './helpers/ports';
  * Structures plan, Phase 2 — Build → place flow (CLIENT half) regression lock.
  *
  * The rail's Build item opens the Build sidebar, where a kind tile raises the
- * left strip's placing tools (✓ Place, Rotate, Mirror, ✕); confirming sends `place_structure`
+ * placing do-hexes (✓ Place, Rotate, Mirror, ✕); confirming sends `place_structure`
  * (a drop a fixed clearance ahead of the ship — the Phase 2 fallback coordinate
  * model). The new structure then rides the existing kind=2 swarm path and shows
  * up in the client's swarm mirror (`data-swarm-count`).
@@ -24,7 +24,7 @@ const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
 
 async function joinClient(browser: Browser): Promise<{ ctx: Awaited<ReturnType<Browser['newContext']>>; page: Page }> {
   // These tests join as a touch device (the two-step tap → Place flow); the
-  // left strip's placing tools show on desktop too (U3-7).
+  // placing do-hexes show on desktop too (U3-7).
   const ctx = await browser.newContext({ viewport: { width: 1280, height: 800 }, hasTouch: true });
   const page = await ctx.newPage();
   await page.goto(`${BASE_URL}?room=test-sector-fast&shipKind=scout`);
@@ -59,7 +59,7 @@ test('Build ▸ Capital → confirm places a structure that appears in the swarm
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="build-capital"] button').click();
 
-    // The left strip's placing tools appear; ✓ Place sends place_structure.
+    // The placing do-hexes appear; ✓ Place sends place_structure.
     await expect(page.locator('[data-testid="placement-kind"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="placement-confirm"]').click();
 
