@@ -18,15 +18,25 @@
  * for starboard and port"). A gate with plates on
  * both sides of its seam (or neither) has no outside and gets no lamps.
  *
- * Static geometry (a Container per gate, a base + a flash Graphics per lamp on
- * two shared `GraphicsContext`s) is built when a gate appears and re-placed
- * only when its pose or the plate set changes; a frame writes only the flash
- * alphas of on-screen gates (invariant #14).
+ * Each lamp is a light, not a disc (owner 2026-11-27, "Small lamps + soft
+ * glow"): a hot core and a soft glow, both the shared effect `glow` texture
+ * (the art service's; `WarpFx`'s canvas glow until it is baked or under
+ * classic art), additive. Its on-screen size is capped
+ * ({@link approachLampScale}): zoomed in it stays a few CSS px; zoomed out it
+ * shrinks with the world. The strobe brightens and swells the lamp briefly.
+ *
+ * Static geometry (a Container per gate, a Container of glow + core Sprites
+ * per lamp) is built when a gate appears and re-placed only when its pose or
+ * the plate set changes; a frame writes only the on-screen gates' lamp scale
+ * (when the zoom changed) and strobe (invariant #14).
  */
-import { Container, Graphics, GraphicsContext } from 'pixi.js';
+import { Container, Sprite, Texture } from 'pixi.js';
 import { DECK_HEX_INRADIUS } from '../../../core/hex/deckCorners.js';
 import { DECK_FENCE_GATE_KIND } from '../../../core/structures/deckLinks.js';
+import type { ArtHandle } from '../art/ArtService.js';
+import type { ShipArtCtx } from '../art/shipArtSprites.js';
 import { isSpriteInView } from '../spriteUpdateDecisions.js';
+import { glowTexture } from './WarpFx.js';
 
 /** `?approach=on|off` — default on (owner OK); `?approach=off` hides them. */
 export function readApproachFlag(search: string): boolean {
@@ -51,12 +61,19 @@ export const APPROACH_FLASH_MS = 170;
  *  (`RIG_UNDER_Z` −1) and every body. */
 export const APPROACH_LAMP_Z = -1.03125;
 
-/** Lamp look (world units). */
-export const LAMP_HOUSING = 0x1a1d22;
+/** Lamp size: the core's radius in world units (today's lens) — what it
+ *  draws at zoom ≤ {@link LAMP_CAP_PX} / {@link LAMP_CORE_R} (the build and
+ *  spawn cameras); past that it holds {@link LAMP_CAP_PX} CSS px. */
+export const LAMP_CORE_R = 11;
+export const LAMP_CAP_PX = 4;
+/** The glow's reach, × the core radius (a soft fade, no edge). */
+export const LAMP_GLOW_K = 3.5;
+/** Glow strength between flashes (the core is at full). */
+export const LAMP_GLOW_ALPHA = 0.55;
+/** At a full flash the glow grows by this × and the core by half of it. */
+export const LAMP_FLASH_GROW = 1.2;
 /** Centre line: white, like a runway centreline (owner 2026-11-26). */
 export const LAMP_CENTRE = 0xeef2ff;
-export const LAMP_BASE_ALPHA = 0.8;
-export const LAMP_FLASH = 0xffffff;
 /** Edge rows: lateral offset from the centre line (world units) = the road's carriageway edge
  *  (`ROAD_HALF_W`, a number here: the road art imports the deck plates; a test locks them equal),
  *  inside the gate's towers (416 wide). Then colours. */
@@ -113,51 +130,84 @@ export function approachFlash(k: number, count: number, nowMs: number): number {
   return f * f;
 }
 
-let baseCtx: GraphicsContext | undefined;
-let flashCtx: GraphicsContext | undefined;
-let portCtx: GraphicsContext | undefined;
-let starCtx: GraphicsContext | undefined;
-
-/** A steady coloured lamp: a faint halo, housing, a modest lens (owner: round 2 was far too bright). */
-function steadyLamp(color: number): GraphicsContext {
-  return new GraphicsContext()
-    .circle(0, 0, 32).fill({ color, alpha: 0.07 })
-    .circle(0, 0, 18).fill({ color: LAMP_HOUSING })
-    .circle(0, 0, 11).fill({ color, alpha: LAMP_BASE_ALPHA });
+/**
+ * The lamp's scale at camera `zoom` (CSS px per world unit): 1 (its world
+ * size) until its core would pass {@link LAMP_CAP_PX} on screen, then the
+ * scale that holds it there. Absent or bad zoom ⇒ 1.
+ */
+export function approachLampScale(zoom: number): number {
+  if (!(zoom > 0)) return 1;
+  return Math.min(1, LAMP_CAP_PX / (LAMP_CORE_R * zoom));
 }
 
-/** The shared edge lamps (built once): red to port, green to starboard. */
-export function approachEdgeContext(port: boolean): GraphicsContext {
-  if (port) return (portCtx ??= steadyLamp(LAMP_PORT));
-  return (starCtx ??= steadyLamp(LAMP_STARBOARD));
+/** Sprite radius (texture edge) in core radii: the `glow` texture's half-alpha
+ *  sits near 0.3 of its radius, so a core sprite this big reads as one core. */
+const CORE_TEX_K = 3.5;
+/** The glow sprite's texture edge, in core radii (it fades out well inside). */
+const GLOW_TEX_K = 2 * LAMP_GLOW_K;
+
+/** `c` lifted toward white by `k` (0..1): a coloured lamp's hot centre. */
+export function towardWhite(c: number, k: number): number {
+  let out = 0;
+  for (let s = 0; s <= 16; s += 8) { const v = (c >> s) & 0xff; out |= Math.round(v + (255 - v) * k) << s; }
+  return out;
+}
+/** Core tints (the glow wears the lamp colour). */
+export const CORE_TINT_PORT = towardWhite(LAMP_PORT, 0.45);
+export const CORE_TINT_STAR = towardWhite(LAMP_STARBOARD, 0.45);
+
+/** The lamp texture until the art `glow` is baked (or under classic art):
+ *  `WarpFx`'s canvas glow; a white square where there is no canvas (unit tests). */
+function fallbackGlow(): Texture {
+  return glowTexture() ?? Texture.WHITE;
 }
 
-/** The shared steady centre lamp: white (built once). */
-export function approachBaseContext(): GraphicsContext {
-  if (baseCtx === undefined) {
-    baseCtx = steadyLamp(LAMP_CENTRE);
+/** One lamp: glow (child 0, the lamp colour) under a hot core (child 1), additive. */
+function makeLamp(tex: Texture, glow: number, core: number): Container {
+  const lamp = new Container();
+  for (let i = 0; i < 2; i++) {
+    const s = new Sprite(tex);
+    s.anchor.set(0.5);
+    s.tint = i === 0 ? glow : core;
+    s.blendMode = 'add';
+    lamp.addChild(s);
   }
-  return baseCtx;
+  return lamp;
 }
 
-/** The shared strobe: a white core in a soft halo (its alpha is the flash). */
-export function approachFlashContext(): GraphicsContext {
-  if (flashCtx === undefined) {
-    flashCtx = new GraphicsContext()
-      .circle(0, 0, 50).fill({ color: LAMP_FLASH, alpha: 0.08 })
-      .circle(0, 0, 26).fill({ color: LAMP_FLASH, alpha: 0.2 })
-      .circle(0, 0, 13).fill({ color: LAMP_FLASH, alpha: 0.85 });
-  }
-  return flashCtx;
+/** Size `lamp`'s sprites for texture `tex` at flash `f` (0..1): the bloom
+ *  swells the glow (and less so the core) and brings the glow to full. */
+export function sizeApproachLamp(lamp: Container, tex: Texture, f: number): void {
+  const unit = (2 * LAMP_CORE_R) / (tex.width || 1); // a texture radius ⇒ one core radius
+  const glow = lamp.children[0]!, core = lamp.children[1]!;
+  glow.scale.set(unit * GLOW_TEX_K * (1 + LAMP_FLASH_GROW * f));
+  core.scale.set(unit * CORE_TEX_K * (1 + 0.5 * LAMP_FLASH_GROW * f));
+  glow.alpha = LAMP_GLOW_ALPHA + (1 - LAMP_GLOW_ALPHA) * f;
 }
 
-/** Half the lamp line's length plus the halo: the cull radius round its middle. */
+/** What a frame reads besides the time: the camera scale and the art (the
+ *  swarm updater's ctx fits; `DeckLitView`). */
+export interface ApproachView {
+  art: ShipArtCtx;
+  cameraScale?: number;
+}
+
+/** Half the lamp line's length plus the glow: the cull radius round its middle. */
 const CULL_R = ((APPROACH_LAMP_COUNT - 1) * APPROACH_LAMP_SPACING) / 2 + APPROACH_EDGE_OFFSET + 140;
 const MID_D = APPROACH_LAMP_START + ((APPROACH_LAMP_COUNT - 1) * APPROACH_LAMP_SPACING) / 2;
 
+/** Child index of the port (`port`) or starboard edge lamp beside centre lamp `k`. */
+export function approachEdgeIndex(k: number, port: boolean): number {
+  return APPROACH_LAMP_COUNT + 2 * k + (port ? 0 : 1);
+}
+
 interface GateEntry {
   c: Container;
-  flashes: Graphics[];
+  /** Each centre lamp's last drawn flash (0..1). */
+  flash: Float64Array;
+  /** The lamp scale and texture generation last applied. */
+  scale: number;
+  texGen: number;
   stamp: number;
   x: number; y: number; a: number;
   /** Plate version the side was worked out against. */
@@ -172,7 +222,9 @@ interface GateEntry {
 /**
  * The approach lights of every deck fence gate. The swarm updater notes each
  * structure ({@link note}); {@link frame} runs at the start of the next frame
- * (sweep gone gates, then strobe the live, on-screen ones).
+ * (sweep gone gates, then size and strobe the live, on-screen ones).
+ * Children of a gate's Container: centre lamps 0..{@link APPROACH_LAMP_COUNT}−1,
+ * then a port + starboard lamp per edge position ({@link approachEdgeIndex}).
  */
 export class DeckApproachLights {
   private readonly entries = new Map<number, GateEntry>();
@@ -182,17 +234,29 @@ export class DeckApproachLights {
   private readonly pt = new Float64Array(2);
   private nowMs = 0;
   private bounds: Float64Array | undefined;
+  /** The lamp scale this frame ({@link approachLampScale}). */
+  private scale = 1;
+  /** The lamp texture: the fallback glow until the art `glow` is ready. */
+  private tex: Texture = fallbackGlow();
+  private texGen = 0;
+  private glowHandle: ArtHandle | null = null;
   private readonly sweepFn = (e: GateEntry, id: number): void => {
     if (e.stamp !== this.stamp) this.drop(id, e);
   };
   private readonly strobeFn = (e: GateEntry): void => {
     e.c.visible = e.sign !== 0 && isSpriteInView(e.mx, e.my, CULL_R, this.bounds);
     if (!e.c.visible) return;
+    const lamps = e.c.children;
+    if (e.texGen !== this.texGen) this.retexture(e);
+    if (e.scale !== this.scale) {
+      e.scale = this.scale;
+      for (let i = 0; i < lamps.length; i++) lamps[i]!.scale.set(this.scale);
+    }
     for (let k = 0; k < e.lit; k++) {
-      const g = e.flashes[k]!;
       const f = approachFlash(k, e.lit, this.nowMs);
-      g.visible = f > 0;
-      g.alpha = f;
+      if (f === e.flash[k]) continue;
+      e.flash[k] = f;
+      sizeApproachLamp(lamps[k] as Container, this.tex, f);
     }
   };
 
@@ -205,15 +269,18 @@ export class DeckApproachLights {
   /** The lamp Container of gate `id` (tests). */
   containerOf(id: number): Container | undefined { return this.entries.get(id)?.c; }
 
-  /** Free gates not noted since the last call, strobe the rest at effect time
-   *  `nowMs` (on-screen only: `bounds`, pixi space), then start a frame. */
-  frame(deck: boolean, plateVersion: number, nowMs: number, bounds: Float64Array | undefined): void {
+  /** Free gates not noted since the last call, size and strobe the rest at
+   *  effect time `nowMs` (on-screen only: `bounds`, pixi space) and the
+   *  `view`'s camera scale, then start a frame. */
+  frame(deck: boolean, plateVersion: number, nowMs: number, bounds: Float64Array | undefined, view?: ApproachView): void {
     this.deck = deck;
     this.plateVersion = plateVersion;
     if (!deck) this.stamp++; // off the deck: everything goes now
     this.entries.forEach(this.sweepFn);
     this.nowMs = nowMs;
     this.bounds = bounds;
+    this.scale = approachLampScale(view?.cameraScale ?? 1);
+    if (this.entries.size > 0) this.pickTexture(view);
     this.entries.forEach(this.strobeFn);
     this.bounds = undefined;
     this.stamp++;
@@ -236,18 +303,16 @@ export class DeckApproachLights {
       approachLampInto(0, 0, angle, e.sign, k, this.pt);
       if (e.lit === APPROACH_LAMP_COUNT && e.sign !== 0 && this.onPlate(x + this.pt[0]!, y + this.pt[1]!)) e.lit = k; // another deck: stop short
       const on = k < e.lit;
-      lamps[2 * k]!.visible = on;
-      if (!on) lamps[2 * k + 1]!.visible = false;
-      lamps[2 * k]!.position.set(this.pt[0]!, -this.pt[1]!);
-      lamps[2 * k + 1]!.position.set(this.pt[0]!, -this.pt[1]!);
+      lamps[k]!.visible = on;
+      lamps[k]!.position.set(this.pt[0]!, -this.pt[1]!);
       if (k >= APPROACH_EDGE_COUNT) continue;
       const lx = this.pt[0]!, ly = this.pt[1]!;
       approachEdgeInto(lx, ly, angle, e.sign, true, this.pt);
-      lamps[2 * APPROACH_LAMP_COUNT + 2 * k]!.position.set(this.pt[0]!, -this.pt[1]!);
-      lamps[2 * APPROACH_LAMP_COUNT + 2 * k]!.visible = on;
+      lamps[approachEdgeIndex(k, true)]!.position.set(this.pt[0]!, -this.pt[1]!);
+      lamps[approachEdgeIndex(k, true)]!.visible = on;
       approachEdgeInto(lx, ly, angle, e.sign, false, this.pt);
-      lamps[2 * APPROACH_LAMP_COUNT + 2 * k + 1]!.position.set(this.pt[0]!, -this.pt[1]!);
-      lamps[2 * APPROACH_LAMP_COUNT + 2 * k + 1]!.visible = on;
+      lamps[approachEdgeIndex(k, false)]!.position.set(this.pt[0]!, -this.pt[1]!);
+      lamps[approachEdgeIndex(k, false)]!.visible = on;
     }
     e.mx = x - Math.sin(angle) * e.sign * MID_D;
     e.my = -(y + Math.cos(angle) * e.sign * MID_D);
@@ -258,33 +323,52 @@ export class DeckApproachLights {
     this.entries.forEach(this.sweepFn);
   }
 
-  /** Build time: a gate's Container with a base + a flash per lamp, then a port + starboard edge lamp per lamp. */
+  /** Swap to the baked art `glow` once it is ready (once; the handle is reused). */
+  private pickTexture(view: ApproachView | undefined): void {
+    if (this.glowHandle?.state === 'ready' && this.glowHandle.fx?.tex === this.tex) return;
+    const art = view?.art.art;
+    if (!art) return;
+    this.glowHandle ??= art.fx('glow', undefined, undefined, false);
+    const fx = this.glowHandle.state === 'ready' ? this.glowHandle.fx : null;
+    if (!fx || fx.tex === this.tex) return;
+    this.tex = fx.tex;
+    this.texGen++;
+  }
+
+  /** Put gate `e`'s lamps on the current texture, sized for it (flash reset). */
+  private retexture(e: GateEntry): void {
+    e.texGen = this.texGen;
+    const lamps = e.c.children;
+    for (let i = 0; i < lamps.length; i++) {
+      const lamp = lamps[i] as Container;
+      (lamp.children[0] as Sprite).texture = this.tex;
+      (lamp.children[1] as Sprite).texture = this.tex;
+      sizeApproachLamp(lamp, this.tex, 0);
+    }
+    e.flash.fill(0);
+  }
+
+  /** Build time: a gate's Container with a centre lamp per position, then a port + starboard edge lamp per edge position. */
   private build(id: number): GateEntry {
     const c = new Container();
     c.label = 'deckApproach';
     c.zIndex = APPROACH_LAMP_Z;
-    const flashes: Graphics[] = [];
-    for (let k = 0; k < APPROACH_LAMP_COUNT; k++) {
-      c.addChild(new Graphics(approachBaseContext()));
-      const f = new Graphics(approachFlashContext());
-      f.visible = false;
-      c.addChild(f);
-      flashes.push(f);
-    }
+    for (let k = 0; k < APPROACH_LAMP_COUNT; k++) c.addChild(makeLamp(this.tex, LAMP_CENTRE, 0xffffff));
     for (let k = 0; k < APPROACH_EDGE_COUNT; k++) { // edge rows after the centre line
-      c.addChild(new Graphics(approachEdgeContext(true)));
-      c.addChild(new Graphics(approachEdgeContext(false)));
+      c.addChild(makeLamp(this.tex, LAMP_PORT, CORE_TINT_PORT));
+      c.addChild(makeLamp(this.tex, LAMP_STARBOARD, CORE_TINT_STAR));
     }
     this.shipContainer.sortableChildren = true;
     this.shipContainer.addChild(c);
-    const e: GateEntry = { c, flashes, stamp: 0, x: Number.NaN, y: Number.NaN, a: Number.NaN, plates: -1, sign: 0, lit: APPROACH_LAMP_COUNT, mx: 0, my: 0 };
+    // texGen −1: the first on-screen frame sizes every lamp for the texture.
+    const e: GateEntry = { c, flash: new Float64Array(APPROACH_LAMP_COUNT), scale: Number.NaN, texGen: -1, stamp: 0, x: Number.NaN, y: Number.NaN, a: Number.NaN, plates: -1, sign: 0, lit: APPROACH_LAMP_COUNT, mx: 0, my: 0 };
     this.entries.set(id, e);
     return e;
   }
 
   private drop(id: number, e: GateEntry): void {
     e.c.parent?.removeChild(e.c);
-    e.c.destroy({ children: true }); // the shared contexts survive
+    e.c.destroy({ children: true }); // the shared textures survive
     this.entries.delete(id);
   }
 }

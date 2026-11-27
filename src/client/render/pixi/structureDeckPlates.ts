@@ -175,7 +175,7 @@ export class StructureDeckPlates {
     this.zones?.frame(plates?.deck === true); // last frame's gone structures lose their paint
     this.syncPlates(plates);
     // After the plates: a gate's outside side reads the current set.
-    this.approach?.frame(plates?.deck === true, this.version, fxNowMs, viewBounds);
+    this.approach?.frame(plates?.deck === true, this.version, fxNowMs, viewBounds, view); // view: camera scale (lamp size cap) + art glow
     if (this.lit !== undefined && view !== undefined) this.lit.frame(view);
   }
 
