@@ -195,16 +195,36 @@ describe('whoHexWord (the hex word)', () => {
 });
 
 describe('the honeycomb layout', () => {
-  it('two per row, odd rows shifted half a hex, rows nest at 3/4 of a hex', () => {
-    const s0 = whoHexSlot(0);
-    const s1 = whoHexSlot(1);
-    const s2 = whoHexSlot(2);
-    expect(s0).toEqual({ x: 0, y: 0 });
-    expect(s1.y).toBe(0);
-    expect(s1.x).toBeGreaterThanOrEqual(HUD.hex.w);
-    expect(s2.x).toBe(Math.round(s1.x / 2));
-    expect(s2.y).toBeGreaterThan(HUD.hex.h / 2);
-    expect(s2.y).toBeLessThan(HUD.hex.h);
+  it('one connected honeycomb: neighbours in a row are exactly one hex width apart (no gap)', () => {
+    expect(HUD.hex).toMatchObject({ w: 52, h: 60 });
+    expect(whoHexSlot(0)).toEqual({ x: 0, y: 0 });
+    expect(whoHexSlot(1)).toEqual({ x: HUD.hex.w, y: 0 });
+    expect(whoHexSlot(3).x - whoHexSlot(2).x).toBe(HUD.hex.w);
+    expect(whoHexSlot(3).y).toBe(whoHexSlot(2).y);
+  });
+
+  it('rows interlock: odd rows shift half a hex, row pitch is 3/4 of the hex height', () => {
+    const rowPitch = HUD.hex.h * 3 / 4; // 45
+    expect(whoHexSlot(2)).toEqual({ x: HUD.hex.w / 2, y: rowPitch });
+    expect(whoHexSlot(3)).toEqual({ x: HUD.hex.w * 1.5, y: rowPitch });
+    expect(whoHexSlot(4)).toEqual({ x: 0, y: 2 * rowPitch });
+    // Touching neighbours (same row, and up/down the interlock): centres one hex width apart.
+    const c = (i: number): { x: number; y: number } => ({ x: whoHexSlot(i).x + HUD.hex.w / 2, y: whoHexSlot(i).y + HUD.hex.h / 2 });
+    for (const [a, b] of [[0, 1], [0, 2], [1, 2], [1, 3], [2, 3], [2, 4]] as const) {
+      expect(Math.hypot(c(a).x - c(b).x, c(a).y - c(b).y)).toBeCloseTo(HUD.hex.w, -0.5);
+    }
+  });
+
+  it('only the hex-shaped button takes taps: the overlapping cell boxes pass them through', () => {
+    const [k1, k2, k3] = KINDS as [string, string, string];
+    fleet({ a: k1, b: k2, c: k3 });
+    mount();
+    select(['a', 'b', 'c']);
+    const cell = screen.getByTestId(whoHexTestId(k1)).closest('.eqx-who-hex-cell') as HTMLElement;
+    expect(cell.style.pointerEvents).toBe('none');
+    expect(screen.getByTestId('who-hexes').style.pointerEvents).toBe('none');
+    expect(screen.getByTestId('who-hexes').querySelector('style')?.textContent)
+      .toContain('[data-open="true"] .eqx-who-hex-cell button { pointer-events: auto; }');
   });
 
   it('five hexes fit in three rows', () => {
