@@ -118,6 +118,16 @@ beyond a banded grouping distance → project → spring-smooth → fade-in.
    is the pure `halo/lockMarks.ts` `radarLockTint` over `mirror.localGroups` /
    `mirror.localLockedBy` (both on the structured-cloned mirror, so the worker
    path has them). On-screen lock visuals are unchanged (AimFeedbackRenderer).
+10. **Edge-stuck world tag** (selection HUD S9). When the focus (or the
+   selected group's centroid) is off screen, the DOM world tag
+   (`hud/worldTag.ts`, `hud/worldTagEdge.ts`) sticks to the edge on the same
+   track maths (`placeOnTrack` → `resolveBlocked` → `trackPoint`), its track
+   inset by the tag's half size and the HUD rects grown by it; an arrow in the
+   relation colour points at the anchor, with the distance from the camera
+   centre (`formatContactKm`; the own ship in Fly, the camera follows it).
+   It takes taps only then: a tap glides the camera there (`glideCameraTo`).
+   While a single tag is edge-stuck, `RenderMirror.worldTagEdgeId` names the
+   focus and the radar skips that entity (`halo/tagSkip.ts`): one arrow, not two.
 
 ## 4. Defaults
 

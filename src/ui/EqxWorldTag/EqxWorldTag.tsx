@@ -8,6 +8,10 @@
  *   (the relation colour), then the hull bar when `hullPct` is given.
  * - Does not position itself: the caller places its bottom-centre (the
  *   pointer tip) on the entity.
+ * - Edge-stuck (S9, off-screen anchor): an arrow + distance row, hidden by
+ *   default. The caller's per-frame writer (`hud/worldTag.ts`) shows it,
+ *   hides the down pointer, rotates the arrow and writes the distance via
+ *   the `data-world-tag-*` hooks. The arrow takes the relation colour.
  */
 import { Box } from '@mui/material';
 import { HUD } from '../../client/hud/tokens.js';
@@ -67,11 +71,26 @@ const POINTER_SX = {
   borderTop: `${T.pointerH}px solid ${HUD.color.ink}`,
   filter: `drop-shadow(0 1px 0 ${T.outline})`,
 };
+/** S9 edge row: hidden until the writer shows it (display flex). */
+const EDGE_SX = { display: 'none', alignItems: 'center', gap: '4px', mb: `${T.barGap}px`, fontSize: T.ownerSize, fontWeight: 700 };
+/** A right-pointing triangle; the writer rotates it toward the anchor. */
+const ARROW_SX = {
+  width: 0,
+  height: 0,
+  borderTop: `${T.pointerHalf}px solid transparent`,
+  borderBottom: `${T.pointerHalf}px solid transparent`,
+  borderLeft: `${T.pointerH + 2}px solid ${HUD.color.ink}`,
+  filter: `drop-shadow(0 0 1px ${T.outline})`,
+};
 
 export function EqxWorldTag({ title, owner, ownerColor, hullPct, 'data-testid': testId }: EqxWorldTagProps) {
   const hull = hullPct === undefined ? undefined : Math.max(0, Math.min(100, hullPct));
   return (
     <Box sx={ROOT_SX} data-testid={testId} aria-label={owner ? `${title}, ${owner}` : title}>
+      <Box sx={EDGE_SX} data-world-tag-edge aria-hidden>
+        <Box sx={ARROW_SX} data-world-tag-arrow style={ownerColor ? { borderLeftColor: ownerColor } : undefined} />
+        <Box component="span" data-world-tag-dist />
+      </Box>
       <Box component="span" sx={TITLE_SX}>{title}</Box>
       {owner !== undefined && owner !== '' && (
         <Box component="span" sx={OWNER_SX} style={ownerColor ? { color: ownerColor } : undefined}>{owner}</Box>
@@ -88,7 +107,7 @@ export function EqxWorldTag({ title, owner, ownerColor, hullPct, 'data-testid': 
           <Box sx={FILL_SX} style={{ width: `${hull}%`, backgroundColor: barColor('hull', hull) }} />
         </Box>
       )}
-      <Box sx={POINTER_SX} aria-hidden />
+      <Box sx={POINTER_SX} data-world-tag-pointer aria-hidden />
     </Box>
   );
 }

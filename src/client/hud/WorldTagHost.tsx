@@ -6,6 +6,8 @@
  * events. Nothing focused, or a right panel open ⇒ nothing mounted.
  * S7: 2+ own ships selected (the focus one of them or none) ⇒ ONE group tag
  * over the selection centroid instead (`groupWorldTag.ts`).
+ * S9: an off-screen anchor sticks the tag to the screen edge; a tap there
+ * glides the camera to it (`worldTag.ts`).
  */
 import { useCallback, useEffect } from 'react';
 import { getShipKind } from '@shared-types/shipKinds';
@@ -16,7 +18,8 @@ import { getGameClient } from '../net/clientSingleton';
 import { useUIStore } from '../state/store';
 import { selectRightPanelOpen } from '../state/rightPanel';
 import { useFleetSelectionView } from '../fleet/useFleetSelectionView.js';
-import { setWorldTagAnchor, setWorldTagElement, worldTagText, type WorldTagText } from './worldTag.js';
+import { requestWorldTagGlide, setWorldTagAnchor, setWorldTagElement, worldTagText, type WorldTagText } from './worldTag.js';
+import { useTouchClickActivate } from '../components/touchClickActivate.js';
 import { groupTagText, worldTagMode } from './groupWorldTag.js';
 
 /** The wrapper the per-frame writer moves: top-left origin, translated. */
@@ -37,7 +40,10 @@ export function WorldTagHost() {
   const panelOpen = useUIStore(selectRightPanelOpen);
   const fleet = useFleetSelectionView();
   const group = worldTagMode(fleet.active ? fleet.ids : [], focusId) === 'group';
-  useEffect(() => setWorldTagAnchor(group ? 'centroid' : 'focus'), [group]);
+  useEffect(() => setWorldTagAnchor(group ? 'centroid' : 'focus', focusId), [group, focusId]);
+  // S9: edge-stuck, the tag takes taps (the writer turns pointer events on
+  // only then) and glides the camera to what it points at.
+  const { touchActivate, clickActivate } = useTouchClickActivate();
   const ref = useCallback((el: HTMLDivElement | null) => setWorldTagElement(el), []);
   if (panelOpen || (!group && data === null)) return null;
   const tag: WorldTagText = group
@@ -45,7 +51,8 @@ export function WorldTagHost() {
     : worldTagText(data!, focusTypeName(focusId, focusKind));
   return (
     <Slot anchor="fullscreen" pointerEvents="none">
-      <div ref={ref} style={WRAP_STYLE} data-testid="world-tag" data-focus-id={focusId ?? undefined} data-tag-mode={group ? 'group' : 'single'}>
+      <div ref={ref} style={WRAP_STYLE} data-testid="world-tag" data-focus-id={focusId ?? undefined} data-tag-mode={group ? 'group' : 'single'}
+        onTouchStart={touchActivate(requestWorldTagGlide)} onClick={clickActivate(requestWorldTagGlide)}>
         <EqxWorldTag title={tag.title} owner={tag.owner} ownerColor={tag.ownerColor} hullPct={tag.hullPct} />
       </div>
     </Slot>

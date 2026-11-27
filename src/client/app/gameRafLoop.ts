@@ -365,7 +365,10 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // per-frame read is cheap; the actual work fires only on a transition.
     const selFb = feedback ?? renderer.getFeedback();
     gameClient.setFieldView(selFb.viewX, selFb.viewY, selFb.viewHalf); // the cut field follows the camera
-    updateWorldTag(selFb); // the focus name tag follows the bracket (style writes on change only)
+    // The focus name tag follows the bracket (style writes on change only); off
+    // screen it sticks to the edge (S9) and the radar skips the focus there.
+    gameClient.mirror.worldTagEdgeId = typeof window === 'undefined' ? null
+      : updateWorldTag(selFb, window.innerWidth, window.innerHeight, renderer);
     _helmGate.frame(gameClient, useUIStore.getState(), selFb);
     // THE selection (RTS Part A): the selected ships (`fleetSelIds`) and the
     // focus (`selectedPickId/Kind`, the entity whose details panel shows) are

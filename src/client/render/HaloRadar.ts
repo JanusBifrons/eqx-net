@@ -54,6 +54,7 @@ import {
 } from './halo/arrowGraphics.js';
 import { resolveRadarReference } from './halo/radarReference.js';
 import { radarLockTint, LOCK_TINT_NONE } from './halo/lockMarks.js';
+import { tagSkipSwarmId } from './halo/tagSkip.js';
 import {
   circleTouchesViewport,
   deOverlapAlongTrack,
@@ -315,9 +316,13 @@ export class HaloRadar {
     const lockedBy = mirror.localLockedBy;
     const anyLocks = (lockGroups !== undefined && lockGroups.length > 0)
       || (lockedBy !== undefined && lockedBy.length > 0);
+    // S9: the edge-stuck world tag already points at the focus (one arrow, not two).
+    const tagSkip = mirror.worldTagEdgeId ?? null;
+    const tagSkipSwarm = tagSkipSwarmId(tagSkip);
 
     if (mirror.swarm) {
       for (const [id, e] of mirror.swarm) {
+        if (id === tagSkipSwarm) continue;
         if (n >= MAX_CANDIDATES * 4) break;
         const hostile = e.kind === 1 && (e.isHostileToLocal ?? false);
         const cat = radarCategoryForSwarm(e.kind, hostile, e.shipKind);
@@ -349,7 +354,7 @@ export class HaloRadar {
       // ship like any other (RTS Part A owner decision). Your own fleet draws
       // in the own colour; anyone else's ship in the player colour.
       for (const [id, sh] of mirror.ships) {
-        if (id === localId) continue;
+        if (id === localId || id === tagSkip) continue;
         const colour = isOwnedByMe(mirror, id, sh) ? OWN_SHIP_COLOUR : cats.player.color;
         let key = this.shipKeys.get(id);
         if (key === undefined) { key = `ship:${id}`; this.shipKeys.set(id, key); }

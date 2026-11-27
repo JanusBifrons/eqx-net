@@ -19,6 +19,16 @@ describe('EqxWorldTag', () => {
     expect(screen.getByTestId('t').getAttribute('aria-label')).toBe('Asteroid');
   });
 
+  it('S9 edge hooks: a hidden arrow + distance row, the arrow in the relation colour', () => {
+    render(<EqxWorldTag title="A" owner="Hostile" ownerColor="#ff6b6b" data-testid="t" />);
+    const tag = screen.getByTestId('t');
+    const arrow = tag.querySelector<HTMLElement>('[data-world-tag-arrow]')!;
+    expect(arrow.style.borderLeftColor).toBe('rgb(255, 107, 107)');
+    expect(tag.querySelector('[data-world-tag-edge]')).not.toBeNull();
+    expect(tag.querySelector('[data-world-tag-dist]')).not.toBeNull();
+    expect(tag.querySelector('[data-world-tag-pointer]')).not.toBeNull();
+  });
+
   it('hullPct draws a clamped hull meter coloured by health; omitted = no bar', () => {
     const { rerender } = render(<EqxWorldTag title="A" hullPct={140} />);
     expect(screen.getByRole('meter', { name: 'Hull' }).getAttribute('aria-valuenow')).toBe('100');
