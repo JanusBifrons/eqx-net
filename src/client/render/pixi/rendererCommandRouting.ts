@@ -420,6 +420,7 @@ export abstract class RendererCommandRouting {
       this._cmdRouter.holdArmedAt(Date.now(), this._holdArmed),
       this._fleetModel,
       this._fleetPick,
+      this._focusId,
     );
   }
 
