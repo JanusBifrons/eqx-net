@@ -29,7 +29,7 @@ import type { SectorRoomOptions } from './sectorRoomOptions.js';
 import { isSealedSectorKey, paysRealCredits } from './sealedSectors.js';
 import { StructuresSliceSync } from './structuresSlice.js';
 import { seedScaleGrid, seedScenarioScrap, seedStructureScenario, structureRowsForTests, type StructureScenarioHost } from './scenarioLayouts.js';
-import { seedRoomStartup } from './roomStartupSeed.js';
+import { seedRoomStartup } from './roomStartupSeed.js'; import { seedStarterPlate } from './sandboxStarterPlate.js';
 import { SwarmEntityRegistry, type SwarmEntityRecord } from '../net/SwarmEntityRegistry.js';
 import { LoadShedder } from '../orchestration/LoadShedder.js';
 import { SpatialGrid } from '../interest/SpatialGrid.js';
@@ -1832,7 +1832,7 @@ export class SectorRoom extends Room<SectorState> {
       startSceneClock: (tick) => this.sceneRunner?.start(tick),
       markWarpArrived: (pid, tick) => this.warpTravel.markArrived(pid, tick),
       startInCommand: (pid, sessionId) => this.fleetHooks.startInCommand(pid, sessionId),
-      ownedFleet: roomOpts.ownedFleet === true && isSealedSectorKey(this.sectorKey), launchFleetHull: (pid, kind, o) => this.hullHandOff.launchNewHull(pid, kind, 0, o, true), // sandbox ship grid (sandboxFleet.ts)
+      ownedFleet: roomOpts.ownedFleet === true && isSealedSectorKey(this.sectorKey), launchFleetHull: (pid, kind, o) => this.hullHandOff.launchNewHull(pid, kind, 0, o, true), seedStarterPlate: (pid, x, y) => { seedStarterPlate(this.structureScenarioHost, pid, x, y); }, // sandbox ship grid + starter plate (sandboxFleet.ts)
       bindRosterEntry: (playerId, userId, kind, pose, preferredShipId = '', forceFreshCreate = false) =>
         this.rosterPersistence.bind(playerId, userId, kind, pose, preferredShipId, forceFreshCreate),
     });
