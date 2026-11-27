@@ -23,6 +23,7 @@ import { DECK_HEX_FLAT, DECK_HEX_SIZE, deckHexCentreInto } from '../../../core/h
 import { DECK_HEX_INRADIUS } from '../../../core/hex/deckCorners.js';
 import { DECK_ROAD_KIND } from '../../../core/structures/deckGateRoad.js';
 import { DECK_FENCE_GATE_KIND } from '../../../core/structures/deckLinks.js';
+import { rebuildRoadLamps, resetRoadLamps } from './roadLampLights.js';
 
 /** Local arm slots of the lone straight: Pixi-local 90° and 270° (j = 1, 4). */
 export const ROAD_STRAIGHT_MASK = (1 << 1) | (1 << 4);
@@ -101,11 +102,17 @@ export function roadLocalArms(worldJoins: number, rotDeg: number, mirror: boolea
   return m;
 }
 
-/** Every road's LOCAL arm mask, by entity id (cold path). */
-export function deriveRoadArms(roads: readonly RoadPiece[], gates: readonly GatePoint[], out: Map<number, number>): Map<number, number> {
+/** Every road's LOCAL arm mask, by entity id (cold path). `unmirrored`
+ *  (lit deck spike): the same masks as if no road were mirrored, for the lit
+ *  bake, whose mesh is counter-flipped (a lit mesh never takes a negative scale). */
+export function deriveRoadArms(roads: readonly RoadPiece[], gates: readonly GatePoint[], out: Map<number, number>, unmirrored?: Map<number, number>): Map<number, number> {
   out.clear();
+  unmirrored?.clear();
   const joins = roadWorldJoins(roads, gates);
-  for (const p of roads) out.set(p.id, roadLocalArms(joins.get(p.id) ?? 0, p.rotDeg, p.mirror));
+  for (const p of roads) {
+    out.set(p.id, roadLocalArms(joins.get(p.id) ?? 0, p.rotDeg, p.mirror));
+    unmirrored?.set(p.id, roadLocalArms(joins.get(p.id) ?? 0, p.rotDeg, false));
+  }
   return out;
 }
 
@@ -113,6 +120,8 @@ export function deriveRoadArms(roads: readonly RoadPiece[], gates: readonly Gate
 
 /** Road entity id → local arm mask (the hook's code reads it). */
 const ARMS = new Map<number, number>();
+/** Road entity id → its arm mask ignoring the build mirror (the lit bake's). */
+const LIT_ARMS = new Map<number, number>();
 let signature = 0;
 let sigAcc = 0;
 let sigSwarm: ReadonlyMap<number, SwarmRenderState> | undefined;
@@ -130,6 +139,12 @@ function foldOne(st: StructureRenderState, id: number): void {
 /** The local arm mask of road `id` (its lone straight until the table has it). */
 export function roadArmsOf(id: number | undefined): number {
   return (id === undefined ? undefined : ARMS.get(id)) ?? ROAD_STRAIGHT_MASK;
+}
+
+/** Road `id`'s arm mask for its lit bake: as {@link roadArmsOf}, but in the
+ *  UNMIRRORED local frame (its lit mesh is counter-flipped on a mirrored road). */
+export function roadLitArmsOf(id: number): number {
+  return LIT_ARMS.get(id) ?? ROAD_STRAIGHT_MASK;
 }
 
 /** Per frame on a deck room: rebuild the arm table when a road or gate
@@ -157,11 +172,14 @@ function rebuild(structures: ReadonlyMap<number, StructureRenderState>, swarm: R
     if (a.shipKind === DECK_ROAD_KIND) roads.push({ id, x: a.x, y: a.y, rotDeg: (a.angle * 180) / Math.PI, mirror: st.mirror === true });
     else if (a.shipKind === DECK_FENCE_GATE_KIND) gates.push({ x: a.x, y: a.y });
   });
-  deriveRoadArms(roads, gates, ARMS);
+  deriveRoadArms(roads, gates, ARMS, LIT_ARMS);
+  rebuildRoadLamps(roads, LIT_ARMS); // lit deck: the lamps light the deck (roadLampLights.ts)
 }
 
 /** Test hook: forget the live table. */
 export function resetRoadJoins(): void {
   ARMS.clear();
+  LIT_ARMS.clear();
+  resetRoadLamps();
   signature = 0;
 }

@@ -20,6 +20,7 @@
 import { prefersReducedMotion } from '../galaxy/galaxyMapMotion';
 import { ART_OFF, type ArtOptions } from '../art/artMode.js';
 import { readFxKillSwitches } from '../fxKillSwitches.js';
+import { readDeckLitFlag } from '../pixi/rendererSetup/restyleLook.js';
 import { readApproachFlag } from '../pixi/deckApproachLights.js';
 import type {
   FleetOverlayModel,
@@ -244,6 +245,8 @@ export class WorkerRendererClient implements IRenderer {
       ...(this._art.zones !== undefined ? { zones: this._art.zones } : {}), ...(this._art.buildSlots !== undefined ? { buildSlots: this._art.buildSlots } : {}),
       ...(this._art.buildRing !== undefined ? { buildRing: this._art.buildRing } : {}),
       approach: this._art.approach ?? readApproachFlag(typeof window !== 'undefined' ? window.location.search : ''), // main thread reads the URL
+      // Lit deck spike: resolved here (the worker has no `window`), like the kill switches.
+      ...((this._art.deckLit ?? readDeckLitFlag(typeof window !== 'undefined' ? window.location.search : '')) ? { deckLit: true } : {}),
       // The worker has no `window`: resolve `?cleanworld=1` & co. here.
       fxKillSwitches: readFxKillSwitches(),
     }, [offscreen]);

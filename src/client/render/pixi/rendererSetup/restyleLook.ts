@@ -13,6 +13,7 @@ import type { ArtOptions } from '../../art/artMode.js';
 import { DEFAULT_LINE_LOOK, readLineLook, type LineLook } from '../connectorLineLooks.js';
 import { readRigsFlag, StructureRigs } from '../structureRigs.js';
 import { StructureDeckPlates } from '../structureDeckPlates.js';
+import { StructureDeckLit } from '../structureDeckLit.js';
 import { DEFAULT_DECK_TEX, readDeckTex, type DeckTex } from '../structureDeckTexture.js';
 import { DEFAULT_FENCE_LOOK, readFenceLook, type FenceLook } from '../connectorFenceBeam.js';
 import { DEFAULT_EDGE_LOOK, edgePost, readEdgeLook, type EdgeLook } from '../connectorEdgeLook.js';
@@ -40,19 +41,27 @@ export interface RestyleLook {
   buildSlots: boolean;
   /** Readable construction: progress ring + wireframe hologram on unbuilt structures (`?buildRing=on|off`, default on). */
   buildRing: boolean;
+  /** Lit deck spike (`?deckLit=on`, .resume/deck-lit-plan.md): a road bakes its
+   *  carriageway into its lit art instead of the vector overlay. Off by default. */
+  deckLit: boolean;
+}
+
+/** `?deckLit=on`; anything else, or absent, = off. */
+export function readDeckLitFlag(search: string): boolean {
+  return /[?&]deckLit=on\b/.test(search);
 }
 
 /** The restyle scene options from a URL query string. */
 export function readRestyleLook(search: string): RestyleLook {
   return {
     lineLook: readLineLook(search), rigs: readRigsFlag(search), deckTex: readDeckTex(search), fenceLook: readFenceLook(search), edgeLook: readEdgeLook(search), zones: readZonesFlag(search),
-    approach: readApproachFlag(search), buildSlots: readBuildSlotsFlag(search), buildRing: readBuildRingFlag(search),
+    approach: readApproachFlag(search), buildSlots: readBuildSlotsFlag(search), buildRing: readBuildRingFlag(search), deckLit: readDeckLitFlag(search),
   };
 }
 
 /** What a renderer draws: `ArtOptions` first, else the URL (`search`, null in a worker), else the defaults. */
 export function resolveRestyleLook(art: ArtOptions, search: string | null): RestyleLook {
-  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, edgeLook: DEFAULT_EDGE_LOOK, zones: true, approach: true, buildSlots: true, buildRing: true };
+  const fromUrl = search !== null ? readRestyleLook(search) : { lineLook: DEFAULT_LINE_LOOK, rigs: true, deckTex: DEFAULT_DECK_TEX, fenceLook: DEFAULT_FENCE_LOOK, edgeLook: DEFAULT_EDGE_LOOK, zones: true, approach: true, buildSlots: true, buildRing: true, deckLit: false };
   return {
     lineLook: art.lineLook !== undefined ? art.lineLook : fromUrl.lineLook,
     rigs: art.rigs ?? fromUrl.rigs,
@@ -63,6 +72,7 @@ export function resolveRestyleLook(art: ArtOptions, search: string | null): Rest
     approach: art.approach ?? fromUrl.approach,
     buildSlots: art.buildSlots ?? fromUrl.buildSlots,
     buildRing: art.buildRing ?? fromUrl.buildRing,
+    deckLit: art.deckLit ?? fromUrl.deckLit,
   };
 }
 
@@ -70,7 +80,7 @@ export function resolveRestyleLook(art: ArtOptions, search: string | null): Rest
  *  one `StructureRigs` the swarm updater poses (and the deck floor), on either renderer path. */
 export function applyRestyleLook(
   connectorRenderer: { lineLook: LineLook | null; socketCables?: boolean; cables?: { fenceBeams: boolean; edgeLook?: EdgeLook }; buildRing?: boolean },
-  swarmUpdaterCtx: { structureRigs?: StructureRigs; deckPlates?: StructureDeckPlates; socketNubs?: boolean; buildRing?: boolean },
+  swarmUpdaterCtx: { structureRigs?: StructureRigs; deckPlates?: StructureDeckPlates; socketNubs?: boolean; buildRing?: boolean; art?: { deckLit?: boolean } },
   shipContainer: Container,
   art: ArtOptions,
   search: string | null,
@@ -92,7 +102,10 @@ export function applyRestyleLook(
   connectorRenderer.buildRing = look.buildRing;
   if (look.rigs) swarmUpdaterCtx.structureRigs = new StructureRigs(shipContainer);
   // Base platforms: the deck floor (drawn only while the room's deck flag is on).
-  swarmUpdaterCtx.deckPlates = new StructureDeckPlates(shipContainer, look.deckTex, look.zones, look.approach);
+  swarmUpdaterCtx.deckPlates = new StructureDeckPlates(shipContainer, look.deckTex, look.zones, look.approach,
+    look.deckLit && look.deckTex !== 'plain' ? new StructureDeckLit(shipContainer, look.deckTex) : undefined);
+  // Lit deck spike: roads bake their carriageway (`structHandleFor`). Off = untouched.
+  if (look.deckLit && swarmUpdaterCtx.art) swarmUpdaterCtx.art.deckLit = true;
   // Base platforms: outline the free build slots while placing (default on; `?buildSlots=off` hides).
   if (placementGhostCtx) placementGhostCtx.slotOutlines = look.buildSlots ? new BuildSlotOutlines(shipContainer) : null;
   return look;

@@ -270,7 +270,7 @@ export function litMapsTexture(m: LitMaps): Texture {
 }
 
 /** A light in the world (Pixi space): explosions, weapons fire. */
-export interface PointLight { x: number; y: number; z: number; r: number; g: number; b: number; intensity: number; reach: number; owner: number }
+export interface PointLight { x: number; y: number; z: number; r: number; g: number; b: number; intensity: number; reach: number; owner: number; /** Weight when picking the strongest lights only (1 = by intensity; road lamps rank low). */ rank: number }
 /** A big hull that shades others (Pixi space): a box with a height. */
 export interface Occluder { id: number; x: number; y: number; rot: number; hx: number; hy: number; height: number; r: number; g: number; b: number; sunlit: number; capital: boolean }
 
@@ -292,10 +292,10 @@ export class LitScene {
   occluderCount = 0;
   begin(): void { this.lightCount = 0; this.occluderCount = 0; }
   /** `owner`: the hull this light belongs to (its engines), -1 for none. */
-  addLight(x: number, y: number, z: number, color: number, intensity: number, reach: number, owner = -1): void {
+  addLight(x: number, y: number, z: number, color: number, intensity: number, reach: number, owner = -1, rank = 1): void {
     let l = this.lights[this.lightCount];
-    if (!l) { l = { x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, intensity: 0, reach: 1, owner: -1 }; this.lights.push(l); }
-    l.x = x; l.y = y; l.z = z; l.intensity = intensity; l.reach = reach; l.owner = owner;
+    if (!l) { l = { x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, intensity: 0, reach: 1, owner: -1, rank: 1 }; this.lights.push(l); }
+    l.x = x; l.y = y; l.z = z; l.intensity = intensity; l.reach = reach; l.owner = owner; l.rank = rank;
     l.r = ((color >> 16) & 255) / 255; l.g = ((color >> 8) & 255) / 255; l.b = (color & 255) / 255;
     this.lightCount++;
   }
@@ -498,7 +498,7 @@ export function strongestLightsInto(scene: LitScene, x: number, y: number, rot: 
     if (edge >= l.reach) continue; // out of reach (the shader fades to 0 at reach)
     const q = edge / l.reach, w = 1 - q * q;
     const own = owner >= 0 && l.owner === owner ? LitShipMesh.OWN_LIGHT : 1;
-    const d = -(l.intensity * own) * w * w; // lower = stronger
+    const d = -(l.intensity * own * l.rank) * w * w; // lower = stronger
     let j: number;
     if (k < n) j = k++;
     else { if (d >= _pickD[n - 1]!) continue; j = n - 1; }

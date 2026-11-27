@@ -356,13 +356,14 @@ export class ArtService {
 
   /** `livery`: the owner's colours and sigil (on by default, `?structLivery=0` = off); `style`:
    *  a `?restyle=` structure style. Each joins the bake key; absent (or
-   *  style `current`) = today's job, exactly. */
-  struct(id: string, seed: number, rot = 0, accent?: number, urgent = true, rings = false, livery?: StructLivery, style?: string): ArtHandle {
+   *  style `current`) = today's job, exactly. `arms`: a road's arm mask (lit deck spike). */
+  struct(id: string, seed: number, rot = 0, accent?: number, urgent = true, rings = false, livery?: StructLivery, style?: string, arms?: number): ArtHandle {
     const job: Extract<BakeJob, { type: 'struct' }> = rings
       ? { type: 'struct', id, seed: seedVariant(seed), rot, accent, rings }
       : { type: 'struct', id, seed: seedVariant(seed), rot, accent };
     if (livery) job.livery = livery;
     if (style && style !== 'current') job.style = style;
+    if (arms !== undefined) job.arms = arms;
     return this.acquire(job, urgent);
   }
 

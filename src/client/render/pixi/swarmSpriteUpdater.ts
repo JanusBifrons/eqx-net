@@ -125,7 +125,7 @@ export function scrapHeatTint(ageMs: number): number | undefined {
 
 export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): void {
   // Base platforms: the deck floor follows the plate set (one version compare per frame).
-  ctx.deckPlates?.sync(mirror.deckPlates, ctx.fxNowMs, ctx.viewBounds); // + gate approach strobe (effect time)
+  ctx.deckPlates?.sync(mirror.deckPlates, ctx.fxNowMs, ctx.viewBounds, ctx); // + gate approach strobe (effect time); ctx = lit deck view
   // Slice 31: road joins, rebuilt only when a road or gate changed.
   if (mirror.deckPlates?.deck === true && ctx.socketNubs === true) syncRoadJoins(mirror.structures, mirror.swarm);
   if (!mirror.swarm) return;
@@ -201,7 +201,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
       : entry.kind === 1 && entry.shipKind
         ? shipArtHandleForEntity(ctx.art, spriteKey, entry.shipKind, entry.faction)
         : entry.kind === 2 && entry.shipKind
-          ? structHandleFor(ctx.art, spriteKey, entry.shipKind, -entry.angle, ctx.art.structLivery === true ? mirror.structures?.get(entityId)?.owner : undefined)
+          ? structHandleFor(ctx.art, spriteKey, entry.shipKind, -entry.angle, ctx.art.structLivery === true ? mirror.structures?.get(entityId)?.owner : undefined, entityId)
           : entry.kind === 3 && entry.shipKind
             ? scrapHandleFor(ctx.art, spriteKey, entry.shipKind, entry.componentIndex ?? 0)
             : null;
