@@ -17,6 +17,7 @@ import { DirectorPersistence, type DirectorStatePayload } from '../livingworld/D
 import { db } from '../db/Database.js';
 import { getTeleportBroker } from '../teleport/TeleportBroker.js';
 import type { WorldHandles } from './worldHandles.js';
+import { isSealedSectorKey } from '../rooms/sealedSectors.js';
 
 const EMPTY_COUNTS: ReadonlyMap<string, number> = new Map();
 
@@ -173,7 +174,8 @@ export function startLivingWorld(deps: { logger: Logger; galaxyRooms: Map<string
         const u = uid ? getUser(uid) : null;
         return u ? (u.displayName ?? null) : null;
       },
-      lastSectorOf: (pid) => getPlayerShipStore().listByPlayer(pid)[0]?.lastSectorKey ?? null,
+      // A bounty never points at a sealed (sandbox) sector.
+      lastSectorOf: (pid) => getPlayerShipStore().listByPlayer(pid).find((r) => !isSealedSectorKey(r.lastSectorKey))?.lastSectorKey ?? null,
     });
     const bountyRow = db
       .prepare("SELECT payload_json FROM economy_state WHERE key = 'bounties'")

@@ -8,6 +8,7 @@
 import type { Client } from 'colyseus';
 import { getBountyBoard, type BountyRoom } from '../../economy/BountyBoard.js';
 import type { ParsedMessageHost, RoomFeature } from './parsedMessage.js';
+import { paysRealCredits } from '../sealedSectors.js';
 import { PlaceBountySchema, type BountyResult } from '../../../shared-types/contracts.js';
 
 /** What the handler needs from the room; getters read the live field. */
@@ -29,7 +30,7 @@ export function registerBountyMessages(h: BountyMessageHost): RoomFeature {
     const reply = (ok: boolean, message: string): void => {
       try { client.send('bounty_result', { type: 'bounty_result', ok, message } satisfies BountyResult); } catch { /* closing */ }
     };
-    if (h.sectorKey() === null) { reply(false, 'Bounties are only available in the galaxy.'); return; }
+    if (h.sectorKey() === null || !paysRealCredits(h.sectorKey())) { reply(false, 'Bounties are only available in the galaxy.'); return; }
     // Economy v2 W1 — paid from the placer's WALLET (anywhere; guests too).
     const v = board.place(h.bountyRoom, playerId, p.data.targetPlayerId, p.data.amount);
     reply(v.ok, v.message);

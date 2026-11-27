@@ -19,6 +19,7 @@
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 import { getWallet } from '../db/PersistenceWorker.js';
 import { getBountyBoard, type BountyRoom } from '../economy/BountyBoard.js';
+import { paysRealCredits } from './sealedSectors.js';
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../net/SwarmEntityRegistry.js';
 import type { ScrapSpawner } from '../spawn/ScrapSpawner.js';
 import { recordKill } from '../stats/StatsService.js';
@@ -58,6 +59,7 @@ export interface CombatDestructionAuditHost {
 export function auditCombatDestruction(host: CombatDestructionAuditHost, rec: SwarmEntityRecord, shooterId?: string): void {
   const sector = host.sectorKey() ?? undefined;
   const attackerKind = classifyAttacker(shooterId, host.swarmRegistry);
+  const pays = paysRealCredits(sector); // sandbox: kills pay no real credits
   if (rec.kind === SWARM_KIND_STRUCTURE) {
     const s = host.structureRegistry.get(rec.id);
     if (!s) return;
@@ -86,7 +88,7 @@ export function auditCombatDestruction(host: CombatDestructionAuditHost, rec: Sw
     if (rec.elite !== undefined) {
       auditEvent({ event: 'elite_killed', sector, name: rec.elite.name, kind: rec.shipKind ?? '', attackerId: shooterId });
       // P4c — the elite's bounty goes into the KILLER's hold (signed-in pilots).
-      if (shooterId && attackerKind === 'player') host.payEliteBounty(shooterId, rec.elite.name, rec.elite.bounty);
+      if (pays && shooterId && attackerKind === 'player') host.payEliteBounty(shooterId, rec.elite.name, rec.elite.bounty);
     }
     // Phase 4 (Leveling & XP, WS-B1) — a drone is the primary XP source. Award
     // XP to the KILLER SHIP INSTANCE, weighted by the drone's toughness
@@ -96,10 +98,16 @@ export function auditCombatDestruction(host: CombatDestructionAuditHost, rec: Sw
     if (attackerKind === 'player') host.awardKillXp(shooterId ?? '', droneMaxHealth);
     // Economy v2 W1 — every NPC kill pays a bounty straight into the killer's
     // WALLET (credits are virtual; pods carry goods only).
-    if (shooterId && attackerKind === 'player') {
+    if (pays && shooterId && attackerKind === 'player') {
       getWallet().credit(shooterId, rollKillBounty(rec.shipKind, Math.random), 'kill_bounty');
     }
   }
+}
+
+/** P4c-2 — the killer collects any open player bounties on the victim; a
+ *  sealed (sandbox) room pays none (`paysRealCredits`). */
+export function claimPvpBounty(host: Pick<ShipDestroyedHost, 'sectorKey' | 'bountyRoom'>, victim: string, killer: string): void {
+  if (paysRealCredits(host.sectorKey())) getBountyBoard()?.onPlayerKilled(host.bountyRoom(), victim, killer);
 }
 
 /** What the `SHIP_DESTROYED` handler reads from the room. Every room field
@@ -182,7 +190,7 @@ export function onShipDestroyed(host: ShipDestroyedHost, evt: BusEventPayloads['
       killer: auditAttacker,
     });
     // P4c-2 — the killer collects any open player bounties on the victim.
-    getBountyBoard()?.onPlayerKilled(host.bountyRoom(), victimPlayerId, auditAttacker);
+    claimPvpBounty(host, victimPlayerId, auditAttacker);
   }
   // Phase 4 (Leveling & XP, WS-B1) — award XP to the KILLER SHIP INSTANCE,
   // weighted by the victim's toughness. MUST run BEFORE the roster wipe

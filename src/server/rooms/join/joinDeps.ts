@@ -21,6 +21,7 @@ import type { SectorObstacles } from '../SectorObstacles.js';
 import type { CutFieldSubsystem } from '../CutFieldSubsystem.js';
 import type { LockSubsystem } from '../LockSubsystem.js';
 import type { PendingJoinRecord, WreckWelcomeFields } from './joinConstants.js';
+import type { NewHullOrigin, NewHullResult } from '../features/hullHandOff.js';
 
 /** The room state the join path reads and writes. Scalars the room may
  *  reassign are live getters (setters where the join writes them). */
@@ -90,6 +91,10 @@ export interface JoinHandlerDeps {
   markWarpArrived(playerId: string, tick: number): void;
   /** RTS command-view join: park the just-activated hull (`FleetRoomHooks.startInCommand`). */
   startInCommand(playerId: string, sessionId: string): void;
+  /** Sandbox ship grid (`sandboxFleet.ts`): the room has `ownedFleet` (sealed rooms only). */
+  readonly ownedFleet: boolean;
+  /** `HullHandOff.launchNewHull(playerId, kind, 0, o, requireLive=true)`. */
+  launchFleetHull(playerId: string, kind: string, o: NewHullOrigin): NewHullResult;
   /**
    * Upsert a `player_ships` row for the newly-bound ship. Looks up
    * existing roster entries for the player and reuses the most-recent;

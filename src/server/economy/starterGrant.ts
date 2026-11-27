@@ -30,6 +30,18 @@ import type { Wallet } from './Wallet.js';
 import type { EconomyStore } from './EconomyStore.js';
 import { capitalCrateItem } from '../structures/StructurePlacementSubsystem.js';
 import { CAPITAL_STARTING_MINERALS } from '../../core/structures/structureGridConstants.js';
+import { isSealedSectorKey } from '../rooms/sealedSectors.js';
+
+/** Does this join earn the starter grant? A fresh launch with a roster row in a
+ *  galaxy sector, not a seeded test hold or an adopted test base, and never in
+ *  a sealed sector (the sandbox must not spend the real once-per-account gift). */
+export function starterGrantDue(o: {
+  resumedFromStore: boolean; adoptedBase: boolean; shipInstanceId: string;
+  sectorKey: string | null; seededCargo: boolean;
+}): boolean {
+  return !o.resumedFromStore && !o.adoptedBase && o.shipInstanceId !== ''
+    && o.sectorKey !== null && !isSealedSectorKey(o.sectorKey) && !o.seededCargo;
+}
 
 /** The starter crate's product and quality. */
 export const STARTER_CAPITAL_PRODUCT = 'structure:capital';

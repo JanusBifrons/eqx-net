@@ -16,6 +16,7 @@ import type { BreakInSubsystem } from '../BreakInSubsystem.js';
 import type { StorageService } from '../../cargo/StorageService.js';
 import { isOperationalStorage } from '../../cargo/storageHolds.js';
 import { getPlayerShipStore, getHoldStore, getWallet } from '../../db/PersistenceWorker.js';
+import { paysRealCredits } from '../sealedSectors.js';
 import { getTradeSink } from '../../economy/tradeSink.js';
 import { auditEvent } from '../../audit/GameplayAuditLog.js';
 import type { ParsedMessageHost, RoomFeature } from './parsedMessage.js';
@@ -239,7 +240,7 @@ function dockMarket(
   const closed = (message: string): CargoState => ({
     type: 'cargo_state', entityId, open: false, hold: null, used: 0, capacity: 0, ship: null, shipCapacity: 0, message, ...(move ? { ok: false } : {}),
   });
-  if (sink === null) return closed('The traders are not here.');
+  if (sink === null || !paysRealCredits(sectorKey)) return closed('The traders are not here.'); // sandbox: no real credits
   if (sink.dockQuote(playerId, sectorKey, 'minerals') === null) return closed('The traders refuse to deal with you.');
   const wallet = getWallet();
   let verdict: { ok: boolean; message: string } | undefined;

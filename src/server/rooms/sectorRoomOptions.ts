@@ -19,7 +19,7 @@ import type { RecipeId } from '../../shared-types/recipes.js';
 export interface SectorRoomOptions {
   testMode?: boolean;
   /** Base-platforms prototype: the room builds on hex deck plates
-   *  (`state.deck`). Honoured only with testMode; default false. `?room=deck`. */
+   *  (`state.deck`). Honoured only with testMode or `sealed`; default false. `?room=deck`. */
   deck?: boolean;
   asteroidConfig?: ReadonlyArray<AsteroidSpec>;
   /** P2c (testMode) — sector features for a non-galaxy room (asteroid mix,
@@ -304,7 +304,8 @@ export interface SectorRoomOptions {
    *  and an overload shows as slower ticks. testMode-only. */
   perfFixedLoad?: boolean;
   /** testMode — false: never save or restore this sector's snapshot (a
-   *  test room that needs a sectorKey for the roster, not persistence). */
+   *  test room that needs a sectorKey for the roster, not persistence). A
+   *  `sealed` room is never saved, whatever this says. */
   persistSector?: boolean;
   /** testMode — where a WAVE squad lands in this room (the wave E2E;
    *  `LivingWorldRoom.testWaveArrival`). */
@@ -313,4 +314,15 @@ export interface SectorRoomOptions {
    *  active ship in the room, so a wave E2E draws its wave after it joins,
    *  however long the server ran before (waves otherwise ignore presence). */
   waveNeedsOwner?: boolean;
+  /** Sandbox (docs/features/sandbox.md): a SEALED room. Nothing in it reaches
+   *  the real game: its roster rows are its own (`isSealedSectorKey`), no warp,
+   *  teleport or credit payout leaves it, and it is never saved. NOT testMode:
+   *  the test-only join options and `test_*` messages stay off. */
+  sealed?: boolean;
+  /** Sandbox: every player build and upgrade is free (normal build time, no
+   *  crate, no minerals), and a free structure repacks into nothing. */
+  freeBuilds?: boolean;
+  /** Sandbox: each joiner finds one of every base pilot hull parked in their
+   *  own grid lane, owned by them (`sandboxFleet.ts`). Sealed rooms only. */
+  ownedFleet?: boolean;
 }

@@ -59,6 +59,7 @@ export { MINING_SKIFF } from './shipKinds/miningSkiff.js';
 
 // Re-export the canonical-order list.
 export { SHIP_KINDS_LIST } from './shipKinds/catalogueOrder.js';
+export { isPilotHullKind, PILOT_HULL_KINDS_LIST, isBaseHullId, BASE_PILOT_HULL_KINDS_LIST } from './shipKinds/pilotHulls.js';
 
 // Build the `SHIP_KINDS` keyed lookup from the canonical list. The list
 // is the single source of truth for wire order; this object is a

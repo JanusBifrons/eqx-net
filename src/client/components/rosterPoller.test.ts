@@ -27,6 +27,7 @@ import {
   acquireRosterPolling,
   releaseRosterPolling,
   forceRefreshRoster,
+  rosterListUrl,
   __test_resetRosterPoller,
   __test_getRosterPollerState,
 } from './rosterPoller';
@@ -259,5 +260,12 @@ describe('roster poller — skips unchanged rosters', () => {
     useUIStore.getState().setShipRoster([]); // e.g. a local patch
     await vi.advanceTimersByTimeAsync(POLL_MS);
     expect(useUIStore.getState().shipRoster).toHaveLength(1);
+  });
+});
+
+describe('roster poller — list URL', () => {
+  it('passes the current room sector (the server honours only a sealed one)', () => {
+    expect(rosterListUrl('p 1', null)).toBe('/hangar/ships?playerId=p%201');
+    expect(rosterListUrl('p1', 'sandbox')).toBe('/hangar/ships?playerId=p1&sector=sandbox');
   });
 });

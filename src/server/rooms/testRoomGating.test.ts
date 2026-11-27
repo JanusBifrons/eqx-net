@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { shouldRegisterTestRooms } from './testRoomGating.js';
+import { shouldRegisterSandboxRoom, shouldRegisterTestRooms } from './testRoomGating.js';
 
 describe('shouldRegisterTestRooms (S6)', () => {
   it('registers test rooms in development', () => {
@@ -24,5 +24,25 @@ describe('shouldRegisterTestRooms (S6)', () => {
     expect(
       shouldRegisterTestRooms({ NODE_ENV: 'production', EQX_ENABLE_TEST_ROOMS: 'true' } as NodeJS.ProcessEnv),
     ).toBe(false);
+  });
+});
+
+describe('shouldRegisterSandboxRoom', () => {
+  const env = (e: Record<string, string>) => e as NodeJS.ProcessEnv;
+  it.each([
+    [{}, true],
+    [{ NODE_ENV: 'development' }, true],
+    [{ NODE_ENV: 'production' }, false],
+    [{ NODE_ENV: 'production', EQX_ENABLE_TEST_ROOMS: '1' }, true],
+    [{ NODE_ENV: 'production', EQX_ENABLE_SANDBOX_ROOM: '1' }, true],
+    [{ NODE_ENV: 'production', EQX_ENABLE_SANDBOX_ROOM: 'true' }, false],
+    // The phone lane: sandbox on, test rooms off.
+    [{ NODE_ENV: 'production', EQX_ENABLE_TEST_ROOMS: '0', EQX_ENABLE_SANDBOX_ROOM: '1' }, true],
+  ])('%o -> %s', (e, want) => {
+    expect(shouldRegisterSandboxRoom(env(e))).toBe(want);
+  });
+
+  it('the sandbox flag never turns the test rooms on', () => {
+    expect(shouldRegisterTestRooms(env({ NODE_ENV: 'production', EQX_ENABLE_SANDBOX_ROOM: '1' }))).toBe(false);
   });
 });

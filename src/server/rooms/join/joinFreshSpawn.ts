@@ -26,7 +26,7 @@ import type { WelcomeMessage } from '../../../shared-types/messages.js';
 import { factionLooksWelcomeField } from '../../../shared-types/factions.js';
 import { gateLaunch, seedTestWallet } from '../launchGate.js';
 import { adoptPrebuiltBase } from '../scenarioLayouts.js';
-import { getStarterGrantEconomy, grantStarter } from '../../economy/starterGrant.js';
+import { getStarterGrantEconomy, grantStarter, starterGrantDue } from '../../economy/starterGrant.js';
 import { tuningFor } from '../../../shared-types/shipScale/lookup.js';
 import { nearestClearPoint } from '../../../core/bases/baseSite.js';
 import { effectiveShipShieldMax, effectiveShipEnergyMax } from '../../../core/leveling/shipStats.js';
@@ -185,7 +185,7 @@ export function joinFreshSpawn(
   if ((d.testMode || ALLOW_DEV_OVERRIDES) && parsed.success) seedTestWallet(playerId, parsed.data.initialWallet ?? d.testWalletSeed);
   // base-build-test: the base is the joiner's, its Capital already holding the starter copies (no grant then).
   const adoptedBase = d.testMode && adoptPrebuiltBase(d.structureRegistry, playerId) > 0;
-  if (!resumedFromStore && d.sectorKey !== null && d.enforceHullGate) chosenKind = gateLaunch(d.launchCostsOn, playerId, chosenKind, (m) => d.sendNotice(client, m));
+  if (!resumedFromStore && d.sectorKey !== null && d.enforceHullGate) chosenKind = gateLaunch(d.launchCostsOn, d.sectorKey, playerId, chosenKind, (m) => d.sendNotice(client, m));
 
   // WS-B (Phase 5): the Limbo restore path is RETIRED. A returning player
   // resumes by shipId — the roster shipId-restore above, which is now the
@@ -402,7 +402,9 @@ export function joinFreshSpawn(
   }
   // Starter grant: a fresh launch carries the once-per-account packed Capital
   // crate (economy/starterGrant.ts). A test-seeded hold (initialCargo) is exact.
-  if (!resumedFromStore && !adoptedBase && ship.shipInstanceId !== '' && d.sectorKey !== null && !(parsed.success && parsed.data.initialCargo !== undefined)) {
+  // Never in a sealed sector (starterGrantDue).
+  const seededCargo = parsed.success && parsed.data.initialCargo !== undefined;
+  if (starterGrantDue({ resumedFromStore, adoptedBase, shipInstanceId: ship.shipInstanceId, sectorKey: d.sectorKey, seededCargo })) {
     grantStarter({ econ: getStarterGrantEconomy(), holds: getHoldStore() }, playerId, ship.shipInstanceId, ship.kind);
   }
   ship.shieldLastDamageTick = d.serverTick;

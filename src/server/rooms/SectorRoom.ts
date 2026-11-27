@@ -26,6 +26,7 @@ import type { MineFieldSubsystem } from '../structures/MineFieldSubsystem.js';
 import type { ShellBlast } from '../../shared-types/shellBlast.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
 import type { SectorRoomOptions } from './sectorRoomOptions.js';
+import { isSealedSectorKey, paysRealCredits } from './sealedSectors.js';
 import { StructuresSliceSync } from './structuresSlice.js';
 import { seedScaleGrid, seedScenarioScrap, seedStructureScenario, structureRowsForTests, type StructureScenarioHost } from './scenarioLayouts.js';
 import { seedRoomStartup } from './roomStartupSeed.js';
@@ -1254,7 +1255,7 @@ export class SectorRoom extends Room<SectorState> {
     // create, so reject oversized seed arrays before they seed the sector.
     assertRoomSeedBounds(roomOpts as Record<string, unknown>);
     this.testMode = roomOpts.testMode ?? false;
-    this.state.deck = this.structureRegistry.deck = this.testMode && roomOpts.deck === true; // base-platforms prototype flag (synced; client-suppliable, so testMode only; the registry feeds canConnect)
+    this.state.deck = this.structureRegistry.deck = (this.testMode || roomOpts.sealed === true) && roomOpts.deck === true; // base-platforms flag (synced; client-suppliable, so testMode or a sealed room only; the registry feeds canConnect)
     this.enforceHullGate = !this.testMode || roomOpts.enforceHullGate === true;
     this.launchCostsOn = this.testMode ? (roomOpts.launchCosts ?? LAUNCH_COSTS_ON) : LAUNCH_COSTS_ON;
     this.disableCollisionDamage = this.testMode && (roomOpts.disableCollisionDamage ?? false);
@@ -1262,6 +1263,7 @@ export class SectorRoom extends Room<SectorState> {
     // so a malicious / mis-targeted galaxy join can't ever speed it up.
     this.testTimeScale = this.testMode ? Math.max(1, roomOpts.testTimeScale ?? 1) : 1;
     this.sectorKey = roomOpts.sectorKey ?? null;
+    this.state.freeBuilds = roomOpts.freeBuilds === true && isSealedSectorKey(this.sectorKey); // sandbox (synced for the build menu); sealed rooms only: create options are client-suppliable
     this.tickBurnMs = Math.max(0, Math.min(50, roomOpts.tickBurnMs ?? 0));
     this.defaultSpawnX = roomOpts.defaultSpawnX ?? null;
     this.defaultSpawnY = roomOpts.defaultSpawnY ?? null;
@@ -1551,7 +1553,7 @@ export class SectorRoom extends Room<SectorState> {
     // mount-ticker cleanup. Extracted to RespawnHandler.ts.
     this.respawnHandler = new RespawnHandler({
       // Join flow — a respawn re-launches the same hull, so it pays like a launch.
-      chargeRespawn: (pid, kind) => !this.launchCharged() || chargeLaunchFor(this.launchCostsOn, pid, kind).kind !== 'refuse',
+      chargeRespawn: (pid, kind) => !this.launchCharged() || chargeLaunchFor(this.launchCostsOn, this.sectorKey, pid, kind).kind !== 'refuse',
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       serverTick: () => this.serverTick,
@@ -1830,6 +1832,7 @@ export class SectorRoom extends Room<SectorState> {
       startSceneClock: (tick) => this.sceneRunner?.start(tick),
       markWarpArrived: (pid, tick) => this.warpTravel.markArrived(pid, tick),
       startInCommand: (pid, sessionId) => this.fleetHooks.startInCommand(pid, sessionId),
+      ownedFleet: roomOpts.ownedFleet === true && isSealedSectorKey(this.sectorKey), launchFleetHull: (pid, kind, o) => this.hullHandOff.launchNewHull(pid, kind, 0, o, true), // sandbox ship grid (sandboxFleet.ts)
       bindRosterEntry: (playerId, userId, kind, pose, preferredShipId = '', forceFreshCreate = false) =>
         this.rosterPersistence.bind(playerId, userId, kind, pose, preferredShipId, forceFreshCreate),
     });
@@ -2093,15 +2096,13 @@ export class SectorRoom extends Room<SectorState> {
       // Living World P1a-2 — stable uid (keys the structure's holds row).
       structureUid: (owner, kind, x, y) => structureUid(this.sectorKey, owner, kind, x, y),
       registry: this.structureRegistry,
-      // Asteroids (swarm kind=0) block placement and a connector's line of sight
-      // (Item D); shared with the grid-pulse reconnect sweep. Placement also
-      // passes `near` for unloaded cut-field rocks (C5, links C5g), and `wrecks`
-      // for wreck pieces, loaded and not (wreck fields 7). Off the hot loop.
+      // Asteroids (swarm kind=0) block placement and a connector's line of sight (Item D);
+      // shared with the grid-pulse reconnect sweep. Placement also passes `near` for unloaded cut-field
+      // rocks (C5, links C5g), and `wrecks` for wreck pieces, loaded and not (wreck fields 7). Off the hot loop.
       getObstacles: (near, wrecks) => this.obstacles.rocks(near, wrecks),
-      // Economy v2 W4b — a player's non-starter structure is placed from a
-      // PACKED item (now buyable from traders, and lootable). Consumed only
-      // after the structure registers; its build then costs only time.
-      sectorKey: () => this.sectorKey,
+      // Economy v2 W4b — a player's non-starter structure is placed from a PACKED item (buyable,
+      // lootable), consumed once it registers; its build then costs only time. Sandbox: all free.
+      sectorKey: () => this.sectorKey, freeBuild: () => this.state.freeBuilds,
       packedGateForBuild: (owner, kindId) => packedGateForBuild(packedGateHost, owner, kindId),
       placementRefusal: (owner, kindId) => territoryLockRefusal(owner, kindId, this.sectorKey ?? '', liveSectorHolder(this.sectorKey ?? ''), this.structureRegistry.all()),
       shipHulls: () => this.obstacles.hullCircles(''), // round a ship: a hologram, parked hulls ordered clear (blueprintBody.ts)
@@ -2221,8 +2222,7 @@ export class SectorRoom extends Room<SectorState> {
       onBlueprintSpent: (rec) => this.storage.persistSlot(rec), swapBlueprint: (rec, recipe) => swapBlueprintFor(this.storage, rec, recipe),
       // Active power: processors draw full only while running.
       setActive: (rec, active) => this.structureGrid.setActive(rec, active),
-      // D3 — station taxes: a player's habitat modules and spires pay their wallet; an NPC or ownerless base has none (`walletOwnerOf`).
-      payCredits: (rec, n) => { const w = walletOwnerOf(rec.owner); if (w !== null) getWallet().credit(w, n, 'station_taxes'); },
+      payCredits: (rec, n) => { const w = walletOwnerOf(rec.owner); if (w !== null && paysRealCredits(this.sectorKey)) getWallet().credit(w, n, 'station_taxes'); }, // D3 station taxes: a player's base pays their wallet; NPC / ownerless bases and a sealed sandbox pay nothing
       // A finished hull goes live: out of a Shipyard's slipway on a Move order to its park spot (`HullHandOff.launchNewHull`).
       launchHull: (rec, kind, q) => walletOwnerOf(rec.owner) !== null && this.hullHandOff.launchNewHull(rec.owner, kind, q, newHullOrigin(rec.kind, rec.x, rec.y, rec.rot ?? 0, kind, rec.prodCycles, rec.mirror), true).ok,
     });
@@ -2279,7 +2279,7 @@ export class SectorRoom extends Room<SectorState> {
     }), SELECTION_STATS_INTERVAL_MS);
     this.selectionStatsTimer.unref?.();
 
-    if (this.testMode) this.persistSector = roomOpts.persistSector !== false; // cut field before any seeding: placement sees its rocks (C5)
+    if (this.testMode || roomOpts.sealed === true) this.persistSector = roomOpts.sealed !== true && roomOpts.persistSector !== false; // a sealed room is never saved; cut field before any seeding: placement sees its rocks (C5)
     // The chunk-streaming host exists when the sector has ANY chunk source: the field's rocks today; wreck-field sources join `chunkSources` (wreck fields R7).
     // Break-up is ON by default in every room (owner decision 2026-11-14:
     // "land it switched on"). A room opts out with `capitalWrecks: false` /

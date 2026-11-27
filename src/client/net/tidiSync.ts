@@ -25,8 +25,9 @@ export function syncTidiFromRoom(room: Room | null, audio: IAudio | null): void 
   const rate = typeof stateAny.clockRate === 'number' ? stateAny.clockRate : 1.0;
   const ui = useUIStore.getState();
   ui.setClockRate(rate);
-  // Room flags ride the same per-snapshot state read (base-platforms `deck`).
-  ui.setDeck((room.state as unknown as { deck?: boolean }).deck === true);
+  // Room flags ride the same per-snapshot state read (base-platforms `deck`, sandbox `freeBuilds`).
+  const flags = room.state as unknown as { deck?: boolean; freeBuilds?: boolean };
+  ui.setRoomFlags(flags.deck === true, flags.freeBuilds === true);
   audio?.setClockRate(rate);
   const current = ui.sectorAlert;
   if (rate < 0.99 && (current === null || current === 'Temporal Anomaly')) {

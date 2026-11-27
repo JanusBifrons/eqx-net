@@ -171,6 +171,9 @@ A quick tunnel is a public address: anyone who guesses it reaches the gate.
   Safari's, so it must arrive with the key itself.
 - Test rooms are off (`EQX_ENABLE_TEST_ROOMS=0`); the `/dev` routes are
   behind the gate.
+- The one exception is the sealed sandbox room (`EQX_ENABLE_SANDBOX_ROOM=1`,
+  `&room=sandbox`): free building and a ship yard, kept apart from the real
+  game and wiped on restart ([sandbox](../features/sandbox.md)).
 - Treat the link like a password: anyone with it can play and reach the debug
   routes. `pnpm phone down` (or a new tunnel) revokes it.
 

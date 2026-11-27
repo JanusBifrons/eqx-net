@@ -131,6 +131,26 @@ describe('devPlayerShipsHandler', () => {
     expect(entry['health']).toBe(350);
   });
 
+  it('omits sealed-sector (sandbox) rows from the Hangar list', () => {
+    store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 'sol-prime', x: 0, y: 0, health: 100 });
+    store.create({ playerId: 'p1', userId: null, kind: 'scout', sectorKey: 'sandbox', x: 0, y: 0, health: 100 });
+    const res = makeRes();
+    devPlayerShipsHandler(makeReq({ query: { playerId: 'p1' } }), res);
+    const body = res._json as { ships: Array<{ sectorKey: string }> };
+    expect(body.ships.map((s) => s.sectorKey)).toEqual(['sol-prime']);
+  });
+
+  it('inside the sandbox (sector=sandbox) lists only its own rows; a real sector key changes nothing', () => {
+    store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 'sol-prime', x: 0, y: 0, health: 100 });
+    store.create({ playerId: 'p1', userId: null, kind: 'scout', sectorKey: 'sandbox', x: 0, y: 0, health: 100 });
+    const inSandbox = makeRes();
+    devPlayerShipsHandler(makeReq({ query: { playerId: 'p1', sector: 'sandbox' } }), inSandbox);
+    expect((inSandbox._json as { ships: Array<{ sectorKey: string }> }).ships.map((r) => r.sectorKey)).toEqual(['sandbox']);
+    const inReal = makeRes();
+    devPlayerShipsHandler(makeReq({ query: { playerId: 'p1', sector: 'sol-prime' } }), inReal);
+    expect((inReal._json as { ships: Array<{ sectorKey: string }> }).ships.map((r) => r.sectorKey)).toEqual(['sol-prime']);
+  });
+
   it('only returns the queried playerId\'s ships', () => {
     store.create({ playerId: 'p1', userId: null, kind: 'fighter', sectorKey: 's', x: 0, y: 0, health: 100 });
     store.create({ playerId: 'p2', userId: null, kind: 'scout',   sectorKey: 's', x: 0, y: 0, health: 100 });

@@ -27,7 +27,8 @@ import { setGalaxyStatsProvider } from './livingworld/galaxyStatsProvider.js';
 import { setContractsProvider } from './livingworld/contractsProvider.js';
 import { setBountyBoard } from './economy/BountyBoard.js';
 import { resolveCorsPolicy, corsMiddleware, securityHeadersMiddleware } from './net/httpCors.js';
-import { shouldRegisterTestRooms } from './rooms/testRoomGating.js';
+import { shouldRegisterSandboxRoom, shouldRegisterTestRooms } from './rooms/testRoomGating.js';
+import { defineSandboxRoom } from './rooms/testRooms/sandboxRoom.js';
 import { installProcessGuards } from './orchestration/processGuards.js';
 import { startPersistenceWorker, listenHttp, hydratePlayerStores } from './boot/persistenceBoot.js';
 import { createGalaxyRooms } from './boot/galaxyRoomsBoot.js';
@@ -196,6 +197,8 @@ defineWorldRooms(gameServer);
 // Perf scenes: one `perf-<id>` room per catalogue entry.
 definePerfRooms(gameServer, SectorRoom);
 } // end shouldRegisterTestRooms() gate (S6)
+// Sandbox (`?room=sandbox`): sealed, not testMode, so its own gate (phone lane).
+if (shouldRegisterSandboxRoom()) defineSandboxRoom(gameServer);
 
 // A6 (S6): warn loudly if the dev-override bypass is armed in production. It's
 // an E2E-only flag (bypasses testMode gating on JoinOptions); never set it in

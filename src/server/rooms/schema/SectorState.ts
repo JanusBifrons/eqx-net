@@ -262,4 +262,7 @@ export class SectorState extends Schema {
   /** Base-platforms prototype: this room builds on hex deck plates (room opt
    *  `deck`, testMode only). Synced so join + snapshots carry it (invariant 16). */
   @type('boolean') deck: boolean = false;
+  /** Sandbox: every player build is free (room opt `freeBuilds`, sealed rooms
+   *  only). Synced so the build menu drops the crate rule (invariant 16). */
+  @type('boolean') freeBuilds: boolean = false;
 }

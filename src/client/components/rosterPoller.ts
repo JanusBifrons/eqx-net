@@ -73,6 +73,13 @@ export function __test_getRosterPollerState(): Readonly<PollerState> {
   return state;
 }
 
+/** The list URL. The current room's sector rides along: the server honours it
+ *  only for a sealed room (the sandbox lists its own ships there). */
+export function rosterListUrl(playerId: string, sectorKey: string | null): string {
+  const base = `${ENDPOINT_LIST}?playerId=${encodeURIComponent(playerId)}`;
+  return sectorKey === null ? base : `${base}&sector=${encodeURIComponent(sectorKey)}`;
+}
+
 async function performFetch(playerId: string): Promise<void> {
   if (state.inFlight) {
     // De-bounce: a previous fetch hasn't returned yet. Skip rather than
@@ -87,7 +94,7 @@ async function performFetch(playerId: string): Promise<void> {
   }
   state.inFlight = true;
   try {
-    const url = `${ENDPOINT_LIST}?playerId=${encodeURIComponent(playerId)}`;
+    const url = rosterListUrl(playerId, useUIStore.getState().currentSectorKey);
     logEvent('roster_fetch', { stage: 'start', url, playerId });
     const res = await fetch(url);
     if (!res.ok) {
