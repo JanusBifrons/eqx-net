@@ -39,6 +39,11 @@ function plural(name: string, n: number): string {
   return name.endsWith('s') ? `${name}es` : `${name}s`;
 }
 
+/** "5 ships" / "1 ship": the title's lead and the compact tag's line (S10). */
+function groupTagCount(n: number): string {
+  return `${n} ${n === 1 ? 'ship' : 'ships'}`;
+}
+
 /**
  * Pure: line 1 "5 ships · 2 Battleships · 3 Fighters" from the selection's
  * kind groups: `groupMirrorSelection` / `groupSelectionByKind`
@@ -48,7 +53,7 @@ function plural(name: string, n: number): string {
 export function groupTagTitle(groups: readonly GroupTagKind[]): string {
   let total = 0;
   for (const g of groups) total += g.count;
-  let out = `${total} ${total === 1 ? 'ship' : 'ships'}`;
+  let out = groupTagCount(total);
   for (const g of groups) out += ` · ${g.count} ${plural(g.displayName, g.count)}`;
   return out;
 }
@@ -64,7 +69,9 @@ export function groupTagText(
   let owner = 'Yours';
   if (mode !== null && mode !== 'mixed') owner += ` · ${MODE_LABELS[mode]}`;
   if (stance !== null && stance !== 'mixed') owner += ` · ${STANCE_LABELS[stance]}`;
-  const out: WorldTagText = { title: groupTagTitle(groups), owner, ownerColor: STANCE_COLOUR.friendly };
+  const out: WorldTagText = {
+    title: groupTagTitle(groups), compactTitle: groupTagCount(ships.length), owner, ownerColor: STANCE_COLOUR.friendly,
+  };
   let sum = 0;
   let n = 0;
   for (const s of ships) {

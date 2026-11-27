@@ -58,6 +58,7 @@ describe('groupTagText', () => {
     const t = groupTagText([ship(100), ship(50)], fighters2, 'patrol', 'aggressive');
     expect(t).toEqual({
       title: '2 ships · 2 Fighters',
+      compactTitle: '2 ships',
       owner: 'Yours · Patrol · Aggressive',
       ownerColor: STANCE_COLOUR.friendly,
       hullPct: 75,

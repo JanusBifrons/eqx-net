@@ -12,12 +12,15 @@ const data = (extra: Partial<PanelData>): PanelData => ({ name: 'Vex', hpPct: 60
 describe('worldTagText', () => {
   it('a ship: "Type · Name", stance word in the stance colour, hull bar', () => {
     const t = worldTagText(data({ stance: 'hostile' }), 'Fighter');
-    expect(t).toEqual({ title: 'Fighter · Vex', owner: 'Hostile', ownerColor: STANCE_COLOUR.hostile, hullPct: 60 });
+    expect(t).toEqual({
+      title: 'Fighter · Vex', compactTitle: 'Fighter', owner: 'Hostile', ownerColor: STANCE_COLOUR.hostile, hullPct: 60,
+    });
   });
 
   it('a type that repeats the name is dropped; an owner wins over the stance word', () => {
     const t = worldTagText(data({ name: 'Solar Array', owner: 'you', stance: 'friendly' }), 'Solar Array');
     expect(t.title).toBe('Solar Array');
+    expect(t.compactTitle).toBeUndefined(); // the compact line is the title itself
     expect(t.owner).toBe('you');
     expect(t.ownerColor).toBe(STANCE_COLOUR.friendly);
   });
@@ -40,6 +43,13 @@ describe('worldTagPos', () => {
     expect(worldTagAt).toEqual({ x: 50, y: 200 - GROUP_TAG_LIFT_PX });
     expect(worldTagPos({ ...fb, selCentroidOnScreen: false }, 'centroid')).toBe(false);
     expect(worldTagPos(fb, 'focus')).toBe(false);
+  });
+
+  it('clamps the tip down so a tag over a screen-filling hull stays on screen', () => {
+    expect(worldTagPos({ focusScreenX: 300, focusScreenY: -871, focusOnScreen: true }, 'focus', 46)).toBe(true);
+    expect(worldTagAt).toEqual({ x: 300, y: 46 });
+    expect(worldTagPos({ focusScreenX: 300, focusScreenY: 120, focusOnScreen: true }, 'focus', 46)).toBe(true);
+    expect(worldTagAt.y).toBe(120);
   });
 
   it('hidden off screen or with nothing focused (NaN)', () => {
