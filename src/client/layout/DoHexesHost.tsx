@@ -17,7 +17,7 @@
  *   (Place or Done under the thumb, Cancel in the far corner) and the
  *   building's Upgrade, Demolish, Power, More. Every device, like Command.
  * - Command, own ships selected plus a tapped target that is not mine (S8,
- *   `targetDoHexes.tsx`): Follow (dimmed: no order for it), Move to, Attack,
+ *   `targetDoHexes.tsx`): Follow (escort; dimmed off ships), Move to, Attack,
  *   More (its Details), Clear (keeps the ships, drops the target).
  * - Hidden while a right panel is open (`selectRightPanelOpen`): the panel docks
  *   over the right edge. A held Boost lets go then (HoldButton on unmount).
@@ -44,7 +44,8 @@ import { useSelectionStripItems } from './selectionStripItems.js';
 import { usePlacingStripItems } from './placingStripItems.js';
 import { useRouteStripItems } from './routeStripItems.js';
 import { useBuildingStripItems } from './buildingStripItems.js';
-import { targetDoHexes, targetSelected } from './targetDoHexes.js';
+import { followTarget, targetDoHexes, targetFollowable, targetSelected } from './targetDoHexes.js';
+import { resolveFleetCommands } from '../fleet/useFleetSelectionView.js';
 import type { IFleetView } from '@core/contracts/render/IFleetView';
 import { fleetLockApplies, lockFocus } from '../components/targetLock.js';
 import { resolveSelectable, type SelectableTarget } from '../render/SelectionBracket.js';
@@ -151,11 +152,14 @@ const targetPose: SelectableTarget = { x: 0, y: 0, r: 0, hw: 0, hh: 0 };
 function TargetHexes({ rendererRef }: { rendererRef: NonNullable<Props['rendererRef']> }): JSX.Element | null {
   const setRightPanel = useUIStore((s) => s.setRightPanel);
   const attackable = useUIStore((s) => fleetLockApplies(s.selection));
+  const followable = useUIStore((s) => targetFollowable(s.selection));
   // The fleet builder decides when fleet orders apply at all (Command, own ships).
   const fleet = useFleetStripItems();
   if (fleet.length === 0) return null;
   const hexes = targetDoHexes({
     attackable,
+    followable,
+    follow: () => { followTarget(useUIStore.getState().selection, resolveFleetCommands()); },
     moveTo: () => {
       const sel = useUIStore.getState().selection;
       const mirror = getGameClient()?.mirror;

@@ -1,6 +1,6 @@
 /**
  * Selection-HUD S8: the target do-hexes in the host. Own ships selected in
- * Command plus a tapped target that is not mine: Follow (dimmed, no order),
+ * Command plus a tapped target that is not mine: Follow (the escort order on any ship),
  * Move to (the move order to the target), Attack (the T2 Lock -> the
  * renderer's attackFocus), More (the target's Details), Clear (the renderer
  * keeps only the ships, back to the fleet set).
@@ -20,6 +20,7 @@ vi.mock('../net/clientSingleton', () => ({ getGameClient: () => client }));
 
 import { useUIStore } from '../state/store';
 import { resetFleetStatus } from '../fleet/fleetStatus';
+import { resetFleetCommands, setFleetCommands } from '../fleet/fleetCommands';
 import { LayoutProvider } from './LayoutProvider';
 import { DoHexesHost } from './DoHexesHost';
 
@@ -31,6 +32,7 @@ function stubMedia(): void {
   }));
 }
 
+const setMode = vi.fn();
 const renderer = { selectFleetShips: vi.fn(), attackFocus: vi.fn() };
 const rendererRef = { current: renderer };
 
@@ -48,6 +50,7 @@ const cellOf = (testId: string): string | null =>
 beforeEach(() => {
   stubMedia();
   resetFleetStatus();
+  setFleetCommands({ setMode });
   useUIStore.setState({
     phase: 'game', rightPanel: null, travelling: true, pilotMode: 'spectator', isDead: false,
     buildMode: false, placementKind: null, fleetPick: null, commandSpeed: 3,
@@ -58,6 +61,8 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   sendFleetOrder.mockReset();
+  setMode.mockReset();
+  resetFleetCommands();
   renderer.selectFleetShips.mockReset();
   renderer.attackFocus.mockReset();
 });
@@ -105,7 +110,15 @@ describe('target do-hexes (S8)', () => {
     expect(screen.getByTestId('do-hex-patrol')).toBeInTheDocument();
   });
 
-  it('Follow is dimmed (no follow order for a ship that is not mine); a rock blocks Attack', () => {
+  it('Follow on anyone\'s ship sends the escort order with its id', () => {
+    mount();
+    select(['a', 'b'], 'p2');
+    expect(screen.getByTestId('do-hex-follow')).not.toBeDisabled();
+    fireEvent.click(screen.getByTestId('do-hex-follow'));
+    expect(setMode).toHaveBeenCalledWith(['a', 'b'], 'escort', { escortId: 'p2' });
+  });
+
+  it('a rock: Follow and Attack dimmed, Move to live', () => {
     mount();
     select(['a'], 'swarm-3', 'asteroid');
     expect(screen.getByTestId('do-hex-follow')).toBeDisabled();

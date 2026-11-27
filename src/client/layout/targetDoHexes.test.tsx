@@ -5,10 +5,12 @@
  */
 import { describe, expect, it, vi } from 'vitest';
 import { doHexLayout } from './doHexLayout';
-import { targetDoHexes, targetHexCovers, targetSelected, type TargetDoHexOptions } from './targetDoHexes';
+import {
+  followTarget, targetDoHexes, targetFollowable, targetHexCovers, targetSelected, type TargetDoHexOptions,
+} from './targetDoHexes';
 
 function opts(over: Partial<TargetDoHexOptions> = {}): TargetDoHexOptions {
-  return { attackable: true, moveTo: vi.fn(), attack: vi.fn(), openMore: vi.fn(), clear: vi.fn(), ...over };
+  return { attackable: true, followable: true, follow: vi.fn(), moveTo: vi.fn(), attack: vi.fn(), openMore: vi.fn(), clear: vi.fn(), ...over };
 }
 
 const byKey = (o: TargetDoHexOptions, key: string) => {
@@ -44,10 +46,32 @@ describe('targetDoHexes', () => {
     expect(o.attack).not.toHaveBeenCalled();
   });
 
-  it('Follow has no order for a target that is not mine: dimmed and blocked', () => {
-    const f = byKey(opts(), 'follow');
+  it('Follow on a ship (anyone\'s): live, and it sends the escort order with the target id', () => {
+    const o = opts({ followable: true });
+    const f = byKey(o, 'follow');
+    expect(f.dim).toBeFalsy();
+    expect(f.disabled).toBeFalsy();
+    f.onPress();
+    expect(o.follow).toHaveBeenCalledOnce();
+    const cmds = { setMode: vi.fn() };
+    expect(followTarget({ ids: ['a', 'b'], focusId: 'p2', focusKind: 'ship' }, cmds)).toBe(true);
+    expect(cmds.setMode).toHaveBeenCalledWith(['a', 'b'], 'escort', { escortId: 'p2' });
+  });
+
+  it('Follow on a non-ship (rock, pod, structure): dimmed and blocked, nothing sent', () => {
+    const f = byKey(opts({ followable: false }), 'follow');
     expect(f.dim).toBe(true);
     expect(f.disabled).toBe(true);
+    const cmds = { setMode: vi.fn() };
+    expect(followTarget({ ids: ['a'], focusId: 'swarm-3', focusKind: 'asteroid' }, cmds)).toBe(false);
+    expect(cmds.setMode).not.toHaveBeenCalled();
+  });
+
+  it('targetFollowable: ships, AI-flown hulls and NPC (drone) ships; never rocks, pods, structures', () => {
+    const sel = (focusKind: 'ship' | 'lingering' | 'drone' | 'asteroid' | 'pod' | 'structure') => ({ ids: ['a'], focusId: 'x', focusKind });
+    for (const k of ['ship', 'lingering', 'drone'] as const) expect(targetFollowable(sel(k)), k).toBe(true);
+    for (const k of ['asteroid', 'pod', 'structure'] as const) expect(targetFollowable(sel(k)), k).toBe(false);
+    expect(targetFollowable({ ids: ['a'], focusId: 'a', focusKind: 'ship' })).toBe(false);
   });
 
   it('Attack is dimmed and blocked for something the fleet cannot attack (a rock, a pod)', () => {
