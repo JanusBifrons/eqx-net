@@ -88,6 +88,20 @@ leaving build mode and a sector change drop the plan. The crate cap
 (`placementEndsAfterPlace`) counts planned buildings of the kind. A deck fence
 run (`commitFenceRun`) still sends at once.
 
+Planned ghosts: the plan reaches the (possibly worker) renderer on
+`RenderMirror.pendingPlacementPreview.plan`, flat stride 5 (x, y, rot degrees,
+structure kind index, flags 1 mirror | 2 refused; `writePreviewPlan`, written with
+`run` in `resolvePlacementPreviewStatus`). `PendingRunGhosts` draws each as the
+placement ghost of its kind, dim and still in `GHOST_PLANNED_COLOR` (red when
+refused), from its own pool of `PLACE_STRUCTURES_MAX` so it never takes the fence
+run's `RUN_GHOST_CAP` slots. `addPlanFootprints` feeds the same plan to the live
+ghost's `PlacementGhostVerdict.addFootprint`: after the world check, the ghost is
+judged against the planned buildings the way the batch checks a later item
+(overlap and pad only), so it reads red on a planned building with the batch's
+reason. A Place ON a planned building (`planTapHitIndex`, its footprint box)
+removes that one from the plan instead of adding; the ✓ stays enabled there
+(`placementChosen.onPlanned`) though the ghost reads red.
+
 - Validate kind, clamp to `SECTOR_PLAYABLE_HALF_EXTENT`, reject footprint overlap
   with a structure or an asteroid (`placementRejection`, obstacles from the
   `getObstacles(near)` hook; in a cut field `near` adds the rocks with no body,

@@ -12,7 +12,7 @@ import { describe, it, expect } from 'vitest';
 import { Container } from 'pixi.js';
 import { createPlacementGhostCtx, updatePlacementGhost } from './placementGhostUpdater.js';
 import { GHOST_BLOCKED_COLOR, GHOST_CLEAR_COLOR, HOLOGRAM_LABEL, StructureHologram } from './structureHologram.js';
-import { getStructureKind } from '../../../shared-types/structureKinds.js';
+import { getStructureKind, structureKindToIndex } from '../../../shared-types/structureKinds.js';
 import type { RenderMirror, RendererFeedback, SwarmRenderState, StructureRenderState } from '../../../core/contracts/IRenderer.js';
 import type { GridObstacle } from '../../../core/structures/Grid.js';
 import type { RendererInputController } from './rendererInputController.js';
@@ -60,6 +60,16 @@ describe('placement ghost: red or green by the server rule', () => {
     updatePlacementGhost(mirror(5000, 0), ctx);
     expect(feedback.placementPreviewRejection).toBeNull();
     expect(ctx.placementGhost!.tint).toBe(GHOST_CLEAR_COLOR);
+  });
+
+  it('ghost is red on top of a PLANNED building (preview.plan), with the batch reason', () => {
+    const { ctx, feedback, mirror } = harness([]);
+    const m = mirror(10, 0);
+    m.pendingPlacementPreview!.plan = [0, 0, 0, structureKindToIndex('connector'), 0];
+    updatePlacementGhost(m, ctx);
+    expect(feedback.placementPreviewRejection).toBe('overlap-structure');
+    expect(ctx.placementGhost!.tint).toBe(GHOST_BLOCKED_COLOR);
+    expect(ctx.runGhosts!.plannedDrawn).toBe(1);
   });
 
   it('ghost is red over another structure', () => {

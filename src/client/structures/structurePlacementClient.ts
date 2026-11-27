@@ -80,7 +80,7 @@ const DEG = Math.PI / 180;
 import { getGameClient } from '../net/clientSingleton.js';
 import { writePreviewRun } from './pendingPlacementRun.js';
 import { placementChosen, setPlacementHeld } from './placementChosen.js';
-import { addPlannedPlacement, type PlannedPlacement } from './placementPlan.js';
+import { addPlannedPlacement, writePreviewPlan, type PlannedPlacement } from './placementPlan.js';
 import { logEvent } from '../debug/ClientLogger.js';
 
 /** Gap (world units) between the ship's leading edge and the new structure's
@@ -142,6 +142,9 @@ export interface PlacementPreview {
   /** One per `runHover` corner: 0 = a post is there (beam only), 1 = a post
    *  the click would place, 2 = the one it would place but the server refuses. */
   runHoverMark?: number[];
+  /** Plan then Build: the planned buildings, flat stride 5 (`writePreviewPlan`).
+   *  Empty when none. */
+  plan?: number[];
 }
 
 /** The plate source the preview copies from (`ColyseusClient.plates`). */
@@ -260,6 +263,7 @@ export function resolvePlacementPreviewStatus(
     out.held = isHeldOnSent(placementKind, pending, chosenX, chosenY);
     const live = pending !== null && !pendingPlacementResolved(pending, nowMs, currentStructureCount, allStructuresRenderable);
     writePreviewRun(out, live ? pending : null);
+    writePreviewPlan(out); // plan then Build: the planned ghosts + their verdict footprints
     return 'active';
   }
   if (pending) {
@@ -274,6 +278,7 @@ export function resolvePlacementPreviewStatus(
     out.pending = true;
     out.held = false;
     writePreviewRun(out, pending);
+    writePreviewPlan(out);
     return 'pending';
   }
   return 'none';

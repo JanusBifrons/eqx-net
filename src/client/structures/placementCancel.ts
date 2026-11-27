@@ -10,8 +10,10 @@ import { commitChosenPlacement, PENDING_PLACEMENT_TIMEOUT_MS, sendPlaceStructure
 import { commitFenceRun, endFenceRun, fenceRunRocks, isFenceRunKind } from './fenceRun';
 import { PlacementGhostVerdict } from './placementGhostVerdict.js';
 import {
-  clearPlacementPlan, clearPlanRefused, getPlacementPlanCount, markPlannedRefused, plannedCountOfKind, plannedPlacements,
+  clearPlacementPlan, clearPlanRefused, getPlacementPlanCount, markPlannedRefused, plannedCountOfKind, plannedPlacementHitIndex,
+  plannedPlacements, removePlannedPlacement,
 } from './placementPlan.js';
+import { placementChosen } from './placementChosen.js';
 
 /**
  * How a placement ends (build-menu redesign M3). After a place you KEEP
@@ -67,12 +69,16 @@ export function cancelPlacement(): void {
  * plan). Placement stays open for the next one, except a place-once kind or
  * the last crate (`placementEndsAfterPlace`, counting the planned ones). A
  * refused commit (blocked ghost) keeps placement open. A fence post on a deck
- * room still places at once as a fence run (`fenceRun.ts`). Returns whether a
- * placement was planned (or, for a fence run, sent).
+ * room still places at once as a fence run (`fenceRun.ts`). A Place ON a
+ * planned building (`planTapHitIndex`) removes that one from the plan
+ * instead. Returns whether a placement was planned (or, for a fence run,
+ * sent), or a planned one removed.
  */
 export function commitPlacement(kindId: StructureKindId): boolean {
   if (flight.active) return false; // the plan is on its way: it is not edited
   watchPlanExit();
+  const hit = plannedPlacementHitIndex(placementChosen.worldX, placementChosen.worldY);
+  if (hit >= 0) return removePlannedPlacement(hit);
   const ui = useUIStore.getState();
   const ends = placementEndsAfterPlace(kindId, ui.packedStock, ui.currentSectorKey !== null && !ui.freeBuilds, plannedCountOfKind(kindId));
   const run = isFenceRunKind(kindId, ui.deck) ? commitFenceRun(kindId) : null;

@@ -145,7 +145,9 @@ describe('plan then Build', () => {
 
   it('the shared batch check marks a clashing plan red before any send (#15)', () => {
     place('solar', 100, 0);
-    place('battery', 105, 0); // overlaps the planned solar
+    // Overlaps the planned solar. Planned straight in: a Place there now
+    // removes the solar instead (placementPlanGhosts.test.ts).
+    addPlannedPlacement('battery', 105, 0, 0, false, false);
     expect(buildPlacementPlan()).toBe(false);
     expect(sent).toEqual([]);
     expect(isPlannedPlacementRefused(0)).toBe(false);

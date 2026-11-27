@@ -46,6 +46,9 @@ const SCAN_STEP = 6;
  *  build preview's red), and where it is clear (the hologram cyan). */
 export const GHOST_BLOCKED_COLOR = PREVIEW_BLOCKED_COLOR;
 export const GHOST_CLEAR_COLOR = HOLOGRAM_COLOR;
+/** Plan then Build: a PLANNED building's ghost (in the plan, not yet sent):
+ *  a soft blue apart from the live ghost's cyan (`pendingRunGhosts.ts`). */
+export const GHOST_PLANNED_COLOR = 0x8899ff;
 /** Ghost scanner sweep period and pulse period (game ms). */
 const GHOST_SWEEP_MS = 1600;
 const GHOST_PULSE_MS = 1200;
@@ -179,9 +182,10 @@ export class StructureHologram extends Container {
 
   /** Per frame, the placement ghost only: tint cyan (clear) or red (blocked),
    *  sweep the scanner and pulse on the game clock. `sent` = the post-Confirm
-   *  ghost awaiting the server: dimmer and still. No allocation. */
-  updateGhost(blocked: boolean, sent: boolean, nowMs: number): void {
-    this.tint = blocked ? GHOST_BLOCKED_COLOR : GHOST_CLEAR_COLOR;
+   *  ghost awaiting the server: dimmer and still. `clearColor`: the tint when
+   *  not blocked (a planned ghost's {@link GHOST_PLANNED_COLOR}). No allocation. */
+  updateGhost(blocked: boolean, sent: boolean, nowMs: number, clearColor: number = GHOST_CLEAR_COLOR): void {
+    this.tint = blocked ? GHOST_BLOCKED_COLOR : clearColor;
     const t = nowMs < 0 ? 0 : nowMs;
     this.updateSlot(sent, t);
     if (sent) { this.alpha = 0.45; this.line.visible = false; return; }

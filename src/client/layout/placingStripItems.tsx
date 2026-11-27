@@ -29,7 +29,9 @@ import { getStructureKind } from '@shared-types/structureKinds';
 import { EqxIcon } from '../../ui/index.js';
 import { useUIStore } from '../state/store.js';
 import { cyclePlacementRotation, getPlacementMirror, togglePlacementMirror } from '../structures/structurePlacementClient.js';
-import { getPlacementHeld, getPlacementRejection, subscribePlacementHeld, subscribePlacementRejection } from '../structures/placementChosen.js';
+import {
+  getPlacementHeld, getPlacementOnPlanned, getPlacementRejection, subscribePlacementHeld, subscribePlacementOnPlanned, subscribePlacementRejection,
+} from '../structures/placementChosen.js';
 import { buildPlacementPlan, cancelPlacement, commitPlacement } from '../structures/placementCancel.js';
 import { getPlacementPlanCount, subscribePlacementPlan } from '../structures/placementPlan.js';
 import { isFenceRunKind } from '../structures/fenceRun.js';
@@ -56,6 +58,8 @@ export function usePlacingStripItems(): StripAction[] {
   // Blocked ghost (the server's own placement rule) or held on the spot just sent: no Place.
   const rejected = useSyncExternalStore(subscribePlacementRejection, getPlacementRejection) !== null;
   const held = useSyncExternalStore(subscribePlacementHeld, getPlacementHeld);
+  // On a planned building Place removes it (red there, still enabled).
+  const onPlanned = useSyncExternalStore(subscribePlacementOnPlanned, getPlacementOnPlanned);
   const planned = useSyncExternalStore(subscribePlacementPlan, getPlacementPlanCount);
   const cancel: StripAction = { kind: 'button', key: 'cancel', tone: 'danger', icon: 'close', tooltip: 'Stop placing',
     onPress: cancelPlacement, testId: 'placement-cancel' };
@@ -69,7 +73,7 @@ export function usePlacingStripItems(): StripAction[] {
     { kind: 'identity', key: 'kind', icon: <KindIcon kind={kind} />, tooltip: `${name}: open the Build menu`, health: 'ok',
       onPress: () => setRightPanel('build'), state: kind, testId: 'placement-kind' },
     { kind: 'button', key: 'place', tone: 'primary', icon: 'confirm', tooltip: 'Place',
-      disabled: rejected || held, onPress: () => { commitPlacement(kind); }, testId: 'placement-confirm' },
+      disabled: (rejected && !onPlanned) || held, onPress: () => { commitPlacement(kind); }, testId: 'placement-confirm' },
     { kind: 'button', key: 'rotate', icon: 'rotate', tooltip: 'Rotate',
       onPress: () => { cyclePlacementRotation(); }, testId: 'placement-rotate' },
     { kind: 'button', key: 'mirror', icon: 'mirror', tooltip: 'Mirror', active: mirrored,

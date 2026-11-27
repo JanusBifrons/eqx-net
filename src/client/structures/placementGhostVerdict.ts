@@ -21,9 +21,12 @@ import {
   isStructureKindId,
   normaliseStructureRotation,
   structureHalfExtents,
+  structureHalfExtentsInto,
 } from '../../shared-types/structureKinds.js';
 
 const RAD_TO_DEG = 180 / Math.PI;
+/** Scratch for {@link PlacementGhostVerdict.addFootprint} (#14). */
+const ADD_EXT = { hw: 0, hh: 0 };
 
 /** The placement ghost's pose: kind, game-space point, angle in radians. */
 export interface GhostPose {
@@ -94,9 +97,47 @@ export class PlacementGhostVerdict {
     return this.footprints;
   }
 
-  /** {@link check} against the set the last {@link prepare} loaded. */
+  /** Pooled footprints of the ADDED (planned, not yet placed) buildings, and the live view of them. */
+  private readonly addedPool: PlacementFootprint[] = [];
+  private readonly added: PlacementFootprint[] = [];
+
+  /** Drop every {@link addFootprint} (call before re-adding this frame's plan). */
+  clearAdded(): void {
+    this.added.length = 0;
+  }
+
+  /**
+   * Plan then Build: judge as if a building of `kind` stood at (x, y), turned
+   * `rotDeg` (degrees, the deck-snapped wire pose), as the batch check judges
+   * a later batch item against the earlier ones. Kept across {@link prepare}
+   * until {@link clearAdded}. Pooled (#14); an unknown kind is ignored.
+   */
+  addFootprint(kind: string, x: number, y: number, rotDeg: number, mirror: boolean): void {
+    if (!isStructureKindId(kind)) return;
+    const n = this.added.length;
+    let fp = this.addedPool[n];
+    if (fp === undefined) {
+      fp = { x: 0, y: 0, radius: 0 };
+      this.addedPool.push(fp);
+    }
+    const rot = normaliseStructureRotation(rotDeg);
+    const ext = structureHalfExtentsInto(kind, rot, ADD_EXT);
+    fp.x = x; fp.y = y;
+    fp.radius = getStructureKind(kind).radius;
+    fp.halfW = ext.hw; fp.halfH = ext.hh;
+    fp.kind = kind; fp.rot = rot; fp.mirror = mirror;
+    this.added.push(fp);
+  }
+
+  /** {@link check} against the set the last {@link prepare} loaded, then
+   *  against the added (planned) buildings the way the core
+   *  `BatchPlacementChecker` checks a batch item against the earlier ones
+   *  (footprint and pad overlap only: no rocks or deck), so the reason matches. */
   checkPrepared(ghost: GhostPose, obstacles: readonly GridObstacle[] | null, deck: PlacementDeck | null = null): PlacementRejection | null {
     if (!isStructureKindId(ghost.kind)) return null;
-    return placementRejection(ghost.kind, ghost.x, ghost.y, this.footprints, obstacles, normaliseStructureRotation(ghost.angle * RAD_TO_DEG), ghost.mirror === true, deck);
+    const rot = normaliseStructureRotation(ghost.angle * RAD_TO_DEG), mirror = ghost.mirror === true;
+    const world = placementRejection(ghost.kind, ghost.x, ghost.y, this.footprints, obstacles, rot, mirror, deck);
+    if (world !== null || this.added.length === 0) return world;
+    return placementRejection(ghost.kind, ghost.x, ghost.y, this.added, null, rot, mirror, null);
   }
 }

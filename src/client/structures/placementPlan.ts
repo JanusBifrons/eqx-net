@@ -18,7 +18,9 @@
  */
 import { snapPlacementToDeck } from '../../core/structures/deckPlacement.js';
 import type { DeckSnap } from '../../core/hex/deckSnap.js';
-import { snapPlayerStructureRotation, type StructureKindId } from '../../shared-types/structureKinds.js';
+import {
+  snapPlayerStructureRotation, structureHalfExtentsInto, structureKindToIndex, type StructureKindId,
+} from '../../shared-types/structureKinds.js';
 import { PLACE_STRUCTURES_MAX } from '../../shared-types/messages.js';
 
 /** One planned building: the `place_structures` wire item, pose snapped. */
@@ -69,6 +71,79 @@ export function addPlannedPlacement(kind: StructureKindId, x: number, y: number,
   list.push(it);
   notify();
   return true;
+}
+
+/**
+ * Remove planned item `index` (a tap on its ghost while placing). Later items
+ * move up one, keeping their refused flags; the pool stays the list's prefix
+ * so the next add reuses the freed record (#14). False when out of range.
+ */
+export function removePlannedPlacement(index: number): boolean {
+  const n = list.length;
+  if (index < 0 || index >= n) return false;
+  const freed = pool[index]!;
+  for (let k = index; k < n - 1; k++) {
+    pool[k] = pool[k + 1]!;
+    list[k] = pool[k]!;
+    refused[k] = refused[k + 1]!;
+  }
+  pool[n - 1] = freed;
+  refused[n - 1] = false;
+  list.length = n - 1;
+  notify();
+  return true;
+}
+
+const EXT = { hw: 0, hh: 0 };
+
+/**
+ * Plan then Build, the tap decision: which of `items` a Place at (x, y)
+ * lands on (its footprint box at its turn), or -1. A Place ON a planned
+ * building removes it from the plan instead of adding one (that spot is red
+ * anyway: it overlaps the planned building). The LAST item wins where two
+ * overlap (it draws on top). Null point (no chosen point yet) = -1. Pure,
+ * allocation-free.
+ */
+export function planTapHitIndex(items: readonly PlannedPlacement[], x: number | null, y: number | null): number {
+  if (x === null || y === null) return -1;
+  for (let i = items.length - 1; i >= 0; i--) {
+    const p = items[i]!;
+    structureHalfExtentsInto(p.kind, p.rot, EXT);
+    if (Math.abs(x - p.x) <= EXT.hw && Math.abs(y - p.y) <= EXT.hh) return i;
+  }
+  return -1;
+}
+
+/** {@link planTapHitIndex} over the planned list. */
+export function plannedPlacementHitIndex(x: number | null, y: number | null): number {
+  return planTapHitIndex(list, x, y);
+}
+
+/** Floats per planned item on the render preview (`writePreviewPlan`). */
+export const PREVIEW_PLAN_STRIDE = 5;
+/** `PREVIEW_PLAN_STRIDE` flag bits (slot 4): mirrored, refused. */
+export const PREVIEW_PLAN_MIRROR = 1;
+export const PREVIEW_PLAN_REFUSED = 2;
+
+/**
+ * Copy the planned list onto the render preview (`out.plan`, reused, #14), so
+ * the (possibly worker) renderer draws the planned ghosts and its live ghost
+ * verdict sees them as placed. Flat, stride {@link PREVIEW_PLAN_STRIDE}:
+ * x, y, rot (degrees), kind index (`structureKindToIndex`), flags
+ * ({@link PREVIEW_PLAN_MIRROR} | {@link PREVIEW_PLAN_REFUSED}). Structured-cloneable.
+ */
+export function writePreviewPlan(out: { plan?: number[] }): void {
+  if (list.length === 0) {
+    if (out.plan !== undefined) out.plan.length = 0;
+    return;
+  }
+  const dst = out.plan ?? (out.plan = []);
+  dst.length = 0;
+  for (let i = 0; i < list.length; i++) {
+    const p = list[i]!;
+    dst.push(p.x, p.y, p.rot, structureKindToIndex(p.kind),
+      (p.mirror ? PREVIEW_PLAN_MIRROR : 0) | (refused[i] === true ? PREVIEW_PLAN_REFUSED : 0));
+  }
 }
 
 /** Empty the list (✕, leaving build mode, the batch landed). */

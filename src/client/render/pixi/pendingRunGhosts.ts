@@ -15,8 +15,16 @@
  *   into it, and nothing past it draws. The hovered corner itself is the
  *   single ghost, so it is not drawn twice.
  *
- * Ghosts come from a lazily built pool capped at {@link RUN_GHOST_CAP}.
- * Allocation-free per frame after warm-up (#14).
+ * Plan then Build, a third pass: the PLANNED buildings (`preview.plan`,
+ * stride 5, `writePreviewPlan`): each the placement ghost of its own kind
+ * at its deck-snapped wire pose, dim and still, in {@link GHOST_PLANNED_COLOR}
+ * (red when refused). They have their own pool, up to `PLACE_STRUCTURES_MAX`,
+ * so a big plan never takes the run's slots or stops drawing.
+ * {@link addPlanFootprints} feeds the same plan to the live ghost's verdict.
+ *
+ * Run ghosts come from a lazily built pool capped at {@link RUN_GHOST_CAP}.
+ * Allocation-free per frame after warm-up (#14); a planned slot rebuilds its
+ * art only when its kind changes (a plan edit, not per frame).
  */
 import { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '../../../core/contracts/IRenderer.js';
@@ -24,13 +32,13 @@ import type { GridObstacle } from '../../../core/structures/Grid.js';
 import type { PlacementDeck } from '../../../core/structures/placementRules.js';
 import { DECK_FENCE_POST_KIND } from '../../../core/structures/deckLinks.js';
 import { DECK_CORNER_TOLERANCE } from '../../../core/hex/deckCorners.js';
-import { getStructureKind } from '../../../shared-types/structureKinds.js';
+import { getStructureKind, structureKindFromIndex } from '../../../shared-types/structureKinds.js';
+import { PLACE_STRUCTURES_MAX } from '../../../shared-types/messages/clientMessages.js';
 import type { GhostPose, PlacementGhostVerdict } from '../../structures/placementGhostVerdict.js';
 import { drawFenceBeamBody } from './connectorFenceBeam.js';
-import { StructureHologram } from './structureHologram.js';
+import { GHOST_PLANNED_COLOR, StructureHologram } from './structureHologram.js';
 
 type Preview = NonNullable<RenderMirror['pendingPlacementPreview']>;
-/** The preview's fence-run hover fields (client `PlacementPreview`). */
 
 /** Most post ghosts drawn at once (sent + hover). */
 export const RUN_GHOST_CAP = 24;
@@ -54,18 +62,44 @@ export interface RunGhostFrame {
 }
 
 const pose: GhostPose = { kind: DECK_FENCE_POST_KIND, x: 0, y: 0, angle: 0 };
+const DEG_TO_RAD = Math.PI / 180;
+/** `preview.plan` layout (client `placementPlan.ts` `writePreviewPlan`). */
+const PLAN_STRIDE = 5;
+const PLAN_MIRROR = 1;
+const PLAN_REFUSED = 2;
+/** Most planned ghosts drawn at once: the whole plan. */
+export const PLANNED_GHOST_CAP = PLACE_STRUCTURES_MAX;
+
+/**
+ * Feed the plan (`preview.plan`) to the live ghost's verdict as if placed
+ * (`PlacementGhostVerdict.addFootprint`, the batch check's rule), so a ghost
+ * on a planned building reads red with the batch's reason. Allocation-free.
+ */
+export function addPlanFootprints(verdict: PlacementGhostVerdict, plan: readonly number[] | undefined): void {
+  verdict.clearAdded();
+  if (plan === undefined) return;
+  for (let i = 0; i + PLAN_STRIDE <= plan.length; i += PLAN_STRIDE) {
+    verdict.addFootprint(structureKindFromIndex(plan[i + 3]!), plan[i]!, plan[i + 1]!, plan[i + 2]!, (plan[i + 4]! & PLAN_MIRROR) !== 0);
+  }
+}
 
 export class PendingRunGhosts {
   private readonly posts: StructureHologram[] = [];
   private used = 0;
   private sentGfx: Graphics | null = null;
   private hoverGfx: Graphics | null = null;
+  /** Planned ghosts (own pool, any kind) and each slot's built kind. */
+  private readonly planned: StructureHologram[] = [];
+  private readonly plannedKinds: string[] = [];
   /** Probe counts for tests: posts and beams drawn last frame. */
   sentPosts = 0;
   hoverPosts = 0;
   hoverBeams = 0;
   /** Index (corner) of the red refused hover corner last frame, or -1. */
   hoverStop = -1;
+  /** Planned ghosts drawn last frame, and how many of them red (refused). */
+  plannedDrawn = 0;
+  plannedRefused = 0;
 
   constructor(private readonly parent: Container, private readonly style: string | undefined) {}
 
@@ -75,6 +109,7 @@ export class PendingRunGhosts {
     const radius = getStructureKind(DECK_FENCE_POST_KIND).radius;
     this.sentPosts = this.drawSent(f, radius);
     this.drawHover(f, radius);
+    this.drawPlanned(f);
     this.end();
   }
 
@@ -82,6 +117,7 @@ export class PendingRunGhosts {
   hide(): void {
     this.begin();
     this.sentPosts = 0; this.hoverPosts = 0; this.hoverBeams = 0; this.hoverStop = -1;
+    this.plannedDrawn = 0; this.plannedRefused = 0;
     this.end();
   }
 
@@ -93,6 +129,39 @@ export class PendingRunGhosts {
 
   private end(): void {
     for (let i = this.used; i < this.posts.length; i++) this.posts[i]!.visible = false;
+    for (let i = this.plannedDrawn; i < this.planned.length; i++) this.planned[i]!.visible = false;
+  }
+
+  /** Planned slot `i` showing `kind` (built, or rebuilt on a kind change). */
+  private plannedGhost(i: number, kind: string): StructureHologram {
+    let g = this.planned[i];
+    if (g !== undefined && this.plannedKinds[i] === kind) return g;
+    if (g !== undefined) { this.parent.removeChild(g); g.destroy({ children: true }); }
+    g = new StructureHologram(kind, getStructureKind(kind).radius, this.style, 'ghost');
+    // Under everything else in the layer: the live ghost and the runs draw on top.
+    this.parent.addChildAt(g, 0);
+    this.planned[i] = g;
+    this.plannedKinds[i] = kind;
+    return g;
+  }
+
+  /** The planned buildings: dim, still ghosts at their wire poses (red when refused). */
+  private drawPlanned(f: RunGhostFrame): void {
+    this.plannedDrawn = 0; this.plannedRefused = 0;
+    const plan = f.preview.plan;
+    if (plan === undefined) return;
+    for (let i = 0; i + PLAN_STRIDE <= plan.length && this.plannedDrawn < PLANNED_GHOST_CAP; i += PLAN_STRIDE) {
+      const flags = plan[i + 4]!;
+      const g = this.plannedGhost(this.plannedDrawn, structureKindFromIndex(plan[i + 3]!));
+      g.visible = true;
+      g.x = plan[i]!; g.y = -plan[i + 1]!; // Y-flip
+      g.rotation = -plan[i + 2]! * DEG_TO_RAD;
+      g.scale.x = (flags & PLAN_MIRROR) !== 0 ? -1 : 1;
+      const refused = (flags & PLAN_REFUSED) !== 0;
+      g.updateGhost(refused, true, f.nowMs, GHOST_PLANNED_COLOR);
+      this.plannedDrawn++;
+      if (refused) this.plannedRefused++;
+    }
   }
 
   private gfx(hover: boolean): Graphics {

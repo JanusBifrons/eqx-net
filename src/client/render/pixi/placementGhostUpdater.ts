@@ -25,7 +25,7 @@ import { PlacementGhostVerdict, type GhostPose } from '../../structures/placemen
 import { StructureHologram } from './structureHologram.js';
 import { ghostDeckAngle, ghostDeckContext, snapGhostToDeck } from './placementDeckSnap.js';
 import type { BuildSlotOutlines } from './buildSlotOutlines.js';
-import { PendingRunGhosts, type RunGhostFrame } from './pendingRunGhosts.js';
+import { addPlanFootprints, PendingRunGhosts, type RunGhostFrame } from './pendingRunGhosts.js';
 const DEG_TO_RAD = Math.PI / 180;
 
 export interface PlacementGhostCtx {
@@ -158,6 +158,8 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
     ctx.placementGhost.setDeckSlot(snap ? snap.slot : null, snap ? snap.rhombus : -1);
     // Red / green before the click: the server's own overlap rule at the drawn
     // pose (structures, landing pads, rocks; off-deck on a deck room). The pending ghost is already sent.
+    // Plan then Build: the planned buildings count as placed (the batch check's rule).
+    addPlanFootprints(ctx.verdict, preview.plan);
     let rejection: PlacementRejection | null = null;
     if (!pendingGhost && !heldGhost && mirror.swarm) {
       const pose = ctx.pose;
