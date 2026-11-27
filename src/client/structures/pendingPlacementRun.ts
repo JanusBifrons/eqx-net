@@ -8,7 +8,13 @@
  * (no run) replaces the record exactly as before.
  */
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
+import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from '../../core/structures/deckLinks.js';
 import { PENDING_PLACEMENT_TIMEOUT_MS, type PendingPlacement, type PlacementPreview } from './structurePlacementClient.js';
+
+/** Same run: the same kind, or a fence run's post and gate (edge feel P3:
+ *  a gate click sends its seam's posts, then the gate, as one record). */
+const fenceKind = (k: string): boolean => k === DECK_FENCE_POST_KIND || k === DECK_FENCE_GATE_KIND;
+const sameRunKind = (a: string, b: string): boolean => a === b || (fenceKind(a) && fenceKind(b));
 
 /**
  * The pending record after one more `place_structure` was sent. `run` null =
@@ -25,10 +31,10 @@ export function pendingAfterSend(
 ): PendingPlacement {
   if (run === null) return { kind, x, y, rot, mirror, sentAtMs: nowMs, baselineStructureCount: structureCount };
   const sent = prev?.sent ?? 1;
-  if (prev !== null && prev.run !== undefined && prev.kind === kind
+  if (prev !== null && prev.run !== undefined && sameRunKind(prev.kind, kind)
     && nowMs - prev.sentAtMs < PENDING_PLACEMENT_TIMEOUT_MS
     && structureCount < prev.baselineStructureCount + sent) {
-    prev.x = x; prev.y = y; prev.rot = rot; prev.mirror = mirror;
+    prev.kind = kind; prev.x = x; prev.y = y; prev.rot = rot; prev.mirror = mirror;
     prev.sentAtMs = nowMs;
     prev.sent = sent + 1;
     if (run.length > 0) {
