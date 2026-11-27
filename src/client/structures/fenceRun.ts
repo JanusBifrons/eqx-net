@@ -29,6 +29,8 @@ import { DECK_HEX_SIZE } from '../../core/hex/plates.js';
 import { OwnerPlateList } from '../../core/hex/plateSet.js';
 import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from '../../core/structures/deckLinks.js';
 import type { GridObstacle } from '../../core/structures/Grid.js';
+import { snapPlacementToDeck } from '../../core/structures/deckPlacement.js';
+import type { DeckSnap } from '../../core/hex/deckSnap.js';
 import type { PlacementDeck, PlacementRejection } from '../../core/structures/placementRules.js';
 import type { StructureKindId } from '../../shared-types/structureKinds.js';
 import type { RenderMirror } from '../../core/contracts/IRenderer.js';
@@ -99,6 +101,9 @@ export interface FenceRunPlan {
 export interface FenceRunWorld {
   hasPost(x: number, y: number): boolean;
   rejection(x: number, y: number): PlacementRejection | null;
+  /** The ghost verdict for the GATE itself at seam midpoint (x, y), turned
+   *  `rotDeg`; omitted = clear. A seam whose gate already stands is refused. */
+  gateRejection?(x: number, y: number, rotDeg: number): PlacementRejection | null;
 }
 
 const graph = new DeckCornerGraph();
@@ -162,6 +167,7 @@ export function planFenceRunInto(
 }
 
 const MID: HexPoint = { x: 0, y: 0 };
+const GATE_SNAP: DeckSnap = { x: 0, y: 0, q: 0, r: 0, rhombus: -1, rot: -1, slot: 'hex' };
 const NEAR_END: HexPoint = { x: 0, y: 0 };
 const FAR_END: HexPoint = { x: 0, y: 0 };
 
@@ -179,6 +185,17 @@ export function planGateRunInto(
   plates: readonly number[], world: FenceRunWorld,
 ): FenceRunPlan {
   const deg = nearestDeckEdgeInto(x, y, MID);
+  // The gate's own spot first: a red gate ghost sends nothing, no posts either
+  // (owner retest 2026-11-27: a second tap on a gated seam was server-refused).
+  if (world.gateRejection !== undefined) {
+    snapPlacementToDeck(DECK_FENCE_GATE_KIND, MID.x, MID.y, GATE_SNAP);
+    if (world.gateRejection(GATE_SNAP.x, GATE_SNAP.y, GATE_SNAP.rot) !== null) {
+      out.sends.length = 0; out.drawn.length = 0; out.reach.length = 0;
+      out.refused = true; out.anchorOk = false; out.anchorX = 0; out.anchorY = 0;
+      out.gate = false; out.gateX = 0; out.gateY = 0;
+      return out;
+    }
+  }
   const r = (deg * Math.PI) / 180, hx = (Math.cos(r) * DECK_HEX_SIZE) / 2, hy = (Math.sin(r) * DECK_HEX_SIZE) / 2;
   nearestDeckCornerInto(MID.x + hx, MID.y + hy, NEAR_END);
   nearestDeckCornerInto(MID.x - hx, MID.y - hy, FAR_END);
@@ -203,6 +220,7 @@ export function planGateRunInto(
 
 const verdict = new PlacementGhostVerdict();
 const pose: GhostPose = { kind: DECK_FENCE_POST_KIND, x: 0, y: 0, angle: 0 };
+const gatePose: GhostPose = { kind: DECK_FENCE_GATE_KIND, x: 0, y: 0, angle: 0 };
 const plateList = new OwnerPlateList();
 const deckCtx: PlacementDeck = { plates: plateList, owner: '' };
 const NO_PLATES: number[] = [];
@@ -236,6 +254,12 @@ const liveWorld = {
     if (!m.swarm) return null;
     pose.x = x; pose.y = y;
     return verdict.check(pose, m.structures, m.swarm, liveWorld.obstacles, deckCtx);
+  },
+  gateRejection(x: number, y: number, rotDeg: number): PlacementRejection | null {
+    const m = liveWorld.mirror!;
+    if (!m.swarm) return null;
+    gatePose.x = x; gatePose.y = y; gatePose.angle = (rotDeg * Math.PI) / 180;
+    return verdict.check(gatePose, m.structures, m.swarm, liveWorld.obstacles, deckCtx);
   },
 };
 
