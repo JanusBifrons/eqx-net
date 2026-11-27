@@ -16,16 +16,18 @@ Some names below (the `right-rail` and `left-strip` anchors, the `rightPanel` fl
 
 # Part 1: the UI language
 
-## 1.1 The six kinds of on-screen thing
+## 1.1 The eight kinds of on-screen thing
 
 Everything on screen is exactly one of these. Nothing else is allowed.
 
 | Kind | What it is for | Where | When visible |
 |---|---|---|---|
-| **HUD** | Glanceable game state: status capsule, sector chip, CargoChip, weapon strip, lock band, net health, time-scale chip, thumb-sticks, BOOST, mode switch | Where it is today | Always (per mode) |
+| **HUD** | Glanceable game state: status capsule, sector chip, CargoChip, weapon strip, lock band, net health, time-scale chip, move thumb-stick, mode switch (BOOST is a Fly do hex; the touch targeting stick was removed 2026-11-27) | Where it is today | Always (per mode) |
 | **Right rail** | Menus: the things you open to browse or configure | A slim icon column on the right edge | Always |
 | **Panel** | The menu that a rail icon (or ⚙ on the left strip) opens | Slides out from the right, about a third of the width; the world stays live behind it | One at a time, on request |
-| **Left strip** | What you have selected and what you are doing right now, as icons only | A one-icon-wide column on the left edge, below the top-left HUD | Only while something is selected or under way |
+| **Left strip (who hexes)** | WHO you have selected: one hex per ship type, icon + ×N count, no words | A small honeycomb on the left, below the top-left HUD and above the move stick | Command mode, while something is selected |
+| **Do hexes** | WHAT to do now: up to six hex buttons, each an icon **and a word**, colour hints on edge and icon | Bottom-right, where the targeting stick was (thumb-nearest slot = main action, Cancel in the far corner) | Every mode, per context; hidden while a panel is open |
+| **World tag** | The floating name over the selection or target: outlined text, owner line, hull bar, pointer, gentle bob; sticks to the edge with an arrow off screen | Over the thing in the world, fixed screen size | While something is selected or targeted |
 | **Window** | Jobs a third of the screen can't hold: two lists side by side (cargo transfer, market), the galaxy map, level-up, while-away, future editors | Full screen on a phone, centred on desktop; dims the world | Only from a panel button that will work |
 | **Prompt** | Something that needs an answer now (teleporter toll, warp-in warning) and short toasts | Top centre | Briefly |
 
@@ -95,6 +97,10 @@ The strictest element. The owner's rule:
 >
 > (The owner, 2026-11-22. They have had to repeat this rule. Any left-strip design or change: count the text on the strip, and it must be zero. Before redrawing anything, re-read this quote, not a summary of it.)
 
+> **2026-11-27 owner change (selection-HUD redesign):** the strip's content became the *who hexes* below; the doing-tools, quick actions, ⚙ and ✕ moved to the **do hexes** (bottom-right, with words). The no-words rule above still holds for the left: icon + count only.
+
+- **Who hexes:** one pointy hex per selected ship type with ×N; tap one to keep only that type; past five types the last slot is "?" +N and opens the full list in the Orders panel.
+- *Earlier (pre-2026-11-27) strip layout, kept for history:*
 - **One icon column.** Every button is the same size with its icon centred.
 - **No text at all,** except a count badge. Tooltips show on hover or tap-and-hold.
 - **It slides in** from the left edge only while something is selected or under way, and is fully out of view otherwise. It sits below the top-left HUD.
@@ -135,10 +141,10 @@ Some of today's surfaces still exist while the UI-language refactor runs. New wo
 | Factions, ship look | Faction panel (drill-down to Ship look). |
 | Settings, profile, account, logout, debug | Cog panel. The display name is a field; logout confirms inline; Developer is a drill-down. Cog › Display has a Full screen switch and "Install as app". |
 | Full screen | The first tap in a touch browser goes full screen. |
-| A selected ship, fleet or building | Left strip (identity, statuses with fly-outs, quick actions, ⚙, ✕). |
+| A selected ship, fleet or building | Who hexes on the left (Command) + world tag; its actions (stance, attack, move, More, Clear…) are do hexes, bottom-right. |
 | Selection details (bars, inspector sections) | Details panel, from ⚙ on the strip. Building settings use Power / Production / Manage on a segmented control there. |
 | Fleet orders, stance, speed, ship list | Orders panel, from ⚙ on the fleet strip, ending in Apply. |
-| Placing a building, picking route points | Left strip doing-tools. |
+| Placing a building, picking route points | Do hexes (Place/confirm under the thumb, Cancel in the far corner). |
 | Cargo transfer, market | Window, opened only from a panel button that works. |
 | Level-up, while-away, hangar | Window (`EqxWindow`). |
 | Teleport prompts, warp warnings, trade toasts, warp status | Prompt (`EqxPrompt`), top centre. |
@@ -155,13 +161,13 @@ Not part of the game screen in the end state: the speed dial, the ☰ drawer, th
 
 1. **Is it glanceable game state** that should always be visible while playing (no menu, no choices)? → **HUD.** New HUD items, or changes to their look, need the owner's OK.
 2. **Does it need an answer right now,** or is it a short notice? → **Prompt** (top centre).
-3. **Is it about the thing you have selected, or what you are doing in the world right now,** and can it be shown with icons and colours only? → **Left strip.** A status the player changes often gets a fly-out.
+3. **Is it about the thing you have selected, or what you are doing in the world right now,** → **who** is selected goes in the **who hexes** (icons + counts only); **what to do** goes in the **do hexes** (icon + word); its name floats as the **world tag**. A status the player changes often gets a fly-out.
 4. **Does it need words, choices, lists or a form?** → **Panel.**
    - If it belongs to a selected thing, it opens from that thing's ⚙ (Details or Orders).
    - Otherwise it is a rail item. A new rail item needs the owner's OK if the rail already has 8.
 5. **Does it need two lists side by side, a map, a table or a multi-step editor?** → **Window**, opened from a button inside a panel.
 
-Never allowed again: floating bars, speed dials, popovers anchored to random spots, centred dialogs outside the Window shell, banners anywhere but top centre, a second panel, both sides open, text on the left strip.
+Never allowed again: floating bars (the world tag is the one exception), speed dials, popovers anchored to random spots, centred dialogs outside the Window shell, banners anywhere but top centre, a second panel, both sides open, words on the left strip (counts only).
 
 ## 2.2 Placement mechanics
 
@@ -227,10 +233,10 @@ Never allowed again: floating bars, speed dials, popovers anchored to random spo
 
 ## 2.5 Checklist for any UI task or tweak
 
-1. Find its home with 2.1. If it does not fit, ask the owner; don't invent a seventh kind.
+1. Find its home with 2.1. If it does not fit, ask the owner; don't invent a ninth kind.
 2. Search `src/ui/` for the element. Reuse it, add a prop, or add an entry (Part 3, 3.4). Never build UI in a feature folder.
 3. Mount it through a Slot anchor. Take z-order from `zIndex.ts` and sizes and colours from tokens.
-4. Left strip: no text, every button the same size, a tooltip on each.
+4. Left strip: no words, every hex the same size, a tooltip on each. Do hexes: icon + one word each, at most six.
 5. Panel: choose the pattern from 1.4; hide actions that can't work; Apply for multi-field forms.
 6. Add `data-testid`s. Update e2e specs that pin moved testids and `tests/e2e/featureTriggers.mjs`.
 7. If anything is visible, take stills on a phone held sideways (`?art=machined&fx=new`) and on desktop, then do a hostile check: the subject is visible, not clipped, not under the HUD, and not overlapping another surface.
