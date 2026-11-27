@@ -145,6 +145,7 @@ import { WeaponMountTicker } from './WeaponMountTicker.js';
 import type { LockSubsystem } from './LockSubsystem.js';
 import type { NpcLockSubsystem } from './NpcLockSubsystem.js';
 import { fillRangeShape } from '../../core/combat/fireControlBearing.js';
+import { hasMiningTool } from '../../core/combat/salvageTargeting.js';
 import type { PhysicsWorkerProxy, WorkerCmd } from './PhysicsWorkerProxy.js';
 import { classifyAttacker } from './classifyAttacker.js';
 import { RoomHitStanding, adjustStanding } from './features/hitStanding.js';
@@ -2546,6 +2547,7 @@ export class SectorRoom extends Room<SectorState> {
       logger,
       fleetMsgAllowed: (sid) => this.fleetHooks.fleetMsgAllowed(sid),
       fleet: this.fleet,
+      fleetCanSalvage: (id) => { const s = this.state.ships.get(id); const m = s !== undefined ? getShipKind(s.kind).mounts : undefined; return m !== undefined && hasMiningTool(m); },
       fleetTransit: () => this.transitOrchestrator,
       transitOrchestrator: () => this.transitOrchestrator,
       inputCountThisTick: this.inputCountThisTick,

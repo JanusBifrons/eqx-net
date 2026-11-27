@@ -25,6 +25,7 @@ import {
   SetModeSchema,
   SetStanceSchema,
 } from '../../../shared-types/messages.js';
+import { isSalvageFleetTarget, makeFleetSalvageOrder } from './fleetSalvageOrder.js';
 
 /** The one `stop` order object (the brain only reads it). */
 export const FLEET_STOP_ORDER = { kind: 'stop' } as const;
@@ -42,6 +43,8 @@ export interface FleetMessageHost extends ParsedMessageHost {
   swarmRegistry: Pick<SwarmEntityRegistry, 'getByEntityId'>;
   structureRegistry: Pick<StructureRegistry, 'get'>;
   relationCtx: RelationContext;
+  /** Fleet salvage: does hull `shipId` carry a mining tool (`hasMiningTool`)? */
+  fleetCanSalvage(shipId: string): boolean;
 }
 
 /** The entityId in a wire swarm id (`swarm-<entityId>`, what the client's
@@ -84,6 +87,7 @@ export function isFriendlyFleetTarget(
 export function registerFleetMessages(h: FleetMessageHost): RoomFeature {
   /** Reused `set_mode` parameters (#14; the brain copies the route). */
   const fleetModeScratch: FleetModeData = {};
+  const salvage = makeFleetSalvageOrder(h.fleet, (id) => h.fleetCanSalvage(id));
   h.onMessage('fleet_order', (client: Client, raw: unknown) => {
     if (!h.fleetMsgAllowed(client.sessionId)) return;
     const p = FleetOrderSchema.safeParse(raw);
@@ -101,6 +105,14 @@ export function registerFleetMessages(h: FleetMessageHost): RoomFeature {
     else if (d.kind === 'attack') {
       if (isFriendlyFleetTarget(pid, d.targetId!, h)) return;
       accepted = h.fleet.applyOrder(pid, d.shipIds, { kind: 'attack', targetId: d.targetId! });
+    }
+    // Salvage: only a live wreck piece / scrap; miners take it, the rest guard them.
+    else if (d.kind === 'salvage') {
+      if (!isSalvageFleetTarget(d.targetId!, h.swarmRegistry)) return;
+      const r = salvage(pid, d.shipIds, d.targetId!);
+      if (r.salvagers.length === 0) return;
+      h.fleetTransit()?.fleetCommandIssued(pid, r.guards, true);
+      accepted = r.salvagers;
     }
     else accepted = h.fleet.applyOrder(pid, d.shipIds, FLEET_STOP_ORDER);
     // RTS fleet warp: a new order to a spooling ship takes it out of the warp.

@@ -55,7 +55,7 @@ export type FocusEntityKind = NonNullable<RendererFeedback['selectedPickKind']>;
 export interface FleetOverlayShip {
   id: string;
   squadId: string | null;
-  orderKind: 'move' | 'attack' | 'stop' | null;
+  orderKind: 'move' | 'attack' | 'stop' | 'salvage' | null;
   /** Move destination, game space. */
   destX?: number;
   destY?: number;

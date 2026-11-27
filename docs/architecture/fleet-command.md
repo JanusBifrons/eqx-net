@@ -277,6 +277,7 @@ side, §0). What the owner tells the ship is its fleet ORDERS
   of several ships to one point gives each its own spot in a hex cluster
   `flockSeparation` apart (`FleetCommandSubsystem.spreadMove`), so they never
   pile onto one point and shove (RTS stop drift, 2026-11-14).
+- **Salvage order** (`salvage { targetId }`): only a live wreck piece (kind 4) or scrap (kind 3, never a loot pod) by its `swarm-<n>` id; ships with a mining tool (`hasMiningTool`) take it, the rest of the command escort the first of them; no miner ⇒ nothing (`features/fleetSalvageOrder.ts`; cutting and travel are later slices).
 - **Stance** (`aggressive`, `defensive`, `holdFire`): the brain's attitude
   (`applyHullStance`).
 - **Squad role**: fly as a loose pack on the leader (§0 slice 10).
