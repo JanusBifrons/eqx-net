@@ -185,9 +185,12 @@ const BUILD_COVERED = [
 ] as const;
 
 /** Is `a` carried by the Build hexes in this hex set (pure)? Placing and route
- *  picks carry every tool; the own-structure set carries Power and Details. */
+ *  picks carry every tool but Plan then Build's Build (n), which stays on the
+ *  left strip (the placing hexes are full at `DO_HEX_MAX` with a fence run's
+ *  Gate); the own-structure set carries Power and Details. */
 export function buildHexCovers(set: 'placing' | 'route' | 'build', a: StripAction, buildingShown: boolean): boolean {
   if (a.kind === 'separator') return set !== 'build';
+  if (set === 'placing') return !(a.key === 'build' && a.testId === 'placement-build');
   if (set !== 'build') return true;
   return buildingShown && BUILD_COVERED.some((c) => c.key === a.key && c.testId === a.testId);
 }

@@ -6,16 +6,20 @@
  * edges from the previous click's corner (`core/hex/deckCornerGraph.ts`,
  * searched by the one `GraphSearch`). Inner edges count, not just the rim.
  *
- * Nothing new on the wire: each missing corner is one ordinary
- * `place_structure` at its exact corner (`placeStructureAt`), and the
- * server's `autoConnectStructure` links two posts on one seam
- * (`DECK_LINK_SEAM_FENCE`), so the beams appear by themselves. Cost is the
- * same as placing each post by hand.
+ * Plan then Build: a click PLANS each missing corner (and a gate) as one
+ * ordinary item of the planned list (`placementPlan.ts`, `planStructureAt`),
+ * never sending it; Build sends the run with every other planned building as
+ * one `place_structures`, checked all or nothing by the core
+ * `BatchPlacementChecker` on both sides. A planned post counts as a post for
+ * the next click's path, and every planned building counts as placed for the
+ * run's verdict (the batch check's rule, `PlacementGhostVerdict.addFootprint`).
+ * Once placed, the server's `autoConnectStructure` links two posts on one
+ * seam (`DECK_LINK_SEAM_FENCE`), so the beams appear by themselves. Cost is
+ * the same as placing each post by hand.
  *
  * A corner the ghost's own rule (`PlacementGhostVerdict`, the server's
- * `placementRejection`; rocks are not on this list) would refuse ends the run
- * there: that corner is still sent, so the server's refusal notice
- * (`lastRefusal`) says why, and nothing past it is. No rollback. The run
+ * `placementRejection`, plus the plan) would refuse ends the run there: it
+ * is not planned, nor anything past it (the hover shows it red). The run
  * ends on Cancel (right-click, ✕) or on picking another kind: any change of
  * `placementKind` resets it.
  *
@@ -39,7 +43,8 @@ import { useUIStore } from '../state/store.js';
 import { placementChosen, setPlacementHeld } from './placementChosen.js';
 import { PlacementGhostVerdict, type GhostPose } from './placementGhostVerdict.js';
 import { asteroidObstaclesFromSwarm, RockObstacleShapes } from './mirrorToGridNode.js';
-import { placeStructureAt } from './structurePlacementClient.js';
+import { holdOnPlanned, planStructureAt } from './structurePlacementClient.js';
+import { plannedPlacements } from './placementPlan.js';
 
 type MirrorPreview = NonNullable<RenderMirror['pendingPlacementPreview']>;
 
@@ -224,14 +229,14 @@ const gatePose: GhostPose = { kind: DECK_FENCE_GATE_KIND, x: 0, y: 0, angle: 0 }
 const plateList = new OwnerPlateList();
 const deckCtx: PlacementDeck = { plates: plateList, owner: '' };
 const NO_PLATES: number[] = [];
-const NO_CORNERS: number[] = [];
 
 const near = (ax: number, ay: number, bx: number, by: number): boolean =>
   Math.abs(ax - bx) <= DECK_CORNER_TOLERANCE && Math.abs(ay - by) <= DECK_CORNER_TOLERANCE;
 
 /** The live world (module scope, no per-call closures): posts from the
- *  render mirror and the run's sent ones (`preview.run`, never the hover's
- *  `runHover`), and the ghost verdict with `obstacles` (rocks). */
+ *  render mirror, the run's sent ones (`preview.run`, never the hover's
+ *  `runHover`) and the PLANNED ones (`placementPlan.ts`), and the ghost
+ *  verdict with `obstacles` (rocks) and the planned buildings as placed. */
 const liveWorld = {
   mirror: null as RenderMirror | null,
   preview: null as MirrorPreview | null,
@@ -247,6 +252,11 @@ const liveWorld = {
     }
     const run = liveWorld.preview?.run;
     if (run) for (let n = 0; n + 1 < run.length; n += 2) if (near(run[n]!, run[n + 1]!, x, y)) return true;
+    const plan = plannedPlacements();
+    for (let i = 0; i < plan.length; i++) {
+      const p = plan[i]!;
+      if (p.kind === DECK_FENCE_POST_KIND && near(p.x, p.y, x, y)) return true;
+    }
     return false;
   },
   rejection(x: number, y: number): PlacementRejection | null {
@@ -274,7 +284,7 @@ export function fenceRunRocks(mirror: RenderMirror): readonly GridObstacle[] | n
   return mirror.swarm ? asteroidObstaclesFromSwarm(mirror.swarm, runRocks, runRockShapes) : null;
 }
 
-/** Point the live world at `mirror` and `preview` (default: the mirror's; its deck and sent run) and `obstacles`
+/** Point the live world at `mirror` and `preview` (default: the mirror's; its deck and sent run), the planned list and `obstacles`
  *  (rocks, {@link fenceRunRocks}; null = none). Allocation-free;
  *  the returned world is shared module state. */
 export function mirrorFenceWorld(
@@ -287,24 +297,37 @@ export function mirrorFenceWorld(
   deckCtx.owner = pv?.deckOwner ?? '';
   liveWorld.mirror = mirror;
   liveWorld.obstacles = obstacles;
+  // Plan then Build: every planned building counts as placed for the run's
+  // verdict, as the core batch check judges a later item (pooled, #14).
+  verdict.clearAdded();
+  const plan = plannedPlacements();
+  for (let i = 0; i < plan.length; i++) {
+    const p = plan[i]!;
+    verdict.addFootprint(p.kind, p.x, p.y, p.rot, p.mirror);
+  }
   return liveWorld;
 }
 
-/** Each send goes at the deck snap's exact seam point (the same rounding the
- *  live ghost's chosen point gets), so the pending record matches the ghost
- *  left on that spot and the held state (`isHeldOnSent`) covers it: dim, no
- *  red verdict, no re-send. Raw lattice corners differ in the last bits. */
+/** Each planned post goes at the deck snap's exact seam point (the same
+ *  rounding the live ghost's chosen point gets), so the planned item matches
+ *  the ghost left on that spot and the plan hold (`isHeldOnPlanned`) covers
+ *  it: dim, no red verdict, no second Place. Raw lattice corners differ in the
+ *  last bits. */
 const SEND_SNAP: DeckSnap = { x: 0, y: 0, q: 0, r: 0, rhombus: -1, rot: -1, slot: 'hex' };
 
 /**
  * Place for a fence run at the chosen point (`commitPlacement` routes a deck
- * room's fence post here). Returns whether anything was sent; with no chosen
- * point yet it returns null (the caller's plain place path runs).
+ * room's fence post and gate here): PLANS the run's missing posts in path
+ * order, then the gate last (the server cuts the seam's post-post link as it
+ * lands); a refused corner (the plan's last send when `refused`) and
+ * anything past it are not planned. Sends nothing (Build does). Returns
+ * whether anything was planned; with no chosen point yet it returns null (the
+ * caller's plain place path runs).
  */
 export function commitFenceRun(kind: StructureKindId): boolean | null {
   const cx = placementChosen.worldX, cy = placementChosen.worldY;
   if (cx === null || cy === null) return null;
-  if (placementChosen.held) return false; // still on the post just sent
+  if (placementChosen.held) return false; // still on the post just planned
   const client = getGameClient();
   if (!client) return false;
   watchKind();
@@ -313,20 +336,24 @@ export function commitFenceRun(kind: StructureKindId): boolean | null {
   const plan = kind === DECK_FENCE_GATE_KIND
     ? planGateRunInto(newFenceRunPlan(), anchor, cx, cy, plates, world)
     : planFenceRun(anchor, cx, cy, plates, world);
-  let sent = false;
-  for (let n = 0; n + 1 < plan.sends.length; n += 2) {
-    // The first send carries the run's corners for the pending ghost.
+  // The refused corner is the last send: never planned (the ghost shows it red).
+  const posts = plan.refused ? plan.sends.length - 2 : plan.sends.length;
+  let planned = false, full = false, lastX = 0, lastY = 0;
+  for (let n = 0; n + 1 < posts; n += 2) {
     const at = snapPlacementToDeck(DECK_FENCE_POST_KIND, plan.sends[n]!, plan.sends[n + 1]!, SEND_SNAP);
-    if (placeStructureAt(DECK_FENCE_POST_KIND, at.x, at.y, n === 0 ? plan.drawn : NO_CORNERS)) sent = true;
+    if (!planStructureAt(DECK_FENCE_POST_KIND, at.x, at.y)) { full = true; break; } // the plan is full
+    planned = true; lastX = plan.sends[n]!; lastY = plan.sends[n + 1]!;
   }
-  // The gate last (the server cuts the seam's post-post link as it lands).
-  if (plan.gate) {
+  if (plan.gate && !full) {
     const g = snapPlacementToDeck(DECK_FENCE_GATE_KIND, plan.gateX, plan.gateY, SEND_SNAP);
-    if (placeStructureAt(DECK_FENCE_GATE_KIND, g.x, g.y, sent ? NO_CORNERS : plan.drawn)) sent = true;
+    if (planStructureAt(DECK_FENCE_GATE_KIND, g.x, g.y)) planned = true; else full = true;
   }
-  anchor.active = plan.anchorOk;
-  anchor.x = plan.anchorX;
-  anchor.y = plan.anchorY;
-  if (sent) setPlacementHeld(true);
-  return sent;
+  if (!full) {
+    anchor.active = plan.anchorOk; anchor.x = plan.anchorX; anchor.y = plan.anchorY;
+  } else if (planned) {
+    // The plan filled up mid-run: the run goes on from the last planned post.
+    anchor.active = true; anchor.x = lastX; anchor.y = lastY;
+  }
+  if (planned) { holdOnPlanned(kind, cx, cy); setPlacementHeld(true); }
+  return planned;
 }

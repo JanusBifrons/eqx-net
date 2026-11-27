@@ -6,10 +6,11 @@ import { placementChosen, resetPlacementChosen } from './placementChosen.js';
 import { endFenceRun, fenceRunAnchor, planFenceRun, type FenceRunWorld } from './fenceRun.js';
 import { cancelPlacement, commitPlacement } from './placementCancel.js';
 import { pendingAfterSend } from './pendingPlacementRun.js';
-import { clearPlacementPlan, getPlacementPlanCount } from './placementPlan.js';
+import { clearPlacementPlan, getPlacementPlanCount, plannedPlacements } from './placementPlan.js';
 import { resolvePlacementPreviewStatus, type PlacementPreview } from './structurePlacementClient.js';
 
-// The game client: place_structure sends are observable; the mirror holds the
+// The game client: sends are observable (a fence run sends none: it plans);
+// the mirror holds the
 // local deck (plate (0, 0)) and any posts a test puts on it.
 const send = vi.fn();
 const notePendingPlacement = vi.fn();
@@ -28,8 +29,9 @@ function corner(k: number): HexPoint {
   return hexCornerInto(0, 0, DECK_HEX_SIZE, k, { x: 0, y: 0 });
 }
 
-function sentPoints(): Array<[number, number]> {
-  return send.mock.calls.map((c) => [c[1].x as number, c[1].y as number]);
+/** The planned posts (Plan then Build: a fence run plans, Build sends). */
+function plannedPoints(): Array<[number, number]> {
+  return plannedPlacements().filter((p) => p.kind === 'shield_pylon').map((p) => [p.x, p.y]);
 }
 
 function addPost(id: number, p: HexPoint): void {
@@ -73,7 +75,7 @@ describe('fence run: the plan for one click', () => {
     expect(plan.sends[0]).toBeCloseTo(b.x);
   });
 
-  it('a refused corner is sent (the server says why) and ends the run there', () => {
+  it('a refused corner is the last send (never planned: commitFenceRun drops it) and ends the run there', () => {
     const a = corner(0), m = corner(1), b = corner(2);
     const world: FenceRunWorld = { hasPost: () => false, rejection: (x, y) => (Math.hypot(x - m.x, y - m.y) < 1 ? 'overlap-obstacle' : null) };
     const plan = planFenceRun({ active: true, x: a.x, y: a.y }, b.x, b.y, [0, 0], world);
@@ -83,8 +85,9 @@ describe('fence run: the plan for one click', () => {
   });
 });
 
-describe('fence run: Place on a deck sends one place_structure per missing corner', () => {
+describe('fence run: Place on a deck plans one post per missing corner', () => {
   beforeEach(() => {
+    clearPlacementPlan();
     send.mockClear();
     notePendingPlacement.mockClear();
     structures.clear();
@@ -98,32 +101,24 @@ describe('fence run: Place on a deck sends one place_structure per missing corne
     click(corner(0));
     click(corner(2));
     click(corner(4));
-    const pts = sentPoints();
+    const pts = plannedPoints();
     expect(pts.length).toBe(5); // 0, 1, 2, 3, 4
     for (let k = 0; k < 5; k++) {
       expect(pts[k]![0]).toBeCloseTo(corner(k).x, 6);
       expect(pts[k]![1]).toBeCloseTo(corner(k).y, 6);
     }
-    expect(send.mock.calls[0]![1]).toMatchObject({ type: 'place_structure', kind: 'shield_pylon' });
+    expect(send).not.toHaveBeenCalled();
   });
 
   it('reuses existing posts (an existing post starts the run; 3 clicks = 2 edges)', () => {
     addPost(1, corner(0));
     addPost(2, corner(1));
-    click(corner(0)); // existing: nothing sent, run starts here
-    expect(send).not.toHaveBeenCalled();
+    click(corner(0)); // existing: nothing planned, run starts here
+    expect(getPlacementPlanCount()).toBe(0);
     expect(fenceRunAnchor().active).toBe(true);
     click(corner(2)); // 1 already has a post
-    expect(sentPoints().length).toBe(1);
-    expect(sentPoints()[0]![0]).toBeCloseTo(corner(2).x);
-  });
-
-  it('the first send of a click carries the run corners for the pending ghost', () => {
-    click(corner(0));
-    click(corner(2));
-    const runs = notePendingPlacement.mock.calls.map((c) => c[5] as number[]);
-    expect(runs[1]!.length).toBe(6); // corners 0, 1, 2 on the click's first send
-    expect(runs[2]!.length).toBe(0); // the click's second send adds none
+    expect(plannedPoints().length).toBe(1);
+    expect(plannedPoints()[0]![0]).toBeCloseTo(corner(2).x);
   });
 
   it('Cancel or another pick ends the run', () => {
@@ -132,7 +127,7 @@ describe('fence run: Place on a deck sends one place_structure per missing corne
     useUIStore.setState({ placementKind: 'solar' });
     expect(fenceRunAnchor().active).toBe(false);
     useUIStore.setState({ placementKind: 'shield_pylon' });
-    click(corner(0));
+    click(corner(3));
     expect(fenceRunAnchor().active).toBe(true);
     cancelPlacement();
     expect(fenceRunAnchor().active).toBe(false);
@@ -143,7 +138,7 @@ describe('fence run: Place on a deck sends one place_structure per missing corne
     clearPlacementPlan();
     click(corner(0));
     click(corner(2));
-    expect(sentPoints().length).toBe(0);
+    expect(send).not.toHaveBeenCalled();
     expect(getPlacementPlanCount()).toBe(2);
     clearPlacementPlan();
     expect(fenceRunAnchor().active).toBe(false);

@@ -86,7 +86,21 @@ from `gameRafLoop`) the plan stays and Build may be pressed again; a late reply 
 the old Build is then ignored. ✕ (`cancelPlacement`),
 leaving build mode and a sector change drop the plan. The crate cap
 (`placementEndsAfterPlace`) counts planned buildings of the kind. A deck fence
-run (`commitFenceRun`) still sends at once.
+run (`commitFenceRun`, `fenceRun.ts`) plans too: each click adds its missing
+posts in path order, then a gate last, as ordinary planned items
+(`planStructureAt`, deck-snapped), and Build sends them with everything else in
+the one batch. The run reads the plan as built: a planned post is a post
+(`hasPost`, so the next click's path does not plan it twice) and every planned
+building is a placed footprint for the run's verdict
+(`PlacementGhostVerdict.addFootprint`, the batch's later-item rule), so a corner a
+planned building blocks stops the run there and is not planned (nor anything past
+it). Build's `batchPlacementRejections` still judges the whole plan, run posts
+included, so a clash the run could not see (a building planned onto a post
+afterwards) is refused red, not sent. Right after a run click the ghost is held on
+the spot it planned (`holdOnPlanned`). The fence hover (`fenceRunHover.ts`)
+re-plans when the planned count changes. While placing, the do-hexes carry every
+placing tool but Build (n), which stays on the left strip (`buildHexCovers`): with
+a fence run's Gate the placing hexes are already at `DO_HEX_MAX`.
 
 Planned ghosts: the plan reaches the (possibly worker) renderer on
 `RenderMirror.pendingPlacementPreview.plan`, flat stride 5 (x, y, rot degrees,
@@ -94,7 +108,9 @@ structure kind index, flags 1 mirror | 2 refused; `writePreviewPlan`, written wi
 `run` in `resolvePlacementPreviewStatus`). `PendingRunGhosts` draws each as the
 placement ghost of its kind, dim and still in `GHOST_PLANNED_COLOR` (red when
 refused), from its own pool of `PLACE_STRUCTURES_MAX` so it never takes the fence
-run's `RUN_GHOST_CAP` slots. `addPlanFootprints` feeds the same plan to the live
+run's `RUN_GHOST_CAP` slots. A fence run's planned posts and gate draw here like
+any planned building (no beams between them until they land: the server links
+them); the hover run still draws its faint beams, to planned posts too. `addPlanFootprints` feeds the same plan to the live
 ghost's `PlacementGhostVerdict.addFootprint`: after the world check, the ghost is
 judged against the planned buildings the way the batch checks a later item
 (overlap and pad only), so it reads red on a planned building with the batch's

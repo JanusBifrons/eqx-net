@@ -119,8 +119,10 @@ describe('placing tools as do-hexes', () => {
     mount();
     expect(screen.queryByTestId('placement-build')).toBeNull();
     act(() => { addPlannedPlacement('solar', 0, 0, 0, false, false); addPlannedPlacement('solar', 5000, 0, 0, false, false); });
+    // The placing tools are do-hexes; Build (n) stays on the left strip.
+    expect(hexIds()).toEqual(['placement-confirm', 'placement-rotate', 'placement-kind', 'placement-mirror', 'placement-cancel']);
     const ids = Array.from(screen.getByTestId('left-strip').querySelectorAll('button')).map((b) => b.dataset.testid);
-    expect(ids).toEqual(['placement-kind', 'placement-confirm', 'placement-rotate', 'placement-mirror', 'placement-build', 'placement-cancel']);
+    expect(ids).toEqual(['placement-build']);
     expect(tool('placement-build').getAttribute('aria-label')).toBe('Build (2)');
     expect(tool('placement-build').dataset.state).toBe('2');
     fireEvent.click(tool('placement-cancel'));
@@ -248,8 +250,7 @@ describe('placing tools as do-hexes', () => {
   it('a road has no Rotate or Mirror: it lines itself up', () => {
     act(() => { useUIStore.setState({ placementKind: 'road', deck: true }); });
     mount();
-    const ids = Array.from(screen.getByTestId('left-strip').querySelectorAll('button')).map((b) => b.dataset.testid);
-    expect(ids).toEqual(['placement-kind', 'placement-confirm', 'placement-cancel']);
+    expect(hexIds()).toEqual(['placement-confirm', 'placement-kind', 'placement-cancel']);
   });
 
   it('no Gate off a deck room or for other kinds', () => {

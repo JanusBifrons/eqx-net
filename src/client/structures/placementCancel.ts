@@ -68,11 +68,11 @@ export function cancelPlacement(): void {
  * the desktop click (gameRafLoop). It PLANS the building (Build sends the
  * plan). Placement stays open for the next one, except a place-once kind or
  * the last crate (`placementEndsAfterPlace`, counting the planned ones). A
- * refused commit (blocked ghost) keeps placement open. A fence post on a deck
- * room still places at once as a fence run (`fenceRun.ts`). A Place ON a
- * planned building (`planTapHitIndex`) removes that one from the plan
- * instead, unless the ghost is still held on the spot just planned. Returns whether a placement was planned (or, for a fence run,
- * sent), or a planned one removed.
+ * refused commit (blocked ghost) keeps placement open. A fence post or gate
+ * on a deck room plans its whole run (`fenceRun.ts`: the missing posts, then
+ * the gate). A Place ON a planned building (`planTapHitIndex`) removes that
+ * one from the plan instead, unless the ghost is still held on the spot just
+ * planned. Returns whether anything was planned, or a planned one removed.
  */
 export function commitPlacement(kindId: StructureKindId): boolean {
   if (flight.active) return false; // the plan is on its way: it is not edited

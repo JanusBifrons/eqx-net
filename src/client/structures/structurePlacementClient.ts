@@ -325,8 +325,9 @@ export function isHeldOnPlanned(kind: StructureKindId, chosenX: number | null, c
   return false;
 }
 
-/** Hold the live ghost on the spot just planned (`commitChosenPlacement`). */
-function holdOnPlanned(kind: StructureKindId, x: number, y: number): void {
+/** Hold the live ghost on the spot just planned (`commitChosenPlacement`;
+ *  a fence run's `commitFenceRun`, on its last planned post or gate). */
+export function holdOnPlanned(kind: StructureKindId, x: number, y: number): void {
   planHold.kind = kind; planHold.x = x; planHold.y = y;
   planHold.rot = placementRotationFor(kind); planHold.mirror = placementMirror;
   planHold.active = true;
@@ -388,26 +389,6 @@ export function sendPlaceStructures(items: readonly PlannedPlacement[], batchId:
   placeStructuresMsg.batchId = batchId;
   placeStructuresMsg.items = items;
   room.send('place_structures', placeStructuresMsg);
-  return true;
-}
-
-/**
- * Place a structure of `kindId` at an EXPLICIT world position at once (the
- * fence run, `fenceRun.ts`; every other Place plans instead). Returns true if
- * the message was sent (false when there's no live room yet). `run`: this
- * place is part of a run, with the corners to add to its pending ghost
- * (`pendingAfterSend`).
- */
-export function placeStructureAt(kindId: StructureKindId, x: number, y: number, run: readonly number[] | null = null): boolean {
-  const client = getGameClient();
-  if (!client) return false;
-  const room = client.getRoom();
-  if (!room) return false;
-  const rot = placementRotationFor(kindId);
-  room.send('place_structure', { type: 'place_structure', kind: kindId, x, y, rot, mirror: placementMirror });
-  // Keep a dim ghost at the sent point until the structure lands, so the
-  // blueprint doesn't vanish for ~1 s (playtest 2026-06-10 Issue 7).
-  client.notePendingPlacement(kindId, x, y, rot, placementMirror, run);
   return true;
 }
 

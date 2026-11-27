@@ -6,6 +6,7 @@ import { placementChosen, resetPlacementChosen } from './placementChosen.js';
 import { endFenceRun, newFenceRunPlan, planFenceRun, planFenceRunInto, type FenceRunWorld } from './fenceRun.js';
 import { resetFenceRunHover, writePreviewHoverRun } from './fenceRunHover.js';
 import { commitPlacement } from './placementCancel.js';
+import { addPlannedPlacement, clearPlacementPlan, getPlacementPlanCount } from './placementPlan.js';
 import type { PlacementPreview } from './structurePlacementClient.js';
 
 // The game client: sends are observable; the mirror's preview IS the hover's
@@ -67,7 +68,7 @@ describe('the fence run hover preview', () => {
     structures.clear(); swarm.clear();
     preview.run = []; preview.runHover = undefined; preview.runHoverMark = undefined; preview.held = false;
     preview.deckPlates = [0, 0];
-    resetPlacementChosen(); resetFenceRunHover();
+    resetPlacementChosen(); resetFenceRunHover(); clearPlacementPlan();
     useUIStore.setState({ deck: true, placementKind: 'shield_pylon', packedStock: null });
     endFenceRun();
   });
@@ -87,12 +88,19 @@ describe('the fence run hover preview', () => {
     expect(preview.run).toEqual([]);
   });
 
-  it('a click after hovering still sends every missing corner', () => {
+  it('a click after hovering still plans every missing corner', () => {
     click(corner(0));
-    send.mockClear();
     hover(corner(3));
     click(corner(3));
-    expect(send.mock.calls.length).toBe(3); // corners 1, 2, 3
+    expect(getPlacementPlanCount()).toBe(4); // corner 0, then 1, 2, 3
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it('a planned post is a post: the hover beams to it and does not place it again', () => {
+    click(corner(0));
+    click(corner(2)); // plans 0, 1, 2
+    expect(hover(corner(3))).toBe(true);
+    expect(preview.runHoverMark).toEqual([0, 1]);
   });
 
   it('recomputes only when its key changes', () => {
@@ -109,6 +117,8 @@ describe('the fence run hover preview', () => {
     expect(preview.runHoverMark).toEqual([0, 0, 1]);
     preview.deckPlates = [0, 0, 1, 0];
     expect(hover(corner(2))).toBe(true); // plates changed
+    addPlannedPlacement('connector', 9999, 9999, 0, false, false);
+    expect(hover(corner(2))).toBe(true); // the plan changed
   });
 
   it('clears when the ghost is not the live one', () => {

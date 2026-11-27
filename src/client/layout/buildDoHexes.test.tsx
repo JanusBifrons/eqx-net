@@ -103,6 +103,8 @@ describe('buildHexCovers', () => {
     expect(buildHexCovers('placing', b('place', 'placement-confirm'), false)).toBe(true);
     expect(buildHexCovers('route', b('route-cancel', 'left-strip-route-cancel'), false)).toBe(true);
     expect(buildHexCovers('placing', sep, false)).toBe(true);
+    // Plan then Build: Build (n) stays on the left strip while placing.
+    expect(buildHexCovers('placing', b('build', 'placement-build'), false)).toBe(false);
   });
   it('the own-structure set carries Power and Details only, and only while it shows', () => {
     expect(buildHexCovers('build', power('on'), true)).toBe(true);
