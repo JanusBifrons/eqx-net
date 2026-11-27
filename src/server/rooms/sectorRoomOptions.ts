@@ -313,4 +313,12 @@ export interface SectorRoomOptions {
    *  active ship in the room, so a wave E2E draws its wave after it joins,
    *  however long the server ran before (waves otherwise ignore presence). */
   waveNeedsOwner?: boolean;
+  /** Sandbox (docs/features/sandbox.md): a SEALED room. Nothing in it reaches
+   *  the real game: its roster rows are its own (`isSealedSectorKey`), no warp,
+   *  teleport or credit payout leaves it, and it is never saved. NOT testMode:
+   *  the test-only join options and `test_*` messages stay off. */
+  sealed?: boolean;
+  /** Sandbox: every player build and upgrade is free (normal build time, no
+   *  crate, no minerals), and a free structure repacks into nothing. */
+  freeBuilds?: boolean;
 }
