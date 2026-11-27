@@ -28,7 +28,8 @@
  *   passes pointer events through and only the (hex-clipped) button takes them;
  *   a tap on a neighbour's corner never lands on a dead box.
  */
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import { getPlacementPlanCount, subscribePlacementPlan } from '../structures/placementPlan.js';
 import { EqxIconButton, HEX_CLIP } from '../../ui/index.js';
 import { HUD } from '../hud/tokens.js';
 import { HoldButton } from '../hud/widgets.js';
@@ -79,14 +80,16 @@ interface Props {
  *  on touch, none when flying on desktop; the Build set in Build (empty
  *  without your own structure selected); the target set with own ships and a
  *  tapped target that is not mine; else the fleet set (empty without own
- *  ships in Command). The left strip reads it too, so an action shows in
- *  exactly one place (`LeftStripHost`). */
+ *  ships in Command). Placing also covers a place-once kind that ended with
+ *  buildings still planned (`planned` > 0: Build and Cancel). The left strip
+ *  reads it too, so an action shows in exactly one place (`LeftStripHost`). */
 export type DoHexSet = 'fly' | 'fleet' | 'target' | 'placing' | 'route' | 'build' | null;
 export function doHexSet(
   s: Pick<UIStore, 'pilotMode' | 'isDead' | 'buildMode'> & Partial<Pick<UIStore, 'placementKind' | 'fleetPick' | 'selection'>>,
   touch: boolean,
+  planned = 0,
 ): DoHexSet {
-  if (s.placementKind != null) return 'placing';
+  if (s.placementKind != null || (planned > 0 && s.buildMode)) return 'placing';
   if (s.fleetPick != null && s.fleetPick.kind !== 'move') return 'route';
   const flying = s.pilotMode !== 'spectator' && !s.isDead && !s.buildMode;
   if (flying) return touch ? 'fly' : null;
@@ -97,7 +100,8 @@ export function doHexSet(
 
 /** {@link doHexSet} for the live store. */
 export function useDoHexSet(touch: boolean): DoHexSet {
-  return useUIStore((s) => doHexSet(s, touch));
+  const planned = useSyncExternalStore(subscribePlacementPlan, getPlacementPlanCount);
+  return useUIStore((s) => doHexSet(s, touch, planned));
 }
 
 export function DoHexesHost({ touchInput = null, rendererRef = NO_RENDERER }: Props): JSX.Element | null {
@@ -243,6 +247,10 @@ function FlyHexes({ touchInput }: { touchInput: Pick<TouchInput, 'setBoostHeld'>
 function DoHexGrid({ hexes, label, set }: { hexes: readonly DoHex[]; label: string; set: string }): JSX.Element | null {
   if (hexes.length === 0) return null;
   const layout = doHexLayout(hexes);
+  // A badged hex paints last, so its corner badge draws over the neighbouring hex.
+  const cells = layout.cells.some((c) => c.hex.badge)
+    ? [...layout.cells.filter((c) => !c.hex.badge), ...layout.cells.filter((c) => c.hex.badge)]
+    : layout.cells;
   return (
     <Slot anchor="bottom-right" order={0}>
       <style>{CELL_CSS}</style>
@@ -253,7 +261,7 @@ function DoHexGrid({ hexes, label, set }: { hexes: readonly DoHex[]; label: stri
         data-set={set}
         style={{ position: 'relative', width: layout.width, height: layout.height }}
       >
-        {layout.cells.map(({ hex, cell, right, bottom }) => (
+        {cells.map(({ hex, cell, right, bottom }) => (
           <div
             key={hex.key}
             className={CELL_CLASS}
@@ -281,6 +289,7 @@ function HexButton({ hex, testId = hex.testId }: { hex: DoHex; testId?: string }
       disabled={hex.disabled === true}
       onClick={hex.onPress}
       data-testid={testId}
+      {...(hex.badge !== undefined ? { badge: hex.badge } : {})}
       {...(hex.state !== undefined ? { 'data-state': hex.state } : {})}
     />
   );

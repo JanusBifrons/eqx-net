@@ -11,14 +11,15 @@
  *   the left when active, badge as a small pill on the tile corner.
  * - `variant="hex"`: the selection-HUD pointy-top hexagon `HUD.hex`; the tone colours the
  *   edge and icon only (body stays dark panel); optional short `word` under the icon; `lit` =
- *   stronger edge + glow, `dim` = faded. No badge. Look in `hexTile.ts`.
+ *   stronger edge + glow, `dim` = faded; `badge` = the gold count pill on the top-right corner
+ *   (outside the hex clip). Look in `hexTile.ts`.
  */
 import { Badge, Box, IconButton } from '@mui/material';
 import type { ReactNode } from 'react';
 import { HUD } from '../../client/hud/tokens.js';
 import { TONE_COLOR, type EqxTone } from '../EqxButton/EqxButton.js';
 import { EqxTooltip } from '../EqxTooltip/EqxTooltip.js';
-import { hexGlowSx, hexTileSx, hexWordSx } from './hexTile.js';
+import { hexBadgeSx, hexGlowSx, hexTileSx, hexWordSx } from './hexTile.js';
 import { STRIP_BADGE_ROOT, stripBadgeSx, stripTileSx } from './stripTile.js';
 
 /** Strip status tile: `calm` = cyan icon, `alert` = red icon (aggressive stance). */
@@ -106,6 +107,11 @@ export function EqxIconButton({
               </Box>
             ) : null}
           </IconButton>
+          {badge ? (
+            <Box component="span" data-testid={testId ? `${testId}-badge` : undefined} sx={hexBadgeSx}>
+              {badge}
+            </Box>
+          ) : null}
         </Box>
       </EqxTooltip>
     );

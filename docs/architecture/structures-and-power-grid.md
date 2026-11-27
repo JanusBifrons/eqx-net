@@ -53,6 +53,89 @@ handlers resolve the owner (`sessionToPlayer`) and delegate to
 (decision logic over injected hooks — spawn / health-seed / despawn / clamp / id —
 so it unit-tests like `TransitOrchestrator`):
 
+**Plan then Build (`place_structures`).** One message carries up to
+`PLACE_STRUCTURES_MAX` (32) `place_structure` items, ALL OR NOTHING: `checkBatch`
+runs every item through the same checks as one placement (`validate`), each also
+against the batch's earlier items (overlap, and a kind's own rule: a second
+Territory Lock in one batch is refused `kind-rule`) and with packed crates summed
+across the batch; a batch bigger than the room's free entity slots is refused
+`no-room` (`freeSpawnSlots`) before anything lands
+(shared core `BatchPlacementChecker`, `core/structures/batchPlacement.ts`, which
+the client can run on its planned list); a plate a batch connector lays counts as
+deck for the other items. One refusal places none and replies
+`place_structures_refused { batchId, refused: [{ index, code }] }` (`PlaceRefusalCode`:
+the `PlacementRejection` names plus `not-buildable`, `kind-rule`, `no-crate`,
+`no-room`);
+success commits plate-laying connectors first, then the rest, sends what a
+single placement does (the slice refresh) and replies
+`place_structures_placed { batchId }`. The client numbers each Build (`batchId`,
+0..`PLACE_STRUCTURES_BATCH_ID_MAX`, wrapping); both replies echo it.
+
+Client side: in build mode every Place (✓, the desktop click: `commitPlacement` →
+`commitChosenPlacement`) ADDS the building to the planned list
+(`client/structures/placementPlan.ts`: flat, pre-allocated, the pose snapped as
+the server snaps it) instead of sending it. The Build hex (`placement-build`,
+word "Build", the planned count as its badge, only while the list is non-empty) runs `buildPlacementPlan`
+(`placementCancel.ts`): the shared `batchPlacementRejections` against the mirror's
+structures, rocks and deck marks clashing items refused without a round trip; a
+clean plan goes as one `place_structures` (`sendPlaceStructures`) with the next
+`batchId`. Only a reply with the in-flight `batchId` counts: `place_structures_refused`
+keeps the plan and flags the refused indices (the in-flight batch and its landing live in the leaf `placementPlanFlight.ts`, which the room handlers import so they never pull in the renderer graph; `tests/unit/roomHandlersBootGraph.test.ts` fails if a handler reaches `structureStyleC*`); after `place_structures_placed` the
+plan stays drawn and locked until the buildings are in the mirror and drawn (the
+sent-Place rule `pendingPlacementResolved`: count over the send-time baseline, all in
+the swarm, or the timeout; `stepLanding`), so nothing blinks out before the
+snapshot, then it clears. Build also keeps the ghost held on the last planned spot
+(`holdPlanSent`) until it moves, so it never reads red on its own new building.
+After `PENDING_PLACEMENT_TIMEOUT_MS` with no reply (`stepPlacementPlan`, per frame
+from `gameRafLoop`) the plan stays and Build may be pressed again; a late reply to
+the old Build is then ignored. ✕ (`cancelPlacement`),
+leaving build mode and a sector change drop the plan. The crate cap
+(`placementEndsAfterPlace`) counts planned buildings of the kind. A deck fence
+run (`commitFenceRun`, `fenceRun.ts`) plans too: each click adds its missing
+posts in path order, then a gate last, as ordinary planned items
+(`planStructureAt`, deck-snapped), and Build sends them with everything else in
+the one batch. The run reads the plan as built: a planned post is a post
+(`hasPost`, so the next click's path does not plan it twice) and every planned
+building is a placed footprint for the run's verdict
+(`PlacementGhostVerdict.addFootprint`, the batch's later-item rule), so a corner a
+planned building blocks stops the run there and is not planned (nor anything past
+it). Build's `batchPlacementRejections` still judges the whole plan, run posts
+included, so a clash the run could not see (a building planned onto a post
+afterwards) is refused red, not sent. Right after a run click the ghost is held on
+the spot it planned (`holdOnPlanned`). The fence hover (`fenceRunHover.ts`)
+re-plans when the planned count changes. While placing, the do-hexes carry every
+placing tool, Build included, and the left strip is empty (`buildHexCovers`; owner
+2026-11-27). Hexes per kind: a building Place, Rotate, the building, Mirror, Build,
+Cancel; a road Place, the building, Build, Cancel; a deck fence post or gate Place,
+the building, Gate, Build, Cancel (no Rotate / Mirror: the run snaps to corners and
+seams); a place-once kind that ended with a plan Build, Cancel. Over `DO_HEX_MAX`,
+Mirror, then Rotate, then the building give way; never Place, Build or Cancel.
+
+Planned ghosts: the plan reaches the (possibly worker) renderer on
+`RenderMirror.pendingPlacementPreview.plan`, flat stride 5 (x, y, rot degrees,
+structure kind index, flags 1 mirror | 2 refused; `writePreviewPlan`, written with
+`run` in `resolvePlacementPreviewStatus`). `PendingRunGhosts` draws each as the
+placement ghost of its kind, dim and still in `GHOST_PLANNED_COLOR` (0x8899ff, a
+soft blue apart from the live cyan; owner-approved 2026-11-27) (red when
+refused), from its own pool of `PLACE_STRUCTURES_MAX` so it never takes the fence
+run's `RUN_GHOST_CAP` slots. A fence run's planned posts and gate draw here like
+any planned building (no beams between them until they land: the server links
+them); the hover run still draws its faint beams, to planned posts too. `addPlanFootprints` feeds the same plan to the live
+ghost's `PlacementGhostVerdict.addFootprint`: after the world check, the ghost is
+judged against the planned buildings the way the batch checks a later item
+(overlap and pad only), so it reads red on a planned building with the batch's
+reason. On a deck room a planned plate-laying connector makes its plate deck for
+the live ghost too: `addPlanFootprints` begins the core `BatchPlacementChecker`
+on the plan and judges the ghost against its `deckWithBatch()` (the batch's own
+plate rule, not a re-derivation). Right after a Place the ghost is HELD on the
+spot just planned, the same hold as after a send (`isHeldOnPlanned` beside
+`isHeldOnSent`: dim, no verdict, Place refused), so it never reads red on its
+own new building and a double-click does nothing. The hold ends for good once the
+ghost leaves the spot (or the plan is sent or cleared). A Place ON a planned
+building it is not held on (`planTapHitIndex`, its footprint box) removes that
+one from the plan instead of adding; the ✓ stays enabled there
+(`placementChosen.onPlanned`) though the ghost reads red.
+
 - Validate kind, clamp to `SECTOR_PLAYABLE_HALF_EXTENT`, reject footprint overlap
   with a structure or an asteroid (`placementRejection`, obstacles from the
   `getObstacles(near)` hook; in a cut field `near` adds the rocks with no body,

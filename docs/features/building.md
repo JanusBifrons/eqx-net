@@ -46,6 +46,15 @@ Build mode on its own opens nothing. It is the one place you pick a building:
   or right-click on desktop) ends it, and the sidebar comes back on the same
   category, ready for the next pick. A one-off building (the Capital, a
   territory lock) or your last packed crate of a building ends it by itself.
+- **Plan, then Build.** Each Place adds the building to your plan as a dim
+  ghost; nothing is built yet. Tap a planned ghost again to take it out. When
+  you are happy, press **Build** (the hex with the count of planned buildings on
+  its corner) and every planned
+  building starts at once, or none do if one of them can't go there (those
+  turn red). Shield fences plan the same way: each tap plans the posts along
+  the run (and a gate, with Gate on), so you can lay out a whole fence and its
+  gates and then build it in one go with the rest. A fence post can't be
+  planned on top of another planned building: the run stops short there.
 - **Desktop keys** while the sidebar is open: **1–9** pick the 1st to 9th tile
   of the open category, **Q / E** step to the previous / next category. While
   it is open these keys don't switch weapon groups.

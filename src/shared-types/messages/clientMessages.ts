@@ -225,19 +225,86 @@ export const ClientReadyMessageSchema = z
  *  world (x, y)". The server validates the kind + clamps the position to
  *  playable sector bounds, then drops a non-operational scaffolding (10 % HP)
  *  that the grid pulse builds up over time (Phase 3). Strict — no extra keys. */
+const PLACE_STRUCTURE_ITEM = {
+  kind: StructureKindIdSchema,
+  x: z.number().finite(),
+  y: z.number().finite(),
+  /** Rotation in degrees; the server snaps it to 30° steps on a deck room,
+   *  quarter turns elsewhere (`snapPlayerStructureRotation`). */
+  rot: z.number().finite().optional(),
+  /** Build mirror — place it left-right flipped (x → −x in its local frame). */
+  mirror: z.boolean().optional(),
+};
 export const PlaceStructureSchema = z
+  .object({ type: z.literal('place_structure'), ...PLACE_STRUCTURE_ITEM })
+  .strict();
+
+/** Most buildings one `place_structures` may carry: a few deck plates of
+ *  planned buildings, and a bound on the per-message work (the batch is
+ *  checked item against item, so 32² box tests at worst). */
+export const PLACE_STRUCTURES_MAX = 32;
+
+/** Highest `batchId` a `place_structures` may carry: the client counts its
+ *  Builds and wraps here; the server echoes the id in its reply so the
+ *  client matches the reply to the Build it sent. */
+export const PLACE_STRUCTURES_BATCH_ID_MAX = 0xffff;
+
+/** Client → server (plan then Build): place EVERY planned building, all or
+ *  nothing. Each item is what `place_structure` carries; if any one is
+ *  refused none is placed and the server replies `place_structures_refused`,
+ *  else `place_structures_placed`; both echo `batchId`. */
+export const PlaceStructuresSchema = z
   .object({
-    type: z.literal('place_structure'),
-    kind: StructureKindIdSchema,
-    x: z.number().finite(),
-    y: z.number().finite(),
-    /** Rotation in degrees; the server snaps it to 30° steps on a deck room,
-     *  quarter turns elsewhere (`snapPlayerStructureRotation`). */
-    rot: z.number().finite().optional(),
-    /** Build mirror — place it left-right flipped (x → −x in its local frame). */
-    mirror: z.boolean().optional(),
+    type: z.literal('place_structures'),
+    batchId: z.number().int().min(0).max(PLACE_STRUCTURES_BATCH_ID_MAX),
+    items: z.array(z.object(PLACE_STRUCTURE_ITEM).strict()).min(1).max(PLACE_STRUCTURES_MAX),
   })
   .strict();
+
+/** Why one planned building was refused: a placement-rule rejection
+ *  (`PlacementRejection` in core, same names), or `not-buildable` (a kind a
+ *  player can never place here), `kind-rule` (the kind's own rule, e.g. one
+ *  Territory Lock per sector, counting the batch's earlier items), `no-crate`
+ *  (not enough packed crates for the batch), `no-room` (the sector has too
+ *  few free entity slots for the whole batch: the items past the room). */
+export const PLACE_REFUSAL_CODES = [
+  'overlap-structure', 'overlap-obstacle', 'overlap-pad', 'off-deck', 'plate-blocked',
+  'not-buildable', 'kind-rule', 'no-crate', 'no-room',
+] as const;
+export type PlaceRefusalCode = (typeof PLACE_REFUSAL_CODES)[number];
+
+/** Server → client reply to a refused `place_structures`: nothing was placed;
+ *  `refused` lists each refused item (its index in `items`) and why, so the
+ *  client can paint those ghosts red. Interface-only (server → client). */
+export interface PlaceStructuresRefusedEvent {
+  type: 'place_structures_refused';
+  /** The refused `place_structures`'s `batchId`, echoed. */
+  batchId: number;
+  refused: Array<{ index: number; code: PlaceRefusalCode }>;
+}
+
+/** The client's ingest schema for {@link PlaceStructuresRefusedEvent} (#3). */
+export const PlaceStructuresRefusedSchema = z.object({
+  type: z.literal('place_structures_refused'),
+  batchId: z.number().int().min(0).max(PLACE_STRUCTURES_BATCH_ID_MAX),
+  refused: z.array(z.object({
+    index: z.number().int().min(0).max(PLACE_STRUCTURES_MAX - 1),
+    code: z.enum(PLACE_REFUSAL_CODES),
+  })).max(PLACE_STRUCTURES_MAX),
+}) satisfies z.ZodType<PlaceStructuresRefusedEvent>;
+
+/** Server → client reply to a `place_structures` that passed every check
+ *  and was committed: the plan with this `batchId` landed. Interface-only. */
+export interface PlaceStructuresPlacedEvent {
+  type: 'place_structures_placed';
+  batchId: number;
+}
+
+/** The client's ingest schema for {@link PlaceStructuresPlacedEvent} (#3). */
+export const PlaceStructuresPlacedSchema = z.object({
+  type: z.literal('place_structures_placed'),
+  batchId: z.number().int().min(0).max(PLACE_STRUCTURES_BATCH_ID_MAX),
+}) satisfies z.ZodType<PlaceStructuresPlacedEvent>;
 
 /** Client → server (structures plan, Phase 2): "remove the structure I own
  *  with this id". The server rejects ids the requester doesn't own. */
@@ -475,6 +542,7 @@ export const ClientMessageSchema = z.discriminatedUnion('type', [
   TestGateSealSchema,
   ClientReadyMessageSchema,
   PlaceStructureSchema,
+  PlaceStructuresSchema,
   RemoveStructureSchema,
   StructureActionSchema,
   UpgradeStructureSchema,
@@ -507,6 +575,7 @@ export type EngageTransitMessage = z.infer<typeof EngageTransitSchema>;
 export type CancelTransitMessage = z.infer<typeof CancelTransitSchema>;
 export type ClientReadyMessage = z.infer<typeof ClientReadyMessageSchema>;
 export type PlaceStructureMessage = z.infer<typeof PlaceStructureSchema>;
+export type PlaceStructuresMessage = z.infer<typeof PlaceStructuresSchema>;
 export type RemoveStructureMessage = z.infer<typeof RemoveStructureSchema>;
 export type StructureActionMessage = z.infer<typeof StructureActionSchema>;
 export type UpgradeStructureMessage = z.infer<typeof UpgradeStructureSchema>;

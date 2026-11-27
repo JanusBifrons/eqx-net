@@ -4,7 +4,8 @@
  * the predicate that shows them, and the strip coverage (one place per action).
  */
 import { describe, expect, it, vi } from 'vitest';
-import { buildHexCovers, buildingDoHexes, buildingHexesShow, kindWord, type BuildingDoHexOptions } from './buildDoHexes';
+import { buildHexCovers, buildingDoHexes, buildingHexesShow, kindWord, placingDoHexes, type BuildingDoHexOptions } from './buildDoHexes';
+import { DO_HEX_MAX } from './doHexLayout';
 import type { PanelData } from '../components/selectionPanelData';
 import type { StripAction } from './stripActions';
 
@@ -103,6 +104,8 @@ describe('buildHexCovers', () => {
     expect(buildHexCovers('placing', b('place', 'placement-confirm'), false)).toBe(true);
     expect(buildHexCovers('route', b('route-cancel', 'left-strip-route-cancel'), false)).toBe(true);
     expect(buildHexCovers('placing', sep, false)).toBe(true);
+    // Plan then Build: Build (n) stays on the left strip while placing.
+    expect(buildHexCovers('placing', b('build', 'placement-build'), false)).toBe(true); // owner 2026-11-27: Build is a hex too
   });
   it('the own-structure set carries Power and Details only, and only while it shows', () => {
     expect(buildHexCovers('build', power('on'), true)).toBe(true);
@@ -110,5 +113,21 @@ describe('buildHexCovers', () => {
     expect(buildHexCovers('build', b('details', 'left-strip-details'), false)).toBe(false);
     expect(buildHexCovers('build', b('loot', 'cargo-open-toggle'), true)).toBe(false);
     expect(buildHexCovers('build', sep, true)).toBe(false);
+  });
+});
+
+describe('placingDoHexes', () => {
+  const btn = (key: string, extra: Partial<StripAction> = {}): StripAction =>
+    ({ kind: 'button', key, testId: `placement-${key}`, icon: 'details', tooltip: key, onPress: () => {}, ...extra }) as StripAction;
+  const kind: StripAction = { kind: 'identity', key: 'kind', icon: 'structure', tooltip: 'Solar', state: 'solar', testId: 'placement-kind', health: 'ok' } as StripAction;
+  it('Build is a hex with the planned count as its badge', () => {
+    const b = placingDoHexes([btn('place'), kind, btn('build', { tooltip: 'Build (4)', state: '4' }), btn('cancel')]).find((h) => h.key === 'build');
+    expect(b).toMatchObject({ testId: 'placement-build', word: 'Build', badge: 4, tooltip: 'Build (4)' });
+  });
+  it('never more than the grid holds: Mirror, then Rotate, then the building go first; never Place, Build or Cancel', () => {
+    const all = [kind, btn('place'), btn('rotate'), btn('mirror'), btn('gate'), btn('build', { state: '3' }), btn('cancel')];
+    const keys = placingDoHexes(all).map((h) => h.key);
+    expect(keys.length).toBe(DO_HEX_MAX);
+    expect(keys).toEqual(['place', 'rotate', 'kind', 'gate', 'build', 'cancel']);
   });
 });

@@ -29,6 +29,7 @@ diag/captures/<ts>-<id>/
                         plates, own plate under the point; `taps` counts spots),
                         structure_place_confirm/blocked
                         server: place_structure_rejected (raw + snapped point, refusal text)
+                        server: place_structures_rejected (a batch: each refused item's index, snapped point, code)
   other.ndjson        ← anything unmapped (defensive — empty under normal use)
 ```
 

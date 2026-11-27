@@ -12,6 +12,7 @@
  */
 import type { SxProps, Theme } from '@mui/material';
 import { HUD } from '../../client/hud/tokens.js';
+import { stripBadgeSx } from './stripTile.js';
 
 const H = HUD.hex;
 
@@ -61,9 +62,25 @@ export function hexTileSx(color: string, lit: boolean, dim: boolean): SxProps<Th
 export function hexGlowSx(color: string, lit: boolean): SxProps<Theme> {
   return {
     display: 'inline-flex',
+    position: 'relative',
     filter: lit ? `drop-shadow(0 0 ${H.glow}px ${color})` : 'none',
   } as SxProps<Theme>;
 }
+
+/** The count pill on the hex's top-right corner (a hex Build's planned count):
+ *  the strip's gold badge, drawn on the unclipped wrapper so the clip never cuts it. */
+export const hexBadgeSx = {
+  ...stripBadgeSx,
+  top: 0,
+  right: 0,
+  minWidth: H.badge,
+  height: H.badge,
+  borderRadius: `${H.badge / 2}px`,
+  fontSize: H.badgeFont,
+  lineHeight: `${H.badge}px`,
+  textAlign: 'center',
+  pointerEvents: 'none',
+} as const;
 
 /** The short word under the icon: HUD label font, light ink, black outline. */
 export const hexWordSx = {

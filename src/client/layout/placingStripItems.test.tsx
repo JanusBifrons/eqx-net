@@ -15,6 +15,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useUIStore } from '../state/store';
 import { getPlacementMirror, getPlacementRotationDeg, setPlacementMirror, setPlacementRotationDeg } from '../structures/structurePlacementClient';
 import { resetPlacementChosen, setPlacementHeld, setPlacementRejection } from '../structures/placementChosen';
+import { addPlannedPlacement, clearPlacementPlan, getPlacementPlanCount } from '../structures/placementPlan';
 
 const commitChosenPlacement = vi.fn((..._a: unknown[]) => true);
 vi.mock('../structures/structurePlacementClient', async (orig) => ({
@@ -43,8 +44,11 @@ function mount(): void {
 const tool = (id: string): HTMLButtonElement => screen.getByTestId(id) as HTMLButtonElement;
 const hexesShown = (): boolean => screen.queryByTestId('placement-kind') !== null
   && screen.getByTestId('do-hexes').dataset.set === 'placing';
+/** The hexes in thumb-nearness order (their cell), not DOM order (a badged hex paints last). */
 const hexIds = (): (string | undefined)[] =>
-  Array.from(screen.getByTestId('do-hexes').querySelectorAll('button')).map((b) => b.dataset.testid);
+  Array.from(screen.getByTestId('do-hexes').querySelectorAll('[data-cell]'))
+    .sort((x, y) => Number(x.getAttribute('data-cell')) - Number(y.getAttribute('data-cell')))
+    .map((c) => c.querySelector('button')?.dataset.testid);
 const cellOf = (testId: string): string | null =>
   screen.getByTestId(testId).closest('[data-cell]')?.getAttribute('data-cell') ?? null;
 const buildOpen = (): boolean => screen.queryByTestId('build-rail') !== null;
@@ -65,6 +69,7 @@ beforeEach(() => {
     selection: { ids: [], focusId: null, focusKind: null },
   });
   resetPlacementChosen();
+  clearPlacementPlan();
   commitChosenPlacement.mockClear();
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -110,6 +115,34 @@ describe('placing tools as do-hexes', () => {
     expect(cellOf('placement-kind')).toBe('2');
     expect(cellOf('placement-mirror')).toBe('3');
     expect(cellOf('placement-cancel')).toBe('4');
+  });
+
+  it('plan then Build: Build (n) shows only while buildings are planned; ✕ drops the plan', () => {
+    act(() => { useUIStore.setState({ placementKind: 'solar' }); });
+    mount();
+    expect(screen.queryByTestId('placement-build')).toBeNull();
+    act(() => { addPlannedPlacement('solar', 0, 0, 0, false, false); addPlannedPlacement('solar', 5000, 0, 0, false, false); });
+    // Owner 2026-11-27: Build is a hex too (the left strip draws nothing), with a count badge.
+    expect(hexIds()).toEqual(['placement-confirm', 'placement-rotate', 'placement-kind', 'placement-mirror', 'placement-build', 'placement-cancel']);
+    expect(screen.queryByTestId('left-strip')).toBeNull();
+    expect(tool('placement-build').dataset.variant).toBe('hex');
+    expect(tool('placement-build').getAttribute('aria-label')).toBe('Build (2)');
+    expect(tool('placement-build').dataset.state).toBe('2');
+    expect(screen.getByTestId('placement-build-word').textContent).toBe('Build');
+    expect(screen.getByTestId('placement-build-badge').textContent).toBe('2');
+    expect(cellOf('placement-cancel')).toBe('5');
+    fireEvent.click(tool('placement-cancel'));
+    expect(getPlacementPlanCount()).toBe(0);
+    expect(screen.queryByTestId('placement-build')).toBeNull();
+  });
+
+  it('a place-once kind ends placing with its building planned: Build and ✕ stay', () => {
+    act(() => { useUIStore.setState({ placementKind: null }); addPlannedPlacement('capital', 0, 0, 0, false, false); });
+    mount();
+    expect(hexIds()).toEqual(['placement-build', 'placement-cancel']);
+    expect(screen.queryByTestId('left-strip')).toBeNull();
+    fireEvent.click(tool('placement-cancel'));
+    expect(getPlacementPlanCount()).toBe(0);
   });
 
   it('placing wins over a selection', () => {
@@ -207,13 +240,19 @@ describe('placing tools as do-hexes', () => {
     expect(screen.getByTestId('build-kinds')).toHaveAttribute('data-category', 'economy');
   });
 
-  it('a fence post on a deck adds Gate, which switches post <-> gate (edge feel P3)', () => {
+  it('a fence post on a deck adds Gate, which switches post <-> gate (edge feel P3); no Rotate / Mirror (the run lines itself up)', () => {
     act(() => { useUIStore.setState({ placementKind: 'shield_pylon', deck: true }); });
     mount();
-    expect(hexIds()).toEqual(['placement-confirm', 'placement-rotate', 'placement-kind', 'placement-mirror', 'placement-gate', 'placement-cancel']);
+    expect(hexIds()).toEqual(['placement-confirm', 'placement-kind', 'placement-gate', 'placement-cancel']);
     expect(tool('placement-gate').getAttribute('aria-label')).toBe('Gate');
-    expect(cellOf('placement-gate')).toBe('4');
-    expect(cellOf('placement-cancel')).toBe('5');
+    act(() => { addPlannedPlacement('shield_pylon', 0, 0, 0, false, true); });
+    expect(hexIds()).toEqual(['placement-confirm', 'placement-kind', 'placement-gate', 'placement-build', 'placement-cancel']);
+    expect(cellOf('placement-cancel')).toBe('4');
+    // Build sits in the bottom row here: its badge must draw over the hex above it, so its cell paints last.
+    expect(cellOf('placement-build')).toBe('3');
+    const cells = screen.getByTestId('do-hexes').querySelectorAll('[data-cell]');
+    expect(cells[cells.length - 1]!.contains(tool('placement-build'))).toBe(true);
+    expect(screen.getByTestId('placement-build-badge').textContent).toBe('1');
     fireEvent.click(tool('placement-gate'));
     expect(useUIStore.getState().placementKind).toBe('shield_gate');
     fireEvent.click(tool('placement-gate'));
@@ -223,8 +262,7 @@ describe('placing tools as do-hexes', () => {
   it('a road has no Rotate or Mirror: it lines itself up', () => {
     act(() => { useUIStore.setState({ placementKind: 'road', deck: true }); });
     mount();
-    const ids = Array.from(screen.getByTestId('left-strip').querySelectorAll('button')).map((b) => b.dataset.testid);
-    expect(ids).toEqual(['placement-kind', 'placement-confirm', 'placement-cancel']);
+    expect(hexIds()).toEqual(['placement-confirm', 'placement-kind', 'placement-cancel']);
   });
 
   it('no Gate off a deck room or for other kinds', () => {

@@ -35,6 +35,8 @@ import {
 } from '../../core/structures/structureGridConstants.js';
 import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
 import { placementRejection, placementRejectionNotice, type PlacementDeck } from '../../core/structures/placementRules.js';
+import { BatchPlacementChecker, type BatchEarlierItem, type BatchPlacementItem } from '../../core/structures/batchPlacement.js';
+import type { PlaceRefusalCode } from '../../shared-types/messages.js';
 import { plateReachBoxAdd } from '../../core/structures/plateClearance.js';
 import { isPlateAnchor } from '../../core/hex/plateSet.js';
 import { StructureRegistry, type StructureRecord } from './StructureRegistry.js';
@@ -53,6 +55,9 @@ import { moveParkedHullsClear, shipInsideFootprint, type HullCircle, type Parked
  *  the structure is registered (a failed spawn spends nothing). */
 export interface PackedGateResult {
   ok: boolean;
+  /** How many packed crates of the kind the owner holds here (a batch needs
+   *  one per item). Absent = one when `ok`. */
+  available?: number;
   /** Consume the packed item; returns it (null if it vanished). */
   commit(): PackedItem | null;
 }
@@ -70,7 +75,11 @@ export interface StructurePlacementHooks {
   /** A kind's own placement rule for a PLAYER placement (`requirePacked`):
    *  the refusal text, or null to allow. Today only the Territory Lock has one
    *  (`territoryLockRefusal`). Absent ⇒ no extra rule. */
-  placementRefusal?(owner: string, kindId: StructureKindId): string | null;
+  placementRefusal?(owner: string, kindId: StructureKindId, earlier?: Iterable<BatchEarlierItem>): string | null;
+  /** Free entity slots for new structures (the room's slot pool). A
+   *  `place_structures` batch needs one per item, else it is refused
+   *  `no-room` before anything lands. Absent = never short. */
+  freeSpawnSlots?(): number;
   /** Room's sector key (for the packed gate). Null or absent = no sector:
    *  no holds there, so the Capital needs no crate. */
   sectorKey?(): string | null;
@@ -114,6 +123,9 @@ export interface StructurePlacementHooks {
   parkedHulls?: ParkedHullClearHost;
 }
 
+/** The notice for a batch the room's entity slots can't hold. */
+export const NO_ROOM_NOTICE = "Can't build: no room in this sector for that many buildings";
+
 export class StructurePlacementSubsystem {
   /** Scratch for `linkReachBox` (auto-connect's `near` box). */
   private readonly linkBox: ObstacleBox = { x0: 0, y0: 0, x1: 0, y1: 0 };
@@ -126,6 +138,16 @@ export class StructurePlacementSubsystem {
    *  `placementRefusal`), for the room's notice; null when it wasn't (or it
    *  succeeded). */
   lastRefusal: string | null = null;
+  /** The wire code for the last refusal (`place_structures_refused`); null
+   *  when the last check passed. */
+  lastRefusalCode: PlaceRefusalCode | null = null;
+  /** The pose + crate the last passing `validate` checked. */
+  private readonly v: { pos: { x: number; y: number }; rot: number; mirror: boolean; packed: PackedGateResult | null; free: boolean } =
+    { pos: { x: 0, y: 0 }, rot: 0, mirror: false, packed: null, free: false };
+  /** Plan then Build scratch (#14): the batch checker and its clamped items. */
+  private readonly batch = new BatchPlacementChecker();
+  private readonly batchItems: Array<{ kind: string; x: number; y: number; rot: number; mirror: boolean }> = [];
+  private readonly batchView: Array<{ kind: string; x: number; y: number; rot: number; mirror: boolean }> = [];
 
   constructor(private readonly hooks: StructurePlacementHooks) {}
 
@@ -153,14 +175,89 @@ export class StructurePlacementSubsystem {
     y: number,
     opts?: { skipAutoConnect?: boolean; rot?: number; mirror?: boolean; requirePacked?: boolean; ignoreObstacles?: boolean; deck?: boolean },
   ): string | null {
+    if (!this.validate(owner, kindId, x, y, opts, -1)) return null;
+    // validate() passed: the kind is real and `v` holds the checked pose.
+    const k = kindId as StructureKindId;
+    const v = this.v;
+    return this.commit(owner, k, v.pos.x, v.pos.y, v.rot, v.mirror, v.packed, v.free, opts?.skipAutoConnect === true);
+  }
+
+  /**
+   * Plan then Build (`place_structures`): check EVERY item for `owner` as a
+   * player's placement, each also against the earlier items of the batch as
+   * if they were placed (`BatchPlacementChecker`, shared core) and with
+   * packed crates summed across the batch. Places nothing. Writes each
+   * refused item's index and code into `outIndex`/`outCode` (cleared first);
+   * `lastRefusal` is the first refused item's notice text, if any.
+   */
+  checkBatch(owner: string, items: readonly BatchPlacementItem[], deck: boolean, outIndex: number[], outCode: PlaceRefusalCode[]): boolean {
+    outIndex.length = 0;
+    outCode.length = 0;
+    // The checker sees the same clamped, normalised pose validate() checks.
+    this.batchView.length = 0;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i]!;
+      let b = this.batchItems[i];
+      if (b === undefined) { b = { kind: '', x: 0, y: 0, rot: 0, mirror: false }; this.batchItems.push(b); }
+      const pos = this.hooks.clamp(it.x, it.y);
+      b.kind = it.kind; b.x = pos.x; b.y = pos.y; b.rot = normaliseStructureRotation(it.rot); b.mirror = it.mirror === true;
+      this.batchView.push(b);
+    }
+    this.batch.begin(this.batchView, deck ? this.deckFor(owner) : null, owner);
+    let firstText: string | null = null;
+    for (let i = 0; i < this.batchView.length; i++) {
+      const it = this.batchView[i]!;
+      if (!this.validate(owner, it.kind, it.x, it.y, { rot: it.rot, mirror: it.mirror, requirePacked: true, deck }, i)) {
+        outIndex.push(i);
+        outCode.push(this.lastRefusalCode ?? 'not-buildable');
+        firstText ??= this.lastRefusal;
+      }
+    }
+    // All or nothing: every item needs an entity slot, or none lands. The
+    // items past the free slots are refused (in order, after any others).
+    const slots = this.hooks.freeSpawnSlots?.() ?? Infinity;
+    if (outIndex.length === 0 && slots < this.batchView.length) {
+      for (let i = Math.max(0, slots); i < this.batchView.length; i++) { outIndex.push(i); outCode.push('no-room'); }
+      firstText = NO_ROOM_NOTICE;
+    }
+    this.lastRefusal = firstText;
+    return outIndex.length === 0;
+  }
+
+  /** Does item `index` of the last `checkBatch` lay a plate (place it first)? */
+  batchItemLaysPlate(index: number): boolean {
+    return this.batch.isAnchor(index);
+  }
+
+  /** The room's deck context for `owner`'s placement (scratch, #14). */
+  private deckFor(owner: string): PlacementDeck {
+    const deck = this.deckScratch;
+    deck.plates = this.hooks.registry.plates;
+    deck.owner = owner;
+    return deck;
+  }
+
+  /**
+   * The checks of `place` (kind, overlap / deck, the kind's own rule, the
+   * packed crate), nothing placed. True = legal, with the pose and crate in
+   * `v`; false sets `lastRefusal` (notice text, may be null) and
+   * `lastRefusalCode`. `batchIndex` >= 0: that item of the batch
+   * `checkBatch` began (checked against its earlier items, crates summed).
+   */
+  private validate(
+    owner: string,
+    kindId: string,
+    x: number,
+    y: number,
+    opts: { rot?: number; mirror?: boolean; requirePacked?: boolean; ignoreObstacles?: boolean; deck?: boolean } | undefined,
+    batchIndex: number,
+  ): boolean {
     this.lastRefusal = null;
-    if (!isStructureKindId(kindId)) return null;
-    const kind = getStructureKind(kindId);
+    this.lastRefusalCode = 'not-buildable';
+    if (!isStructureKindId(kindId)) return false;
     const pos = this.hooks.clamp(x, y);
     const rot = normaliseStructureRotation(opts?.rot);
     const mirror = opts?.mirror === true;
-    // The record's box (nearest quarter turn; colliders/hit tests: slice 17).
-    const { hw, hh } = structureHalfExtents(kindId, rot);
 
     // No-overlap: reject if the new footprint would intersect an existing
     // structure's footprint OR an asteroid/obstacle (Phase-4 C2 — the obstacle
@@ -175,22 +272,24 @@ export class StructurePlacementSubsystem {
     const near = { x0: pos.x - b.hw, y0: pos.y - b.hh, x1: pos.x + b.hw, y1: pos.y + b.hh };
     let deck: PlacementDeck | null = null;
     if (opts?.deck === true) {
-      deck = this.deckScratch;
-      deck.plates = this.hooks.registry.plates;
-      deck.owner = owner;
+      deck = this.deckFor(owner);
       // Laying a plate: its whole 7-hex area must be clear of rocks, so fetch them all.
       if (isPlateAnchor(kindId, pos.x, pos.y)) plateReachBoxAdd(pos.x, pos.y, near);
     }
-    const rejection = placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), opts?.ignoreObstacles === true ? undefined : this.hooks.getObstacles?.(near, true), rot, mirror, deck);
+    const obstacles = opts?.ignoreObstacles === true ? undefined : this.hooks.getObstacles?.(near, true);
+    const rejection = batchIndex >= 0
+      ? this.batch.rejection(batchIndex, this.hooks.registry.all(), obstacles)
+      : placementRejection(kindId, pos.x, pos.y, this.hooks.registry.all(), obstacles, rot, mirror, deck);
     if (rejection !== null) {
       this.lastRefusal = placementRejectionNotice(rejection);
-      return null;
+      this.lastRefusalCode = rejection;
+      return false;
     }
 
     // A kind's own rule (the Territory Lock: hold the sector, one per sector).
     if (opts?.requirePacked === true && this.hooks.placementRefusal) {
-      this.lastRefusal = this.hooks.placementRefusal(owner, kindId);
-      if (this.lastRefusal !== null) return null;
+      this.lastRefusal = this.hooks.placementRefusal(owner, kindId, batchIndex >= 0 ? this.batch.earlierItems(batchIndex) : undefined);
+      if (this.lastRefusal !== null) { this.lastRefusalCode = 'kind-rule'; return false; }
     }
 
     // A player's placement uses a held packed crate first (a free build).
@@ -205,9 +304,26 @@ export class StructurePlacementSubsystem {
     const crate = needsPackedCrate(kindId) && sectorKey !== null && !free;
     if (opts?.requirePacked === true && !free && this.hooks.packedGateForBuild && (crate || !STARTER_STRUCTURE_KINDS.includes(kindId))) {
       const gate = this.hooks.packedGateForBuild(owner, kindId, sectorKey);
-      if (gate.ok) packed = gate;
-      else if (crate) return null;
+      // A batch needs one crate per item of the kind (summed across it).
+      const need = batchIndex >= 0 ? this.batch.countOf(kindId, batchIndex) + 1 : 1;
+      if (gate.ok && (gate.available ?? 1) >= need) packed = gate;
+      else if (crate) { this.lastRefusalCode = 'no-crate'; return false; }
     }
+    const v = this.v;
+    v.pos.x = pos.x; v.pos.y = pos.y; v.rot = rot; v.mirror = mirror; v.packed = packed; v.free = free;
+    this.lastRefusalCode = null;
+    return true;
+  }
+
+  /** Spawn + register a checked placement (the second half of `place`). */
+  private commit(
+    owner: string, kindId: StructureKindId, px: number, py: number, rot: number, mirror: boolean,
+    packed: PackedGateResult | null, free: boolean, skipAutoConnect: boolean,
+  ): string | null {
+    const kind = getStructureKind(kindId);
+    const pos = { x: px, y: py };
+    // The record's box (nearest quarter turn; colliders/hit tests: slice 17).
+    const { hw, hh } = structureHalfExtents(kindId, rot);
 
     const preBuilt = kind.constructionCost <= 0;
     // Hologram pass-through: a body turns solid only round no ship. A
@@ -289,7 +405,7 @@ export class StructurePlacementSubsystem {
     // whose connecting segment isn't blocked by another structure OR an asteroid
     // (incl. one with no body, over the box the links may run in). Nothing in
     // range ⇒ nothing to link.
-    if (opts?.skipAutoConnect !== true && linkReachBox(this.hooks.registry, id, this.linkBox)) {
+    if (!skipAutoConnect && linkReachBox(this.hooks.registry, id, this.linkBox)) {
       autoConnectStructure(this.hooks.registry, id, this.hooks.getObstacles?.(this.linkBox));
     }
     return id;
@@ -334,6 +450,9 @@ export interface PackedGateHost {
   holdStore(): HoldStore;
   sectorKey(): string | null;
   findPacked(owner: string, product: string): { rec: StructureRecord } | { shipId: string } | null;
+  /** How many packed `product` items `owner` holds here (every source
+   *  `findPacked` looks in). Absent = one when `findPacked` finds one. */
+  countPacked?(owner: string, product: string): number;
 }
 
 /** The `packedGateForBuild` hook: ok when `owner` has a packed `kindId`
@@ -344,6 +463,7 @@ export function packedGateForBuild(h: PackedGateHost, owner: string, kindId: Str
   if (src === null) return { ok: false, commit: () => null };
   return {
     ok: true,
+    available: h.countPacked?.(owner, product) ?? 1,
     commit: () => {
       if ('rec' in src) {
         const item = takePackedOfProduct(src.rec.hold!, product);

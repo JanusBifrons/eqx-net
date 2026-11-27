@@ -57,7 +57,7 @@ export const edgePopPhone: Shot = {
       const sx = (b.wx - a.wx) / (b.px - a.px), sy = (b.wy - a.wy) / (b.py - a.py);
       ctx.log('calibration ' + JSON.stringify({ a, b, sx, sy }));
       const at = ([x, y]: readonly [number, number]) => ({ x: a.px + (x - a.wx) / sx, y: a.py + (y - a.wy) / sy });
-      // First post: tap the corner, place it, watch it land.
+      // First post: tap the corner and plan it.
       const p0 = at(RUN[0]!);
       await f.tap(p0.x, p0.y);
       await ctx.sleep(900);
@@ -75,6 +75,9 @@ export const edgePopPhone: Shot = {
       await f.tap(p2.x, p2.y);
       await ctx.sleep(1100);
       await tapId(ctx, 'placement-confirm');
+      await ctx.sleep(900);
+      // Build (n): the planned posts are sent together and pop as they land.
+      await tapId(ctx, 'placement-build');
       await ctx.sleep(2500);
       // A building on the deck: its slot outline pops as the ghost snaps slot to slot.
       await tapId(ctx, 'right-rail-build');

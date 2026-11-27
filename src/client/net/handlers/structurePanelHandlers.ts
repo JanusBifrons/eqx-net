@@ -13,6 +13,7 @@ import {
   TeleportCandidatesReplySchema,
   TollPromptSchema,
 } from '../../../shared-types/teleport.js';
+import { onPlaceStructuresPlaced, onPlaceStructuresRefused } from '../../structures/placementPlanFlight.js';
 
 /** The structure-panel handlers touch only the UI store, so they need no context. */
 export type StructurePanelHandlerCtx = Record<never, never>;
@@ -48,6 +49,17 @@ export function registerStructurePanelHandlers(room: Room, _ctx: StructurePanelH
     const parsed = TeleportCandidatesReplySchema.safeParse(raw);
     if (!parsed.success) return;
     useUIStore.getState().setTeleportCandidates(parsed.data);
+  });
+  // Plan then Build: the batch was refused (nothing placed); mark the refused
+  // planned buildings, keep the plan. Or it landed: clear the plan. Each reply
+  // only acts on the Build it echoes (batchId).
+  room.onMessage('place_structures_refused', (raw: unknown) => {
+    const parsed = ServerMessageSchemas.place_structures_refused.safeParse(raw);
+    if (parsed.success) onPlaceStructuresRefused(parsed.data.batchId, parsed.data.refused);
+  });
+  room.onMessage('place_structures_placed', (raw: unknown) => {
+    const parsed = ServerMessageSchemas.place_structures_placed.safeParse(raw);
+    if (parsed.success) onPlaceStructuresPlaced(parsed.data.batchId);
   });
   // Economy v2 W3 — the Research Lab panel's view (a reply to lab_query /
   // lab_start / lab_cancel; the panel is rebuilt from it alone).

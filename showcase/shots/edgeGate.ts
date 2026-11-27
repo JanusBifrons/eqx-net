@@ -103,7 +103,7 @@ export const edgeGatePhone: Shot = {
       await note(ctx, '2-gate-hover');
       await confirm(ctx, f);
       await ctx.sleep(3200);
-      await note(ctx, '3-gate-landed');
+      await note(ctx, '3-gate-planned');
       // Gate off: back to posts, the run goes on from the gate's far end.
       await press(ctx, f, 'placement-gate');
       await ctx.sleep(900);
@@ -112,6 +112,9 @@ export const edgeGatePhone: Shot = {
       await ctx.sleep(1500);
       await note(ctx, '4-next-hover');
       await confirm(ctx, f);
+      await ctx.sleep(900);
+      // Build (n): the planned posts and gate are sent together.
+      await press(ctx, f, 'placement-build');
       await ctx.sleep(3000);
       await note(ctx, '5-end');
       await press(ctx, f, 'placement-cancel');

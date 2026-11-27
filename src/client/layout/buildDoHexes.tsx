@@ -6,8 +6,10 @@
  *   (cell 0; `commitPlacement`, disabled while the ghost is rejected or held),
  *   Rotate, the building (a hex like the rest: its picture at icon size, its
  *   short name as the word; reopens the Build menu), Mirror, Gate (fence runs on
- *   a deck), and Cancel in the far corner. Rows read
- *   "Mirror Rotate Place / Cancel Build" (with Gate: "Cancel Gate Build").
+ *   a deck: no Rotate or Mirror, the run lines itself up), Build (only while
+ *   buildings are planned; the planned count as a badge), and Cancel in the far
+ *   corner. Never more than `DO_HEX_MAX`: Mirror, then Rotate, then the building
+ *   hex give way; Place, Build and Cancel never do.
  * - **Route / target pick** (`routeStripItems.tsx`: Patrol, Escort, Retreat):
  *   Done (Patrol) or Back to post (Retreat) under the thumb, Undo, the pick
  *   itself (its hint as the tooltip, the patrol's point count in the word), and
@@ -21,15 +23,15 @@
  *   path today, so those hexes are not drawn.
  *
  * While these draw, the left strip leaves out what they carry
- * (`buildHexCovers`): every placing / route tool, and the building's Power and
- * Details. Pure: unit-tested; `DoHexesHost` owns the hooks.
+ * (`buildHexCovers`): every placing / route tool (the strip is empty while
+ * placing), and the building's Power and Details. Pure: unit-tested; `DoHexesHost` owns the hooks.
  */
 import type { ReactElement } from 'react';
 import { getStructureKind, isStructureKindId } from '@shared-types/structureKinds';
 import { EqxIcon, type EqxIconName } from '../../ui/index.js';
 import type { ManageActionData } from '../components/StructureManageActions.js';
 import type { PanelData } from '../components/selectionPanelData.js';
-import type { DoHex } from './doHexLayout.js';
+import { DO_HEX_MAX, type DoHex } from './doHexLayout.js';
 import type { StripAction, StripButtonAction, StripFlyoutAction, StripIdentityAction } from './stripActions.js';
 
 const noop = (): void => {};
@@ -81,6 +83,7 @@ export function placingDoHexes(actions: readonly StripAction[]): DoHex[] {
   const kind = find(actions, 'kind', 'identity');
   const mirror = find(actions, 'mirror', 'button');
   const gate = find(actions, 'gate', 'button');
+  const build = find(actions, 'build', 'button');
   const cancel = find(actions, 'cancel', 'button');
   const out: DoHex[] = [];
   if (place !== null) out.push(buttonHex(place, 'Place', { tone: 'good', role: 'main' }));
@@ -88,9 +91,18 @@ export function placingDoHexes(actions: readonly StripAction[]): DoHex[] {
   if (kind !== null) out.push(identityHex(kind, kindWord(kind.state), kind.testId, 'neutral'));
   if (mirror !== null) out.push(buttonHex(mirror, 'Mirror'));
   if (gate !== null) out.push(buttonHex(gate, 'Gate'));
+  if (build !== null) out.push(buttonHex(build, 'Build', { tone: 'primary', badge: Number(build.state ?? 0) }));
   if (cancel !== null) out.push(buttonHex(cancel, 'Cancel', { tone: 'danger', role: 'cancel' }));
+  for (const k of GIVE_WAY) {
+    if (out.length <= DO_HEX_MAX) break;
+    const i = out.findIndex((h) => h.key === k);
+    if (i >= 0) out.splice(i, 1);
+  }
   return out;
 }
+
+/** Over the grid's `DO_HEX_MAX`, these placing hexes give way, in order. */
+const GIVE_WAY = ['mirror', 'rotate', 'kind'] as const;
 
 const PICK_WORD: Readonly<Record<string, string>> = { patrol: 'Route', escort: 'Escort', retreat: 'Retreat' };
 
@@ -185,7 +197,8 @@ const BUILD_COVERED = [
 ] as const;
 
 /** Is `a` carried by the Build hexes in this hex set (pure)? Placing and route
- *  picks carry every tool; the own-structure set carries Power and Details. */
+ *  picks carry every tool (Build (n) included: the left strip is empty while
+ *  placing); the own-structure set carries Power and Details. */
 export function buildHexCovers(set: 'placing' | 'route' | 'build', a: StripAction, buildingShown: boolean): boolean {
   if (a.kind === 'separator') return set !== 'build';
   if (set !== 'build') return true;

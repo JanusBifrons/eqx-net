@@ -5,7 +5,8 @@
  * A fence post or gate on a deck adds Gate (edge feel P3): it switches
  * `placementKind` between the two and the fence run stays open (`fenceRun.ts`).
  * A road has no Rotate or Mirror: it lines itself up with the roads and gates
- * beside it (`roadAutoTurnDeg`, core).
+ * beside it (`roadAutoTurnDeg`, core). Nor does a fence run on a deck: its
+ * posts sit on deck corners and its gates on seams (`fenceRun.ts`).
  * It replaces the old bottom-middle placing bar and the Build panel's folded
  * picked-building strip; desktop and touch alike (the desktop R / F keys and
  * click-to-place keep working beside it).
@@ -18,7 +19,9 @@
  *   disabled while the ghost is rejected or held on the spot just sent;
  * - Rotate / Mirror → `cyclePlacementRotation` / `togglePlacementMirror` (the
  *   R / F keys' functions; module state the renderer reads);
- * - ✕ → `cancelPlacement` (the ghost goes, Build stays).
+ * - Build (plan then Build; only while buildings are planned, "Build (n)") →
+ *   `buildPlacementPlan`: Place only PLANS a building, Build sends them all;
+ * - ✕ → `cancelPlacement` (the ghost and the plan go, Build mode stays).
  *
  * Returned as data (`StripAction`, `stripActions.tsx`); the strip draws it with
  * `renderStripActions`.
@@ -29,8 +32,11 @@ import { getStructureKind } from '@shared-types/structureKinds';
 import { EqxIcon } from '../../ui/index.js';
 import { useUIStore } from '../state/store.js';
 import { cyclePlacementRotation, getPlacementMirror, togglePlacementMirror } from '../structures/structurePlacementClient.js';
-import { getPlacementHeld, getPlacementRejection, subscribePlacementHeld, subscribePlacementRejection } from '../structures/placementChosen.js';
-import { cancelPlacement, commitPlacement } from '../structures/placementCancel.js';
+import {
+  getPlacementHeld, getPlacementOnPlanned, getPlacementRejection, subscribePlacementHeld, subscribePlacementOnPlanned, subscribePlacementRejection,
+} from '../structures/placementChosen.js';
+import { buildPlacementPlan, cancelPlacement, commitPlacement } from '../structures/placementCancel.js';
+import { getPlacementPlanCount, subscribePlacementPlan } from '../structures/placementPlan.js';
 import { isFenceRunKind } from '../structures/fenceRun.js';
 import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from '../../core/structures/deckLinks.js';
 import { DECK_ROAD_KIND } from '../../core/structures/deckGateRoad.js';
@@ -56,16 +62,25 @@ export function usePlacingStripItems(): StripAction[] {
   // Blocked ghost (the server's own placement rule) or held on the spot just sent: no Place.
   const rejected = useSyncExternalStore(subscribePlacementRejection, getPlacementRejection) !== null;
   const held = useSyncExternalStore(subscribePlacementHeld, getPlacementHeld);
-  if (kind === null) return [];
+  // On a planned building Place removes it (red there, still enabled).
+  const onPlanned = useSyncExternalStore(subscribePlacementOnPlanned, getPlacementOnPlanned);
+  const planned = useSyncExternalStore(subscribePlacementPlan, getPlacementPlanCount);
+  const cancel: StripAction = { kind: 'button', key: 'cancel', tone: 'danger', icon: 'close', tooltip: 'Stop placing',
+    onPress: cancelPlacement, testId: 'placement-cancel' };
+  const build: StripAction[] = planned > 0 ? [{ kind: 'button', key: 'build', tone: 'primary', icon: 'build', tooltip: `Build (${planned})`, state: String(planned),
+    onPress: () => { buildPlacementPlan(); }, testId: 'placement-build' }] : [];
+  // A place-once kind ends placing with its building still planned: Build and ✕ stay.
+  if (kind === null) return planned > 0 ? [...build, { kind: 'separator', key: 'sep' }, cancel] : [];
   const mirrored = getPlacementMirror();
   const name = getStructureKind(kind).displayName;
   return [
     { kind: 'identity', key: 'kind', icon: <KindIcon kind={kind} />, tooltip: `${name}: open the Build menu`, health: 'ok',
       onPress: () => setRightPanel('build'), state: kind, testId: 'placement-kind' },
     { kind: 'button', key: 'place', tone: 'primary', icon: 'confirm', tooltip: 'Place',
-      disabled: rejected || held, onPress: () => { commitPlacement(kind); }, testId: 'placement-confirm' },
-    // A road lines itself up (core `roadAutoTurnDeg`) and its straight is symmetric: no Rotate / Mirror.
-    ...(kind === DECK_ROAD_KIND ? [] : [
+      disabled: (rejected && !onPlanned) || held, onPress: () => { commitPlacement(kind); }, testId: 'placement-confirm' },
+    // A road lines itself up (core `roadAutoTurnDeg`) and its straight is symmetric; a fence
+    // run snaps posts to corners and gates to seams: no Rotate / Mirror for either.
+    ...(kind === DECK_ROAD_KIND || isFenceRunKind(kind, deck) ? [] : [
       { kind: 'button', key: 'rotate', icon: 'rotate', tooltip: 'Rotate',
         onPress: () => { cyclePlacementRotation(); }, testId: 'placement-rotate' } satisfies StripAction,
       { kind: 'button', key: 'mirror', icon: 'mirror', tooltip: 'Mirror', active: mirrored,
@@ -76,8 +91,8 @@ export function usePlacingStripItems(): StripAction[] {
         onPress: () => { setPlacementKind(kind === DECK_FENCE_GATE_KIND ? DECK_FENCE_POST_KIND : DECK_FENCE_GATE_KIND); },
         testId: 'placement-gate' } satisfies StripAction,
     ] : []),
+    ...build,
     { kind: 'separator', key: 'sep' },
-    { kind: 'button', key: 'cancel', tone: 'danger', icon: 'close', tooltip: 'Stop placing',
-      onPress: cancelPlacement, testId: 'placement-cancel' },
+    cancel,
   ];
 }

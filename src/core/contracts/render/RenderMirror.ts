@@ -255,8 +255,11 @@ export interface RenderMirror {
    * the server's `off-deck` rule (`placementRejection`'s deck context).
    * `run` (fence run): the sent fence posts not yet landed, flat (x, y)
    * corners, a NaN pair between two clicks' paths (`pendingRunGhosts.ts`).
+   * `plan` (plan then Build): the planned buildings, flat stride 5
+   * (x, y, rot degrees, structure kind index, flags: 1 mirror | 2 refused),
+   * deck-snapped wire poses (`writePreviewPlan`, client `placementPlan.ts`).
    */
-  pendingPlacementPreview?: { kind: string; x: number; y: number; angle: number; mirror?: boolean; pending?: boolean; held?: boolean; deck?: boolean; deckOwner?: string; deckPlates?: number[]; run?: number[]; runHover?: number[]; runHoverMark?: number[] } | null;
+  pendingPlacementPreview?: { kind: string; x: number; y: number; angle: number; mirror?: boolean; pending?: boolean; held?: boolean; deck?: boolean; deckOwner?: string; deckPlates?: number[]; run?: number[]; runHover?: number[]; runHoverMark?: number[]; plan?: number[] } | null;
   /**
    * Helm move marker (owner 2026-11-12): the local pilot's active helm course
    * point, GAME-space, while they fly a capital under a helm order (never for

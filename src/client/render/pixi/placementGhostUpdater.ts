@@ -25,7 +25,7 @@ import { PlacementGhostVerdict, type GhostPose } from '../../structures/placemen
 import { StructureHologram } from './structureHologram.js';
 import { ghostDeckAngle, ghostDeckContext, ghostRoadArms, snapGhostToDeck } from './placementDeckSnap.js';
 import type { BuildSlotOutlines } from './buildSlotOutlines.js';
-import { PendingRunGhosts, type RunGhostFrame } from './pendingRunGhosts.js';
+import { addPlanFootprints, PendingRunGhosts, type RunGhostFrame } from './pendingRunGhosts.js';
 const DEG_TO_RAD = Math.PI / 180;
 
 export interface PlacementGhostCtx {
@@ -159,18 +159,21 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
     ctx.placementGhost.setRoadArms(ghostRoadArms(preview, angle)); // a road shows its carriageway as laid
     // Red / green before the click: the server's own overlap rule at the drawn
     // pose (structures, landing pads, rocks; off-deck on a deck room). The pending ghost is already sent.
+    // Plan then Build: the planned buildings count as placed (the batch check's rule).
+    // Planned plates are deck too (the batch's plate rule).
+    const deck = addPlanFootprints(ctx.verdict, preview.plan, ghostDeckContext(preview));
     let rejection: PlacementRejection | null = null;
     if (!pendingGhost && !heldGhost && mirror.swarm) {
       const pose = ctx.pose;
       pose.kind = preview.kind; pose.x = gx; pose.y = gy; pose.angle = angle; pose.mirror = preview.mirror === true;
-      rejection = ctx.verdict.check(pose, mirror.structures, mirror.swarm, ctx.obstacles, ghostDeckContext(preview));
+      rejection = ctx.verdict.check(pose, mirror.structures, mirror.swarm, ctx.obstacles, deck);
     }
     ctx.feedback.placementPreviewRejection = rejection;
     // Fence run: the sent run and the hover run (one ghost look, faint for the hover).
     const rg = ctx.runGhosts ?? (ctx.runGhosts = new PendingRunGhosts(shipContainer, ctx.structStyle));
     const rf = runFrame;
     rf.mirror = mirror; rf.preview = preview; rf.verdict = ctx.verdict; rf.obstacles = ctx.obstacles;
-    rf.deck = ghostDeckContext(preview); rf.ghostX = gx; rf.ghostY = gy; rf.scale = ctx.scale; rf.nowMs = ctx.nowMs;
+    rf.deck = deck; rf.ghostX = gx; rf.ghostY = gy; rf.scale = ctx.scale; rf.nowMs = ctx.nowMs;
     rg.update(rf);
     // Cyan when clear, red when blocked; the pending ghost is dimmer and still
     // so it reads as "sent, awaiting" vs positioning. Recolour only: no rebuild.

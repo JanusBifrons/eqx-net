@@ -6,8 +6,9 @@ import { useUIStore } from '../state/store.js';
 import { placementChosen, resetPlacementChosen } from './placementChosen.js';
 import { endFenceRun, fenceRunAnchor, newFenceRunPlan, planGateRunInto, type FenceRunWorld } from './fenceRun.js';
 import { commitPlacement } from './placementCancel.js';
+import { clearPlacementPlan, getPlacementPlanCount, plannedPlacements } from './placementPlan.js';
 import { pendingAfterSend } from './pendingPlacementRun.js';
-import { isHeldOnSent, type PendingPlacement } from './structurePlacementClient.js';
+import { isHeldOnPlanned } from './structurePlacementClient.js';
 import { snapPlacementToDeck } from '../../core/structures/deckPlacement.js';
 
 // Edge feel P3: a gate in the fence run. Same client fixture as fenceRun.test.ts.
@@ -90,13 +91,14 @@ describe('gate in a fence run: the plan', () => {
   });
 });
 
-describe('gate in a fence run: Place sends', () => {
+describe('gate in a fence run: Place plans', () => {
   beforeEach(() => {
     send.mockClear();
     notePendingPlacement.mockClear();
     structures.clear();
     swarm.clear();
     resetPlacementChosen();
+    clearPlacementPlan();
     useUIStore.setState({ deck: true, placementKind: 'shield_pylon', packedStock: null });
     endFenceRun();
   });
@@ -111,29 +113,28 @@ describe('gate in a fence run: Place sends', () => {
     expect(fenceRunAnchor().active).toBe(false);
   });
 
-  it('a gate click sends the posts as shield_pylon, then one shield_gate last', () => {
+  it('a gate click plans the posts as shield_pylon, then one shield_gate last', () => {
     place('shield_pylon', corner(4));
-    send.mockClear();
     useUIStore.setState({ placementKind: 'shield_gate' });
     expect(place('shield_gate', mid(1))).toBe(true);
-    const kinds = send.mock.calls.map((c) => c[1].kind as string);
+    const kinds = plannedPlacements().slice(1).map((p) => p.kind);
     expect(kinds).toEqual(['shield_pylon', 'shield_pylon', 'shield_pylon', 'shield_gate']);
-    const g = send.mock.calls[3]![1];
+    const g = plannedPlacements()[4]!;
     expect(g.x).toBeCloseTo(mid(1).x, 6);
     expect(g.y).toBeCloseTo(mid(1).y, 6);
     expect(fenceRunAnchor().x).toBeCloseTo(corner(1).x, 6);
     // Back to posts: the run continues from the gate's far end.
     useUIStore.setState({ placementKind: 'shield_pylon' });
-    send.mockClear();
     place('shield_pylon', corner(2));
-    expect(send.mock.calls.length).toBe(1);
-    expect(send.mock.calls[0]![1].x).toBeCloseTo(corner(2).x, 6);
+    expect(getPlacementPlanCount()).toBe(6);
+    expect(plannedPlacements()[5]!.x).toBeCloseTo(corner(2).x, 6);
+    expect(send).not.toHaveBeenCalled();
   });
 
   // Owner retest 2026-11-27 (build.ndjson): a second tap on a seam whose gate
   // had just landed showed a red ghost, yet Place still sent the gate and the
   // server refused it ("place_structure rejected", shield_gate, twice).
-  it('a seam that already has its gate: Place sends nothing (the ghost is red)', () => {
+  it('a seam that already has its gate: Place plans nothing (the ghost is red)', () => {
     const a = corner(0), b = corner(1), m = mid(1);
     const g = snapPlacementToDeck('shield_gate', m.x, m.y, { x: 0, y: 0, q: 0, r: 0, rhombus: -1, rot: -1, slot: 'hex' });
     swarm.set(1, { x: a.x, y: a.y, angle: 0, shipKind: 'shield_pylon' }); structures.set(1, {});
@@ -141,6 +142,7 @@ describe('gate in a fence run: Place sends', () => {
     swarm.set(3, { x: g.x, y: g.y, angle: (g.rot * Math.PI) / 180, shipKind: 'shield_gate' }); structures.set(3, {});
     useUIStore.setState({ placementKind: 'shield_gate' });
     expect(place('shield_gate', m)).toBe(false);
+    expect(getPlacementPlanCount()).toBe(0);
     expect(send).not.toHaveBeenCalled();
   });
 
@@ -157,11 +159,11 @@ describe('gate in a fence run: Place sends', () => {
 
 // Owner phone playtest 2026-11-27: after a gate went down, the ghost stayed on
 // that seam and at once read red ("Too close to another structure") over its
-// own gate. The live ghost sits at the renderer's SNAPPED seam point; the sent
-// gate (and its posts) must be recorded at that same point so the "just sent"
-// hold (`isHeldOnSent`: dim, no verdict, Place refused) covers it, as it does
-// for any other kind.
-describe('fence run: the ghost is held on the spot just sent', () => {
+// own gate. The live ghost sits at the renderer's SNAPPED seam point; the
+// planned gate (and its posts) must be recorded at that same point so the
+// "just planned" hold (`isHeldOnPlanned`: dim, no verdict, Place refused)
+// covers it, as it does for any other kind.
+describe('fence run: the ghost is held on the spot just planned', () => {
   const SNAP = { x: 0, y: 0, q: 0, r: 0, rhombus: -1, rot: -1, slot: 'hex' as const };
   beforeEach(() => {
     send.mockClear();
@@ -169,24 +171,16 @@ describe('fence run: the ghost is held on the spot just sent', () => {
     structures.clear();
     swarm.clear();
     resetPlacementChosen();
+    clearPlacementPlan();
     endFenceRun();
   });
-
-  /** The pending record the client would hold after the sends. */
-  function pendingFromSends(): PendingPlacement | null {
-    let p: PendingPlacement | null = null;
-    for (const c of notePendingPlacement.mock.calls) {
-      p = pendingAfterSend(p, c[0], c[1], c[2], c[3], c[4], 1000, 0, c[5] ?? null);
-    }
-    return p;
-  }
 
   it('a gate: the ghost at its snapped seam point is held after Place', () => {
     useUIStore.setState({ deck: true, placementKind: 'shield_gate', packedStock: null });
     const g = snapPlacementToDeck('shield_gate', mid(1).x, mid(1).y, SNAP);
     const gx = g.x, gy = g.y;
     expect(place('shield_gate', { x: gx, y: gy })).toBe(true);
-    expect(isHeldOnSent('shield_gate', pendingFromSends(), gx, gy)).toBe(true);
+    expect(isHeldOnPlanned('shield_gate', gx, gy)).toBe(true);
   });
 
   it('a post: the ghost at its snapped corner is held after Place', () => {
@@ -194,6 +188,6 @@ describe('fence run: the ghost is held on the spot just sent', () => {
     const c = snapPlacementToDeck('shield_pylon', corner(1).x, corner(1).y, SNAP);
     const cx = c.x, cy = c.y;
     expect(place('shield_pylon', { x: cx, y: cy })).toBe(true);
-    expect(isHeldOnSent('shield_pylon', pendingFromSends(), cx, cy)).toBe(true);
+    expect(isHeldOnPlanned('shield_pylon', cx, cy)).toBe(true);
   });
 });

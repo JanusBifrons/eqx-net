@@ -36,7 +36,7 @@ import { placementChosen, resetPlacementChosen, writePlacementChosen } from '../
 import { notePlacementGhost, resetPlacementTelemetry } from '../structures/placementTelemetry.js';
 import { updatePlacementHints } from '../structures/placementHints.js';
 import { updateWorldTag } from '../hud/worldTag.js';
-import { commitPlacement } from '../structures/placementCancel.js';
+import { commitPlacement, stepPlacementPlan } from '../structures/placementCancel.js';
 import { stepBuildModeView, takeBuildRestoreScale } from '../structures/buildModeView.js';
 import { sendSelectEntity, sendDeselectEntity } from '../net/selectionClient.js';
 import { resetSelectionStats } from '../net/selectionStats.js';
@@ -349,6 +349,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
       resetPlacementChosen();
       resetPlacementTelemetry();
     }
+    stepPlacementPlan(now); // plan then Build: a sent plan timed out?
     // Build mode: Command view + camera pulled back while placing; restored after.
     if (typeof window !== 'undefined') stepBuildModeView(useUIStore.getState().buildMode, feedback, gameClient.mirror.localShipInstanceId ?? null,
       renderer, window.innerWidth, window.innerHeight);

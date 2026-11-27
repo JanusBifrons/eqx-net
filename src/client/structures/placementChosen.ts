@@ -23,6 +23,7 @@
  */
 import type { RendererFeedback } from '../../core/contracts/IRenderer.js';
 import type { PlacementRejection } from '../../core/structures/placementRules.js';
+import { plannedPlacementHitIndex } from './placementPlan.js';
 
 export interface PlacementChosen {
   /** Chosen world X (game-space), or null until the player positions the ghost. */
@@ -36,6 +37,10 @@ export interface PlacementChosen {
    *  sent (same point, kind, rotation, mirror): it draws dim with no verdict
    *  and Place refuses until the ghost moves. */
   held: boolean;
+  /** Plan then Build: the ghost's point is on a planned building, so Place
+   *  removes it from the plan (`planTapHitIndex`): Place stays enabled
+   *  though the ghost reads red there. */
+  onPlanned: boolean;
 }
 
 export const placementChosen: PlacementChosen = {
@@ -44,6 +49,7 @@ export const placementChosen: PlacementChosen = {
   stuck: false,
   rejection: null,
   held: false,
+  onPlanned: false,
 };
 
 const rejectionListeners = new Set<() => void>();
@@ -82,8 +88,27 @@ export function getPlacementHeld(): boolean {
   return placementChosen.held;
 }
 
+const onPlannedListeners = new Set<() => void>();
+
+/** Set the on-a-planned-building state; listeners hear only a change. */
+export function setPlacementOnPlanned(v: boolean): void {
+  if (placementChosen.onPlanned === v) return;
+  placementChosen.onPlanned = v;
+  for (const l of onPlannedListeners) l();
+}
+
+/** `useSyncExternalStore` pair for the on-a-planned-building state (the Place button). */
+export function subscribePlacementOnPlanned(l: () => void): () => void {
+  onPlannedListeners.add(l);
+  return () => { onPlannedListeners.delete(l); };
+}
+export function getPlacementOnPlanned(): boolean {
+  return placementChosen.onPlanned;
+}
+
 /** Per frame while a ghost is up: copy the renderer's chosen point, park
- *  state and verdict. Allocation-free. */
+ *  state and verdict, and whether the point is on a planned building.
+ *  Allocation-free. */
 export function writePlacementChosen(
   feedback: Pick<RendererFeedback, 'placementChosenWorldX' | 'placementChosenWorldY' | 'placementStuck' | 'placementPreviewRejection'>,
 ): void {
@@ -91,6 +116,7 @@ export function writePlacementChosen(
   placementChosen.worldY = typeof feedback.placementChosenWorldY === 'number' ? feedback.placementChosenWorldY : null;
   placementChosen.stuck = feedback.placementStuck;
   setPlacementRejection(feedback.placementPreviewRejection ?? null);
+  setPlacementOnPlanned(plannedPlacementHitIndex(placementChosen.worldX, placementChosen.worldY) >= 0);
 }
 
 /** Clear the chosen point (placement ended / cancelled). */
@@ -100,4 +126,5 @@ export function resetPlacementChosen(): void {
   placementChosen.stuck = false;
   setPlacementRejection(null);
   setPlacementHeld(false);
+  setPlacementOnPlanned(false);
 }
