@@ -262,6 +262,8 @@ export const HUD = {
     /** Gentle bob: amplitude (px) and period (ms); none under reduced motion. */
     bobPx: 1.5,
     bobMs: 2600,
+    /** Compact (far zoom, S10): the owner-colour dot after the type name. */
+    dotPx: 6,
   },
   /** EqxBar: a readout bar in a panel (mock .lrow + .bar). Px and colours. */
   bar: {
