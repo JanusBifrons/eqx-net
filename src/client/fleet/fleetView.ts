@@ -6,6 +6,9 @@
 import type { RenderMirror, SwarmRenderState } from '@core/contracts/IRenderer';
 import type { FleetMode, FleetStance } from '@shared-types/messages/fleetStatusMessages';
 import { getShipKind } from '@shared-types/shipKinds';
+import { SIZE_CLASSES, sizeClassOf } from '@shared-types/shipScale/tuning';
+import type { IFleetView } from '@core/contracts/render/IFleetView';
+import { shipHullPct } from '../net/shipSchemaHealth.js';
 import { wreckSourceKindOf } from '../net/wreckRootSource';
 import { SWARM_KIND_ASTEROID, SWARM_KIND_SCRAP, SWARM_KIND_STRUCTURE, SWARM_KIND_WRECK, isLootPod } from '@shared-types/swarmWireFormat';
 import type { FleetStatusRow } from './fleetStatus.js';
@@ -142,4 +145,98 @@ export function swarmEntityName(mirror: RenderMirror, e: SwarmRenderState, drone
     default:
       return kindName(e.shipKind) ?? droneFallback;
   }
+}
+
+/** One ship type in the selection (selection HUD S5a): the left side shows
+ *  one hex per group with its count ("Battleship ×2"). */
+export interface KindGroup {
+  /** Ship kind id; `''` for ships whose kind the mirror does not know yet. */
+  kind: string;
+  displayName: string;
+  icon?: string;
+  ids: string[];
+  count: number;
+  /** Mean hull 0..1 over the ships whose hull is known; null when none is. */
+  avgHullFrac: number | null;
+}
+
+/** Biggest size class first (capital → fighter); unknown kinds last. */
+function classRank(kind: string): number {
+  if (!kind) return SIZE_CLASSES.length;
+  return SIZE_CLASSES.length - 1 - SIZE_CLASSES.indexOf(sizeClassOf(getShipKind(kind)));
+}
+
+/**
+ * Group selected ids by ship kind. Order: largest size class first, then
+ * count (desc), then name; ids keep their selection order inside a group.
+ * `kindOf` / `hullFracOf` read the ship (see {@link groupMirrorSelection}).
+ */
+export function groupSelectionByKind(
+  ids: readonly string[],
+  kindOf: (id: string) => string | undefined,
+  hullFracOf: (id: string) => number | null = () => null,
+): KindGroup[] {
+  const byKind = new Map<string, { ids: string[]; hullSum: number; hullN: number }>();
+  for (const id of ids) {
+    const kind = kindOf(id) ?? '';
+    let g = byKind.get(kind);
+    if (!g) {
+      g = { ids: [], hullSum: 0, hullN: 0 };
+      byKind.set(kind, g);
+    }
+    g.ids.push(id);
+    const h = hullFracOf(id);
+    if (h !== null) {
+      g.hullSum += h;
+      g.hullN++;
+    }
+  }
+  const groups: KindGroup[] = [];
+  for (const [kind, g] of byKind) {
+    groups.push({
+      kind,
+      displayName: kindName(kind) ?? 'Ship',
+      ids: g.ids,
+      count: g.ids.length,
+      avgHullFrac: g.hullN > 0 ? g.hullSum / g.hullN : null,
+    });
+  }
+  return groups.sort(
+    (a, b) =>
+      classRank(a.kind) - classRank(b.kind) ||
+      b.count - a.count ||
+      a.displayName.localeCompare(b.displayName) ||
+      a.kind.localeCompare(b.kind),
+  );
+}
+
+/** {@link groupSelectionByKind} reading kind and hull from the render mirror
+ *  (low cadence only, like every `getGameClient()` mirror read). */
+export function groupMirrorSelection(mirror: RenderMirror | null | undefined, ids: readonly string[]): KindGroup[] {
+  return groupSelectionByKind(
+    ids,
+    (id) => mirror?.ships.get(id)?.kind,
+    (id) => {
+      const pct = shipHullPct(mirror?.ships.get(id));
+      return pct === null ? null : pct / 100;
+    },
+  );
+}
+
+/** Fit the groups into `max` slots: with more than `max` groups the last slot
+ *  becomes a "?" overflow holding every remaining kind and its ship count. */
+export function capKindGroups(
+  groups: readonly KindGroup[],
+  max = 5,
+): { shown: KindGroup[]; overflowKinds: KindGroup[]; overflowCount: number } {
+  if (groups.length <= max) return { shown: groups.slice(), overflowKinds: [], overflowCount: 0 };
+  const keep = Math.max(0, max - 1);
+  const overflowKinds = groups.slice(keep);
+  return { shown: groups.slice(0, keep), overflowKinds, overflowCount: overflowKinds.reduce((n, g) => n + g.count, 0) };
+}
+
+/** Tap on a type hex: keep only that type's ships selected, through the one
+ *  selection the renderer owns (`IFleetView.selectFleetShips`). */
+export function keepOnlyKind(view: Pick<IFleetView, 'selectFleetShips'>, group: Pick<KindGroup, 'ids'>): void {
+  view.selectFleetShips(group.ids);
 }
