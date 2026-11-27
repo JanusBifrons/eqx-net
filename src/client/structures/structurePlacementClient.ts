@@ -338,18 +338,20 @@ export function planStructureAt(kindId: StructureKindId, x: number, y: number): 
 }
 
 /** Reused `place_structures` message (Colyseus encodes it on send, #14). */
-const placeStructuresMsg: { type: 'place_structures'; items: readonly PlannedPlacement[] } = { type: 'place_structures', items: [] };
+const placeStructuresMsg: { type: 'place_structures'; batchId: number; items: readonly PlannedPlacement[] } = { type: 'place_structures', batchId: 0, items: [] };
 
 /**
  * Plan then Build: send every planned building as ONE `place_structures`
- * (all or nothing on the server; a refusal replies `place_structures_refused`).
- * `items` are already snapped wire items (`placementPlan.ts`). Returns whether
+ * (all or nothing on the server; it replies `place_structures_refused` or
+ * `place_structures_placed`, each echoing `batchId`). `items` are already
+ * snapped wire items (`placementPlan.ts`). Returns whether
  * it was sent (false with no live room or nothing to send).
  */
-export function sendPlaceStructures(items: readonly PlannedPlacement[]): boolean {
+export function sendPlaceStructures(items: readonly PlannedPlacement[], batchId: number): boolean {
   if (items.length === 0) return false;
   const room = getGameClient()?.getRoom();
   if (!room) return false;
+  placeStructuresMsg.batchId = batchId;
   placeStructuresMsg.items = items;
   room.send('place_structures', placeStructuresMsg);
   return true;

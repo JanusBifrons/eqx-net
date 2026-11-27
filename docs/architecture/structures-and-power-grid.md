@@ -63,11 +63,13 @@ across the batch; a batch bigger than the room's free entity slots is refused
 (shared core `BatchPlacementChecker`, `core/structures/batchPlacement.ts`, which
 the client can run on its planned list); a plate a batch connector lays counts as
 deck for the other items. One refusal places none and replies
-`place_structures_refused { refused: [{ index, code }] }` (`PlaceRefusalCode`:
+`place_structures_refused { batchId, refused: [{ index, code }] }` (`PlaceRefusalCode`:
 the `PlacementRejection` names plus `not-buildable`, `kind-rule`, `no-crate`,
 `no-room`);
-success commits plate-laying connectors first, then the rest, and sends what a
-single placement does (the slice refresh, no reply).
+success commits plate-laying connectors first, then the rest, sends what a
+single placement does (the slice refresh) and replies
+`place_structures_placed { batchId }`. The client numbers each Build (`batchId`,
+0..`PLACE_STRUCTURES_BATCH_ID_MAX`, wrapping); both replies echo it.
 
 Client side: in build mode every Place (✓, the desktop click: `commitPlacement` →
 `commitChosenPlacement`) ADDS the building to the planned list
@@ -76,12 +78,12 @@ the server snaps it) instead of sending it. The strip's Build (`placement-build`
 "Build (n)", only while the list is non-empty) runs `buildPlacementPlan`
 (`placementCancel.ts`): the shared `batchPlacementRejections` against the mirror's
 structures, rocks and deck marks clashing items refused without a round trip; a
-clean plan goes as one `place_structures` (`sendPlaceStructures`). A
-`place_structures_refused` reply keeps the plan and flags the refused indices.
-Success has no reply: the plan clears once the room state's structure count
-reaches the count at send plus the planned count (`stepPlacementPlan`, per frame
-from `gameRafLoop`, the dim-ghost rule); after `PENDING_PLACEMENT_TIMEOUT_MS`
-without either the plan stays and Build may be pressed again. ✕ (`cancelPlacement`),
+clean plan goes as one `place_structures` (`sendPlaceStructures`) with the next
+`batchId`. Only a reply with the in-flight `batchId` counts: `place_structures_refused`
+keeps the plan and flags the refused indices; `place_structures_placed` clears it.
+After `PENDING_PLACEMENT_TIMEOUT_MS` with no reply (`stepPlacementPlan`, per frame
+from `gameRafLoop`) the plan stays and Build may be pressed again; a late reply to
+the old Build is then ignored. ✕ (`cancelPlacement`),
 leaving build mode and a sector change drop the plan. The crate cap
 (`placementEndsAfterPlace`) counts planned buildings of the kind. A deck fence
 run (`commitFenceRun`) still sends at once.

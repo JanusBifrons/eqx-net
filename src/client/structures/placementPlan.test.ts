@@ -2,7 +2,7 @@
  * Plan then Build (owner 2026-11-27): Place plans, Build sends the whole plan
  * as ONE `place_structures` (all or nothing). ✕ and leaving build mode drop
  * the plan; a refusal keeps it and marks the refused items; the batch
- * landing (the structures count grew by the batch) clears it.
+ * server's `place_structures_placed` reply (matching batchId) clears it.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -33,7 +33,7 @@ import { useUIStore } from '../state/store.js';
 import { PlaceStructuresSchema } from '../../shared-types/messages.js';
 import { placementChosen, resetPlacementChosen } from './placementChosen.js';
 import {
-  buildPlacementPlan, cancelPlacement, commitPlacement, onPlaceStructuresRefused, stepPlacementPlan,
+  buildPlacementPlan, cancelPlacement, commitPlacement, onPlaceStructuresPlaced, onPlaceStructuresRefused, stepPlacementPlan,
 } from './placementCancel.js';
 import {
   addPlannedPlacement, clearPlacementPlan, getPlacementPlanCount, isPlannedPlacementRefused, plannedPlacementAt, subscribePlacementPlan,
@@ -64,26 +64,26 @@ beforeEach(() => {
 describe('plan then Build', () => {
   it('Place adds to the plan and sends nothing', () => {
     expect(place('solar', 100, 0)).toBe(true);
-    expect(place('battery', 4000, 0)).toBe(true);
+    expect(place('battery', 600, 0)).toBe(true);
     expect(sent).toEqual([]);
     expect(getPlacementPlanCount()).toBe(2);
     expect(plannedPlacementAt(0)).toEqual({ kind: 'solar', x: 100, y: 0, rot: 0, mirror: false });
-    expect(plannedPlacementAt(1)).toMatchObject({ kind: 'battery', x: 4000, y: 0 });
+    expect(plannedPlacementAt(1)).toMatchObject({ kind: 'battery', x: 600, y: 0 });
     expect(useUIStore.getState().placementKind).toBe('solar'); // placing goes on
   });
 
   it('Build sends ONE place_structures with every item in order, passing the server schema', () => {
     place('solar', 100, 0);
-    place('battery', 4000, 0);
-    place('solar', 7000, 0);
+    place('battery', 600, 0);
+    place('solar', 1100, 0);
     expect(buildPlacementPlan()).toBe(true);
     expect(sent.map((s) => s.type)).toEqual(['place_structures']);
     const parsed = PlaceStructuresSchema.safeParse(sent[0]!.msg);
     expect(parsed.success).toBe(true);
-    expect(parsed.data!.items.map((i) => [i.kind, i.x])).toEqual([['solar', 100], ['battery', 4000], ['solar', 7000]]);
+    expect(parsed.data!.items.map((i) => [i.kind, i.x])).toEqual([['solar', 100], ['battery', 600], ['solar', 1100]]);
     // In flight: no second send, no new plan items.
     expect(buildPlacementPlan()).toBe(false);
-    expect(place('solar', 10000, 0)).toBe(false);
+    expect(place('solar', 1600, 0)).toBe(false);
     expect(sent.length).toBe(1);
   });
 
@@ -98,36 +98,49 @@ describe('plan then Build', () => {
     expect(getPlacementPlanCount()).toBe(0);
   });
 
-  it('a refused reply keeps the plan and marks the refused indices', () => {
+  /** The batchId of the last place_structures sent. */
+  const lastBatchId = (): number => (sent[sent.length - 1]!.msg as { batchId: number }).batchId;
+
+  it('a refused reply (matching batchId) keeps the plan and marks the refused indices', () => {
     place('solar', 100, 0);
-    place('battery', 4000, 0);
-    place('solar', 7000, 0);
+    place('battery', 600, 0);
+    place('solar', 1100, 0);
     buildPlacementPlan();
-    onPlaceStructuresRefused([{ index: 0 }, { index: 2 }]);
+    const id = lastBatchId();
+    onPlaceStructuresRefused(id + 1, [{ index: 1 }]); // another batch's reply: ignored
+    expect([0, 1, 2].map(isPlannedPlacementRefused)).toEqual([false, false, false]);
+    expect(buildPlacementPlan()).toBe(false); // still in flight
+    onPlaceStructuresRefused(id, [{ index: 0 }, { index: 2 }]);
     expect(getPlacementPlanCount()).toBe(3);
     expect([0, 1, 2].map(isPlannedPlacementRefused)).toEqual([true, false, true]);
-    // Build may be pressed again (the flags reset for the fresh verdict).
+    // Build may be pressed again (the flags reset for the fresh verdict), with a new batchId.
     expect(buildPlacementPlan()).toBe(true);
     expect(sent.length).toBe(2);
+    expect(lastBatchId()).not.toBe(id);
     expect(isPlannedPlacementRefused(0)).toBe(false);
   });
 
-  it('the batch landing (structures grew by the batch) clears the plan; a timeout keeps it', () => {
+  it('only the placed reply with the matching batchId clears the plan; a timeout keeps it', () => {
     place('solar', 100, 0);
-    place('battery', 4000, 0);
-    buildPlacementPlan(); // baseline 0 structures
-    stepPlacementPlan(0, 1000);
-    stepPlacementPlan(1, 1016);
+    place('battery', 600, 0);
+    buildPlacementPlan();
+    const id = lastBatchId();
+    onPlaceStructuresPlaced(id + 1); // a stale or foreign id: nothing happens
     expect(getPlacementPlanCount()).toBe(2);
-    stepPlacementPlan(2, 1032);
+    onPlaceStructuresPlaced(id);
     expect(getPlacementPlanCount()).toBe(0);
-    // Timeout: the plan stays, Build may be pressed again.
+    // Timeout: the plan stays, Build may be pressed again; a late placed for the old id is ignored.
     place('solar', 100, 0);
     buildPlacementPlan();
-    stepPlacementPlan(0, 5000);
-    stepPlacementPlan(0, 9000);
+    const late = lastBatchId();
+    stepPlacementPlan(5000);
+    stepPlacementPlan(9000);
     expect(getPlacementPlanCount()).toBe(1);
     expect(buildPlacementPlan()).toBe(true);
+    onPlaceStructuresPlaced(late);
+    expect(getPlacementPlanCount()).toBe(1);
+    onPlaceStructuresPlaced(lastBatchId());
+    expect(getPlacementPlanCount()).toBe(0);
   });
 
   it('the shared batch check marks a clashing plan red before any send (#15)', () => {
@@ -143,7 +156,7 @@ describe('plan then Build', () => {
     useUIStore.setState({ placementKind: 'smelter', currentSectorKey: 'sol', packedStock: { 'structure:smelter': 2 } });
     expect(place('smelter', 100, 0)).toBe(true);
     expect(useUIStore.getState().placementKind).toBe('smelter'); // one crate left unplanned
-    expect(place('smelter', 6000, 0)).toBe(true);
+    expect(place('smelter', 1500, 0)).toBe(true);
     expect(useUIStore.getState().placementKind).toBe(null); // the last crate is planned
     expect(getPlacementPlanCount()).toBe(2);
   });

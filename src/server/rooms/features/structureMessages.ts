@@ -27,6 +27,7 @@ import {
   StructureActionSchema,
   UpgradeStructureSchema,
   type PlaceRefusalCode,
+  type PlaceStructuresPlacedEvent,
   type PlaceStructuresRefusedEvent,
 } from '../../../shared-types/messages.js';
 import type { StructureKindId } from '../../../shared-types/structureKinds.js';
@@ -90,7 +91,8 @@ const batchItems: SnappedItem[] = [];
 const batchView: SnappedItem[] = [];
 const refusedIndex: number[] = [];
 const refusedCode: PlaceRefusalCode[] = [];
-const refusedReply: PlaceStructuresRefusedEvent = { type: 'place_structures_refused', refused: [] };
+const refusedReply: PlaceStructuresRefusedEvent = { type: 'place_structures_refused', batchId: 0, refused: [] };
+const placedReply: PlaceStructuresPlacedEvent = { type: 'place_structures_placed', batchId: 0 };
 const refusedPool: Array<{ index: number; code: PlaceRefusalCode }> = [];
 
 export function registerStructureMessages(h: StructureMessageHost): RoomFeature {
@@ -155,7 +157,8 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
   // item is checked first (each against the batch's earlier items too, crates
   // summed: `checkBatch`); one refusal places none and replies
   // `place_structures_refused` with each refused index + code. Success sends
-  // what a single placement does (the slice refresh; no reply).
+  // what a single placement does (the slice refresh) plus
+  // `place_structures_placed`. Both replies echo the batch's `batchId`.
   parsedMessage(h, 'place_structures', PlaceStructuresSchema, (msg, client) => {
     const owner = h.sessionToPlayer().get(client.sessionId);
     if (!owner) return;
@@ -187,6 +190,7 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
         h.logger.warn({ sessionId: client.sessionId, kind: it.kind, x: Math.round(it.x), y: Math.round(it.y), refusal: e.code, index: e.index }, 'place_structures rejected');
         serverLogEvent('place_structures_rejected', { owner, kind: it.kind, index: e.index, x: it.x, y: it.y, deck: h.deck(), refusal: e.code });
       }
+      refusedReply.batchId = msg.batchId;
       try { client.send('place_structures_refused', refusedReply); } catch { /* socket closing */ }
       if (placement.lastRefusal !== null) h.sendNotice(client, placement.lastRefusal);
       return;
@@ -210,6 +214,11 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
       }
     }
     if (n > 0) afterPlacing();
+    // The batch passed every check and was committed: tell the sender, so
+    // its plan (matched by batchId) clears. Sent even if a full slot pool
+    // dropped an item above, so a re-Build never re-sends the placed ones.
+    placedReply.batchId = msg.batchId;
+    try { client.send('place_structures_placed', placedReply); } catch { /* socket closing */ }
   });
 
   parsedMessage(h, 'remove_structure', RemoveStructureSchema, (msg, client) => {

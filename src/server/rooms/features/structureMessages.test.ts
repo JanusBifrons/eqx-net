@@ -58,8 +58,9 @@ function rig(obstacles: GridObstacle[] = [], crates?: number, opts: { slots?: nu
   const place = (kind: string, x: number, y: number) =>
     handlers.get('place_structure')!(client, { type: 'place_structure', kind, x, y });
   const placeAll = (items: Array<{ kind: string; x: number; y: number }>) =>
-    handlers.get('place_structures')!(client, { type: 'place_structures', items });
-  return { place, placeAll, notices, registry, sent, crates: () => held };
+    handlers.get('place_structures')!(client, { type: 'place_structures', batchId: 7, items });
+  const placeRaw = (m: unknown) => handlers.get('place_structures')!(client, m);
+  return { place, placeAll, placeRaw, notices, registry, sent, crates: () => held };
 }
 
 describe('place_structure refusal notice', () => {
@@ -161,11 +162,11 @@ describe('structure_action reconnect notice', () => {
 });
 
 describe('place_structures — plan then Build, all or nothing', () => {
-  it('an all-valid batch places every item and sends no refusal', () => {
+  it('an all-valid batch places every item and sends ONE placed reply echoing the batchId', () => {
     const r = rig();
     r.placeAll([{ kind: 'solar', x: 0, y: 0 }, { kind: 'solar', x: 3000, y: 0 }, { kind: 'reactor', x: 0, y: 3000 }]);
     expect(r.registry.size).toBe(3);
-    expect(r.sent).toEqual([]);
+    expect(r.sent).toEqual([{ type: 'place_structures_placed', msg: { type: 'place_structures_placed', batchId: 7 } }]);
     expect(r.notices).toEqual([]);
   });
 
@@ -173,7 +174,8 @@ describe('place_structures — plan then Build, all or nothing', () => {
     const r = rig([{ x: 3000, y: 0, radius: 120 }]);
     r.placeAll([{ kind: 'solar', x: 0, y: 0 }, { kind: 'solar', x: 3000, y: 0 }, { kind: 'reactor', x: 0, y: 3000 }]);
     expect(r.registry.size).toBe(0);
-    expect(r.sent).toEqual([{ type: 'place_structures_refused', msg: { type: 'place_structures_refused', refused: [{ index: 1, code: 'overlap-obstacle' }] } }]);
+    expect(r.sent).toEqual([{ type: 'place_structures_refused', msg: { type: 'place_structures_refused', batchId: 7, refused: [{ index: 1, code: 'overlap-obstacle' }] } }]);
+    expect(r.sent.some((m) => m.type === 'place_structures_placed')).toBe(false);
     expect(r.notices).toEqual(["Can't build here: blocked by an asteroid or wreck"]);
   });
 
@@ -182,14 +184,14 @@ describe('place_structures — plan then Build, all or nothing', () => {
     r.place('capital', 0, 0);
     r.placeAll([{ kind: 'solar', x: 5000, y: 0 }, { kind: 'connector', x: 10, y: 10 }]);
     expect(r.registry.size).toBe(1);
-    expect(r.sent[0]!.msg).toEqual({ type: 'place_structures_refused', refused: [{ index: 1, code: 'overlap-structure' }] });
+    expect(r.sent[0]!.msg).toEqual({ type: 'place_structures_refused', batchId: 7, refused: [{ index: 1, code: 'overlap-structure' }] });
   });
 
   it('two items overlapping each other: the later is refused, none placed', () => {
     const r = rig();
     r.placeAll([{ kind: 'solar', x: 0, y: 0 }, { kind: 'solar', x: 100, y: 0 }]);
     expect(r.registry.size).toBe(0);
-    expect(r.sent[0]!.msg).toEqual({ type: 'place_structures_refused', refused: [{ index: 1, code: 'overlap-structure' }] });
+    expect(r.sent[0]!.msg).toEqual({ type: 'place_structures_refused', batchId: 7, refused: [{ index: 1, code: 'overlap-structure' }] });
   });
 
   it('crates for 2 but a batch of 3 Capitals: the third is refused no-crate, none placed', () => {
@@ -197,7 +199,7 @@ describe('place_structures — plan then Build, all or nothing', () => {
     r.placeAll([{ kind: 'capital', x: 0, y: 0 }, { kind: 'capital', x: 5000, y: 0 }, { kind: 'capital', x: 10000, y: 0 }]);
     expect(r.registry.size).toBe(0);
     expect(r.crates()).toBe(2);
-    expect(r.sent[0]!.msg).toEqual({ type: 'place_structures_refused', refused: [{ index: 2, code: 'no-crate' }] });
+    expect(r.sent[0]!.msg).toEqual({ type: 'place_structures_refused', batchId: 7, refused: [{ index: 2, code: 'no-crate' }] });
   });
 
   it('crates for 2 and a batch of 2 Capitals: both placed, both crates spent', () => {
@@ -205,21 +207,21 @@ describe('place_structures — plan then Build, all or nothing', () => {
     r.placeAll([{ kind: 'capital', x: 0, y: 0 }, { kind: 'capital', x: 5000, y: 0 }]);
     expect(r.registry.size).toBe(2);
     expect(r.crates()).toBe(0);
-    expect(r.sent).toEqual([]);
+    expect(r.sent).toEqual([{ type: 'place_structures_placed', msg: { type: 'place_structures_placed', batchId: 7 } }]);
   });
 
   it('a kind no player may build is refused not-buildable', () => {
     const r = rig();
     r.placeAll([{ kind: 'solar', x: 0, y: 0 }, { kind: 'alien_gate', x: 9000, y: 0 }]);
     expect(r.registry.size).toBe(0);
-    expect(r.sent[0]!.msg).toEqual({ type: 'place_structures_refused', refused: [{ index: 1, code: 'not-buildable' }] });
+    expect(r.sent[0]!.msg).toEqual({ type: 'place_structures_refused', batchId: 7, refused: [{ index: 1, code: 'not-buildable' }] });
   });
 
   it('two Territory Locks in one batch: the second breaks the one-per-sector rule, none placed', () => {
     const r = rig([], undefined, { locks: true });
     r.placeAll([{ kind: 'territory_lock', x: 0, y: 0 }, { kind: 'territory_lock', x: 5000, y: 0 }]);
     expect(r.registry.size).toBe(0);
-    expect(r.sent[0]!.msg).toEqual({ type: 'place_structures_refused', refused: [{ index: 1, code: 'kind-rule' }] });
+    expect(r.sent[0]!.msg).toEqual({ type: 'place_structures_refused', batchId: 7, refused: [{ index: 1, code: 'kind-rule' }] });
     expect(r.notices).toEqual(['This sector already has a Territory Lock.']);
   });
 
@@ -227,27 +229,30 @@ describe('place_structures — plan then Build, all or nothing', () => {
     const r = rig([], undefined, { locks: true });
     r.placeAll([{ kind: 'territory_lock', x: 0, y: 0 }, { kind: 'solar', x: 5000, y: 0 }]);
     expect(r.registry.size).toBe(2);
-    expect(r.sent).toEqual([]);
+    expect(r.sent).toEqual([{ type: 'place_structures_placed', msg: { type: 'place_structures_placed', batchId: 7 } }]);
   });
 
   it('free spawn slots for 2 but a batch of 3: the batch is refused no-room, none placed', () => {
     const r = rig([], undefined, { slots: 2 });
     r.placeAll([{ kind: 'solar', x: 0, y: 0 }, { kind: 'solar', x: 3000, y: 0 }, { kind: 'solar', x: 6000, y: 0 }]);
     expect(r.registry.size).toBe(0);
-    expect(r.sent[0]!.msg).toEqual({ type: 'place_structures_refused', refused: [{ index: 2, code: 'no-room' }] });
+    expect(r.sent[0]!.msg).toEqual({ type: 'place_structures_refused', batchId: 7, refused: [{ index: 2, code: 'no-room' }] });
   });
 
   it('free spawn slots for exactly the batch: all placed', () => {
     const r = rig([], undefined, { slots: 2 });
     r.placeAll([{ kind: 'solar', x: 0, y: 0 }, { kind: 'solar', x: 3000, y: 0 }]);
     expect(r.registry.size).toBe(2);
-    expect(r.sent).toEqual([]);
+    expect(r.sent).toEqual([{ type: 'place_structures_placed', msg: { type: 'place_structures_placed', batchId: 7 } }]);
   });
 
   it('a malformed or oversized batch is dropped', () => {
     const r = rig();
     r.placeAll([]);
     r.placeAll(Array.from({ length: 33 }, (_, i) => ({ kind: 'solar', x: i * 3000, y: 0 })));
+    // No batchId (or a bad one): the client could not match a reply, so it is dropped too.
+    r.placeRaw({ type: 'place_structures', items: [{ kind: 'solar', x: 0, y: 0 }] });
+    r.placeRaw({ type: 'place_structures', batchId: -1, items: [{ kind: 'solar', x: 0, y: 0 }] });
     expect(r.registry.size).toBe(0);
     expect(r.sent).toEqual([]);
   });

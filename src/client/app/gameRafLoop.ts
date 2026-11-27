@@ -349,7 +349,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
       resetPlacementChosen();
       resetPlacementTelemetry();
     }
-    stepPlacementPlan(gameClient.mirror.structures?.size ?? 0, now); // plan then Build: a sent plan landed?
+    stepPlacementPlan(now); // plan then Build: a sent plan timed out?
     // Build mode: Command view + camera pulled back while placing; restored after.
     if (typeof window !== 'undefined') stepBuildModeView(useUIStore.getState().buildMode, feedback, gameClient.mirror.localShipInstanceId ?? null,
       renderer, window.innerWidth, window.innerHeight);

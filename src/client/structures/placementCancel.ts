@@ -5,6 +5,7 @@ import { batchPlacementRejections, BatchPlacementChecker } from '../../core/stru
 import type { PlacementRejection } from '../../core/structures/placementRules.js';
 import { getGameClient } from '../net/clientSingleton.js';
 import { ghostDeckContext } from '../render/pixi/placementDeckSnap.js';
+import { PLACE_STRUCTURES_BATCH_ID_MAX } from '@shared-types/messages';
 import { commitChosenPlacement, PENDING_PLACEMENT_TIMEOUT_MS, sendPlaceStructures } from './structurePlacementClient';
 import { commitFenceRun, endFenceRun, fenceRunRocks, isFenceRunKind } from './fenceRun';
 import { PlacementGhostVerdict } from './placementGhostVerdict.js';
@@ -21,9 +22,10 @@ import {
  * Build (`buildPlacementPlan`) sends it as one `place_structures`.
  */
 
-/** A Build in flight: nothing is added or re-sent until it lands, is
- *  refused, or times out. `sentAtMs` < 0 until the first frame stamps it. */
-const flight = { active: false, baseline: 0, count: 0, sentAtMs: -1 };
+/** A Build in flight: nothing is added or re-sent until the server's reply
+ *  for its `batchId` (placed or refused) or a timeout. `sentAtMs` < 0 until
+ *  the first frame stamps it. `batchId` counts Builds (wraps at the wire max). */
+const flight = { active: false, batchId: 0, sentAtMs: -1 };
 
 /** Is a Build waiting on the server (the Build button stays disabled)? */
 export function isPlanBuildInFlight(): boolean {
@@ -107,33 +109,43 @@ export function buildPlacementPlan(): boolean {
       return false;
     }
   }
-  if (!sendPlaceStructures(items)) return false;
+  const batchId = flight.batchId >= PLACE_STRUCTURES_BATCH_ID_MAX ? 0 : flight.batchId + 1;
+  if (!sendPlaceStructures(items, batchId)) return false;
   flight.active = true;
-  flight.baseline = mirror.structures?.size ?? 0;
-  flight.count = items.length;
+  flight.batchId = batchId;
   flight.sentAtMs = -1;
   return true;
 }
 
-/** `place_structures_refused`: nothing was placed. Keep the plan and mark
- *  each refused index red; Build may be pressed again. */
-export function onPlaceStructuresRefused(refused: readonly { index: number }[]): void {
+/** Is this reply for the Build in flight? A reply to an older Build (one
+ *  that timed out, or from before a ✕) is ignored. */
+function replyIsCurrent(batchId: number): boolean {
+  return flight.active && batchId === flight.batchId;
+}
+
+/** `place_structures_refused` for the Build in flight: nothing was placed.
+ *  Keep the plan and mark each refused index red; Build may be pressed again. */
+export function onPlaceStructuresRefused(batchId: number, refused: readonly { index: number }[]): void {
+  if (!replyIsCurrent(batchId)) return;
   flight.active = false;
   clearPlanRefused();
   for (let k = 0; k < refused.length; k++) markPlannedRefused(refused[k]!.index);
 }
 
+/** `place_structures_placed` for the Build in flight: every planned
+ *  building landed, so the plan is cleared. */
+export function onPlaceStructuresPlaced(batchId: number): void {
+  if (replyIsCurrent(batchId)) dropPlan();
+}
+
 /**
- * Per frame (gameRafLoop): resolve a Build in flight. Success has no reply:
- * the room state's structures grew by the batch (`structureCount` ≥ the
- * count at send + the planned count, the dim-ghost rule
- * `pendingPlacementResolved` uses) ⇒ the plan landed and is cleared. Past
- * `PENDING_PLACEMENT_TIMEOUT_MS` without either, the plan stays and Build
- * may be pressed again. One boolean when idle; allocation-free.
+ * Per frame (gameRafLoop): time out a Build in flight. Past
+ * `PENDING_PLACEMENT_TIMEOUT_MS` with no reply for its batchId, the plan
+ * stays and Build may be pressed again (a late reply is then ignored). One
+ * boolean when idle; allocation-free.
  */
-export function stepPlacementPlan(structureCount: number, nowMs: number): void {
+export function stepPlacementPlan(nowMs: number): void {
   if (!flight.active) return;
-  if (structureCount >= flight.baseline + flight.count) { dropPlan(); return; }
   if (flight.sentAtMs < 0) flight.sentAtMs = nowMs;
   else if (nowMs - flight.sentAtMs >= PENDING_PLACEMENT_TIMEOUT_MS) flight.active = false;
 }

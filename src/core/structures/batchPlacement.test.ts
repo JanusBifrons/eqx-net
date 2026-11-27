@@ -5,7 +5,10 @@
  */
 import { describe, it, expect } from 'vitest';
 import { BatchPlacementChecker, batchPlacementRejections, type BatchPlacementItem } from './batchPlacement.js';
-import { PLACEMENT_REJECTION_TEXT, type PlacementDeck, type PlacementRejection } from './placementRules.js';
+import {
+  PLACEMENT_REJECTION_TEXT, placementRejection, type PlacementDeck, type PlacementFootprint, type PlacementRejection,
+} from './placementRules.js';
+import { getStructureKind, structureHalfExtents } from '../../shared-types/structureKinds.js';
 import { PLACE_REFUSAL_CODES } from '../../shared-types/messages.js';
 import { PlateSet } from '../hex/plateSet.js';
 import { deckHexCentreInto, plateCentreWorldInto, plateHexes } from '../hex/plates.js';
@@ -71,5 +74,44 @@ describe('BatchPlacementChecker — a batch checked against itself', () => {
 
   it('every placement rejection is a wire refusal code (both sides agree)', () => {
     for (const r of Object.keys(PLACEMENT_REJECTION_TEXT)) expect(PLACE_REFUSAL_CODES).toContain(r);
+  });
+});
+
+/** Item 0 as the server records it once placed (`StructurePlacementSubsystem.place`). */
+function placedFootprint(it: BatchPlacementItem): PlacementFootprint {
+  const ext = structureHalfExtents(it.kind, it.rot);
+  return {
+    x: it.x, y: it.y, radius: getStructureKind(it.kind).radius, halfW: ext.hw, halfH: ext.hh,
+    kind: it.kind, rot: it.rot, ...(it.mirror ? { mirror: true } : {}),
+  };
+}
+
+describe('batch vs single placement parity (the same pair, the same verdict)', () => {
+  // Item 1 checked as the batch's second item must get exactly the verdict
+  // the single placement gives with item 0 already standing in the world.
+  const pairs: Array<[string, string]> = [['solar', 'battery'], ['battery', 'solar'], ['solar', 'solar'], ['connector', 'solar'], ['reactor', 'battery']];
+  const gaps = [0, 100, 200, 300, 400, 500, 600, 800, 1000, 1500];
+  const rots = [0, 90, 30];
+  for (const [a, b] of pairs) {
+    it(`${a} then ${b}, side by side and diagonal, turned or not`, () => {
+      for (const gap of gaps) for (const rot of rots) for (const [dx, dy] of [[1, 0], [0, 1], [0.7, 0.7]] as const) {
+        const first: BatchPlacementItem = { kind: a, x: 0, y: 0, rot };
+        const second: BatchPlacementItem = { kind: b, x: dx * gap, y: dy * gap, rot };
+        const single = placementRejection(b, second.x, second.y, [placedFootprint(first)], null, rot, false, null);
+        const index: number[] = [], code: PlacementRejection[] = [];
+        batchPlacementRejections(new BatchPlacementChecker(), [first, second], [], null, index, code);
+        const batch = index.includes(1) ? code[index.indexOf(1)]! : null;
+        expect(batch, `${a}→${b} gap ${gap} rot ${rot} dir ${dx},${dy}`).toBe(single);
+      }
+    });
+  }
+
+  it('a solar and a battery 300 apart really overlap (solar half-width 350 + battery 95 > 300), batch and single alike', () => {
+    const first = item('solar', 0, 0), second = item('battery', 300, 0);
+    const single = placementRejection('battery', 300, 0, [placedFootprint(first)], null, 0, false, null);
+    expect(single).toBe('overlap-structure');
+    expect(run([first, second]).code[0] ?? null).toBe(single);
+    // Just past touching (445) both say legal.
+    expect(run([first, item('battery', 450, 0)]).index).toEqual([]);
   });
 });
