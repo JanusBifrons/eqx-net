@@ -29,6 +29,7 @@ export const SANDBOX_OPTS = {
   sectorKey: SANDBOX_SECTOR_KEY,
   sealed: true,
   freeBuilds: true,
+  ownedFleet: true,
   persistSector: false,
   deck: true,
   asteroidConfig: [],

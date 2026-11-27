@@ -26,7 +26,7 @@ import type { MineFieldSubsystem } from '../structures/MineFieldSubsystem.js';
 import type { ShellBlast } from '../../shared-types/shellBlast.js';
 import { assertRoomSeedBounds } from './roomSeedBounds.js';
 import type { SectorRoomOptions } from './sectorRoomOptions.js';
-import { isSealedSectorKey } from './sealedSectors.js';
+import { isSealedSectorKey, paysRealCredits } from './sealedSectors.js';
 import { StructuresSliceSync } from './structuresSlice.js';
 import { seedScaleGrid, seedScenarioScrap, seedStructureScenario, structureRowsForTests, type StructureScenarioHost } from './scenarioLayouts.js';
 import { seedRoomStartup } from './roomStartupSeed.js';
@@ -96,7 +96,6 @@ import { npcBaseTrade } from '../economy/npcBaseTrade.js';
 import { buildStructureRigs, type StructureRigs } from './features/structureRigs.js';
 import { LAUNCH_COSTS_ON } from '../../shared-types/launch.js';
 import { chargeLaunchFor } from './launchGate.js';
-import { paysRealCredits } from './sealedSectors.js';
 import { ASTEROID_YIELD, rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
 
@@ -1554,7 +1553,7 @@ export class SectorRoom extends Room<SectorState> {
     // mount-ticker cleanup. Extracted to RespawnHandler.ts.
     this.respawnHandler = new RespawnHandler({
       // Join flow — a respawn re-launches the same hull, so it pays like a launch.
-      chargeRespawn: (pid, kind) => !this.launchCharged() || chargeLaunchFor(this.launchCostsOn, pid, kind).kind !== 'refuse',
+      chargeRespawn: (pid, kind) => !this.launchCharged() || chargeLaunchFor(this.launchCostsOn, this.sectorKey, pid, kind).kind !== 'refuse',
       sabF32: this.sabF32,
       sabU32: this.sabU32,
       serverTick: () => this.serverTick,
@@ -1833,6 +1832,7 @@ export class SectorRoom extends Room<SectorState> {
       startSceneClock: (tick) => this.sceneRunner?.start(tick),
       markWarpArrived: (pid, tick) => this.warpTravel.markArrived(pid, tick),
       startInCommand: (pid, sessionId) => this.fleetHooks.startInCommand(pid, sessionId),
+      ownedFleet: roomOpts.ownedFleet === true && isSealedSectorKey(this.sectorKey), launchFleetHull: (pid, kind, o) => this.hullHandOff.launchNewHull(pid, kind, 0, o, true), // sandbox ship grid (sandboxFleet.ts)
       bindRosterEntry: (playerId, userId, kind, pose, preferredShipId = '', forceFreshCreate = false) =>
         this.rosterPersistence.bind(playerId, userId, kind, pose, preferredShipId, forceFreshCreate),
     });

@@ -6,7 +6,9 @@
  * hull; any other kind must be a ship you OWN (a roster row). The same gate
  * pays for the launch (`chargeLaunch`: wallet, free launch or debt). A fresh
  * spawn the pilot can't have or can't pay for launches a Fighter instead, and
- * is told why. Respawn charges through `chargeLaunchFor` too.
+ * is told why. Respawn charges through `chargeLaunchFor` too. A sealed room
+ * (the sandbox, `paysRealCredits`) launches every hull free: no charge, no
+ * join credits, no hull gate.
  */
 import type { LaunchVerdict } from '../../shared-types/launch.js';
 import { DEFAULT_SHIP_KIND, getShipKind } from '../../shared-types/shipKinds.js';
@@ -15,10 +17,14 @@ import { getPersistence, getWallet } from '../db/PersistenceWorker.js';
 import { chargeLaunch } from '../economy/launchCharge.js';
 import { getTradeSink } from '../economy/tradeSink.js';
 import { getStarterGrantEconomy, grantJoinCredits } from '../economy/starterGrant.js';
+import { paysRealCredits } from './sealedSectors.js';
+
+const SEALED_FREE: LaunchVerdict = Object.freeze({ kind: 'free', cost: 0 });
 
 /** The room's one charging seam (join gate and respawn). The once-per-account
  *  join credits land first, so a new pilot pays for a battleship outright. */
-export function chargeLaunchFor(costsOn: boolean, playerId: string, kind: string): LaunchVerdict {
+export function chargeLaunchFor(costsOn: boolean, sectorKey: string | null, playerId: string, kind: string): LaunchVerdict {
+  if (!paysRealCredits(sectorKey)) return SEALED_FREE;
   grantJoinCredits({ econ: getStarterGrantEconomy(), wallet: getWallet(), persistence: getPersistence }, playerId);
   const sink = getTradeSink();
   return chargeLaunch({
@@ -30,8 +36,8 @@ export function chargeLaunchFor(costsOn: boolean, playerId: string, kind: string
 }
 
 /** Charge a fresh launch of `kind`; returns the kind that actually launches. */
-export function gateLaunch(costsOn: boolean, playerId: string, kind: string, notice: (msg: string) => void): string {
-  const verdict = chargeLaunchFor(costsOn, playerId, kind);
+export function gateLaunch(costsOn: boolean, sectorKey: string | null, playerId: string, kind: string, notice: (msg: string) => void): string {
+  const verdict = chargeLaunchFor(costsOn, sectorKey, playerId, kind);
   if (verdict.kind !== 'refuse') return kind;
   const wanted = getShipKind(kind).displayName;
   notice(verdict.reason === 'shipyard'

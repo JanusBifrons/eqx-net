@@ -21,7 +21,7 @@ import { emptyHold } from '../../core/cargo/hold.js';
 import { fittedUid } from '../../shared-types/blueprints.js';
 import { RosterPersistence, type RosterPose } from './RosterPersistence.js';
 import { SANDBOX_SECTOR_KEY } from './sealedSectors.js';
-import { pickResumableRow, purgeSealedRosterRows, rosterRowFitsRoom, unsealedRows } from './rosterSealing.js';
+import { pickResumableRow, purgeSealedRosterRows, rosterRowFitsRoom, rosterRowsForView, unsealedRows } from './rosterSealing.js';
 
 const REAL = 'sol-prime';
 const POSE: RosterPose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0, health: 100, lastFireClientTick: 0 };
@@ -110,6 +110,17 @@ describe('unsealedRows (Hangar list)', () => {
   it('drops sealed rows', () => {
     const rows = [{ lastSectorKey: REAL }, { lastSectorKey: SANDBOX_SECTOR_KEY }];
     expect(unsealedRows(rows)).toEqual([{ lastSectorKey: REAL }]);
+  });
+});
+
+describe('rosterRowsForView (in-game ship list)', () => {
+  const rows = [{ lastSectorKey: REAL }, { lastSectorKey: SANDBOX_SECTOR_KEY }];
+  it('a sealed view key lists only that room\'s rows', () => {
+    expect(rosterRowsForView(rows, SANDBOX_SECTOR_KEY)).toEqual([{ lastSectorKey: SANDBOX_SECTOR_KEY }]);
+  });
+  it('no key or a real key lists the real rows only', () => {
+    expect(rosterRowsForView(rows, null)).toEqual([{ lastSectorKey: REAL }]);
+    expect(rosterRowsForView(rows, REAL)).toEqual([{ lastSectorKey: REAL }]);
   });
 });
 

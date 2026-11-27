@@ -35,6 +35,15 @@ export function unsealedRows<R extends { lastSectorKey: string }>(rows: readonly
   return rows.filter((r) => !isSealedSectorKey(r.lastSectorKey));
 }
 
+/** The ship list a pilot sees (`/hangar/ships`). In a sealed room (`viewSectorKey`
+ *  sealed: the client passes its room's sector) only that room's own rows, so the
+ *  sandbox lists its ships and nothing else; anywhere else (any other key, or
+ *  none) the real rows only. */
+export function rosterRowsForView<R extends { lastSectorKey: string }>(rows: readonly R[], viewSectorKey: string | null): R[] {
+  if (viewSectorKey !== null && isSealedSectorKey(viewSectorKey)) return rows.filter((r) => r.lastSectorKey === viewSectorKey);
+  return unsealedRows(rows);
+}
+
 /** Narrow views of the two stores the boot purge touches. */
 export interface PurgeRosterStore {
   all(): ReadonlyArray<{ shipId: string; lastSectorKey: string }>;
