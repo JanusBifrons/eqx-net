@@ -1,15 +1,16 @@
 /**
  * The left strip host (UI language plan A5, jobs U1-8, U3-1; selection HUD S5).
  *
- * - Command, own ships selected: the strip BECOMES the who-hex honeycomb
- *   (`WhoHexes.tsx`): one hex per ship type (type icon + "×N"); a tap keeps only
+ * - Command, own ships selected: the strip BECOMES the who-hex column
+ *   (`WhoHexes.tsx`, in the `left-column` anchor: top left, under the mode
+ *   switch, zigzagging down the left edge): one hex per ship type (type icon + "×N"); a tap keeps only
  *   that type (`keepOnlyKind` through the renderer, which owns the selection);
  *   more than 5 types puts "?" + "+N" in the last slot, which opens the Fleet
  *   orders panel with the full list. Grouping lives in `fleet/fleetView.ts`.
  * - Fly and Build: no who-hexes (the actor is implied: your own ship, or the
  *   ghost / structure the world tag names).
  * - The selection's ACTIONS the bottom-right do-hexes do not carry stay on a
- *   slim icon strip under the honeycomb (`left-strip`). An action shows in one
+ *   slim icon strip (`left-strip`; under the who-hexes when they show). An action shows in one
  *   place only: the strip reads the do-hexes' own predicate (`useDoHexSet`) and
  *   coverage (`FLEET_HEX_KEYS`, `flyHexCovers`). While the fleet hexes draw, the
  *   fleet section (Order / Move / Stance / Stop, `fleetStripItems.tsx`) is gone;
@@ -134,8 +135,10 @@ export function LeftStripHost({ rendererRef, touch = false }: Props): JSX.Elemen
   const quick = [...quickItems, ...details];
   const quickLeft = hexSet === 'fly' ? quick.filter((a) => !flyHexCovers(a)) : quick;
   const actions = [...fleetLeft, ...buildingItems, ...quickLeft];
+  // The who-hexes start top left (the `left-column` anchor, under the mode
+  // switch); what is left of the strip follows them down the same column.
   return (
-    <Slot anchor="left-strip">
+    <Slot anchor={groups !== null ? 'left-column' : 'left-strip'}>
       {groups !== null && (
         <WhoHexes shown={groups.shown} overflowKinds={groups.overflowKinds} overflowCount={groups.overflowCount}
           total={selection.ids.length} focusId={selection.focusId} open={!panelOpen}

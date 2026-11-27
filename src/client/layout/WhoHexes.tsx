@@ -10,16 +10,17 @@
  * Grouping is `fleet/fleetView.ts` (`groupMirrorSelection` / `capKindGroups`),
  * read from the render mirror when the selection changes; nothing per frame.
  *
- * Layout: ONE connected honeycomb (owner 2026-11-27: "the select hexes aren't
- * connected and should be"): two hexes per row, odd rows shifted half a hex so
- * they interlock, neighbours sharing edges with no gap. Placed with the core
- * hex projection (`axialToPixel`, odd-r offset rows) at the tile's own size
- * (circumradius `HUD.hex.h / 2`): pitch = one hex width across, 3/4 of a hex
- * height down. The cells' boxes overlap, so only the hex-clipped button takes
- * pointer events (as in the do-hexes host); a shared edge never steals a tap. It sits in
- * the `left-strip` anchor, so the strip's fit (`leftStripFit.ts`) keeps it
- * under the mode switch and on screen. Slides out to the left while a right
- * panel is open, like the strip.
+ * Layout: ONE connected column down the left edge (owner 2026-11-27: start top
+ * left, hug the left, connect diagonally down, not side by side): one hex per
+ * row, each next hex a step down, alternately half a hex right then back left,
+ * so they interlock and touch edge to edge. Placed with the core hex
+ * projection (`axialToPixel`, odd-r offset rows) at the tile's own size
+ * (circumradius `HUD.hex.h / 2`): 3/4 of a hex height per step down, half a hex
+ * width across. The cells' boxes overlap, so only the hex-clipped button takes
+ * pointer events (as in the do-hexes host); a shared edge never steals a tap.
+ * `LeftStripHost` puts it in the `left-column` anchor, right under the top-left
+ * HUD and in line with the mode switch (`leftStripFit.ts` scales it to fit the
+ * height). Slides out to the left while a right panel is open, like the strip.
  */
 import type { CSSProperties, ReactElement } from 'react';
 import { axialToPixel } from '@core/hex/hex';
@@ -29,16 +30,16 @@ import type { KindGroup } from '../fleet/fleetView';
 
 /** Hexes before the "?" overflow takes the last slot (owner 2026-11-27). */
 export const WHO_HEX_MAX = 5;
-/** Hexes per honeycomb row. */
-const PER_ROW = 2;
+/** Hexes per row: one, so the column hugs the left edge. */
+const PER_ROW = 1;
 /** The tile's circumradius: `HUD.hex` is a pointy-top hexagon h tall. */
 const HEX_SIZE = HUD.hex.h / 2;
 /** Only the hex-clipped button takes taps, and only while the honeycomb is shown. */
 const CELL_CLASS = 'eqx-who-hex-cell';
 const CELL_CSS = `[data-testid="who-hexes"][data-open="true"] .${CELL_CLASS} button { pointer-events: auto; }`;
 
-/** Top-left px offset of slot `i` in a {@link PER_ROW}-wide honeycomb of
- *  `HUD.hex` tiles (pure; unit-tested). Odd rows are shifted half a hex right. */
+/** Top-left px offset of slot `i` in the column of `HUD.hex` tiles (pure;
+ *  unit-tested): (0,0), (26,45), (0,90), ...; odd rows shift half a hex right. */
 export function whoHexSlot(i: number): { x: number; y: number } {
   const row = Math.floor(i / PER_ROW);
   const col = i % PER_ROW;
@@ -110,7 +111,6 @@ export function WhoHexes({ shown, overflowKinds, overflowCount, total, focusId, 
     position: 'relative',
     width: box.w,
     height: box.h,
-    marginLeft: 'calc(8px + env(safe-area-inset-left, 0px))',
     pointerEvents: 'none',
     transform: open ? 'none' : 'translateX(-120%)',
     opacity: open ? 1 : 0,

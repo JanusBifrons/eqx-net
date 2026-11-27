@@ -196,25 +196,30 @@ describe('whoHexWord (the hex word)', () => {
   });
 });
 
-describe('the honeycomb layout', () => {
-  it('one connected honeycomb: neighbours in a row are exactly one hex width apart (no gap)', () => {
+describe('the who-hex column', () => {
+  it('a column down the left edge: each next hex steps down, alternately right then left', () => {
     expect(HUD.hex).toMatchObject({ w: 52, h: 60 });
-    expect(whoHexSlot(0)).toEqual({ x: 0, y: 0 });
-    expect(whoHexSlot(1)).toEqual({ x: HUD.hex.w, y: 0 });
-    expect(whoHexSlot(3).x - whoHexSlot(2).x).toBe(HUD.hex.w);
-    expect(whoHexSlot(3).y).toBe(whoHexSlot(2).y);
+    // Owner 2026-11-27: start top left, hug the left, connect diagonally down.
+    expect([0, 1, 2, 3, 4].map(whoHexSlot)).toEqual([
+      { x: 0, y: 0 }, { x: 26, y: 45 }, { x: 0, y: 90 }, { x: 26, y: 135 }, { x: 0, y: 180 },
+    ]);
   });
 
-  it('rows interlock: odd rows shift half a hex, row pitch is 3/4 of the hex height', () => {
-    const rowPitch = HUD.hex.h * 3 / 4; // 45
-    expect(whoHexSlot(2)).toEqual({ x: HUD.hex.w / 2, y: rowPitch });
-    expect(whoHexSlot(3)).toEqual({ x: HUD.hex.w * 1.5, y: rowPitch });
-    expect(whoHexSlot(4)).toEqual({ x: 0, y: 2 * rowPitch });
-    // Touching neighbours (same row, and up/down the interlock): centres one hex width apart.
+  it('each next hex touches the one before edge to edge (centres one hex width apart)', () => {
     const c = (i: number): { x: number; y: number } => ({ x: whoHexSlot(i).x + HUD.hex.w / 2, y: whoHexSlot(i).y + HUD.hex.h / 2 });
-    for (const [a, b] of [[0, 1], [0, 2], [1, 2], [1, 3], [2, 3], [2, 4]] as const) {
-      expect(Math.hypot(c(a).x - c(b).x, c(a).y - c(b).y)).toBeCloseTo(HUD.hex.w, -0.5);
+    for (let i = 0; i < WHO_HEX_MAX - 1; i++) {
+      expect(Math.hypot(c(i).x - c(i + 1).x, c(i).y - c(i + 1).y)).toBeCloseTo(HUD.hex.w, -0.5);
     }
+  });
+
+  it('sits in the left-column anchor (top left, under the mode switch), not the mid-left strip anchor', () => {
+    const [k1, k2] = KINDS as [string, string];
+    fleet({ a: k1, b: k2 });
+    mount();
+    select(['a', 'b']);
+    const column = document.querySelector('[data-anchor="left-column"]') as HTMLElement;
+    expect(column.contains(screen.getByTestId('who-hexes'))).toBe(true);
+    expect(document.querySelector('[data-anchor="left-strip"]')?.childElementCount).toBe(0);
   });
 
   it('only the hex-shaped button takes taps: the overlapping cell boxes pass them through', () => {
@@ -229,10 +234,9 @@ describe('the honeycomb layout', () => {
       .toContain('[data-open="true"] .eqx-who-hex-cell button { pointer-events: auto; }');
   });
 
-  it('five hexes fit in three rows', () => {
-    const box = whoHexBox(5);
-    expect(box.h).toBe(whoHexSlot(4).y + HUD.hex.h);
-    expect(box.h).toBeLessThan(3 * HUD.hex.h);
+  it('the column box: 1.5 hexes wide, five hexes 240 px tall', () => {
+    expect(whoHexBox(1)).toEqual({ w: HUD.hex.w, h: HUD.hex.h });
+    expect(whoHexBox(WHO_HEX_MAX)).toEqual({ w: 78, h: 240 });
     expect(whoHexBox(0)).toEqual({ w: 0, h: 0 });
   });
 });
