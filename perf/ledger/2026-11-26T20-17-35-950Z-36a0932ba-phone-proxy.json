@@ -1,0 +1,1210 @@
+{
+  "when": "2026-11-26T20:17:35.950Z",
+  "device": "phone-proxy",
+  "reps": 4,
+  "cpuRate": 2,
+  "noiseCheck": false,
+  "host": {
+    "hostname": "2T9394",
+    "platform": "win32 10.0.26200",
+    "node": "v24.14.0",
+    "cpuModel": "AMD Ryzen 7 9800X3D 8-Core Processor",
+    "threads": 16,
+    "totalMemMb": 31849,
+    "freeMemMbAtStart": 16597,
+    "gpuRenderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 5070 Ti (0x00002C05) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    "browserArgs": [
+      "--use-angle=d3d11",
+      "--ignore-gpu-blocklist",
+      "--enable-gpu-rasterization",
+      "--disable-background-timer-throttling",
+      "--disable-renderer-backgrounding",
+      "--disable-backgrounding-occluded-windows"
+    ],
+    "headed": false
+  },
+  "load": {
+    "gate": true,
+    "limits": {
+      "minFreeMemMb": 1024,
+      "maxCpuPct": 25
+    },
+    "ignorePorts": [],
+    "portOffset": 0,
+    "atStart": {
+      "at": "2026-11-26T20:12:22.114Z",
+      "cpuPct": 21.9,
+      "cpuWindowMs": 1000,
+      "threads": 16,
+      "freeMemMb": 14608,
+      "totalMemMb": 31849,
+      "foreignListeners": [
+        {
+          "port": 2590,
+          "pid": 26872,
+          "name": "node.exe",
+          "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+        },
+        {
+          "port": 8090,
+          "pid": 5836,
+          "name": "node.exe",
+          "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+        }
+      ],
+      "foreignProcs": {
+        "node": 15,
+        "chrome": 20
+      }
+    }
+  },
+  "arms": [
+    {
+      "name": "base",
+      "sha": "36a0932ba",
+      "clientParams": {
+        "shipKind": "fighter",
+        "initialHull": "1000000",
+        "art": "machined",
+        "fx": "new",
+        "diag": "0",
+        "perfprobe": "1",
+        "deckLit": "off",
+        "shiplight": "medium"
+      },
+      "serverEnv": {}
+    },
+    {
+      "name": "head",
+      "sha": "36a0932ba",
+      "clientParams": {
+        "shipKind": "fighter",
+        "initialHull": "1000000",
+        "art": "machined",
+        "fx": "new",
+        "diag": "0",
+        "perfprobe": "1",
+        "deckLit": "on",
+        "shiplight": "medium"
+      },
+      "serverEnv": {}
+    }
+  ],
+  "scenes": {
+    "deck-bases": {
+      "title": "Two fenced NPC bases on hex decks: plates and the hex-edge fence ring",
+      "injected": {
+        "serverBurnMs": 0,
+        "clientBurnMs": 0
+      },
+      "verdict": {
+        "status": "INCONCLUSIVE",
+        "rows": [
+          {
+            "metric": "clientFrameP95",
+            "base": 16.7,
+            "head": 16.7,
+            "ratio": 1,
+            "p": 1,
+            "status": "INCONCLUSIVE",
+            "note": "3 v 3 reps can never reach p < 0.05 (min p 0.1)"
+          },
+          {
+            "metric": "clientHitchesPerMin",
+            "base": 2.97,
+            "head": 2.96,
+            "ratio": 1,
+            "p": 0.4,
+            "status": "INCONCLUSIVE",
+            "note": "3 v 3 reps can never reach p < 0.05 (min p 0.1)"
+          },
+          {
+            "metric": "displayObjects",
+            "base": 5238,
+            "head": 5238,
+            "ratio": 1,
+            "p": 1,
+            "status": "INCONCLUSIVE",
+            "note": "3 v 3 reps can never reach p < 0.05 (min p 0.1)"
+          },
+          {
+            "metric": "renderP95",
+            "base": 1.6,
+            "head": 1.6,
+            "ratio": 1,
+            "p": 1,
+            "status": "INCONCLUSIVE",
+            "note": "3 v 3 reps can never reach p < 0.05 (min p 0.1)"
+          },
+          {
+            "metric": "rxKBps",
+            "base": 7.99,
+            "head": 8.06,
+            "ratio": 1.01,
+            "p": 0.4,
+            "status": "INCONCLUSIVE",
+            "note": "3 v 3 reps can never reach p < 0.05 (min p 0.1)"
+          },
+          {
+            "metric": "serverTickP95",
+            "base": 0.25,
+            "head": 0.27,
+            "ratio": 1.08,
+            "p": 0.8,
+            "status": "INCONCLUSIVE",
+            "note": "3 v 3 reps can never reach p < 0.05 (min p 0.1)"
+          },
+          {
+            "metric": "serverTickP99",
+            "base": 0.36,
+            "head": 0.41,
+            "ratio": 1.14,
+            "p": 0.4,
+            "status": "INCONCLUSIVE",
+            "note": "3 v 3 reps can never reach p < 0.05 (min p 0.1)"
+          },
+          {
+            "metric": "clientFrameP99",
+            "base": 16.8,
+            "head": 16.8,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "heapMb",
+            "base": 111,
+            "head": 111,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "longTaskMsPerMin",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "navExpanded",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "navInFlightMax",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "navMessages",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "navRoutes",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "renderP99",
+            "base": 2.2,
+            "head": 2.3,
+            "ratio": 1.05,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverAiAgentsPerTick",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverBodiesPerTick",
+            "base": 0.98,
+            "head": 0.98,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverContactsPerTick",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverCpuMsPerTick",
+            "base": 17.21,
+            "head": 16.81,
+            "ratio": 0.98,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverEntitiesPerSnapshot",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverSwarmBytesPerTick",
+            "base": 37,
+            "head": 43,
+            "ratio": 1.16,
+            "p": 0.8,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverSwarmRecordsPerTick",
+            "base": 1.02,
+            "head": 1.18,
+            "ratio": 1.16,
+            "p": 0.6,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverTickMax",
+            "base": 0.73,
+            "head": 0.73,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverUpdateCpuMsPerTick",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverWingmanHostileQueriesPerTick",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverWingmanHostileScansPerTick",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverWingmanReplansPerTick",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "serverWingmenPerTick",
+            "base": 0,
+            "head": 0,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "sprites",
+            "base": 199,
+            "head": 199,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "swarmAtEnd",
+            "base": 198,
+            "head": 198,
+            "ratio": 1,
+            "p": 1,
+            "status": "PRINT"
+          },
+          {
+            "metric": "workerElu",
+            "base": 0.01,
+            "head": 0.01,
+            "ratio": 0.92,
+            "p": 0.8,
+            "status": "PRINT"
+          },
+          {
+            "metric": "workerTickP95",
+            "base": 0.26,
+            "head": 0.25,
+            "ratio": 0.96,
+            "p": 0.5,
+            "status": "PRINT"
+          }
+        ],
+        "reason": "clientFrameP95: 3 v 3 reps can never reach p < 0.05 (min p 0.1); clientHitchesPerMin: 3 v 3 reps can never reach p < 0.05 (min p 0.1); displayObjects: 3 v 3 reps can never reach p < 0.05 (min p 0.1); renderP95: 3 v 3 reps can never reach p < 0.05 (min p 0.1); rxKBps: 3 v 3 reps can never reach p < 0.05 (min p 0.1); serverTickP95: 3 v 3 reps can never reach p < 0.05 (min p 0.1); serverTickP99: 3 v 3 reps can never reach p < 0.05 (min p 0.1)"
+      },
+      "base": [
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 38% > 25% of 16 threads; foreign game server/Vite listening: :2590 pid 26872 (node.exe), :8090 pid 5836 (node.exe)",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-26T20:12:31.809Z",
+              "cpuPct": 37.8,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13193,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 26872,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 5836,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 15,
+                "chrome": 20
+              }
+            },
+            "after": {
+              "at": "2026-11-26T20:12:33.190Z",
+              "cpuPct": 24.7,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13340,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 26872,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 5836,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 15,
+                "chrome": 20
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: foreign game server/Vite listening: :2590 pid 26872 (node.exe), :8090 pid 5836 (node.exe)",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-26T20:12:49.571Z",
+              "cpuPct": 20.1,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13941,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 26872,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 5836,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 15,
+                "chrome": 17
+              }
+            },
+            "after": {
+              "at": "2026-11-26T20:12:50.947Z",
+              "cpuPct": 17.8,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13943,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 26872,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 5836,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 15,
+                "chrome": 17
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: foreign game server/Vite listening: :2590 pid 26872 (node.exe), :8090 pid 5836 (node.exe)",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-26T20:13:07.354Z",
+              "cpuPct": 19.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13982,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 26872,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 5836,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 15,
+                "chrome": 16
+              }
+            },
+            "after": {
+              "at": "2026-11-26T20:13:08.726Z",
+              "cpuPct": 16.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13988,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 26872,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 5836,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 15,
+                "chrome": 16
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.25,
+            "serverTickP99": 0.36,
+            "serverTickMax": 0.54,
+            "workerTickP95": 0.21,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 2.9667721518987342,
+            "renderP95": 1.3,
+            "renderP99": 2,
+            "longTaskMsPerMin": 148.3386075949367,
+            "serverCpuMsPerTick": 17.213,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.01
+          },
+          "counts": {
+            "rxKBps": 7.9410408116594144,
+            "displayObjects": 5238,
+            "sprites": 199,
+            "swarmAtEnd": 198,
+            "heapMb": 111,
+            "serverBodiesPerTick": 0.98,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 0,
+            "serverSwarmRecordsPerTick": 1.02,
+            "serverSwarmBytesPerTick": 37,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 0,
+            "serverWingmanReplansPerTick": 0,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-26T20:14:53.086Z",
+              "cpuPct": 6.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 14389,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 6,
+                "chrome": 19
+              }
+            },
+            "after": {
+              "at": "2026-11-26T20:15:20.794Z",
+              "cpuPct": 3.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 14682,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 6,
+                "chrome": 19
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.28,
+            "serverTickP99": 0.42,
+            "serverTickMax": 1.05,
+            "workerTickP95": 0.28,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 8.866558297620807,
+            "renderP95": 2,
+            "renderP99": 3,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 16.565,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.013
+          },
+          "counts": {
+            "rxKBps": 7.9949109649770955,
+            "displayObjects": 5240,
+            "sprites": 199,
+            "swarmAtEnd": 198,
+            "heapMb": 117,
+            "serverBodiesPerTick": 0.98,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 0,
+            "serverSwarmRecordsPerTick": 1.02,
+            "serverSwarmBytesPerTick": 37,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 0,
+            "serverWingmanReplansPerTick": 0,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-26T20:15:22.175Z",
+              "cpuPct": 4.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 14733,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 6,
+                "chrome": 19
+              }
+            },
+            "after": {
+              "at": "2026-11-26T20:15:50.020Z",
+              "cpuPct": 15.7,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 14781,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 6,
+                "chrome": 18
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.23,
+            "serverTickP99": 0.34,
+            "serverTickMax": 0.73,
+            "workerTickP95": 0.26,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 2.9565388784862523,
+            "renderP95": 1.6,
+            "renderP99": 2.2,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 17.488,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.012
+          },
+          "counts": {
+            "rxKBps": 8.102764363851385,
+            "displayObjects": 5238,
+            "sprites": 199,
+            "swarmAtEnd": 198,
+            "heapMb": 104,
+            "serverBodiesPerTick": 0.98,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 0,
+            "serverSwarmRecordsPerTick": 1.23,
+            "serverSwarmBytesPerTick": 44,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 0,
+            "serverWingmanReplansPerTick": 0,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-26T20:17:06.940Z",
+              "cpuPct": 6.1,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 14515,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 6,
+                "chrome": 19
+              }
+            },
+            "after": {
+              "at": "2026-11-26T20:17:35.675Z",
+              "cpuPct": 6.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 14802,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 6,
+                "chrome": 20
+              }
+            }
+          },
+          "raw": null
+        }
+      ],
+      "head": [
+        {
+          "valid": false,
+          "invalidReason": "host busy: foreign game server/Vite listening: :2590 pid 26872 (node.exe), :8090 pid 5836 (node.exe)",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-26T20:13:18.470Z",
+              "cpuPct": 22.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 12937,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 26872,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 5836,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 15,
+                "chrome": 17
+              }
+            },
+            "after": {
+              "at": "2026-11-26T20:13:19.863Z",
+              "cpuPct": 24.6,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13041,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 26872,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 5836,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 15,
+                "chrome": 17
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 26% > 25% of 16 threads; foreign game server/Vite listening: :2590 pid 26872 (node.exe), :8090 pid 5836 (node.exe)",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-26T20:13:36.242Z",
+              "cpuPct": 26.3,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13510,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 26872,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 5836,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 15,
+                "chrome": 19
+              }
+            },
+            "after": {
+              "at": "2026-11-26T20:13:37.638Z",
+              "cpuPct": 17.1,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13494,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 26872,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 5836,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 15,
+                "chrome": 19
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: foreign game server/Vite listening: :2590 pid 26872 (node.exe), :8090 pid 5836 (node.exe)",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-26T20:13:54.031Z",
+              "cpuPct": 17.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13583,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 26872,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 5836,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 15,
+                "chrome": 19
+              }
+            },
+            "after": {
+              "at": "2026-11-26T20:13:55.418Z",
+              "cpuPct": 18.5,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13575,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 26872,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 5836,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 15,
+                "chrome": 19
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": false,
+          "invalidReason": "host busy: outside CPU load 25% > 25% of 16 threads; foreign game server/Vite listening: :2590 pid 26872 (node.exe), :8090 pid 5836 (node.exe)",
+          "timing": {},
+          "counts": {},
+          "load": {
+            "before": {
+              "at": "2026-11-26T20:13:56.847Z",
+              "cpuPct": 25.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13463,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 26872,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 5836,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 15,
+                "chrome": 19
+              }
+            },
+            "after": {
+              "at": "2026-11-26T20:13:58.234Z",
+              "cpuPct": 17.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 13470,
+              "totalMemMb": 31849,
+              "foreignListeners": [
+                {
+                  "port": 2590,
+                  "pid": 26872,
+                  "name": "node.exe",
+                  "cmd": "\"C:\\Program Files\\nodejs\\node.exe\" --require C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.pnpm\\tsx@4.21.0\\node_modules\\tsx\\dist\\preflight.cjs --import file:///C:/Users/alecv/D"
+                },
+                {
+                  "port": 8090,
+                  "pid": 5836,
+                  "name": "node.exe",
+                  "cmd": "node   \"C:\\Users\\alecv\\Documents\\Projects\\eqx-net\\wt-phone-host\\node_modules\\.bin\\\\..\\vite\\bin\\vite.js\" \"preview\" \"--outDir\" \"C:\\\\Users\\\\alecv\\\\Documents\\\\Projects\\\\eqx-net\\\\eqx-net\\\\.claude\\\\phone-la"
+                }
+              ],
+              "foreignProcs": {
+                "node": 15,
+                "chrome": 19
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.23,
+            "serverTickP99": 0.37,
+            "serverTickMax": 0.54,
+            "workerTickP95": 0.21,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 2.963548355230663,
+            "renderP95": 1.4,
+            "renderP99": 2.1,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 16.693,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.01
+          },
+          "counts": {
+            "rxKBps": 8.398070915242517,
+            "displayObjects": 5238,
+            "sprites": 199,
+            "swarmAtEnd": 198,
+            "heapMb": 111,
+            "serverBodiesPerTick": 0.98,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 0,
+            "serverSwarmRecordsPerTick": 1.2,
+            "serverSwarmBytesPerTick": 43,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 0,
+            "serverWingmanReplansPerTick": 0,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-26T20:14:14.601Z",
+              "cpuPct": 7.2,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 15287,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 6,
+                "chrome": 19
+              }
+            },
+            "after": {
+              "at": "2026-11-26T20:14:43.690Z",
+              "cpuPct": 17.8,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 14733,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 6,
+                "chrome": 19
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.27,
+            "serverTickP99": 0.41,
+            "serverTickMax": 0.73,
+            "workerTickP95": 0.25,
+            "clientFrameP95": 16.8,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 2.9658922392486406,
+            "renderP95": 1.6,
+            "renderP99": 2.3,
+            "longTaskMsPerMin": 172.02174987642115,
+            "serverCpuMsPerTick": 17.24,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.012
+          },
+          "counts": {
+            "rxKBps": 8.059319775704399,
+            "displayObjects": 5238,
+            "sprites": 199,
+            "swarmAtEnd": 198,
+            "heapMb": 111,
+            "serverBodiesPerTick": 0.98,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 0,
+            "serverSwarmRecordsPerTick": 1.04,
+            "serverSwarmBytesPerTick": 38,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 0,
+            "serverWingmanReplansPerTick": 0,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-26T20:15:59.169Z",
+              "cpuPct": 9.5,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 14465,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 8,
+                "chrome": 17
+              }
+            },
+            "after": {
+              "at": "2026-11-26T20:16:27.469Z",
+              "cpuPct": 10,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 14671,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 6,
+                "chrome": 18
+              }
+            }
+          },
+          "raw": null
+        },
+        {
+          "valid": true,
+          "timing": {
+            "serverTickP95": 0.3,
+            "serverTickP99": 0.45,
+            "serverTickMax": 1.17,
+            "workerTickP95": 0.25,
+            "clientFrameP95": 16.7,
+            "clientFrameP99": 16.8,
+            "clientHitchesPerMin": 0,
+            "renderP95": 1.8,
+            "renderP99": 2.6,
+            "longTaskMsPerMin": 0,
+            "serverCpuMsPerTick": 16.809,
+            "serverUpdateCpuMsPerTick": 0,
+            "workerElu": 0.011
+          },
+          "counts": {
+            "rxKBps": 7.998928971812941,
+            "displayObjects": 5238,
+            "sprites": 199,
+            "swarmAtEnd": 198,
+            "heapMb": 104,
+            "serverBodiesPerTick": 0.98,
+            "serverContactsPerTick": 0,
+            "serverAiAgentsPerTick": 0,
+            "serverSwarmRecordsPerTick": 1.18,
+            "serverSwarmBytesPerTick": 43,
+            "serverEntitiesPerSnapshot": 0,
+            "serverWingmenPerTick": 0,
+            "serverWingmanReplansPerTick": 0,
+            "serverWingmanHostileQueriesPerTick": 0,
+            "serverWingmanHostileScansPerTick": 0,
+            "navRoutes": 0,
+            "navExpanded": 0,
+            "navMessages": 0,
+            "navInFlightMax": 0
+          },
+          "load": {
+            "before": {
+              "at": "2026-11-26T20:16:28.868Z",
+              "cpuPct": 9.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 14730,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 6,
+                "chrome": 18
+              }
+            },
+            "after": {
+              "at": "2026-11-26T20:16:57.592Z",
+              "cpuPct": 3.9,
+              "cpuWindowMs": 1000,
+              "threads": 16,
+              "freeMemMb": 14826,
+              "totalMemMb": 31849,
+              "foreignListeners": [],
+              "foreignProcs": {
+                "node": 6,
+                "chrome": 19
+              }
+            }
+          },
+          "raw": null
+        }
+      ]
+    }
+  }
+}
