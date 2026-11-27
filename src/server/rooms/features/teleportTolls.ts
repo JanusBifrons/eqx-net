@@ -11,6 +11,7 @@ import type { HostileActLedger } from '../../../core/relations/HostileActLedger.
 import type { ShipState } from '../schema/SectorState.js';
 import { serverLogEvent } from '../../debug/ServerEventLog.js';
 import { getWallet } from '../../db/PersistenceWorker.js';
+import { paysRealCredits } from '../sealedSectors.js';
 import { getTradeSink } from '../../economy/tradeSink.js';
 import { parseOwner, relationOf, type RelationContext } from '../../../shared-types/relations.js';
 import { slotBase, SLOT_X_OFF, SLOT_Y_OFF } from '../../../shared-types/sabLayout.js';
@@ -45,7 +46,8 @@ export class TeleportTolls {
   offerToll(rec: StructureRecord): void {
     this.tollAnswers.delete(rec.id);
     const toll = rec.tpToll;
-    if (!toll || toll.per1000 <= 0 || !isTeleporterKind(rec.kind)) return;
+    // Sandbox: a toll would move real credits, so a sealed room asks none.
+    if (!toll || toll.per1000 <= 0 || !isTeleporterKind(rec.kind) || !paysRealCredits(this.h.sectorKey())) return;
     const credits = tollFor(this.h.teleporters().required(rec), toll.per1000);
     if (credits <= 0) return;
     const ownerFaction = parseOwner(rec.owner).faction;

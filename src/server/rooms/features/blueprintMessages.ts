@@ -16,6 +16,7 @@ import type { StorageService } from '../../cargo/StorageService.js';
 import { isOperationalStorage } from '../../cargo/storageHolds.js';
 import { nearStorage } from '../../cargo/storageReach.js';
 import { getHoldStore, getWallet } from '../../db/PersistenceWorker.js';
+import { paysRealCredits } from '../sealedSectors.js';
 import { getTradeSink } from '../../economy/tradeSink.js';
 import { bpBuyPrice, bpSellPrice, getBlueprintMarket, listing as bpListing } from '../../economy/BlueprintMarket.js';
 import { auditEvent } from '../../audit/GameplayAuditLog.js';
@@ -138,7 +139,9 @@ export function registerBlueprintMessages(h: BlueprintMessageHost): RoomFeature 
     if (!p.success) { h.malformed.record(client.sessionId, kind); return; }
     const d = p.data as { networkEntityId: number; offerId?: string; uid?: string };
     let verdict: { ok: boolean; message: string } | undefined;
-    if (kind === 'bp_buy') verdict = buyBlueprint(h, playerId, d.networkEntityId, d.offerId!);
+    // Sandbox: the real blueprint board and real credits stay out of a sealed room.
+    if (kind !== 'bp_market_query' && !paysRealCredits(h.sectorKey())) verdict = { ok: false, message: 'No traders deal in the sandbox.' };
+    else if (kind === 'bp_buy') verdict = buyBlueprint(h, playerId, d.networkEntityId, d.offerId!);
     else if (kind === 'bp_sell') verdict = sellBlueprint(h, playerId, d.networkEntityId, d.uid!);
     try { client.send('bp_market_state', bpMarketView(h, playerId, d.networkEntityId, verdict)); } catch { /* closing */ }
   };

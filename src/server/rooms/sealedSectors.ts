@@ -13,3 +13,15 @@ const SEALED: ReadonlySet<string> = new Set([SANDBOX_SECTOR_KEY]);
 export function isSealedSectorKey(sectorKey: string | null | undefined): boolean {
   return sectorKey != null && SEALED.has(sectorKey);
 }
+
+/** Exits: does a hop from `from` to `to` cross a seal? Warp, fleet warp and
+ *  a teleporter (pairing, cargo swap, riders) all refuse it, both ways. */
+export function crossesSeal(from: string | null | undefined, to: string | null | undefined): boolean {
+  return from !== to && (isSealedSectorKey(from) || isSealedSectorKey(to));
+}
+
+/** Payouts: may a room in `sectorKey` move real credits (taxes, bounties,
+ *  trader sales, tolls)? A sealed room pays and charges nothing. */
+export function paysRealCredits(sectorKey: string | null | undefined): boolean {
+  return !isSealedSectorKey(sectorKey);
+}

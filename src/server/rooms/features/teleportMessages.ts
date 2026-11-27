@@ -30,6 +30,7 @@ import { parsedMessage, type ParsedMessageHost, type MessageSchema, type RoomFea
 import type { StorageService } from '../../cargo/StorageService.js';
 import { padAngle, type PadDoors } from '../../structures/padDoors.js';
 import { getSector } from '../../../core/galaxy/galaxy.js';
+import { crossesSeal, isSealedSectorKey } from '../sealedSectors.js';
 import { getStructureKind } from '../../../shared-types/structureKinds.js';
 import { isNpcOwner, relationOf, type RelationContext } from '../../../shared-types/relations.js';
 import {
@@ -114,7 +115,7 @@ export function registerTeleportMessages(h: TeleportMessageHost): RoomFeature {
       items.push({ sectorKey: here, uid: r.uid, label: `${getStructureKind(r.kind).displayName} · ${km} km` });
     }
     for (const { sectorKey, rec: r } of getTeleportBroker().ownTeleporters(me)) {
-      if (sectorKey === here || r.uid === undefined) continue;
+      if (sectorKey === here || r.uid === undefined || crossesSeal(here, sectorKey)) continue;
       const where = getSector(sectorKey)?.name ?? 'another sector';
       items.push({ sectorKey, uid: r.uid, label: `${getStructureKind(r.kind).displayName} · ${where}` });
     }
@@ -141,6 +142,7 @@ export function registerTeleportMessages(h: TeleportMessageHost): RoomFeature {
     if (isFreeTeleporterKind(target.kind) || isNpcOwner(target.owner)) return;
     if (relationOf(pid, target.owner, h.relationCtx) === 'hostile') return;
     const here = h.sectorKey() ?? '';
+    if (crossesSeal(here, msg.sectorKey)) return; // sandbox: no pairing across the seal
     const mine = msg.sectorKey === here
       ? h.teleporters().byUid(msg.uid)
       : getTeleportBroker().find(msg.sectorKey, msg.uid)?.rec ?? null;
@@ -172,7 +174,7 @@ export function registerTeleportMessages(h: TeleportMessageHost): RoomFeature {
       if (other && other.isConstructed) h.teleporters().pair(rec, other);
       return;
     }
-    const f = getTeleportBroker().find(msg.sectorKey, msg.uid);
+    const f = crossesSeal(h.sectorKey(), msg.sectorKey) ? null : getTeleportBroker().find(msg.sectorKey, msg.uid);
     if (f && f.rec.owner === rec.owner) h.teleporters().pair(rec, f.rec, f.room.teleporters);
   });
   tpMessage('teleport_unpair', TeleportUnpairSchema, (rec) => h.teleporters().unpair(rec));
@@ -237,7 +239,7 @@ export class TeleportPadRiders {
    *  pads' riders are collected BEFORE either side is sent (nobody rides twice). */
   swapAcross(a: StructureRecord, link: PartnerLink): void {
     const other = a.tpPartner ? getTeleportBroker().room(a.tpPartner.sectorKey) : null;
-    if (other === null) return;
+    if (other === null || crossesSeal(this.h.sectorKey(), other.sectorKey)) return;
     this.h.storage().padSwapAcross(a, other.storage, link.rec);
     const mine = this.collectRiders(a);
     const theirs = other.collectRiders(link.rec);
@@ -472,7 +474,7 @@ export function buildTeleporters(h: TeleporterBuildHost): { teleporters: Telepor
     // T3 — partners in other sectors, reached through the broker.
     onSwapRemote: (a, link) => h.padRiders.swapAcross(a, link),
     remoteFind: (sk, uid) => {
-      const f = getTeleportBroker().find(sk, uid);
+      const f = crossesSeal(sectorKey, sk) ? null : getTeleportBroker().find(sk, uid);
       return f && f.room !== teleportRoom ? { rec: f.rec, sys: f.room.teleporters } : null;
     },
     hopsTo: (sk) => h.padRiders.hopsToSector(sk),
@@ -523,7 +525,8 @@ export function buildTeleporters(h: TeleporterBuildHost): { teleporters: Telepor
     receiveFleetSquads: (rows) => h.receiveFleetSquads(rows),
     sendToPlayer: (pid, type, msg) => h.sendToPlayer(pid, type, msg),
   };
-  if (sectorKey !== null) getTeleportBroker().register(teleportRoom);
+  // Sandbox: a sealed room never joins the broker, so no pad elsewhere can reach it.
+  if (sectorKey !== null && !isSealedSectorKey(sectorKey)) getTeleportBroker().register(teleportRoom);
   return { teleporters, teleportRoom };
 }
 
