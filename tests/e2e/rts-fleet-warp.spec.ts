@@ -157,7 +157,9 @@ test.describe('RTS fleet warp @feature', () => {
   test('Warp here warps the selected ships; the commander lands with them, still selected', async ({ browser }) => {
     // Budget: three galaxy joins (infrastructural); the spool is sped up 4×.
     test.setTimeout(120_000);
-    const FROM = 'ashfront';
+    // Not an entry sector (greenfall, ashfront, abyssal-gate): drone squads
+    // warp in there and, at 4×, killed the parked hulls before the warp.
+    const FROM = 'andromeda-rim';
     const TO = 'scoria-drift';
     const { ctx, page } = await joinCommander(browser, FROM, -2200, 1800, 4);
     await addSecondHull(page, FROM, -2040, 1800, 4);
