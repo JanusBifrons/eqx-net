@@ -48,6 +48,8 @@ export interface DoHex {
   onHold?: (down: boolean) => void;
   /** `data-state`, for tests. */
   state?: string;
+  /** A small count on the hex corner (Build's planned count); 0 / undefined shows none. */
+  badge?: number;
 }
 
 /** The most hexes the honeycomb holds. */

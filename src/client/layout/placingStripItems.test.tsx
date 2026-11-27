@@ -119,12 +119,15 @@ describe('placing tools as do-hexes', () => {
     mount();
     expect(screen.queryByTestId('placement-build')).toBeNull();
     act(() => { addPlannedPlacement('solar', 0, 0, 0, false, false); addPlannedPlacement('solar', 5000, 0, 0, false, false); });
-    // The placing tools are do-hexes; Build (n) stays on the left strip.
-    expect(hexIds()).toEqual(['placement-confirm', 'placement-rotate', 'placement-kind', 'placement-mirror', 'placement-cancel']);
-    const ids = Array.from(screen.getByTestId('left-strip').querySelectorAll('button')).map((b) => b.dataset.testid);
-    expect(ids).toEqual(['placement-build']);
+    // Owner 2026-11-27: Build is a hex too (the left strip draws nothing), with a count badge.
+    expect(hexIds()).toEqual(['placement-confirm', 'placement-rotate', 'placement-kind', 'placement-mirror', 'placement-build', 'placement-cancel']);
+    expect(screen.queryByTestId('left-strip')).toBeNull();
+    expect(tool('placement-build').dataset.variant).toBe('hex');
     expect(tool('placement-build').getAttribute('aria-label')).toBe('Build (2)');
     expect(tool('placement-build').dataset.state).toBe('2');
+    expect(screen.getByTestId('placement-build-word').textContent).toBe('Build');
+    expect(screen.getByTestId('placement-build-badge').textContent).toBe('2');
+    expect(cellOf('placement-cancel')).toBe('5');
     fireEvent.click(tool('placement-cancel'));
     expect(getPlacementPlanCount()).toBe(0);
     expect(screen.queryByTestId('placement-build')).toBeNull();
@@ -133,8 +136,8 @@ describe('placing tools as do-hexes', () => {
   it('a place-once kind ends placing with its building planned: Build and ✕ stay', () => {
     act(() => { useUIStore.setState({ placementKind: null }); addPlannedPlacement('capital', 0, 0, 0, false, false); });
     mount();
-    const ids = Array.from(screen.getByTestId('left-strip').querySelectorAll('button')).map((b) => b.dataset.testid);
-    expect(ids).toEqual(['placement-build', 'placement-cancel']);
+    expect(hexIds()).toEqual(['placement-build', 'placement-cancel']);
+    expect(screen.queryByTestId('left-strip')).toBeNull();
     fireEvent.click(tool('placement-cancel'));
     expect(getPlacementPlanCount()).toBe(0);
   });
@@ -234,13 +237,14 @@ describe('placing tools as do-hexes', () => {
     expect(screen.getByTestId('build-kinds')).toHaveAttribute('data-category', 'economy');
   });
 
-  it('a fence post on a deck adds Gate, which switches post <-> gate (edge feel P3)', () => {
+  it('a fence post on a deck adds Gate, which switches post <-> gate (edge feel P3); no Rotate / Mirror (the run lines itself up)', () => {
     act(() => { useUIStore.setState({ placementKind: 'shield_pylon', deck: true }); });
     mount();
-    expect(hexIds()).toEqual(['placement-confirm', 'placement-rotate', 'placement-kind', 'placement-mirror', 'placement-gate', 'placement-cancel']);
+    expect(hexIds()).toEqual(['placement-confirm', 'placement-kind', 'placement-gate', 'placement-cancel']);
     expect(tool('placement-gate').getAttribute('aria-label')).toBe('Gate');
-    expect(cellOf('placement-gate')).toBe('4');
-    expect(cellOf('placement-cancel')).toBe('5');
+    act(() => { addPlannedPlacement('shield_pylon', 0, 0, 0, false, true); });
+    expect(hexIds()).toEqual(['placement-confirm', 'placement-kind', 'placement-gate', 'placement-build', 'placement-cancel']);
+    expect(cellOf('placement-cancel')).toBe('4');
     fireEvent.click(tool('placement-gate'));
     expect(useUIStore.getState().placementKind).toBe('shield_gate');
     fireEvent.click(tool('placement-gate'));

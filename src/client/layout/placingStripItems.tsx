@@ -5,7 +5,8 @@
  * A fence post or gate on a deck adds Gate (edge feel P3): it switches
  * `placementKind` between the two and the fence run stays open (`fenceRun.ts`).
  * A road has no Rotate or Mirror: it lines itself up with the roads and gates
- * beside it (`roadAutoTurnDeg`, core).
+ * beside it (`roadAutoTurnDeg`, core). Nor does a fence run on a deck: its
+ * posts sit on deck corners and its gates on seams (`fenceRun.ts`).
  * It replaces the old bottom-middle placing bar and the Build panel's folded
  * picked-building strip; desktop and touch alike (the desktop R / F keys and
  * click-to-place keep working beside it).
@@ -77,8 +78,9 @@ export function usePlacingStripItems(): StripAction[] {
       onPress: () => setRightPanel('build'), state: kind, testId: 'placement-kind' },
     { kind: 'button', key: 'place', tone: 'primary', icon: 'confirm', tooltip: 'Place',
       disabled: (rejected && !onPlanned) || held, onPress: () => { commitPlacement(kind); }, testId: 'placement-confirm' },
-    // A road lines itself up (core `roadAutoTurnDeg`) and its straight is symmetric: no Rotate / Mirror.
-    ...(kind === DECK_ROAD_KIND ? [] : [
+    // A road lines itself up (core `roadAutoTurnDeg`) and its straight is symmetric; a fence
+    // run snaps posts to corners and gates to seams: no Rotate / Mirror for either.
+    ...(kind === DECK_ROAD_KIND || isFenceRunKind(kind, deck) ? [] : [
       { kind: 'button', key: 'rotate', icon: 'rotate', tooltip: 'Rotate',
         onPress: () => { cyclePlacementRotation(); }, testId: 'placement-rotate' } satisfies StripAction,
       { kind: 'button', key: 'mirror', icon: 'mirror', tooltip: 'Mirror', active: mirrored,

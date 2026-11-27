@@ -74,13 +74,18 @@ single placement does (the slice refresh) and replies
 Client side: in build mode every Place (✓, the desktop click: `commitPlacement` →
 `commitChosenPlacement`) ADDS the building to the planned list
 (`client/structures/placementPlan.ts`: flat, pre-allocated, the pose snapped as
-the server snaps it) instead of sending it. The strip's Build (`placement-build`,
-"Build (n)", only while the list is non-empty) runs `buildPlacementPlan`
+the server snaps it) instead of sending it. The Build hex (`placement-build`,
+word "Build", the planned count as its badge, only while the list is non-empty) runs `buildPlacementPlan`
 (`placementCancel.ts`): the shared `batchPlacementRejections` against the mirror's
 structures, rocks and deck marks clashing items refused without a round trip; a
 clean plan goes as one `place_structures` (`sendPlaceStructures`) with the next
 `batchId`. Only a reply with the in-flight `batchId` counts: `place_structures_refused`
-keeps the plan and flags the refused indices; `place_structures_placed` clears it.
+keeps the plan and flags the refused indices; after `place_structures_placed` the
+plan stays drawn and locked until the buildings are in the mirror and drawn (the
+sent-Place rule `pendingPlacementResolved`: count over the send-time baseline, all in
+the swarm, or the timeout; `stepLanding`), so nothing blinks out before the
+snapshot, then it clears. Build also keeps the ghost held on the last planned spot
+(`holdPlanSent`) until it moves, so it never reads red on its own new building.
 After `PENDING_PLACEMENT_TIMEOUT_MS` with no reply (`stepPlacementPlan`, per frame
 from `gameRafLoop`) the plan stays and Build may be pressed again; a late reply to
 the old Build is then ignored. ✕ (`cancelPlacement`),
@@ -99,14 +104,19 @@ included, so a clash the run could not see (a building planned onto a post
 afterwards) is refused red, not sent. Right after a run click the ghost is held on
 the spot it planned (`holdOnPlanned`). The fence hover (`fenceRunHover.ts`)
 re-plans when the planned count changes. While placing, the do-hexes carry every
-placing tool but Build (n), which stays on the left strip (`buildHexCovers`): with
-a fence run's Gate the placing hexes are already at `DO_HEX_MAX`.
+placing tool, Build included, and the left strip is empty (`buildHexCovers`; owner
+2026-11-27). Hexes per kind: a building Place, Rotate, the building, Mirror, Build,
+Cancel; a road Place, the building, Build, Cancel; a deck fence post or gate Place,
+the building, Gate, Build, Cancel (no Rotate / Mirror: the run snaps to corners and
+seams); a place-once kind that ended with a plan Build, Cancel. Over `DO_HEX_MAX`,
+Mirror, then Rotate, then the building give way; never Place, Build or Cancel.
 
 Planned ghosts: the plan reaches the (possibly worker) renderer on
 `RenderMirror.pendingPlacementPreview.plan`, flat stride 5 (x, y, rot degrees,
 structure kind index, flags 1 mirror | 2 refused; `writePreviewPlan`, written with
 `run` in `resolvePlacementPreviewStatus`). `PendingRunGhosts` draws each as the
-placement ghost of its kind, dim and still in `GHOST_PLANNED_COLOR` (red when
+placement ghost of its kind, dim and still in `GHOST_PLANNED_COLOR` (0x8899ff, a
+soft blue apart from the live cyan; owner-approved 2026-11-27) (red when
 refused), from its own pool of `PLACE_STRUCTURES_MAX` so it never takes the fence
 run's `RUN_GHOST_CAP` slots. A fence run's planned posts and gate draw here like
 any planned building (no beams between them until they land: the server links

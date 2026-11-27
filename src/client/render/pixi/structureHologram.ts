@@ -48,7 +48,9 @@ const SCAN_STEP = 6;
 export const GHOST_BLOCKED_COLOR = PREVIEW_BLOCKED_COLOR;
 export const GHOST_CLEAR_COLOR = HOLOGRAM_COLOR;
 /** Plan then Build: a PLANNED building's ghost (in the plan, not yet sent):
- *  a soft blue apart from the live ghost's cyan (`pendingRunGhosts.ts`). */
+ *  a soft blue apart from the live ghost's cyan (`pendingRunGhosts.ts`).
+ *  The owner kept this colour (2026-11-27); it is the planned look, not a
+ *  placeholder. */
 export const GHOST_PLANNED_COLOR = 0x8899ff;
 /** Ghost scanner sweep period and pulse period (game ms). */
 const GHOST_SWEEP_MS = 1600;

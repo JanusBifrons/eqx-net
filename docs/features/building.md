@@ -48,7 +48,8 @@ Build mode on its own opens nothing. It is the one place you pick a building:
   territory lock) or your last packed crate of a building ends it by itself.
 - **Plan, then Build.** Each Place adds the building to your plan as a dim
   ghost; nothing is built yet. Tap a planned ghost again to take it out. When
-  you are happy, press **Build (n)** on the left strip and every planned
+  you are happy, press **Build** (the hex with the count of planned buildings on
+  its corner) and every planned
   building starts at once, or none do if one of them can't go there (those
   turn red). Shield fences plan the same way: each tap plans the posts along
   the run (and a gate, with Gate on), so you can lay out a whole fence and its
