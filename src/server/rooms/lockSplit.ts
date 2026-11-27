@@ -120,8 +120,9 @@ export function lineageRekey(
   return true;
 }
 
-/** Does group `g` carry a mining laser or a tractor (a salvage group)? */
-function salvageGroup(g: LineageGroup): boolean {
+/** Does group `g` carry a mining laser or a tractor (a salvage group)? Also
+ *  the fleet salvage order's group pick (`wingmanSalvage.ts`). */
+export function salvageGroup(g: { readonly mounts: ReadonlyArray<TurretGroupMount> }): boolean {
   for (let i = 0; i < g.mounts.length; i++) {
     const w = getWeapon(g.mounts[i]!.weaponId);
     if (isSalvageWeapon(w) || w.tractor !== undefined) return true;
