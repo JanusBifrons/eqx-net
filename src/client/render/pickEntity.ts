@@ -17,7 +17,11 @@
  *   - PARKED HULLS (`mirror.ships` entries `isParkedHull`, kind 'lingering';
  *     WS-9/R2.23 — surface the owner).
  *   - CARGO PODS (`kind === 3` records `isLootPod`, kind 'pod'; cargo pods
- *     slice 15 — tap to select, then Open). Other scrap stays unselectable.
+ *     slice 15 — tap to select, then Open).
+ *   - SALVAGE: plain scrap (`kind === 3`, not a pod) and wreck pieces
+ *     (`kind === 4`), kind 'salvage', by their wire radius — ONLY when the
+ *     caller passes `salvage = true` (the Command view: tap scrap to target
+ *     it). Fly keeps skipping them, so a Fly tap on scrap stays a helm course.
  *
  * Explicitly NOT selectable: weapons fire (projectiles / missiles / beams live
  * in their own mirror maps, never scanned here).
@@ -26,7 +30,7 @@
  * consumer (the selection bracket) can resolve the entity's live pose every
  * frame the same way:
  *   - ship  → `playerId` (key in `mirror.ships`)
- *   - drone / structure / asteroid → `swarm-${entityId}`
+ *   - drone / structure / asteroid / pod / salvage → `swarm-${entityId}`
  *   - lingering → `shipInstanceId` (its key in `mirror.ships`)
  *
  * Radius model: swarm entries carry a `radius`; ships derive theirs from
@@ -39,14 +43,14 @@ import { getStructureKind, isStructureKindId } from '../../shared-types/structur
 import { getShipKind } from '@shared-types/shipKinds';
 import { pointInOrientedBox, structureTurnedBoxInto } from '../../shared-types/structureKinds/geometry.js';
 import { isParkedHull, isShipIAmFlying } from './shipOwnership.js';
-import { isLootPod } from '@shared-types/swarmWireFormat';
+import { isLootPod, SWARM_KIND_SCRAP, SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
 import { craneBayFor } from '../../core/articulation/craneRig.js';
 
 /** Selectable entity classes. `drone`/`asteroid`/`lingering` read from
  *  the mirror directly (no server stats channel); `ship`/`structure` use
  *  `entity_stats` for hp/shield (structures also read their slice from the
  *  mirror — WS-9/R2.8). */
-export type PickedEntityKind = 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | 'pod';
+export type PickedEntityKind = 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | 'pod' | 'salvage';
 
 export interface PickedEntity {
   /** Mirror-resolvable id (see module docstring for the per-kind form). */
@@ -82,6 +86,8 @@ export function pickEntityAt(
   mirror: RenderMirror,
   /** Extra grab reach in world units (a touch passes {@link fingerSlopWorld}). */
   slop: number = TAP_SLOP,
+  /** Also pick plain scrap and wreck pieces as 'salvage' (Command view only). */
+  salvage = false,
 ): PickedEntity | null {
   let bestId: string | null = null;
   let bestKind: PickedEntityKind = 'ship';
@@ -106,12 +112,14 @@ export function pickEntityAt(
     }
   }
 
-  // ── Swarm: asteroids (kind 0), drones (kind 1), structures (kind 2). ──
+  // ── Swarm: asteroids (kind 0), drones (kind 1), structures (kind 2), pods,
+  // and (Command only) scrap (kind 3) / wreck pieces (kind 4). ──
   // WS-9/R2.23 — asteroids are now selectable (size/resources readout).
   if (mirror.swarm) {
     for (const [entityId, sw] of mirror.swarm) {
       const pod = isLootPod(sw);
-      if (sw.kind !== 0 && sw.kind !== 1 && sw.kind !== 2 && !pod) continue; // unknown kind / plain scrap
+      const piece = !pod && salvage && (sw.kind === SWARM_KIND_SCRAP || sw.kind === SWARM_KIND_WRECK);
+      if (sw.kind !== 0 && sw.kind !== 1 && sw.kind !== 2 && !pod && !piece) continue; // unknown kind / scrap outside Command
       const dx = sw.x - worldX;
       const dy = sw.y - worldY;
       const distSq = dx * dx + dy * dy;
@@ -137,7 +145,7 @@ export function pickEntityAt(
       if (hit && distSq < bestDistSq) {
         bestDistSq = distSq;
         bestId = `swarm-${entityId}`;
-        bestKind = pod ? 'pod' : sw.kind === 0 ? 'asteroid' : sw.kind === 1 ? 'drone' : 'structure';
+        bestKind = pod ? 'pod' : piece ? 'salvage' : sw.kind === 0 ? 'asteroid' : sw.kind === 1 ? 'drone' : 'structure';
       }
     }
   }

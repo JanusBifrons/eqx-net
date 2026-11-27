@@ -479,6 +479,23 @@ describe('EntityStatsPanel', () => {
     expect(screen.queryByText('HULL')).toBeNull(); // indestructible — no hull bar
   });
 
+  it('a salvage focus names scrap "Scrap" and a wreck piece "Wreck piece", no hull bar', () => {
+    setGameClient(fakeClient({ swarm: new Map([
+      [6, { kind: 3, shipKind: 'fighter', radius: 12, x: 0, y: 0 }],
+      [7, { kind: 4, shipKind: 'cruiser', radius: 60, x: 0, y: 0 }],
+    ]) }));
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-6', focusKind: 'salvage' } });
+    const { unmount } = render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-name')).toHaveTextContent('Scrap');
+    expect(screen.getByTestId('entity-stats-info')).toHaveTextContent('SIZE 12');
+    expect(screen.queryByText('HULL')).toBeNull();
+    unmount();
+    useUIStore.setState({ selection: { ids: [], focusId: 'swarm-7', focusKind: 'salvage' } });
+    render(<EntityStatsPanel />);
+    expect(screen.getByTestId('entity-stats-name')).toHaveTextContent('Wreck piece');
+    expect(screen.getByTestId('entity-stats-info')).toHaveTextContent('SIZE 60');
+  });
+
   it('a MINED asteroid shows its resources (R2.23)', () => {
     setGameClient(fakeClient({ swarm: new Map([[5, { kind: 0, radius: 48, resources: 300, resourcesMax: 1000, x: 0, y: 0 }]]) }));
     useUIStore.setState({ selection: { ids: [], focusId: 'swarm-5', focusKind: 'asteroid' } });

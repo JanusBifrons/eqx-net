@@ -291,12 +291,13 @@ export abstract class RendererCommandRouting {
     }
   }
 
-  /** Not own (ship or structure), not an asteroid or a cargo pod (shots pass
-   *  pods): something the fleet can be told to attack. An own structure under
-   *  the finger / cursor falls back to a move order. */
+  /** Not own (ship or structure), not an asteroid, a cargo pod (shots pass
+   *  pods) or a salvage piece (salvaged, not shot): something the fleet can be
+   *  told to attack. An own structure under the finger / cursor falls back to
+   *  a move order. */
   private isAttackable(id: string, kind: string, m: RenderMirror): boolean {
     if (kind === 'structure') return !isOwnStructure(id, m);
-    return kind !== 'asteroid' && kind !== 'pod' && !this._selShips.has(id) && !isOwnShipPresent(id, m);
+    return kind !== 'asteroid' && kind !== 'pod' && kind !== 'salvage' &&!this._selShips.has(id) && !isOwnShipPresent(id, m);
   }
 
   /** Command-view right-click: attack a non-own entity under the cursor, else
@@ -455,7 +456,9 @@ export abstract class RendererCommandRouting {
     // A crane bay pad is open space to park on: a tap there is a course even
     // when a parked hull or the host's tap slop overlaps it (phone film, base
     // loop: pad taps went nowhere). The host's body still opens its card.
-    const hit = onCraneBayPad(gameX, gameY, m) ? null : pickEntityAt(gameX, gameY, m, slop);
+    // Command view: scrap and wreck pieces pick as 'salvage' too; Fly skips
+    // them, so a Fly tap there stays a helm course.
+    const hit = onCraneBayPad(gameX, gameY, m) ? null : pickEntityAt(gameX, gameY, m, slop, this._cmdRouter.enabled);
     const action = decideTapAction({
       pointerType,
       hitOwn: hit !== null && isOwnShipPresent(hit.id, m),
@@ -496,7 +499,7 @@ export abstract class RendererCommandRouting {
       return;
     }
     const w = this.camera.screenToWorld(screenX, screenY);
-    const hit = pickEntityAt(w.x, -w.y, this._lastMirror);
+    const hit = pickEntityAt(w.x, -w.y, this._lastMirror, TAP_SLOP, this._cmdRouter.enabled);
     this._hoveredId = hit?.id ?? null;
   }
 
@@ -508,7 +511,7 @@ export abstract class RendererCommandRouting {
    */
   devHoverAtWorld(gameX: number, gameY: number): string | null {
     if (this._lastMirror === null) return null;
-    const hit = pickEntityAt(gameX, gameY, this._lastMirror);
+    const hit = pickEntityAt(gameX, gameY, this._lastMirror, TAP_SLOP, this._cmdRouter.enabled);
     this._hoveredId = hit?.id ?? null;
     return this._hoveredId;
   }
@@ -531,7 +534,7 @@ export abstract class RendererCommandRouting {
    */
   devSelectAtWorld(gameX: number, gameY: number): string | null {
     if (this._lastMirror === null) return null;
-    const hit = pickEntityAt(gameX, gameY, this._lastMirror);
+    const hit = pickEntityAt(gameX, gameY, this._lastMirror, TAP_SLOP, this._cmdRouter.enabled);
     if (hit === null || hit.id === this._focusId) this.setFocus(null, null);
     else this.setFocus(hit.id, hit.kind);
     return this._focusId;

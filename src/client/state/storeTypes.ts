@@ -144,7 +144,7 @@ export type ControlMode = 'fly' | 'command' | 'build';
 
 /** What kind of entity the selection's focus is (routes the details panel:
  *  `ship`/`structure` use the server `entity_stats` stream). */
-export type SelectionFocusKind = 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | 'pod';
+export type SelectionFocusKind = 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | 'pod' | 'salvage';
 
 /**
  * THE selection (RTS Part A: one selection concept). The renderer owns it

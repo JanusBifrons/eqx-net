@@ -108,6 +108,36 @@ describe('pickEntityAt', () => {
     expect(pickEntityAt(200, 0, m)).toBeNull();
   });
 
+  describe('salvage picks (Command only: scrap and wreck pieces)', () => {
+    const pod = { ...swarm(0, 0, 3, 20), shipKind: 'cargo-pod' } as SwarmRenderState;
+    const scrap = { ...swarm(200, 0, 3, 20), shipKind: 'fighter' } as SwarmRenderState;
+    const wreck = { ...swarm(400, 0, 4, 60), shipKind: 'cruiser' } as SwarmRenderState;
+    const rock = swarm(800, 0, 0, 50);
+    const m = mirror({ swarm: new Map([[5, pod], [6, scrap], [7, wreck], [8, rock]]) });
+
+    it('with salvage on, a scrap piece (kind 3) picks as salvage', () => {
+      expect(pickEntityAt(200, 0, m, TAP_SLOP, true)).toEqual({ id: 'swarm-6', kind: 'salvage' });
+    });
+
+    it('with salvage on, a wreck piece (kind 4) picks as salvage, using its own radius', () => {
+      expect(pickEntityAt(400, 0, m, TAP_SLOP, true)).toEqual({ id: 'swarm-7', kind: 'salvage' });
+      // Inside radius + slop (60 + 24) hits; just outside misses.
+      expect(pickEntityAt(400 + 83, 0, m, TAP_SLOP, true)).toEqual({ id: 'swarm-7', kind: 'salvage' });
+      expect(pickEntityAt(400 + 85, 0, m, TAP_SLOP, true)).toBeNull();
+    });
+
+    it('pods and rocks are unchanged with salvage on', () => {
+      expect(pickEntityAt(0, 0, m, TAP_SLOP, true)).toEqual({ id: 'swarm-5', kind: 'pod' });
+      expect(pickEntityAt(800, 0, m, TAP_SLOP, true)).toEqual({ id: 'swarm-8', kind: 'asteroid' });
+    });
+
+    it('Fly (salvage off, the default) still skips scrap and wreck pieces', () => {
+      expect(pickEntityAt(200, 0, m)).toBeNull();
+      expect(pickEntityAt(400, 0, m)).toBeNull();
+      expect(pickEntityAt(0, 0, m)).toEqual({ id: 'swarm-5', kind: 'pod' });
+    });
+  });
+
   it('lingering hulls ARE selectable by shipInstanceId (WS-9/R2.23)', () => {
     const m = mirror({
       ships: new Map([['linger-xyz', lingering(300, 300, 'owner-1')]]),
