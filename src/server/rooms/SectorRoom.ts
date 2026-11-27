@@ -3939,6 +3939,7 @@ export class SectorRoom extends Room<SectorState> {
     transitOrchestrator: () => this.transitOrchestrator, postToWorker: (cmd) => this.postToWorker(cmd),
     getActiveShip: (pid) => this.getActiveShip(pid), swarmEntityPoseInto: (id, out) => this.swarmEntityPoseInto(id, out),
     resolveActiveShipKey: (pid) => this.resolveActiveShipKey(pid), fleetStatusSoonFor: (pid) => this.fleetHooks.fleetStatusSoonFor(pid),
+    salvageLineage: () => this.fireLocks.lockLineage, salvageHoldFull: (sid) => this.fireLocks.holdFull(sid),
   });
   private readonly fleetHooks: FleetRoomHooks = new FleetRoomHooks({
     state: () => this.state, fleet: this.fleet, clients: () => this.clients, sessionToPlayer: () => this.sessionToPlayer,

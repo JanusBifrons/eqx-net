@@ -28,7 +28,7 @@ import type { FleetCommandSubsystem } from '../../fleet/FleetCommandSubsystem.js
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
 import type { StructureRegistry } from '../../structures/StructureRegistry.js';
 import { LockSubsystem, newLockTargetView, type LockTargetView } from '../LockSubsystem.js';
-import { LockSalvageLookup, swarmLockId } from '../lockSalvage.js';
+import { LockSalvageLookup, swarmLockId, type LockLineageSource } from '../lockSalvage.js';
 import { NpcLockSubsystem } from '../NpcLockSubsystem.js';
 import { tractorLineClear, type TractorLineHost } from '../tractorLineOfSight.js';
 import type { ShipKindId } from '../../../shared-types/shipKinds.js';
@@ -84,6 +84,13 @@ export class FireControlLocks {
     wrecks: () => this.h.capitalWrecks(), entity: (id) => this.h.swarmRegistry.get(id)?.entityId ?? -1, // lock lineage (lockSplit.ts)
     // No hold (no roster row, e.g. a showcase room with no sectorKey): it takes nothing in, so nothing is consumable.
     freeHold: (s) => (this.h.hasHold(s.shipInstanceId) ? this.h.shipCargoCapacity(s.kind, s.shipInstanceId) - this.h.holdWeight(s.shipInstanceId) : 0) });
+  /** The wreck lineages the locks re-key across (a salvage order's retarget). */
+  get lockLineage(): LockLineageSource { return this._lockSalvage; }
+  /** Hull `sid` has a hold and it is full (a salvage order's finish). */
+  holdFull(sid: string): boolean {
+    const s = this.h.state().ships.get(sid);
+    return s !== undefined && this.h.hasHold(sid) && this.h.shipCargoCapacity(s.kind, sid) - this.h.holdWeight(sid) <= 0;
+  }
 
   buildNpcLockSubsystem(): NpcLockSubsystem {
     return new NpcLockSubsystem({

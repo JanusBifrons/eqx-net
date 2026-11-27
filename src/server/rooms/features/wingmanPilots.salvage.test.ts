@@ -42,14 +42,14 @@ function setup() {
   };
   const orders = { mode: 'defend', stance: 'defensive', order: null as Order };
   const brain = { target: null as string | null, getTargetId(): string | null { return this.target; }, setKeptLockTarget(): void {} };
-  const swarm = new Map<number, { id: string; entityId: number; kind: number; shipKind?: string }>([
-    [7, { id: 'scrap-7', entityId: 7, kind: SWARM_KIND_SCRAP, shipKind: 'havok' }],
+  const swarm = new Map<number, { id: string; entityId: number; kind: number; shipKind?: string; radius?: number }>([
+    [7, { id: 'scrap-7', entityId: 7, kind: SWARM_KIND_SCRAP, shipKind: 'havok', radius: 300 }],
     [9, { id: 'drone-9', entityId: 9, kind: SWARM_KIND_DRONE }],
   ]);
   const fired: string[] = [];
   const host = {
     state: () => ({ ships: { get: (id: string) => (id === HULL ? { alive: true, playerId: 'owner', kind: 'mining-skiff' } : undefined) } }),
-    fleet: { size: 1, idAt: () => HULL, ordersAt: () => orders, ownerAt: () => 'owner', squadFollowOf: () => null },
+    fleet: { size: 1, idAt: () => HULL, ordersAt: () => orders, ordersOf: () => orders, ownerAt: () => 'owner', squadFollowOf: () => null },
     lingeringSlots: new Map([[HULL, 0]]),
     lingeringPoseCache: new Map([[HULL, { x: 0, y: 0 }]]),
     playerToActiveShipInstance: new Map(),
@@ -65,6 +65,8 @@ function setup() {
     mountTicker: () => ({ tickHull: () => {} }),
     playerFireResolver: () => ({ fireHull: (_sid: string, _ship: unknown, gid: string) => { fired.push(gid); } }),
     getActiveShip: () => undefined,
+    // In reach of the piece (slice 3 travel: `wingmanSalvageOrder.ts`).
+    swarmEntityPoseInto: (_id: string, out: { x: number; y: number }) => { out.x = 0; out.y = 0; return true; },
     resolveActiveShipKey: () => undefined,
     fleetStatusSoonFor: () => {},
   } as unknown as WingmanPilotsHost;
@@ -132,6 +134,21 @@ describe('tickWingmanTargets under a salvage order', () => {
     t.orders.stance = 'holdFire';
     t.pilots.tickWingmanTargets();
     expect(t.keys()).toEqual({ laser: [SCRAP_KEY], tractor: [SCRAP_KEY], guns: [] });
+  });
+
+  it('slice 3: the piece gone (no lineage) finishes the order and sends the status', () => {
+    const t = setup();
+    const sent: string[] = [];
+    (t.host as unknown as { fleetStatusSoonFor: (pid: string) => void }).fleetStatusSoonFor = (pid) => { sent.push(pid); };
+    t.orders.order = { kind: 'salvage', targetId: SCRAP };
+    t.pilots.tickWingmanTargets();
+    expect(t.orders.order).not.toBeNull();
+    const resume = vi.spyOn(t.pilots as unknown as { applyHullMode: (id: string) => void }, 'applyHullMode').mockImplementation(() => {});
+    t.swarm.delete(7);
+    t.pilots.tickWingmanTargets();
+    expect(t.orders.order).toBeNull();
+    expect(resume, 'the mode resumes from where the hull is').toHaveBeenCalledWith(HULL);
+    expect(sent).toContain('owner');
   });
 
   it('without a salvage order, nothing locks the scrap', () => {
