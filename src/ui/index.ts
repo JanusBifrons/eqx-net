@@ -6,6 +6,7 @@
 export { eqxTheme, buildEqxTheme } from './theme.js';
 export { EqxButton, TONE_COLOR, type EqxButtonProps, type EqxButtonSize, type EqxTone } from './EqxButton/EqxButton.js';
 export { EqxIconButton, type EqxIconButtonProps } from './EqxIconButton/EqxIconButton.js';
+export { HEX_CLIP } from './EqxIconButton/hexTile.js';
 export { EqxTooltip, type EqxTooltipProps } from './EqxTooltip/EqxTooltip.js';
 export { EqxSwitch, type EqxSwitchProps } from './EqxSwitch/EqxSwitch.js';
 export { EqxThemeProvider, type EqxThemeProviderProps } from './EqxThemeProvider/EqxThemeProvider.js';

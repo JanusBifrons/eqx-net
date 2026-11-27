@@ -1,6 +1,6 @@
 /**
  * A right panel docks over the right edge as glass: the right-thumb Fly
- * control behind it (BOOST) must not show through or take
+ * control behind it (the do-hexes, Boost) must not show through or take
  * touches while any right panel is open (the `rightPanel` flag, or the
  * building-settings panel), and come back when it closes. The left move stick
  * stays (the panel never covers it).
@@ -32,7 +32,7 @@ const touchInput = {
   setJoystick: vi.fn(), setJoystickIdle: vi.fn(), setBoostHeld: vi.fn(),
 } as unknown as TouchInput;
 
-const RIGHT_THUMB_IDS = ['hud-boost'];
+const RIGHT_THUMB_IDS = ['do-hex-boost'];
 const shown = (id: string): boolean => document.querySelector(`[data-testid="${id}"]`) !== null;
 
 describe('GameHud right-thumb controls under a right panel', () => {
@@ -45,18 +45,18 @@ describe('GameHud right-thumb controls under a right panel', () => {
     });
   });
 
-  it('has no touch lock stick (removed 2026-11-27): BOOST alone holds the right thumb', () => {
+  it('has no touch lock stick (removed 2026-11-27): the do-hexes (Boost under the thumb) hold the right thumb', () => {
     render(
       <LayoutContext.Provider value={hosts() as never}>
         <GameHud touchInput={touchInput} />
       </LayoutContext.Provider>,
     );
-    expect(shown('hud-boost')).toBe(true);
+    expect(shown('do-hex-boost')).toBe(true);
     expect(shown('hud-lock-zone')).toBe(false);
     expect(shown('hud-lock-home')).toBe(false);
   });
 
-  it('hides BOOST while a rail panel is open, and restores them on close', () => {
+  it('hides the do-hexes (Boost) while a rail panel is open, and restores them on close', () => {
     render(
       <LayoutContext.Provider value={hosts() as never}>
         <GameHud touchInput={touchInput} />

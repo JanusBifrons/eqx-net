@@ -36,9 +36,14 @@ export interface DoHex {
   tone: EqxTone;
   /** The current / armed action: stronger edge and glow. */
   lit?: boolean;
+  /** Faded but still tappable (nothing to act on yet: no lock target, nothing in reach). */
+  dim?: boolean;
   /** `main` = thumb-nearest cell; `cancel` = the far corner. */
   role?: 'main' | 'cancel';
   onPress: () => void;
+  /** A HOLD control (Boost): the host wraps the hex in `HoldButton` and calls
+   *  this on press and release (and on unmount while held); `onPress` is unused. */
+  onHold?: (down: boolean) => void;
   /** `data-state`, for tests. */
   state?: string;
 }

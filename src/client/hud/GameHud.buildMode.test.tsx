@@ -1,7 +1,7 @@
 /**
  * Build mode (owner design 2026-11-20): in Build, the third control mode
  * (`buildMode`, with or without a ghost) the flight controls are gone (joystick,
- * BOOST, weapon strip, lock band; the speed bar is Command-only), so the ghost owns the
+ * Boost hex, weapon strip, lock band; the speed bar is Command-only), so the ghost owns the
  * screen. Panels unrelated to flying are stubbed: this locks the gate only.
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest';
@@ -33,7 +33,7 @@ const touchInput = {
   setJoystick: vi.fn(), setJoystickIdle: vi.fn(), setBoostHeld: vi.fn(),
 } as unknown as TouchInput;
 
-const FLIGHT_IDS = ['hud-move-zone', 'hud-boost', 'stub-weapon-strip', 'stub-lock-band'];
+const FLIGHT_IDS = ['hud-move-zone', 'do-hex-boost', 'stub-weapon-strip', 'stub-lock-band'];
 
 function renderHud() {
   return render(
