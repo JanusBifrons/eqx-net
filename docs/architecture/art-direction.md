@@ -442,6 +442,10 @@ unpowered.
   to each of its six cable sockets.
 - **Grid cables:** the `cable` line look. A cable leaves each building's socket straight, then bends
   smoothly; it never aims at a building's centre.
+  On a deck, a cable laid along the plate seams (`LinkCable.seam`) is part of the deck: zoomed out
+  it shrinks with the plates (drawn at no less than the look's world scale, `lineLookWorldScale`)
+  instead of holding the `MIN_PX` screen floor, which swelled it into wide bands over the plates.
+  Cables off a deck keep the floor (`connectorCables.deckZoom.test.ts`).
 - **Power:** an eight-panel solar array on a lattice spine that turns to face the sun (look only).
   The reactor is a keep with four corner cooling fans that stop when it runs dry. Battery and bank
   cells fill with amber; the floating bar and number are gone.

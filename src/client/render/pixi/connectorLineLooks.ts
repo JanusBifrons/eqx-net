@@ -73,6 +73,13 @@ export function lineLookBaseWidth(look: LineLook): number {
   return BASE_W[look];
 }
 
+/** The zoom at and above which a look draws at its authored (world) size:
+ *  below it the `MIN_PX` floor widens it. A run that must shrink with the
+ *  world (a deck seam cable) draws at `max(scale, this)`. */
+export function lineLookWorldScale(look: LineLook): number {
+  return MIN_PX[look] / BASE_W[look];
+}
+
 /** Multiplier on a look's authored sizes: 1, or more when zoomed out so the
  *  body never drops under `MIN_PX` screen pixels. */
 export function lineLookScale(look: LineLook, scale: number): number {
