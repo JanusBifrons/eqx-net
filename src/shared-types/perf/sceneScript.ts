@@ -100,12 +100,27 @@ const RigClipStep = z.object({
   fromTip: z.boolean().optional(),
 }).strict();
 
+/** Battle scenarios: mark scene ships `scene-<tag>-0..count-1` hostile to
+ *  every pilot again (the same ledger + `bot_aggro` path as a `spawn` step's
+ *  `hostile`). A mark is forgotten after ~30 s without a hit, so a fleet that
+ *  starts out of range repeats this (`repeatEveryMs` / `repeatUntilMs`, as on
+ *  `spawn`) and keeps closing instead of going back to patrol. A dead ship
+ *  is skipped. */
+const AggroStep = z.object({
+  atMs: z.number().min(0).max(600_000),
+  action: z.literal('aggro'),
+  tag: z.string().min(1).max(16).regex(/^[a-z0-9-]+$/),
+  count: z.number().int().min(1).max(SCENE_MAX_SPAWN),
+  repeatEveryMs: z.number().min(1000).max(600_000).optional(),
+  repeatUntilMs: z.number().min(0).max(600_000).optional(),
+}).strict();
+
 const EndStep = z.object({
   atMs: z.number().min(0).max(600_000),
   action: z.literal('end'),
 }).strict();
 
-export const SceneStepSchema = z.discriminatedUnion('action', [SpawnStep, FleetStep, RocksStep, RockCutStep, MoveStep, RigClipStep, EndStep]);
+export const SceneStepSchema = z.discriminatedUnion('action', [SpawnStep, FleetStep, RocksStep, RockCutStep, MoveStep, RigClipStep, AggroStep, EndStep]);
 export const SceneScriptSchema = z.array(SceneStepSchema).min(1).max(64);
 export type SceneStep = z.infer<typeof SceneStepSchema>;
 

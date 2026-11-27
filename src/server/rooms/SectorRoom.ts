@@ -2325,12 +2325,12 @@ export class SectorRoom extends Room<SectorState> {
         this.testWalletSeed = Math.max(0, Math.floor(g.credits ?? 0));
       }
       this.testHaulerRaiders = Math.max(0, Math.min(6, Math.floor(roomOpts.haulerRaiders ?? 0)));
-      if (roomOpts.sceneScript !== undefined) ({ runner: this.sceneRunner, tickRing: this.sceneTickRing, workerRing: this.sceneWorkerRing } = initSceneScript({ perfSource: this, serverTick: () => this.serverTick, sectorKey: () => this.sectorKey, playerToSlot: () => this.playerToSlot, swarmSpawner: () => this.swarmSpawner, swarmRegistry: this.swarmRegistry, swarmHealth: () => this.swarmHealth, swarmShield: () => this.swarmShield, swarmShieldLastDmg: () => this.swarmShieldLastDmg, aiController: () => this.aiController, broadcast: (t, m) => this.broadcast(t, m), spawnLivingWorldBot: (spec) => this.spawnLivingWorldBot(spec), snapshotRestore: this.snapshotRestore, lingeringSlots: this.lingeringSlots, fleet: this.fleet, capitalWrecks: () => this.capitalWrecks, rigSceneHooks: () => this.rigs.rigScene.sceneHooks() }, roomOpts.sceneScript));
       this.perfFixedLoad = roomOpts.perfFixedLoad === true;
       const twa = roomOpts.testWaveArrival;
       if (twa && Number.isFinite(twa.x) && Number.isFinite(twa.y)) this.testWaveArrivalPose = { x: twa.x, y: twa.y };
       this.waveNeedsOwner = roomOpts.waveNeedsOwner === true;
     }
+    if ((this.testMode || isSealedSectorKey(this.sectorKey)) && roomOpts.sceneScript !== undefined) ({ runner: this.sceneRunner, tickRing: this.sceneTickRing, workerRing: this.sceneWorkerRing } = initSceneScript({ perfSource: this, serverTick: () => this.serverTick, sectorKey: () => this.sectorKey, playerToSlot: () => this.playerToSlot, swarmSpawner: () => this.swarmSpawner, swarmRegistry: this.swarmRegistry, swarmHealth: () => this.swarmHealth, swarmShield: () => this.swarmShield, swarmShieldLastDmg: () => this.swarmShieldLastDmg, aiController: () => this.aiController, broadcast: (t, m) => this.broadcast(t, m), spawnLivingWorldBot: (spec) => this.spawnLivingWorldBot(spec), snapshotRestore: this.snapshotRestore, lingeringSlots: this.lingeringSlots, fleet: this.fleet, capitalWrecks: () => this.capitalWrecks, rigSceneHooks: () => this.rigs.rigScene.sceneHooks() }, roomOpts.sceneScript)); // testMode, or a sealed sector (battle rooms: fixed options, battleRooms.ts)
     // Phase-1 issue 5 — scrap-stress seed: a dense corridor of free-floating
     // scrap ahead of spawn for the fly-through reconciliation E2E.
     if (this.testMode && (roomOpts.scenarioScrapCount ?? 0) > 0) {

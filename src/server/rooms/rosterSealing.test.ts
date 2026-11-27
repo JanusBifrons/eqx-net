@@ -144,4 +144,17 @@ describe('purgeSealedRosterRows', () => {
     expect(holds.get(real)).toBeDefined();
     expect(holds.get(fittedUid(real))).toBeDefined();
   });
+
+  it('with a sector key, deletes only that sealed sector\'s rows', () => {
+    const store = freshStore();
+    const sink = { enqueueCritical: () => {} } as unknown as IPersistenceSink;
+    const holds = new HoldStore({ persistence: () => sink, now: () => 1 });
+    const real = row(store, REAL);
+    const sandbox = row(store, SANDBOX_SECTOR_KEY);
+    const battle = row(store, 'battle-subcaps');
+    expect(purgeSealedRosterRows(store, holds, 'battle-subcaps')).toBe(1);
+    expect(store.get(battle)).toBeNull();
+    expect(store.get(sandbox)).not.toBeNull();
+    expect(store.get(real)).not.toBeNull();
+  });
 });
