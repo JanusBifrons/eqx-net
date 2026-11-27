@@ -248,4 +248,30 @@ export interface RendererFeedback {
   viewX: number;
   viewY: number;
   viewHalf: number;
+  /**
+   * Selection-HUD world tag anchor (S6a), written in `update()` by
+   * `writeSelectionTag` (`render/selectionTag.ts`) with the same camera
+   * projection as `placementScreenX/Y`. Screen space: CSS px, canvas-relative.
+   *
+   * `focusScreenX/Y` is the TOP-CENTRE of the focus's selection bracket
+   * (`selectedPickId`), i.e. where a floating name tag sits just above it;
+   * `NaN` when nothing is focused. `focusOnScreen` is true when that bracket
+   * box overlaps the viewport (the consumer clamps the tag into view).
+   * `focusScreenDiam` is the entity's on-screen diameter in px (bounding
+   * radius x 2 x zoom; 0 when none), so the tag can go compact by the same
+   * rule as `isIconOnly(screenDiamPx)` (`render/pixi/FarZoomIcons.ts`).
+   * UI-position surface only — not consumed by gameplay logic.
+   */
+  focusScreenX: number;
+  focusScreenY: number;
+  focusOnScreen: boolean;
+  focusScreenDiam: number;
+  /**
+   * The multi-selected fleet's (`fleetSelIds`) game-space centroid, projected
+   * (CSS px, canvas-relative); `NaN` when no selected ship resolves.
+   * `selCentroidOnScreen` is true when that point is inside the viewport.
+   */
+  selCentroidScreenX: number;
+  selCentroidScreenY: number;
+  selCentroidOnScreen: boolean;
 }

@@ -105,6 +105,11 @@ export function resolveSelectable(mirror: RenderMirror, id: string, out: Selecta
   return true;
 }
 
+/** Drawn bracket half-size in screen px for a game-space half extent at `zoom`. */
+export function bracketHalfPx(halfWorld: number, zoom: number): number {
+  return Math.max(MIN_HALF_PX, (halfWorld + RADIUS_PAD) * zoom);
+}
+
 export type BracketProjectFn = (pixiWorldX: number, pixiWorldY: number, out: { x: number; y: number }) => void;
 
 export class SelectionBracket {
@@ -170,8 +175,8 @@ export class SelectionBracket {
     if (!resolveSelectable(mirror, id, t)) return false;
     const s = this._s;
     project(t.x, -t.y, s);
-    const hw = Math.max(MIN_HALF_PX, (t.hw + RADIUS_PAD) * zoom);
-    const hh = Math.max(MIN_HALF_PX, (t.hh + RADIUS_PAD) * zoom);
+    const hw = bracketHalfPx(t.hw, zoom);
+    const hh = bracketHalfPx(t.hh, zoom);
     const arm = Math.min(hw, hh) * CORNER_FRAC;
     const x = s.x;
     const y = s.y;

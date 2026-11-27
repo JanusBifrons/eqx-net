@@ -15,6 +15,7 @@ import { updateEngineShieldFx } from './engineShieldFxUpdater.js';
 import { shouldLatchFirstFrame } from '../firstFrameLatch.js';
 import type { RendererFrameCtx } from './frameCtx.js';
 import type { FrameMarkers } from '../worker/protocol.js';
+import { selectionTagFeedbackInit } from '../selectionTagFeedback.js';
 
 /** The renderer's feedback struct, built once by the renderer and mutated in
  *  place each frame (`writeFrameFeedback`); its identity is stable. */
@@ -58,6 +59,7 @@ export function createRendererFeedback(): RendererFeedback {
     selectedPickKind: null,
     hoveredPickId: null,
     miningBeamCount: 0, viewX: 0, viewY: 0, viewHalf: 0,
+    ...selectionTagFeedbackInit(),
   };
 }
 

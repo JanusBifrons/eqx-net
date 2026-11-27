@@ -266,6 +266,13 @@ describe('renderer-worker protocol', () => {
             fleetPickPoints: 3,
             fleetPickSeq: 4,
             fleetPickResult: { kind: 'patrol', route: [[0, 0], [100, -50], [30, 80]] },
+            focusScreenX: 320,
+            focusScreenY: 140.5,
+            focusOnScreen: true,
+            focusScreenDiam: 36,
+            selCentroidScreenX: NaN,
+            selCentroidScreenY: NaN,
+            selCentroidOnScreen: false,
           },
         },
       },
@@ -307,6 +314,12 @@ describe('renderer-worker protocol', () => {
         expect(back.feedback.fleetPickPoints).toBe(3);
         expect(back.feedback.fleetPickSeq).toBe(4);
         expect(back.feedback.fleetPickResult).toEqual({ kind: 'patrol', route: [[0, 0], [100, -50], [30, 80]] });
+        expect(back.feedback.focusScreenX).toBe(320);
+        expect(back.feedback.focusScreenY).toBe(140.5);
+        expect(back.feedback.focusOnScreen).toBe(true);
+        expect(back.feedback.focusScreenDiam).toBe(36);
+        expect(back.feedback.selCentroidScreenX).toBeNaN();
+        expect(back.feedback.selCentroidOnScreen).toBe(false);
       }
       if (back.type === 'FRAME_MARKERS') {
         // Primitive struct — every field must survive the clone intact

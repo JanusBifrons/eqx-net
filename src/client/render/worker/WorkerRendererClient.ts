@@ -50,6 +50,7 @@ import { serialisePointerEvent, serialiseWheelEvent } from './eventSerialisation
 import { setCanvasPointerCapture } from '../pointerCapture.js';
 import { shipScaleWorkerName } from '../../../shared-types/shipScale/config.js';
 import { factionLookVersion, factionLooksWire } from '../../../shared-types/factions.js';
+import { copySelectionTagFeedback, selectionTagFeedbackInit } from '../selectionTagFeedback.js';
 
 /** Callback invoked when the worker emits OVERLAY_TAPPED. Equinox Phase 9:
  *  `sectorKey: null` = an empty-space tap → blur/deselect (close the drawer). */
@@ -87,9 +88,7 @@ function emptyFeedback(): RendererFeedback {
     placementChosenWorldY: null,
     placementStuck: false,
     placementConfirmSeq: 0,
-    helmCourseSeq: 0,
-    helmCourseX: 0,
-    helmCourseY: 0,
+    helmCourseSeq: 0, helmCourseX: 0, helmCourseY: 0,
     fleetSelSeq: 0,
     fleetSelIds: [],
     orderSeq: 0,
@@ -110,6 +109,7 @@ function emptyFeedback(): RendererFeedback {
     hoveredPickId: null,
     miningBeamCount: 0,
     viewX: 0, viewY: 0, viewHalf: 0,
+    ...selectionTagFeedbackInit(),
   };
 }
 
@@ -831,8 +831,7 @@ export class WorkerRendererClient implements IRenderer {
           this.feedback.fleetPickSeq = msg.feedback.fleetPickSeq;
           this.feedback.fleetPickResult = msg.feedback.fleetPickResult;
         }
-        this.feedback.placementPreviewConnectionCount =
-          msg.feedback.placementPreviewConnectionCount;
+        this.feedback.placementPreviewConnectionCount = msg.feedback.placementPreviewConnectionCount;
         this.feedback.placementPreviewTooShortCount = msg.feedback.placementPreviewTooShortCount;
         this.feedback.placementPreviewRejection = msg.feedback.placementPreviewRejection;
         this.feedback.selectedPickId = msg.feedback.selectedPickId;
@@ -840,6 +839,7 @@ export class WorkerRendererClient implements IRenderer {
         this.feedback.hoveredPickId = msg.feedback.hoveredPickId;
         this.feedback.miningBeamCount = msg.feedback.miningBeamCount;
         this.feedback.viewX = msg.feedback.viewX; this.feedback.viewY = msg.feedback.viewY; this.feedback.viewHalf = msg.feedback.viewHalf;
+        copySelectionTagFeedback(this.feedback, msg.feedback);
         this.feedback.mountCounts.clear();
         for (const [k, v] of msg.feedback.mountCounts) {
           this.feedback.mountCounts.set(k, v);
