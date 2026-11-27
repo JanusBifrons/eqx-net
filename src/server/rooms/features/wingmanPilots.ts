@@ -29,6 +29,7 @@ import type { PlayerFireResolver } from '../PlayerFireResolver.js';
 import type { WorkerCmd } from '../PhysicsWorkerProxy.js';
 import { wireSwarmEntityId } from './fleetMessages.js';
 import { WingmanKeptLocks } from './wingmanKeptLocks.js';
+import { WingmanSalvage } from './wingmanSalvage.js';
 
 /** RTS slice 4b — `fleet.detach` options when the owner takes a member's helm. */
 const KEEP_SQUAD = Object.freeze({ keepSquad: true });
@@ -64,7 +65,7 @@ export interface WingmanPilotsHost {
 }
 
 export class WingmanPilots {
-  constructor(private readonly h: WingmanPilotsHost) { this.keptLocks = new WingmanKeptLocks(h); }
+  constructor(private readonly h: WingmanPilotsHost) { this.keptLocks = new WingmanKeptLocks(h); this.salvage = new WingmanSalvage(h); }
 
   /** Scratch for a wingman attack target's pose (#14). */
   readonly wingmanTargetPose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
@@ -345,6 +346,7 @@ export class WingmanPilots {
     this.h.lockActivated().delete(shipInstanceId);
     this.wingmanFireKeys.delete(shipInstanceId);
     this.keptLocks.forget(shipInstanceId);
+    this.salvage.forget(shipInstanceId);
     const slot = this.h.lingeringSlots.get(shipInstanceId);
     if (slot === undefined) return;
     const cmd = this.wingmanInputCmd;
@@ -425,6 +427,7 @@ export class WingmanPilots {
   readonly wingmanFireKeys = new Map<string, { id: string; key: string }>();
   /** Per hull: its kept lock (capital S2; `wingmanKeptLocks.ts`). */
   private readonly keptLocks: WingmanKeptLocks;
+  private readonly salvage: WingmanSalvage; // a salvage order's locks (`wingmanSalvage.ts`)
   /** A swarm record by registry id or wire id (`swarm-<entityId>`, what the
    *  client's attack order names). Alloc-free digit parse. */
   private swarmRecByAnyId(id: string): SwarmEntityRecord | null {
@@ -484,11 +487,11 @@ export class WingmanPilots {
    * here when they hand the hull over, stay until the target dies or leaves
    * lock range; the lock step drops those); only an empty group takes the AI
    * pilot brain's target (`getTargetId`). An attack order is obeyed: every
-   * group retargets to it. Hold fire locks only an ordered target, else every
-   * lock is cancelled (RTS Part B slice 2). The trigger is the brain's
-   * `intent.fire` (`tickWingmanFire`). The lock still takes the time a
-   * pilot's would (fights aren't instant), and a neutral target runs the
-   * failsafe.
+   * group retargets to it; a salvage order, its salvage groups only. Hold
+   * fire locks only an ordered target, else every lock is cancelled (RTS
+   * Part B slice 2). The trigger is the brain's `intent.fire`
+   * (`tickWingmanFire`). The lock still takes the time a pilot's would
+   * (fights aren't instant), and a neutral target runs the failsafe.
    */
   tickWingmanTargets(): void {
     const fleet = this.h.fleet;
@@ -527,8 +530,10 @@ export class WingmanPilots {
         ? ordered
         : (hb?.getTargetId?.() ?? ordered);
       const key = target === null ? null : this.wingmanLockKey(sid, target);
+      // A salvage order: only its salvage groups lock the piece (`wingmanSalvage.ts`).
+      const salv = this.salvage.lockKey(sid, w.order);
       const groups = this.h.wingmanLocks().wireFor(sid);
-      if (key === null) {
+      if (key === null && salv === null) {
         // Hold fire drops every lock; otherwise held locks stay (owner rule).
         if (groups !== undefined && w.stance === 'holdFire') for (let g = 0; g < groups.length; g++) {
           if (groups[g]!.l.length > 0) this.h.wingmanLocks().cancelLock(sid, groups[g]!.id);
@@ -539,14 +544,17 @@ export class WingmanPilots {
       if (gs === undefined) continue;
       for (let g = 0; g < gs.length; g++) {
         const grp = gs[g]!;
-        if (grp.l.length === 1 && grp.l[0]!.t === key) continue;
+        const want = this.salvage.groupKey(ship.kind, grp.id, salv, key);
+        // A gun group with no target under a salvage order: Hold fire drops its lock.
+        if (want === null) { if (w.stance === 'holdFire' && grp.l.length > 0) this.h.wingmanLocks().cancelLock(sid, grp.id); continue; }
+        if (grp.l.length === 1 && grp.l[0]!.t === want) continue;
         // The pilot's live lock (the lock step drops a dead or out-of-range
-        // one) is kept unless an attack order names the target; the AI
-        // pilot's own lock follows its pick (spread targets).
-        if (ordered === null && this.keptLocks.holdsKeptLock(sid, grp)) continue;
+        // one) is kept unless an attack or salvage order names the target;
+        // the AI pilot's own lock follows its pick (spread targets).
+        if (want === key && ordered === null && this.keptLocks.holdsKeptLock(sid, grp)) continue;
         if (grp.l.length > 0) this.h.wingmanLocks().cancelLock(sid, grp.id);
-        this.h.wingmanLocks().requestLock(sid, grp.id, key);
-        this.keptLocks.noteAiLock(sid, grp.id, key);
+        this.h.wingmanLocks().requestLock(sid, grp.id, want);
+        this.keptLocks.noteAiLock(sid, grp.id, want);
       }
     }
   }
@@ -561,7 +569,8 @@ export class WingmanPilots {
    * would (aim tolerance, range, charge wind-up room). A turret-fire-control
    * hull (a capital) has no brain trigger (its brain never fires; the
    * turrets do as each bears, like an AI pilot's capital), so its trigger is
-   * its lock. Liveness: LINGERING hulls with a brain only (#17).
+   * its lock; so is a salvage order's salvage groups' (guns never). Liveness:
+   * LINGERING hulls with a brain only (#17).
    */
   tickWingmanFire(): void {
     const fleet = this.h.fleet;
@@ -573,13 +582,12 @@ export class WingmanPilots {
       this.h.mountTicker().tickHull(sid, ship, pose);
       const groups = this.h.wingmanLocks().wireFor(sid);
       if (groups === undefined) continue;
-      if (!hasTurretFireControl(getShipKind(ship.kind))) {
-        const held = this.hullTrigger.get(sid);
-        if (held === undefined || this.wingmanFireKeys.get(sid)?.id !== held) continue;
-      }
+      let guns = hasTurretFireControl(getShipKind(ship.kind));
+      if (!guns) { const held = this.hullTrigger.get(sid); guns = held !== undefined && this.wingmanFireKeys.get(sid)?.id === held; }
       for (let g = 0; g < groups.length; g++) {
         const grp = groups[g]!;
         if (grp.l.length === 0 || !this.h.wingmanLocks().hasLocked(sid, grp.id)) continue;
+        if (!guns && !this.salvage.firesOnLock(sid, fleet.ordersAt(i).order, ship.kind, grp.id)) continue;
         this.h.playerFireResolver().fireHull(sid, ship, grp.id);
       }
     }
