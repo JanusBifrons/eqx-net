@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   FLEET_STATUS_ACTIVITIES,
   FLEET_STATUS_MODES,
+  FLEET_STATUS_ORDERS,
   FLEET_STATUS_STANCES,
   FleetStatusMessageSchema,
   decodeFleetStatusRow,
@@ -27,6 +28,14 @@ describe('fleet_status wire format', () => {
     };
     const msg = { type: 'fleet_status' as const, s: [encodeFleetStatusRow(row)] };
     const parsed = FleetStatusMessageSchema.parse(JSON.parse(JSON.stringify(msg)));
+    expect(decodeFleetStatusRow(parsed.s[0]!)).toEqual(row);
+  });
+
+  it('round-trips a salvage order (appended order index)', () => {
+    expect(FLEET_STATUS_ORDERS.indexOf('salvage')).toBe(3);
+    const row: FleetStatusRowWire = { id: 'h', mode: 'defend', stance: 'defensive', activity: 'idle', targetId: 'swarm-9', orderKind: 'salvage' };
+    const parsed = FleetStatusMessageSchema.parse(JSON.parse(JSON.stringify({ type: 'fleet_status', s: [encodeFleetStatusRow(row)] })));
+    expect(parsed.s[0]![8]).toBe(3);
     expect(decodeFleetStatusRow(parsed.s[0]!)).toEqual(row);
   });
 

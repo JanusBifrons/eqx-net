@@ -24,6 +24,7 @@ export function installFleetCommandSenders(): void {
     setStance: (ids, stance) => { sendSetStance([...ids], stance); },
     stop: (ids) => { sendFleetOrder([...ids], { kind: 'stop' }); },
     setSpeed: (ids, fraction) => { sendFleetSpeed([...ids], fraction); },
+    salvage: (ids, targetId) => { sendFleetOrder([...ids], { kind: 'salvage', targetId }); },
     formSquad: (ids) => { sendFormSquad([...ids]); },
     disbandSquad: (squadId) => { sendDisbandSquad(squadId); },
   });

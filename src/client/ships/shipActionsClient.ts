@@ -58,6 +58,9 @@ export function sendFleetOrder(shipIds: string[], order: FleetOrder): boolean {
   if (order.kind === 'attack') {
     return dispatchFleet({ type: 'fleet_order', shipIds, kind: 'attack', targetId: order.targetId });
   }
+  if (order.kind === 'salvage') {
+    return dispatchFleet({ type: 'fleet_order', shipIds, kind: 'salvage', targetId: order.targetId });
+  }
   return dispatchFleet({ type: 'fleet_order', shipIds, kind: 'stop' });
 }
 
