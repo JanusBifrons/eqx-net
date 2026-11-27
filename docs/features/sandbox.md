@@ -30,6 +30,7 @@ The sandbox is a *sealed* sector (`src/server/rooms/sealedSectors.ts`,
   the sandbox; its teleporters never pair with real ones.
 - **Credits** (`paysRealCredits`): no station taxes, bounties, dock trading,
   blueprint buying or selling, or tolls; launches there are free.
+- **Battle rooms are sealed too** (`?room=battle-*`, [battle-scenarios](battle-scenarios.md)): same rules, and each run also clears its own rows when it opens.
 - **Wiped on restart.** The sector is never saved, and every sandbox roster
   row and its holds are purged at boot (`persistenceBoot`), whether or not
   the sandbox is enabled.

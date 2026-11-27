@@ -58,11 +58,14 @@ export interface PurgeHoldStore {
  * ship hold (keyed by ship id, sectorKey null) and fitted-blueprint hold.
  * Sealed rooms are never saved, so nothing of theirs survives a restart.
  * Runs whether or not the sandbox is enabled. Returns the rows removed.
+ * `onlySectorKey` (a sealed key) limits it to that one sector: a battle room
+ * clears its last run when it is created (battleRooms.ts).
  */
-export function purgeSealedRosterRows(roster: PurgeRosterStore, holds: PurgeHoldStore): number {
+export function purgeSealedRosterRows(roster: PurgeRosterStore, holds: PurgeHoldStore, onlySectorKey?: string): number {
   let removed = 0;
   for (const rec of roster.all()) {
     if (!isSealedSectorKey(rec.lastSectorKey)) continue;
+    if (onlySectorKey !== undefined && rec.lastSectorKey !== onlySectorKey) continue;
     holds.delete(rec.shipId);
     holds.delete(fittedUid(rec.shipId));
     if (roster.delete(rec.shipId)) removed++;

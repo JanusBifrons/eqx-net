@@ -123,6 +123,22 @@ describe('SceneScriptRunner', () => {
     expect(h.spawned.map((s) => s.id)).toEqual(['scene-blue-0', 'scene-blue-1', 'scene-blue-r1-0', 'scene-blue-r1-1', 'scene-blue-r2-0', 'scene-blue-r2-1']);
   });
 
+  it('aggro re-marks the same ships every repeat (same tag, no spawn, nothing refused)', () => {
+    const script = SceneScriptSchema.parse([
+      { atMs: 0, action: 'spawn', tag: 'red', kind: 'battleship', count: 2, x: 0, y: 0, hostile: true },
+      { atMs: 20_000, action: 'aggro', tag: 'red', count: 2, repeatEveryMs: 20_000, repeatUntilMs: 60_000 },
+      { atMs: 90_000, action: 'end' },
+    ]);
+    expect(expandRepeats(script).filter((s) => s.action === 'aggro').map((s) => [s.atMs, s.action === 'aggro' ? s.tag : ''])).toEqual([[20_000, 'red'], [40_000, 'red']]);
+    const h = harness();
+    const r = new SceneScriptRunner(script, h.hooks);
+    r.start(0);
+    r.tick(ticksFor(45_000));
+    expect(h.spawned).toHaveLength(2);
+    expect(h.hostile).toEqual(['scene-red-0', 'scene-red-1', 'scene-red-0', 'scene-red-1', 'scene-red-0', 'scene-red-1']);
+    expect(r.getStatus().refused).toBe(0);
+  });
+
   it('the soak scene stays inside the 64-entry seed guard and reinforces for its whole 10 minutes', async () => {
     const { perfSceneById } = await import('../../../shared-types/perf/perfScenes.js');
     const soak = perfSceneById('fleet-fight-soak')!;
