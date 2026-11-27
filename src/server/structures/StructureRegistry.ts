@@ -174,6 +174,10 @@ export interface StructureRecord {
   /** Economy v2 W4b — placed from a PACKED item: its build costs only time
    *  (no minerals drawn) and deconstructing it reclaims none. Persisted. */
   prepaid?: boolean;
+  /** Sandbox (`freeBuilds` room): placed free. Its build AND upgrades cost
+   *  only time (no minerals, no goods); deconstructing it reclaims nothing
+   *  and repacks into nothing. Not persisted (a sealed room is never saved). */
+  free?: boolean;
   /** Economy v2 — the packed item's quality (prepaid structures): a
    *  deconstruct repacks it at this quality. Persisted. */
   packedQuality?: number;

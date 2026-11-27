@@ -9,6 +9,12 @@
 import type { StructureRecord } from './StructureRegistry.js';
 import { BUILD_STALL_NOT_CONNECTED, type BuildStallReason } from '../../shared-types/structureStateWire.js';
 
+/** Does this build phase cost only time (no minerals, no route)? A free
+ *  (sandbox) structure always; a prepaid (crate) one for its first build only. */
+export function buildCostsOnlyTime(rec: StructureRecord): boolean {
+  return rec.free === true || (rec.prepaid === true && rec.upgradeTargetLevel === undefined);
+}
+
 /** Why a paying build is paused: the minerals still owed when every Capital
  *  that routes to it is empty, or `BUILD_STALL_NOT_CONNECTED` when no Capital
  *  routes to it at all; null when it is not paused for either (built, prepaid,
@@ -19,7 +25,7 @@ export function buildStallReason(
   route: (fromId: string, toId: string) => readonly string[] | null,
 ): BuildStallReason | null {
   if (rec.isConstructed || rec.isDeconstructing || rec.constructionCost <= 0) return null;
-  if (rec.prepaid === true && rec.upgradeTargetLevel === undefined) return null;
+  if (buildCostsOnlyTime(rec)) return null;
   const remaining = rec.constructionCost - rec.constructionProgress;
   if (remaining <= 0) return null;
   let dryRoute = false;

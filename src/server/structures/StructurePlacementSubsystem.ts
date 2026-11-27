@@ -74,6 +74,10 @@ export interface StructurePlacementHooks {
   /** Room's sector key (for the packed gate). Null or absent = no sector:
    *  no holds there, so the Capital needs no crate. */
   sectorKey?(): string | null;
+  /** Sandbox (`freeBuilds` room): a player's placement of any kind needs no
+   *  crate, takes none it holds, and is `free` (time only, repacks into
+   *  nothing). Absent or false = the normal rules. */
+  freeBuild?(): boolean;
   /** Spawn the kind=2 swarm entity (returns false if the slot pool is full). */
   /** `blueprint`: an unbuilt structure, spawned non-colliding (hologram
    *  pass-through) until the grid finishes it with no ship inside. */
@@ -194,10 +198,12 @@ export class StructurePlacementSubsystem {
     // the bank (not prepaid). The crate rule applies only where holds exist:
     // a room with no sector (engineering / test sandbox: no roster, no hold)
     // places a Capital without one, as unpack_hull is galaxy-rooms-only.
+    // A free-build room (sandbox) skips the crate rule outright.
     let packed: PackedGateResult | null = null;
     const sectorKey = this.hooks.sectorKey?.() ?? null;
-    const crate = needsPackedCrate(kindId) && sectorKey !== null;
-    if (opts?.requirePacked === true && this.hooks.packedGateForBuild && (crate || !STARTER_STRUCTURE_KINDS.includes(kindId))) {
+    const free = opts?.requirePacked === true && this.hooks.freeBuild?.() === true;
+    const crate = needsPackedCrate(kindId) && sectorKey !== null && !free;
+    if (opts?.requirePacked === true && !free && this.hooks.packedGateForBuild && (crate || !STARTER_STRUCTURE_KINDS.includes(kindId))) {
       const gate = this.hooks.packedGateForBuild(owner, kindId, sectorKey);
       if (gate.ok) packed = gate;
       else if (crate) return null;
@@ -258,6 +264,7 @@ export class StructurePlacementSubsystem {
       level: 1,
       // Economy v2 W4b — placed from a packed item: the build costs only time.
       ...(packed !== null ? { prepaid: true } : {}),
+      ...(free ? { free: true } : {}),
       // Living World P1a-2 — stable identity for the holds table.
       ...(this.hooks.structureUid ? { uid: this.hooks.structureUid(owner, kindId, pos.x, pos.y) } : {}),
     };
