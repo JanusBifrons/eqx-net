@@ -95,8 +95,6 @@ export interface JoinHandlerDeps {
   readonly ownedFleet: boolean;
   /** `HullHandOff.launchNewHull(playerId, kind, 0, o, requireLive=true)`. */
   launchFleetHull(playerId: string, kind: string, o: NewHullOrigin): NewHullResult;
-  /** Sandbox: lay a built starter plate (`sandboxStarterPlate.ts`). */
-  seedStarterPlate(playerId: string, x: number, y: number): void;
   /**
    * Upsert a `player_ships` row for the newly-bound ship. Looks up
    * existing roster entries for the player and reuses the most-recent;

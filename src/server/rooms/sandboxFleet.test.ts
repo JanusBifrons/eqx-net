@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { BASE_PILOT_HULL_KINDS_LIST } from '../../shared-types/shipKinds.js';
 import type { NewHullOrigin, NewHullResult } from './features/hullHandOff.js';
-import { baseFleetHulls, fleetGridLayout, fleetLaneHeight, seedOwnedFleet, starterPlateCentre, type FleetSeedHost, type FleetSlot } from './sandboxFleet.js';
+import { baseFleetHulls, fleetGridLayout, seedOwnedFleet, type FleetSeedHost, type FleetSlot } from './sandboxFleet.js';
 
 const ANCHOR = { x: -1000, y: 0 };
 const extentOf = new Map(baseFleetHulls().map((h) => [h.kind, h.extent]));
@@ -42,7 +42,6 @@ describe('fleetGridLayout', () => {
 function fakeRoom(ownedFleet = true) {
   const ships = new Map<string, { playerId: string; kind: string; alive: boolean }>();
   const launched: Array<{ playerId: string; kind: string; o: NewHullOrigin }> = [];
-  const plates: Array<{ playerId: string; x: number; y: number }> = [];
   let n = 0;
   const host: FleetSeedHost = {
     ownedFleet, defaultSpawnX: ANCHOR.x, defaultSpawnY: ANCHOR.y,
@@ -53,29 +52,12 @@ function fakeRoom(ownedFleet = true) {
       launched.push({ playerId, kind, o });
       return { ok: true, shipId, live: true };
     },
-    seedStarterPlate(playerId, x, y) { plates.push({ playerId, x, y }); },
   };
-  return { host, ships, launched, plates };
+  return { host, ships, launched };
 }
 
 describe('seedOwnedFleet', () => {
   const total = BASE_PILOT_HULL_KINDS_LIST.length;
-
-  it('lays each pilot a starter plate east of their lane: lane 0 on the origin plate', () => {
-    expect(starterPlateCentre(ANCHOR.x, ANCHOR.y, 0, fleetLaneHeight(baseFleetHulls()))).toEqual({ x: 0, y: 0 });
-    const { host, plates } = fakeRoom();
-    seedOwnedFleet(host, 'p1', 0, 0);
-    seedOwnedFleet(host, 'p2', 0, 0);
-    expect(plates.map((p) => p.playerId)).toEqual(['p1', 'p2']);
-    expect(plates[0]).toMatchObject({ x: 0, y: 0 });
-    expect(plates[1]!.y).toBeLessThan(-fleetLaneHeight(baseFleetHulls()) / 2);
-  });
-
-  it('option off: no plate', () => {
-    const { host, plates } = fakeRoom(false);
-    seedOwnedFleet(host, 'p1', 0, 0);
-    expect(plates).toEqual([]);
-  });
 
   it('join: one parked owned hull per base kind; the flown kind counts as had', () => {
     const { host, ships, launched } = fakeRoom();
