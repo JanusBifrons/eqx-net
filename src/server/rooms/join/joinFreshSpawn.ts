@@ -26,7 +26,7 @@ import type { WelcomeMessage } from '../../../shared-types/messages.js';
 import { factionLooksWelcomeField } from '../../../shared-types/factions.js';
 import { gateLaunch, seedTestWallet } from '../launchGate.js';
 import { adoptPrebuiltBase } from '../scenarioLayouts.js';
-import { getStarterGrantEconomy, grantStarter } from '../../economy/starterGrant.js';
+import { getStarterGrantEconomy, grantStarter, starterGrantDue } from '../../economy/starterGrant.js';
 import { tuningFor } from '../../../shared-types/shipScale/lookup.js';
 import { nearestClearPoint } from '../../../core/bases/baseSite.js';
 import { effectiveShipShieldMax, effectiveShipEnergyMax } from '../../../core/leveling/shipStats.js';
@@ -402,7 +402,9 @@ export function joinFreshSpawn(
   }
   // Starter grant: a fresh launch carries the once-per-account packed Capital
   // crate (economy/starterGrant.ts). A test-seeded hold (initialCargo) is exact.
-  if (!resumedFromStore && !adoptedBase && ship.shipInstanceId !== '' && d.sectorKey !== null && !(parsed.success && parsed.data.initialCargo !== undefined)) {
+  // Never in a sealed sector (starterGrantDue).
+  const seededCargo = parsed.success && parsed.data.initialCargo !== undefined;
+  if (starterGrantDue({ resumedFromStore, adoptedBase, shipInstanceId: ship.shipInstanceId, sectorKey: d.sectorKey, seededCargo })) {
     grantStarter({ econ: getStarterGrantEconomy(), holds: getHoldStore() }, playerId, ship.shipInstanceId, ship.kind);
   }
   ship.shieldLastDamageTick = d.serverTick;

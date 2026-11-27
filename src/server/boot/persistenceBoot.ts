@@ -9,7 +9,10 @@ import {
   initWallet,
   initLabBoard,
   migrateLegacyHoldCredits,
+  getPlayerShipStore,
+  getHoldStore,
 } from '../db/PersistenceWorker.js';
+import { purgeSealedRosterRows } from '../rooms/rosterSealing.js';
 
 /** Boot step 1 — spawn the persistence worker (creates the schema). */
 export async function startPersistenceWorker(deps: { logger: Logger }): Promise<void> {
@@ -47,6 +50,11 @@ export function hydratePlayerStores(deps: { logger: Logger }): void {
   // BEFORE the galaxy rooms: their hydrate respawns this sector's loot pods.
   const { hydrated: holdsHydrated } = initHoldStore();
   logger.info({ hydrated: holdsHydrated }, 'Holds hydrated from disk');
+
+  // Sandbox sealing: sealed sectors are never saved, so their roster rows and
+  // those ships' holds go at boot (sandbox enabled or not).
+  const sealedPurged = purgeSealedRosterRows(getPlayerShipStore(), getHoldStore());
+  if (sealedPurged > 0) logger.info({ purged: sealedPurged }, 'Sealed-sector roster rows purged');
 
   // PR 3a — account-bound player identity. Hydrate the account→playerId
   // bindings + aliases and fold each account's historical per-browser ids
