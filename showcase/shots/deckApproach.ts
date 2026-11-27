@@ -6,12 +6,13 @@ import type { Shot, ShotContext, ShotTarget } from '../types.js';
  * them on a phone: the `deck-bases` room's sparse base has a fence gate at
  * (-4550, 0), turned 90°, whose outside is west, so its lamps run west along
  * y = 0 from x = -4690 (red/green edge rows at y = ±175). The fighter spawns
- * between lamps 1 and 2. Review take, not in the reel. With
+ * between lamps 1 and 2 (on the centre line at the zoom cap). Review take, not in the reel. With
  * `EQX_APPROACH_SNAPS=<dir>` it saves stills there:
  *   a-spawn-zoom.png   — the fighter's default start zoom;
  *   b-zoom-cap.png     — fully zoomed in (`?zoom=` past the cap is clamped);
  *   c-strobe-NN.png    — a burst at the zoom cap, to catch the rabbit strobe;
- *   d-build-view.png   — the Build camera (Build toggle, pulled back).
+ *   d-build-view.png   — the Build camera (Build toggle, pulled back);
+ *   e-zoom-cap-edge.png — the zoom cap beside the red (port) edge row.
  */
 const SNAP_DIR = process.env['EQX_APPROACH_SNAPS'] ?? '';
 const ROOM = 'deck-bases';
@@ -55,12 +56,18 @@ export const deckApproachStills: Shot = {
     await ctx.page.getByTestId('build-toggle').first().tap({ timeout: 5000 }).catch((e: unknown) => ctx.log('build tap failed ' + String(e)));
     await ctx.sleep(2500);
     await snap(ctx, 'd-build-view');
-    await ctx.enter(target({ zoom: 50 }));
+    // At the cap the view is ~280 world units wide: centre on the lamp row,
+    // midway between lamps 1 and 2 so the hull covers neither.
+    await ctx.enter(target({ zoom: 50, spawnX: -4892, spawnY: 0 }));
     await ctx.sleep(2500);
     await snap(ctx, 'b-zoom-cap');
     for (let i = 0; i < 16; i++) {
       await snap(ctx, 'c-strobe-' + String(i).padStart(2, '0'));
       await ctx.sleep(40);
     }
+    // The red (port) edge row at the cap, beside edge lamps 1 and 2.
+    await ctx.enter(target({ zoom: 50, spawnX: -4892, spawnY: 175 }));
+    await ctx.sleep(2500);
+    await snap(ctx, 'e-zoom-cap-edge');
   },
 };
