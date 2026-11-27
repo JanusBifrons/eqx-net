@@ -14,6 +14,7 @@ import type { StructureGridSubsystem } from '../../structures/StructureGridSubsy
 import type { StorageService } from '../../cargo/StorageService.js';
 import type { SectorPersistence } from '../SectorPersistence.js';
 import { auditEvent } from '../../audit/GameplayAuditLog.js';
+import { serverLogEvent } from '../../debug/ServerEventLog.js';
 import { parsedMessage, type ParsedMessageHost, type RoomFeature } from './parsedMessage.js';
 import { getStructureKind, isBuildableStructureKind, isDeckOnlyStructureKind, snapPlayerStructureRotation } from '../../../shared-types/structureKinds.js';
 import { needsPackedCrate, productName } from '../../../shared-types/blueprints.js';
@@ -85,6 +86,8 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
       // Say why when it was the Capital's packed crate that was missing.
       const kindId = msg.kind;
       const refusal = h.structurePlacement().lastRefusal;
+      // Diagnostic captures (build bucket): the raw and snapped point and why.
+      serverLogEvent('place_structure_rejected', { owner, kind: msg.kind, rawX: msg.x, rawY: msg.y, x: px, y: py, deck: h.deck(), refusal });
       if (refusal !== null) h.sendNotice(client, refusal);
       else if (needsPackedCrate(kindId) && h.findPacked(owner, `structure:${kindId}`) === null) {
         h.sendNotice(client, `You need a Packed ${productName(`structure:${kindId}`)} in your hold or storage here.`);
