@@ -38,6 +38,13 @@ export interface LootCollectorsDeps {
   sab: () => Float32Array;
   playerToSession: () => ReadonlyMap<string, string>;
   clients: () => ReadonlyArray<Client>;
+  /** The fleet's owned hulls and their orders (`forEachSalvager`). Absent:
+   *  no AI-flown hull ever collects. */
+  fleet?: { readonly size: number; idAt(i: number): string; ownerAt(i: number): string; ordersAt(i: number): { order: { kind: string } | null } };
+  /** An AI-flown (lingering) hull's pose; absent when it is not one. */
+  lingeringPose?: (shipInstanceId: string) => { x: number; y: number; angle: number; vx: number; vy: number } | undefined;
+  /** The hull's ship row (any liveness class). */
+  ship?: (shipInstanceId: string) => PilotHull | undefined;
 }
 
 /** Economy v2 W4a — the packed products a pickup/deposit moved, for the popup
@@ -66,6 +73,35 @@ export class LootCollectors {
     // harvesters) collect too (#17: a live swarm entity, kind 1; its hold is
     // keyed by its swarm id). Capacity is the kind's cargo capacity.
     for (const rec of this.d.swarm.all()) if (this.npc(rec, c)) visit(c);
+  }
+
+  /**
+   * Visit every AI-flown owned hull on a fleet SALVAGE order (#17: LINGERING
+   * hulls flown by the AI pilot, alive, with a hold; ACTIVE and DEAD never):
+   * the pieces it cuts or tractors go into its hold (`LootSubsystem`'s piece
+   * store, never pods). Its owner is `playerId` (the pickup notice); its
+   * beams are keyed by its shipInstanceId (`emitterId`). One scratch (#14).
+   */
+  forEachSalvager(visit: (c: LootCollector) => void): void {
+    const fl = this.d.fleet;
+    if (fl === undefined || this.d.sectorKey() === null) return;
+    const c = this.c;
+    for (let i = 0; i < fl.size; i++) {
+      if (fl.ordersAt(i).order?.kind !== 'salvage') continue;
+      const sid = fl.idAt(i);
+      const ship = this.d.ship?.(sid);
+      const pose = this.d.lingeringPose?.(sid);
+      if (!ship?.alive || pose === undefined || !this.d.hasHold(sid)) continue;
+      c.playerId = fl.ownerAt(i);
+      c.shipInstanceId = sid;
+      c.emitterId = sid;
+      c.x = pose.x; c.y = pose.y; c.angle = pose.angle; c.vx = pose.vx; c.vy = pose.vy; c.shieldUp = ship.shield > 0;
+      c.capacity = this.d.cargoCapacity(ship.kind, sid);
+      c.kind = getShipKind(ship.kind);
+      c.npc = false;
+      visit(c);
+    }
+    c.emitterId = undefined;
   }
 
   /** Fill `c` with ship `shipId`'s collector (a pilot, or an AI ship, kind 1):

@@ -37,7 +37,7 @@ const KEEP_SQUAD = Object.freeze({ keepSquad: true });
 const HULL_AI_REGISTRATION = Object.freeze({ hull: true });
 
 /** What the wingman pilots need from the room; getters read the live field. */
-export interface WingmanPilotsHost extends Pick<WingmanSalvageOrderHost, 'salvageLineage' | 'salvageHoldFull'> {
+export interface WingmanPilotsHost extends Pick<WingmanSalvageOrderHost, 'salvageLineage' | 'salvageHoldFull' | 'salvageFlags'> {
   state(): { ships: MapSchema<ShipState> };
   fleet: FleetCommandSubsystem;
   lingeringSlots: ReadonlyMap<string, number>;

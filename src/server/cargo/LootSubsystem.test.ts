@@ -32,7 +32,7 @@ function h(goods: Hold['goods']): Hold {
   return { goods: { ...goods }, blueprints: [] };
 }
 
-function setup(opts: { sectorKey?: string | null; collectors?: LootCollector[]; heldPieces?: LootSubsystemDeps['heldPieces'] } = {}) {
+function setup(opts: { sectorKey?: string | null; collectors?: LootCollector[]; heldPieces?: LootSubsystemDeps['heldPieces']; salvagers?: LootCollector[] } = {}) {
   const { ops, sink } = capture();
   let now = 1_000;
   const store = new HoldStore({ persistence: () => sink, now: () => now });
@@ -54,6 +54,7 @@ function setup(opts: { sectorKey?: string | null; collectors?: LootCollector[]; 
     onCollected: (_c, moved, podId) => { collected.push({ moved, podId }); },
     chunkOre: (_ore, _x, _y, mass, rockMass) => ({ minerals: Math.round((100 * mass) / rockMass) }), // a stand-in for OreDraw.chunkYield (share by weight)
     ...(opts.heldPieces ? { heldPieces: opts.heldPieces } : {}),
+    ...(opts.salvagers ? { forEachSalvager: (visit: (c: LootCollector) => void) => { for (const c of opts.salvagers!) visit(c); } } : {}),
   });
   return { loot, store, ops, poses, indexes, despawned, collected, collectors, advance: (ms: number) => { now += ms; } };
 }
@@ -291,6 +292,27 @@ describe('LootSubsystem: tractored wreck pieces are stored whole (piece store)',
     expect(t.ops, 'one persisted write').toHaveLength(1);
     expect(t.loot.podCount(), 'no pod in between').toBe(0);
     expect(t.collected).toEqual([{ moved: h({ salvage: 7 }), podId: 'wreck-1' }]);
+  });
+
+  it('a salvaging AI-flown hull (forEachSalvager) stores pieces its own beams hold, keyed by its emitter id; it never loads pods', () => {
+    const removed: string[] = [];
+    const wing: LootCollector = { ...SHIP, shipInstanceId: 'hull-9', emitterId: 'hull-9' };
+    const t = setup({
+      salvagers: [wing],
+      heldPieces: {
+        any: () => true,
+        forEach: (c, visit) => { if (c.emitterId === 'hull-9') visit('wreck-1'); },
+        near: () => {},
+        store: (id, out) => { if (removed.includes(id)) return false; out.qty = 5; out.holdWeight = 5; out.mass = 1e9; out.radius = 50; out.rockMass = 1e10; out.ore = undefined; return true; },
+        remove: (id) => { removed.push(id); },
+      },
+    });
+    const pod = t.loot.drop(h({ minerals: 3 }), 10, 0, 0, 0, { alone: true })!; // on the hull: an AI harvester would take it
+    t.loot.collectTick();
+    expect(t.store.get('hull-9')!.hold.goods.salvage, 'the piece went into the hull\'s hold').toBe(5);
+    expect(t.store.get('hull-9')!.ownerId, 'the owner keeps the hold row').toBe('p1');
+    expect(removed).toEqual(['wreck-1']);
+    expect(t.store.get(pod)!.hold.goods.minerals, 'pods are not a salvager\'s').toBe(3);
   });
 
   it('a hold without room for ALL of it changes nothing: the piece stays, no pod, no write', () => {

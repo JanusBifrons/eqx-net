@@ -32,7 +32,7 @@ export interface LootPodsHost {
   swarmSpawner(): Pick<SwarmSpawner, 'spawnScrap'>;
   evictSwarmEntity(rec: SwarmEntityRecord, opts: { broadcast: boolean; emitDestroyed: boolean }): void;
   sabF32(): Float32Array;
-  lootCollectors: Pick<LootCollectors, 'forEach' | 'fill' | 'onLootCollected'>;
+  lootCollectors: Pick<LootCollectors, 'forEach' | 'fill' | 'onLootCollected' | 'forEachSalvager'>;
   forceFields: Pick<ForceFieldSubsystem, 'inTractorHold' | 'tractorCount' | 'forEachHeldPiece'>;
   capitalWrecks(): Pick<CapitalWreckSubsystem, 'liveCount' | 'forEachPieceNear' | 'pieceStore' | 'storePiece'> | null;
   oreDraw: Pick<OreDraw, 'chunkYield'>;
@@ -74,10 +74,10 @@ export function buildLootPods(h: LootPodsHost): LootSubsystem {
       p.y = sab[b + SLOT_Y_OFF]!;
       return p;
     },
-    forEachCollector: (visit) => h.lootCollectors.forEach(visit), fillCollector: (id, c) => h.lootCollectors.fill(id, c),
+    forEachCollector: (visit) => h.lootCollectors.forEach(visit), fillCollector: (id, c) => h.lootCollectors.fill(id, c), forEachSalvager: (visit) => h.lootCollectors.forEachSalvager(visit),
     // Tractor hold zone (emitter id: a pilot's playerId or an AI ship's swarm id): a pod is picked up, a wreck piece stored whole; a consumable piece near the hull too.
     inTractorHold: (c, podId, x, y) => h.forceFields.inTractorHold(c.playerId, podId, x, y),
-    heldPieces: { any: () => h.forceFields.tractorCount > 0 || (h.capitalWrecks()?.liveCount() ?? 0) > 0, forEach: (c, visit) => h.forceFields.forEachHeldPiece(c.playerId, visit), near: (x, y, reach, maxM, visit) => h.capitalWrecks()?.forEachPieceNear(x, y, reach, maxM, visit), store: (id, out) => h.capitalWrecks()?.pieceStore(id, out) === true, remove: (id) => h.capitalWrecks()?.storePiece(id) },
+    heldPieces: { any: () => h.forceFields.tractorCount > 0 || (h.capitalWrecks()?.liveCount() ?? 0) > 0, forEach: (c, visit) => h.forceFields.forEachHeldPiece(c.emitterId ?? c.playerId, visit), near: (x, y, reach, maxM, visit) => h.capitalWrecks()?.forEachPieceNear(x, y, reach, maxM, visit), store: (id, out) => h.capitalWrecks()?.pieceStore(id, out) === true, remove: (id) => h.capitalWrecks()?.storePiece(id) },
     chunkOre: (ore, x, y, mass, rockMass) => h.oreDraw.chunkYield(ore.rockId, x, y, mass, rockMass, ore.resource, ore),
     onCollected: (c, moved, podId) => h.lootCollectors.onLootCollected(c, moved, podId),
     onDropped: (podId, hold, cause) => auditEvent({ event: 'loot_dropped', sector: h.sectorKey() ?? undefined, podId, cause, weight: holdWeight(hold) }),

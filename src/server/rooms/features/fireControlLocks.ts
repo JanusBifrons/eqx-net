@@ -28,7 +28,7 @@ import type { FleetCommandSubsystem } from '../../fleet/FleetCommandSubsystem.js
 import type { SwarmEntityRecord, SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
 import type { StructureRegistry } from '../../structures/StructureRegistry.js';
 import { LockSubsystem, newLockTargetView, type LockTargetView } from '../LockSubsystem.js';
-import { LockSalvageLookup, swarmLockId, type LockLineageSource } from '../lockSalvage.js';
+import { LockSalvageLookup, lockSalvageFlags, swarmLockId, type LockLineageSource, type LockSalvageDeps } from '../lockSalvage.js';
 import { NpcLockSubsystem } from '../NpcLockSubsystem.js';
 import { tractorLineClear, type TractorLineHost } from '../tractorLineOfSight.js';
 import type { ShipKindId } from '../../../shared-types/shipKinds.js';
@@ -90,6 +90,13 @@ export class FireControlLocks {
   holdFull(sid: string): boolean {
     const s = this.h.state().ships.get(sid);
     return s !== undefined && this.h.hasHold(sid) && this.h.shipCargoCapacity(s.kind, sid) - this.h.holdWeight(sid) <= 0;
+  }
+  /** The wingman lock machine's salvage deps (`salvageFlags`). */
+  private readonly _wingmanSalvage: LockSalvageDeps = { salvageOf: (sid, key, out) => this._lockSalvage.fill(this.wingmanHull(sid), key, out) };
+  /** AI-flown hull `sid`'s salvage lock bits for lock key `key` (the lock
+   *  step's own `lockSalvageFlags`: consumable, haul, size tier); 0: not salvage. */
+  salvageFlags(sid: string, key: string): number {
+    return lockSalvageFlags(this._wingmanSalvage, this.lockShipOf(sid, this.wingmanHull(sid)), sid, key);
   }
 
   buildNpcLockSubsystem(): NpcLockSubsystem {

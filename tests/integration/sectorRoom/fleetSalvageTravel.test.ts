@@ -74,4 +74,39 @@ describe('SectorRoom integration — fleet salvage order travels and finishes', 
     expect(int.fleet.ordersOf(sid)?.order ?? null, 'no lineage piece left: the order cleared').toBeNull();
     await harness.disconnectClient(client);
   }, 90_000);
+
+  it('what it salvages goes into its hold: a parked skiff on a fighter wreck collects the pieces', async () => {
+    harness = await bootSectorTestServer({
+      sectorKey: 'sol-prime', droneCount: 0, testMode: true, peacefulDrones: true, asteroidConfig: [],
+      subcapWrecks: true, keepAllOnDeath: true,
+    });
+    const pid = randomUUID();
+    const client = await harness.connectActive(pid, { shipKind: 'mining-skiff', spawnX: 0, spawnY: 0, instantLock: true, groupMode: 'manual' });
+    for (const t of ['laser_fired', 'swarm', 'damage', 'destroy', 'hit_ack', 'loot_collected', 'snapshot', 'fleet_status']) client.onMessage(t, () => {});
+    const room = harness.getServerRoom()! as unknown as SectorRoom;
+    const int = room._internals;
+    let sid = '';
+    for (const [, s] of room.state.ships) if (s.playerId === pid && s.isActive) sid = s.shipInstanceId;
+
+    // A fighter breaks up a little way off: hold-size (AA tier) wreck pieces.
+    expect(int.spawnTestDrone('f1', 0, 1500, 'fighter')).toBe(true);
+    await harness.advance(100);
+    int.applyDamage('f1', 'shooter-x', 1e7);
+    await harness.advance(100);
+    for (const pod of [...int.loot.podIds()]) int.loot.expireNow(pod); // its loot drop is not under test
+    const pieces = [...int.swarmRegistry.all()].filter((r) => r.kind === SWARM_KIND_WRECK);
+    expect(pieces.length, 'the fighter left wreck pieces').toBeGreaterThan(0);
+    const piece = pieces.reduce((a, b) => (b.radius > a.radius ? b : a));
+
+    client.send('spectate', { type: 'spectate' });
+    await harness.advance(300);
+    expect(int.fleet.isAttached(sid), 'the parked hull has an AI pilot').toBe(true);
+    const cargo = (): number => int.loot.shipHold(sid)?.goods.salvage ?? 0;
+    expect(cargo()).toBe(0);
+
+    expect(int.fleet.applyOrder(pid, [sid], { kind: 'salvage', targetId: `swarm-${piece.entityId}` })).toEqual([sid]);
+    for (let i = 0; i < 200 && cargo() === 0; i++) await harness.advance(150);
+    expect(cargo(), 'the hold gained salvage from the wreck').toBeGreaterThan(0);
+    await harness.disconnectClient(client);
+  }, 90_000);
 });
