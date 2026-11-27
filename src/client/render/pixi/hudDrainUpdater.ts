@@ -60,7 +60,8 @@ export function spawnDamageNumbers(mirror: RenderMirror, ctx: HudDrainCtx): void
   }
 }
 
-export function updateHudDrains(mirror: RenderMirror, ctx: HudDrainCtx): void {
+/** @param hideId The selection focus: its health bar hides (the world tag shows its hull). */
+export function updateHudDrains(mirror: RenderMirror, ctx: HudDrainCtx, hideId: string | null = null): void {
   // weapon-hit-prediction Phase 2 — hard-cancel mispredicted / TTL-expired
   // predicted numbers by tag. Drained AFTER the spawn pass (a predict +
   // rollback in the same frame nets to nothing) and BEFORE update() (a
@@ -95,5 +96,5 @@ export function updateHudDrains(mirror: RenderMirror, ctx: HudDrainCtx): void {
   } else if (ctx.healthBarsDisabled && mirror.pendingHealthBarHits) {
     mirror.pendingHealthBarHits.length = 0;
   }
-  if (!ctx.healthBarsDisabled) ctx.healthBars?.update(mirror);
+  if (!ctx.healthBarsDisabled) ctx.healthBars?.update(mirror, hideId);
 }
