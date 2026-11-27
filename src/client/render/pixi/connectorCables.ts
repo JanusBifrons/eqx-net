@@ -33,7 +33,7 @@ import { isShieldEmitterKind } from '../../../core/structures/gateGeometry.js';
 import { isConnectorKind } from '../../../shared-types/structureKinds.js';
 import { blankGridNode } from '../../structures/mirrorToGridNode.js';
 import {
-  addCablePathSparks, cablePulseWidth, cableStudInset, drawCablePathBody, drawCablePathCollarFlash, drawCablePathGlow,
+  addCablePathSparks, cablePulseWidth, cableStudInset, drawCablePathBody, lineLookWorldScale, drawCablePathCollarFlash, drawCablePathGlow,
   mixColor, strokeCableSparks, type LinePath,
 } from './connectorLineLooks.js';
 import { CONNECTOR_IDLE_COLOR, type ConnectorFlowMaterial, type ConnectorVisual } from './connectorVisual.js';
@@ -55,6 +55,9 @@ export interface LinkCable {
   len: number;
   /** Socket to socket (end collars); false for a straight fence link. */
   socketed: boolean;
+  /** A deck link laid along the plate seams: part of the deck, it shrinks
+   *  with the world when zoomed out (no screen-pixel floor). */
+  seam: boolean;
   // What the curve was flattened from (the cache's change check).
   ax: number; ay: number; aa: number; ak: string; sa: number; ma: boolean; dk: boolean;
   bx: number; by: number; ba: number; bk: string; sb: number; mb: boolean;
@@ -67,7 +70,7 @@ export interface LinkCable {
 
 export function makeLinkCable(): LinkCable {
   return {
-    poly: new Float64Array(CABLE_CURVE_FLOATS), cum: new Float64Array(CABLE_POINTS), n: 0, len: 0, socketed: false,
+    poly: new Float64Array(CABLE_CURVE_FLOATS), cum: new Float64Array(CABLE_POINTS), n: 0, len: 0, socketed: false, seam: false,
     ax: NaN, ay: 0, aa: 0, ak: '', sa: CABLE_NO_SOCKET, ma: false, dk: false,
     bx: 0, by: 0, ba: 0, bk: '', sb: CABLE_NO_SOCKET, mb: false, gen: 0,
     flowSince: 0, flowSeen: -Infinity,
@@ -100,6 +103,7 @@ export function fillLinkCable(out: LinkCable, a: GridNode, sa: number, b: GridNo
   }
   out.n = CABLE_POINTS;
   out.socketed = sa !== CABLE_NO_SOCKET && sb !== CABLE_NO_SOCKET;
+  out.seam = deck && deckLinkKind(a, b) !== DECK_LINK_NONE;
   measure(out);
 }
 
@@ -119,6 +123,7 @@ export function fillStraight(out: LinkCable, ax: number, ay: number, bx: number,
   out.poly[0] = ax; out.poly[1] = ay; out.poly[2] = bx; out.poly[3] = by;
   out.n = 2;
   out.socketed = false;
+  out.seam = false;
   measure(out);
 }
 
@@ -259,6 +264,15 @@ export { OUTLINE as SOCKET_OUTLINE, PLATE as SOCKET_PLATE, PLATE_HI as SOCKET_PL
 let _e0 = 0;
 let _e1 = 0;
 
+const CABLE_WORLD_SCALE = lineLookWorldScale('cable');
+/** The zoom a cable is drawn at: a deck seam cable never below the look's
+ *  world scale, so zoomed out it shrinks with the plates instead of holding
+ *  a screen width that swells over them (smoke-test bug); any other cable
+ *  keeps its screen floor. */
+function cableDrawScale(c: LinkCable, scale: number): number {
+  return c.seam && !(scale >= CABLE_WORLD_SCALE) ? CABLE_WORLD_SCALE : scale;
+}
+
 /** Where the end collars sit: just off each stud on a socket cable (the
  *  curve already runs stud to stud), just outside each post on a straight
  *  fence link (centre to centre, as the straight line look). */
@@ -274,6 +288,7 @@ function insets(c: LinkCable, scale: number, ra: number, rb: number): void {
  *  collars sit outside its posts). */
 export function drawSocketCableBody(g: LinePath, c: LinkCable, scale: number, ra = 0, rb = 0): void {
   if (c.n < 2 || c.len < 1) return;
+  scale = cableDrawScale(c, scale);
   insets(c, scale, ra, rb);
   drawCablePathBody(g, c, scale, _e0, _e1, c.socketed);
 }
@@ -361,6 +376,7 @@ export function drawSocketCableFlow(
 ): void {
   if (c.n < 2 || c.len < 1) return;
   noteCableFlow(c, nowMs);
+  scale = cableDrawScale(c, scale);
   insets(c, scale, ra, rb);
   drawCablePathGlow(g, c, v, scale, _e0, _e1, c.socketed);
   const pa = v.pulseAlpha ?? 0;
