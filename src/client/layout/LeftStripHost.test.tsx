@@ -358,7 +358,16 @@ describe('one place per action: the strip reads the do-hexes\' own predicate and
     expect(doHexSet(st('pilot'), false)).toBeNull();
     expect(doHexSet(st('spectator'), false)).toBe('fleet');
     expect(doHexSet(st('pilot', true), true)).toBe('fleet');
-    expect(doHexSet(st('pilot', false, true), true)).toBe('fleet');
+    expect(doHexSet(st('pilot', false, true), true)).toBe('build');
+    expect(doHexSet(st('spectator', false, true), false)).toBe('build');
+  });
+
+  it('doHexSet: placing and a route pick win on every device; a Move pick does not', () => {
+    const pick = (kind: 'patrol' | 'move') => ({ kind, points: 0, doneSeq: 0, undoSeq: 0 }) as never;
+    expect(doHexSet({ ...st('pilot'), placementKind: 'solar' }, false)).toBe('placing');
+    expect(doHexSet({ ...st('spectator', false, true), placementKind: 'solar' }, true)).toBe('placing');
+    expect(doHexSet({ ...st('spectator'), fleetPick: pick('patrol') }, false)).toBe('route');
+    expect(doHexSet({ ...st('spectator'), fleetPick: pick('move') }, false)).toBe('fleet');
   });
 
   it('flyHexCovers: Target, the pod Open, the tapped ship\'s cargo and Details; not the fleet Lock or Pilot', () => {
@@ -373,12 +382,13 @@ describe('one place per action: the strip reads the do-hexes\' own predicate and
 });
 
 describe('the strip hosts the building section (U3-6)', () => {
-  it('your own switchable building in Build shows Power on the strip; not in Command', () => {
+  it('your own switchable building in Build: Power and Details are do-hexes (S4), not on the strip; not in Command', () => {
     panelData = { name: 'Turret', hpPct: 100, shieldPct: null, entityId: 9, isStructure: true, isOwn: true, powerSwitch: true };
     useUIStore.setState({ buildMode: true });
     mount();
     select([], 'swarm-9', 'structure');
-    expect(screen.getByTestId('left-strip-power')).toBeInTheDocument();
+    expect(screen.queryByTestId('left-strip-power')).toBeNull();
+    expect(screen.queryByTestId('left-strip-details')).toBeNull();
     act(() => { useUIStore.setState({ buildMode: false }); });
     expect(screen.queryByTestId('left-strip-power')).toBeNull();
   });

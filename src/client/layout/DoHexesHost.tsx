@@ -12,7 +12,11 @@
  *   thumb, Lock, Cargo, Stance, Salvage, More), from the selection builder
  *   (`useSelectionStripItems`) and the boost input (`TouchInput.setBoostHeld`).
  *   Desktop Fly has none (RMB boost, T lock, the rail's Hold).
- * - Build and Command targets come in later slices (S4, S8).
+ * - Placing a structure, a route / target pick, and Build with your own
+ *   structure selected (S4, `buildDoHexes.tsx`): the placing / route tools
+ *   (Place or Done under the thumb, Cancel in the far corner) and the
+ *   building's Upgrade, Demolish, Power, More. Every device, like Command.
+ * - Command targets come in a later slice (S8).
  * - Hidden while a right panel is open (`selectRightPanelOpen`): the panel docks
  *   over the right edge. A held Boost lets go then (HoldButton on unmount).
  * - Hex boxes overlap in their corner triangles (a honeycomb), so each cell
@@ -35,6 +39,14 @@ import { fleetDoHexes, type FleetHexSub } from './fleetDoHexes.js';
 import { flyDoHexes, type FlyFireMode, type FlyHexSub } from './flyDoHexes.js';
 import { useFleetStripItems } from './fleetStripItems.js';
 import { useSelectionStripItems } from './selectionStripItems.js';
+import { usePlacingStripItems } from './placingStripItems.js';
+import { useRouteStripItems } from './routeStripItems.js';
+import { useBuildingStripItems } from './buildingStripItems.js';
+import { buildingDoHexes, buildingHexesShow, placingDoHexes, routeDoHexes } from './buildDoHexes.js';
+import { canManageBuildings } from '../structures/buildingManagement.js';
+import { sendStructureAction, sendUpgradeStructure } from '../structures/structureActionsClient.js';
+import { DECONSTRUCT_HOLD_MS, useManageData } from '../components/StructureManageActions.js';
+import { useHoldPress } from '../components/useHoldPress.js';
 
 const CELL_CLASS = 'eqx-do-hex-cell';
 /** Only the clipped hex button takes a touch, never its cell's square box. */
@@ -45,14 +57,23 @@ interface Props {
   touchInput?: Pick<TouchInput, 'setBoostHeld'> | null;
 }
 
-/** Which do-hex set this state draws (pure; unit-tested): the Fly set when
- *  flying on touch, none when flying on desktop, else the fleet set (empty
- *  without own ships in Command). The left strip reads it too, so an action
- *  shows in exactly one place (`LeftStripHost`). */
-export type DoHexSet = 'fly' | 'fleet' | null;
-export function doHexSet(s: Pick<UIStore, 'pilotMode' | 'isDead' | 'buildMode'>, touch: boolean): DoHexSet {
+/** Which do-hex set this state draws (pure; unit-tested): the placing tools
+ *  while a structure is being placed and the route tools while a route /
+ *  target pick runs (every device, like the fleet set); the Fly set when flying
+ *  on touch, none when flying on desktop; the Build set in Build (empty
+ *  without your own structure selected); else the fleet set (empty without own
+ *  ships in Command). The left strip reads it too, so an action shows in
+ *  exactly one place (`LeftStripHost`). */
+export type DoHexSet = 'fly' | 'fleet' | 'placing' | 'route' | 'build' | null;
+export function doHexSet(
+  s: Pick<UIStore, 'pilotMode' | 'isDead' | 'buildMode'> & Partial<Pick<UIStore, 'placementKind' | 'fleetPick'>>,
+  touch: boolean,
+): DoHexSet {
+  if (s.placementKind != null) return 'placing';
+  if (s.fleetPick != null && s.fleetPick.kind !== 'move') return 'route';
   const flying = s.pilotMode !== 'spectator' && !s.isDead && !s.buildMode;
   if (flying) return touch ? 'fly' : null;
+  if (s.buildMode) return 'build';
   return 'fleet';
 }
 
@@ -67,7 +88,47 @@ export function DoHexesHost({ touchInput = null }: Props): JSX.Element | null {
   const set = useDoHexSet(touchInput !== null);
   if (!shown || panelOpen || set === null) return null;
   if (set === 'fly') return touchInput !== null ? <FlyHexes touchInput={touchInput} /> : null;
+  if (set === 'placing') return <PlacingHexes />;
+  if (set === 'route') return <RouteHexes />;
+  if (set === 'build') return <BuildingHexes />;
   return <FleetHexes />;
+}
+
+/** Placing a structure: the placing builder's tools. */
+function PlacingHexes(): JSX.Element | null {
+  return <DoHexGrid hexes={placingDoHexes(usePlacingStripItems())} label="Placing" set="placing" />;
+}
+
+/** A route / target pick: the route builder's tools. */
+function RouteHexes(): JSX.Element | null {
+  return <DoHexGrid hexes={routeDoHexes(useRouteStripItems())} label="Picking on the map" set="route" />;
+}
+
+/** The Manage page's cadence (4 Hz). */
+const MANAGE_POLL_MS = 250;
+
+/** Build, your own structure selected. */
+function BuildingHexes(): JSX.Element | null {
+  const setRightPanel = useUIStore((s) => s.setRightPanel);
+  const manage = useUIStore(canManageBuildings);
+  const data = useSelectionPanelData();
+  const building = useBuildingStripItems(data);
+  const show = buildingHexesShow(data, manage);
+  const entityId = show && data?.entityId !== undefined ? data.entityId : null;
+  const manageData = useManageData(entityId, MANAGE_POLL_MS);
+  const demolish = useHoldPress(DECONSTRUCT_HOLD_MS, () => {
+    if (entityId !== null) sendStructureAction(entityId, 'toggle_deconstruct');
+  });
+  if (entityId === null) return null;
+  const hexes = buildingDoHexes({
+    building, manage: manageData,
+    upgrade: () => { sendUpgradeStructure(entityId); },
+    demolishHold: (down) => { if (down) demolish.handlers.onPointerDown(); else demolish.handlers.onPointerUp(); },
+    demolishHolding: demolish.holding,
+    stopDemolish: () => { sendStructureAction(entityId, 'toggle_deconstruct'); },
+    openMore: () => setRightPanel('details'),
+  });
+  return <DoHexGrid hexes={hexes} label="Building" set="build" />;
 }
 
 /** Command, own ships selected. */
@@ -156,6 +217,7 @@ function HexButton({ hex, testId = hex.testId }: { hex: DoHex; testId?: string }
       tone={hex.tone}
       lit={hex.lit === true}
       dim={hex.dim === true}
+      disabled={hex.disabled === true}
       onClick={hex.onPress}
       data-testid={testId}
       {...(hex.state !== undefined ? { 'data-state': hex.state } : {})}
