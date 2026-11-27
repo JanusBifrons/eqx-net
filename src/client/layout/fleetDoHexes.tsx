@@ -62,6 +62,11 @@ function stanceHexes(stance: StripFlyoutAction, setSub: (s: FleetHexSub) => void
   return out;
 }
 
+/** The fleet builder's actions the do-hexes carry (Order -> Attack / Patrol /
+ *  More, Move, Stance, Stop): the left strip leaves them out while these
+ *  hexes draw (`LeftStripHost`). */
+export const FLEET_HEX_KEYS: ReadonlySet<string> = new Set(['order', 'move', 'stance', 'stop']);
+
 /** The do-hexes for the fleet builder's `actions`; [] when it has none (not Command, no own ships). */
 export function fleetDoHexes(actions: readonly StripAction[], opts: FleetDoHexOptions): DoHex[] {
   if (actions.length === 0) return [];

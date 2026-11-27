@@ -14,7 +14,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_BASE_URL } from './helpers/ports';
-import { activeGroupId, waitForFireControlHud } from './helpers/fireControl';
+import { activeGroupId, LOCK_BUTTON, waitForFireControlHud } from './helpers/fireControl';
 import { launchGalaxyTestClient } from './helpers/gameScenario';
 
 const BASE_URL = process.env['PLAYWRIGHT_BASE_URL'] ?? DEFAULT_BASE_URL;
@@ -48,7 +48,7 @@ async function selectFromList(page: Page, open: () => Promise<void>, touch: bool
   // Selected, not locked: the panel closes and the strip shows the contact.
   await expect(panel).toBeHidden();
   await expect(page.locator('[data-testid="left-strip"]')).toBeVisible({ timeout: 5_000 });
-  const lockBtn = page.locator('[data-testid="fc-target"]');
+  const lockBtn = page.locator(LOCK_BUTTON);
   await expect(lockBtn).toHaveAttribute('data-state', 'lock', { timeout: 5_000 });
   await expect(chip).toHaveAttribute('data-locked', '0');
 
@@ -100,7 +100,7 @@ test('another player\'s AI-flown ship is listed, selects and locks like any play
     await expect(row).toHaveAttribute('data-kind', 'ship');
     await row.click();
     await expect(panel).toBeHidden();
-    const lockBtn = page.locator('[data-testid="fc-target"]');
+    const lockBtn = page.locator(LOCK_BUTTON);
     await expect(lockBtn).toHaveAttribute('data-state', 'lock', { timeout: 5_000 });
     await lockBtn.click();
     await expect(page.locator(`[data-testid="fc-chip-${gid}"]`)).toHaveAttribute('data-locked', '1', { timeout: 15_000 });

@@ -28,7 +28,7 @@ import { getGameClient } from '../net/clientSingleton.js';
 import { useSelectionPanelData } from '../components/selectionPanelData.js';
 import { useShouldRenderHud, useUIStore } from '../state/store.js';
 import { selectRightPanelOpen } from '../state/rightPanel.js';
-import type { FcGroupSummary } from '../state/storeTypes.js';
+import type { FcGroupSummary, UIStore } from '../state/storeTypes.js';
 import { Slot } from './Slot.js';
 import { doHexLayout, type DoHex } from './doHexLayout.js';
 import { fleetDoHexes, type FleetHexSub } from './fleetDoHexes.js';
@@ -45,12 +45,28 @@ interface Props {
   touchInput?: Pick<TouchInput, 'setBoostHeld'> | null;
 }
 
+/** Which do-hex set this state draws (pure; unit-tested): the Fly set when
+ *  flying on touch, none when flying on desktop, else the fleet set (empty
+ *  without own ships in Command). The left strip reads it too, so an action
+ *  shows in exactly one place (`LeftStripHost`). */
+export type DoHexSet = 'fly' | 'fleet' | null;
+export function doHexSet(s: Pick<UIStore, 'pilotMode' | 'isDead' | 'buildMode'>, touch: boolean): DoHexSet {
+  const flying = s.pilotMode !== 'spectator' && !s.isDead && !s.buildMode;
+  if (flying) return touch ? 'fly' : null;
+  return 'fleet';
+}
+
+/** {@link doHexSet} for the live store. */
+export function useDoHexSet(touch: boolean): DoHexSet {
+  return useUIStore((s) => doHexSet(s, touch));
+}
+
 export function DoHexesHost({ touchInput = null }: Props): JSX.Element | null {
   const shown = useShouldRenderHud();
   const panelOpen = useUIStore(selectRightPanelOpen);
-  const flying = useUIStore((s) => s.pilotMode !== 'spectator' && !s.isDead && !s.buildMode);
-  if (!shown || panelOpen) return null;
-  if (flying) return touchInput !== null ? <FlyHexes touchInput={touchInput} /> : null;
+  const set = useDoHexSet(touchInput !== null);
+  if (!shown || panelOpen || set === null) return null;
+  if (set === 'fly') return touchInput !== null ? <FlyHexes touchInput={touchInput} /> : null;
   return <FleetHexes />;
 }
 

@@ -956,7 +956,7 @@ function GameSurface({
           toggle sits under the sector chip instead of over the ship. */}
       <PilotToggleSlot />
       <RightPanelHost rendererRef={rendererRef} />
-      <LeftStripHost rendererRef={rendererRef} />
+      <LeftStripHost rendererRef={rendererRef} touch={isTouchRef.current} />
       {/* Phase 4 WS-A1 (D3) — the blocking DeathOverlay "You Died/Respawn" modal
        *  is removed. Death transitions INSTANTLY into spectator (free-roam
        *  construction camera); re-entry is via the galaxy map or (WS-A2) an

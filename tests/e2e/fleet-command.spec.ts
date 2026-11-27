@@ -118,10 +118,12 @@ test.describe('RTS fleet command loop @feature', () => {
     await page.mouse.move(x1, y1, { steps: 10 });
     await page.mouse.up();
     await expect.poll(() => selCount(page), { timeout: 3_000, message: 'box selects both own hulls' }).toBe(2);
-    // Fleet orders live on the left strip now (UI plan U3-4), not a bottom panel.
-    await expect(page.locator('[data-testid="left-strip"]')).toHaveAttribute('data-open', 'true');
+    // Who is selected: the who-hexes (left); fleet orders: the do-hexes (bottom right).
+    // The strip leaves out what the do-hexes carry, so with no other action it is gone.
+    await expect(page.locator('[data-testid="who-hexes"]')).toHaveAttribute('data-open', 'true');
     await expect(page.locator('[data-testid="who-hexes"]')).toHaveAttribute('data-count', '2');
-    await expect(page.locator('[data-testid="left-strip-order"]')).toBeVisible();
+    await expect(page.locator('[data-testid="do-hexes"]')).toHaveAttribute('data-set', 'orders');
+    await expect(page.locator('[data-testid="left-strip-order"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="fleet-mode"]')).toHaveCount(0);
 
     // ── Right-click empty space → move order; the server reports motion. ──
@@ -152,15 +154,15 @@ test.describe('RTS fleet command loop @feature', () => {
       }, { timeout: 5_000, message: 'the server moves the hulls on a right-click order' })
       .toBe('moving');
 
-    // ── Stance: Hold fire from the strip fly-out, echoed by the server. ────
-    await page.locator('[data-testid="left-strip-stance"]').click();
-    await page.locator('[data-testid="left-strip-stance-option-holdFire"]').click();
-    await expect(page.locator('[data-testid="left-strip-stance-options"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="left-strip-stance"]')).toHaveAttribute('aria-label', 'Stance: Hold fire', { timeout: 3_000 });
+    // ── Stance: Hold fire from the Stance do-hex's choices, echoed by the server. ────
+    await page.locator('[data-testid="do-hex-stance"]').click();
+    await expect(page.locator('[data-testid="do-hexes"]')).toHaveAttribute('data-set', 'stance');
+    await page.locator('[data-testid="do-hex-stance-holdFire"]').click();
+    await expect(page.locator('[data-testid="do-hexes"]')).toHaveAttribute('data-set', 'orders');
+    await expect(page.locator('[data-testid="do-hex-stance"]')).toHaveAttribute('aria-label', 'Stance: Hold fire', { timeout: 3_000 });
 
-    // ── Patrol from the strip: pick two points on the map, Done. ──────────
-    await page.locator('[data-testid="left-strip-order"]').click();
-    await page.locator('[data-testid="left-strip-order-option-patrol"]').click();
+    // ── Patrol from the do-hexes: pick two points on the map, Done. ──────────
+    await page.locator('[data-testid="do-hex-patrol"]').click();
     // The strip swaps to its route tools (UI plan U3-3): route icon, ✓, undo, ✕.
     await expect(page.locator('[data-testid="left-strip-route"]')).toHaveAttribute('data-state', 'patrol');
     const done = page.locator('[data-testid="left-strip-route-done"]');
@@ -171,7 +173,7 @@ test.describe('RTS fleet command loop @feature', () => {
     await expect(done, 'two points enable ✓').toBeEnabled({ timeout: 2_000 });
     await done.click();
     await expect(page.locator('[data-testid="left-strip-route"]')).toHaveCount(0);
-    await expect(page.locator('[data-testid="left-strip-order"]')).toHaveAttribute('aria-label', 'Order: Patrol', { timeout: 5_000 });
+    await expect(page.locator('[data-testid="do-hex-patrol"]')).toHaveAttribute('data-lit', 'true', { timeout: 5_000 });
 
     // ── Rail Fleet orders → the Orders panel: ship list, squad, Stop. ──────────────────────
     await page.locator('[data-testid="right-rail-orders"]').click();

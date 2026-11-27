@@ -1,5 +1,10 @@
 import { expect, type Page } from '@playwright/test';
 
+/** The Lock control for the tapped target: the left strip's Target (desktop,
+ *  `fc-target`) or, flying on touch, the Lock do-hex (`do-hex-lock`; the strip
+ *  leaves it out there). Same `data-state` (lock / cancel / unlock) and press. */
+export const LOCK_BUTTON = '[data-testid="fc-target"], [data-testid="do-hex-lock"]';
+
 /**
  * Fire control (lock-to-fire, universal since 2026-11-09): a weapon group fires
  * ONLY at a target it has a COMPLETED lock on. Specs that are ABOUT locking use
@@ -107,7 +112,7 @@ export async function lockOn(page: Page, target: LockTarget, opts: { timeoutMs?:
     { timeout: 15_000 },
   );
   expect(await sel.jsonValue()).not.toBeNull();
-  const btn = page.locator('[data-testid="fc-target"]');
+  const btn = page.locator(LOCK_BUTTON);
   await expect(btn).toHaveAttribute('data-state', /^(lock|unlock|cancel)$/, { timeout: 5_000 });
   // dispatchEvent, not click(): kept from when the selection card was
   // world-anchored (moved every frame); Target is now on the left strip (which

@@ -8,12 +8,16 @@
  *   orders panel with the full list. Grouping lives in `fleet/fleetView.ts`.
  * - Fly and Build: no who-hexes (the actor is implied: your own ship, or the
  *   ghost / structure the world tag names).
- * - Until the bottom-right do-hexes take them, the selection's ACTIONS stay on a
- *   slim icon strip under the honeycomb (`left-strip`): the fleet section (Order
- *   and Stance fly-outs, Stop, `fleetStripItems.tsx`), your building's Power in
- *   Build (`buildingStripItems.tsx`), the quick actions (Target / Lock, cargo /
- *   pod, Pilot, `selectionStripItems.tsx`) and, for a focus-only pick, Details
- *   (`rightPanel='details'`).
+ * - The selection's ACTIONS the bottom-right do-hexes do not carry stay on a
+ *   slim icon strip under the honeycomb (`left-strip`). An action shows in one
+ *   place only: the strip reads the do-hexes' own predicate (`useDoHexSet`) and
+ *   coverage (`FLEET_HEX_KEYS`, `flyHexCovers`). While the fleet hexes draw, the
+ *   fleet section (Order / Move / Stance / Stop, `fleetStripItems.tsx`) is gone;
+ *   while the Fly hexes draw (touch), Target / Lock and the pod Open are gone.
+ *   What stays: your building's Power in Build (`buildingStripItems.tsx`), the
+ *   other quick actions (cargo, Pilot, the T2 Lock, `selectionStripItems.tsx`),
+ *   everything on desktop Fly (no hexes there) and, for a focus-only pick,
+ *   Details (`rightPanel='details'`). Nothing left: no strip frame.
  * - The identity icons and the ⚙ / ✕ buttons are retired: the world tag names
  *   the focus; tapping empty space or Esc deselects; the rail's Fleet orders item
  *   (or "?") opens the orders panel.
@@ -42,6 +46,9 @@ import { useRouteStripItems } from './routeStripItems';
 import { renderStripActions, type StripAction } from './stripActions';
 import { useLeftStripFit } from './leftStripFit';
 import { WHO_HEX_MAX, WhoHexes } from './WhoHexes';
+import { useDoHexSet } from './DoHexesHost';
+import { FLEET_HEX_KEYS } from './fleetDoHexes';
+import { flyHexCovers } from './flyDoHexes';
 
 const FOCUS_LOOK: Readonly<Record<SelectionFocusKind, { icon: EqxIconName; tooltip: string }>> = {
   ship: { icon: 'ship', tooltip: 'Ship' },
@@ -71,9 +78,11 @@ export function stripIdentity(sel: UISelection): StripIdentity | null {
 interface Props {
   /** The renderer (it owns the selection): a who-hex tap re-selects there. */
   rendererRef: { readonly current: Pick<IFleetView, 'selectFleetShips' | 'attackFocus'> | null };
+  /** A touch device (the Fly do-hexes draw there only). */
+  touch?: boolean;
 }
 
-export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
+export function LeftStripHost({ rendererRef, touch = false }: Props): JSX.Element | null {
   const shown = useShouldRenderHud();
   const selection = useUIStore((s) => s.selection);
   const mode = useUIStore(selectControlMode);
@@ -88,6 +97,7 @@ export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
   const { items: quickItems, loot } = useSelectionStripItems(data, fleetLock);
   const placingItems = usePlacingStripItems();
   const routeItems = useRouteStripItems();
+  const hexSet = useDoHexSet(touch);
   const id = stripIdentity(selection);
   const placing = placingItems.length > 0;
   useLeftStripFit(shown && (placing || routeItems !== null || id !== null));
@@ -118,7 +128,10 @@ export function LeftStripHost({ rendererRef }: Props): JSX.Element | null {
         tooltip: data !== null && data.name !== '' ? `${data.name}: details` : 'Details',
         onPress: () => setRightPanel('details') }]
     : [];
-  const actions = [...fleetItems, ...buildingItems, ...quickItems, ...details];
+  // Leave out what the do-hexes carry in this state (their own predicate and keys).
+  const fleetLeft = hexSet === 'fleet' ? fleetItems.filter((a) => a.kind === 'separator' || !FLEET_HEX_KEYS.has(a.key)) : fleetItems;
+  const quickLeft = hexSet === 'fly' ? quickItems.filter((a) => !flyHexCovers(a)) : quickItems;
+  const actions = [...fleetLeft, ...buildingItems, ...quickLeft, ...details];
   return (
     <Slot anchor="left-strip">
       {groups !== null && (

@@ -28,6 +28,8 @@ import { LayoutProvider } from './LayoutProvider';
 import { LeftStripHost, stripIdentity } from './LeftStripHost';
 import { WHO_HEX_MAX, WHO_HEX_WORD_CHARS, whoHexBox, whoHexSlot, whoHexTestId, whoHexWord } from './WhoHexes';
 import { HUD } from '../hud/tokens';
+import { doHexSet } from './DoHexesHost';
+import { flyHexCovers } from './flyDoHexes';
 
 function stubMedia(): void {
   vi.stubGlobal('matchMedia', (q: string) => ({
@@ -41,8 +43,8 @@ const selectFleetShips = vi.fn();
 const attackFocus = vi.fn();
 const rendererRef = { current: { selectFleetShips, attackFocus } };
 
-function mount(): void {
-  render(<LayoutProvider><LeftStripHost rendererRef={rendererRef} /></LayoutProvider>);
+function mount(touch = false): void {
+  render(<LayoutProvider><LeftStripHost rendererRef={rendererRef} touch={touch} /></LayoutProvider>);
 }
 
 function select(ids: string[], focusId: string | null = null, focusKind: 'ship' | 'structure' | 'drone' | 'asteroid' | null = null): void {
@@ -235,7 +237,7 @@ describe('the honeycomb layout', () => {
   });
 });
 
-describe('the action strip (until the do-hexes take the actions)', () => {
+describe('the action strip (what the do-hexes do not carry)', () => {
   const stripTestIds = (): string[] =>
     Array.from(screen.getByTestId('left-strip').querySelectorAll('[data-testid]')).map((b) => b.getAttribute('data-testid') ?? '');
 
@@ -247,13 +249,18 @@ describe('the action strip (until the do-hexes take the actions)', () => {
     }
   });
 
-  it('own ships in Command: the fleet section stays on the strip', () => {
-    useUIStore.setState({ phase: 'game' });
-    mount();
-    select(['a', 'b']);
-    expect(screen.getByTestId('left-strip').getAttribute('data-open')).toBe('true');
-    expect(screen.getByTestId('left-strip-order')).toBeInTheDocument();
-  });
+  for (const touch of [false, true]) {
+    it(`own ships in Command (${touch ? 'touch' : 'desktop'}): Order, Move, Stance, Stop leave the strip; nothing left, no strip frame`, () => {
+      useUIStore.setState({ phase: 'game' });
+      mount(touch);
+      select(['a', 'b']);
+      for (const t of ['left-strip-order', 'left-strip-move', 'left-strip-stance', 'left-strip-stop']) {
+        expect(screen.queryByTestId(t), t).toBeNull();
+      }
+      expect(screen.queryByTestId('left-strip')).toBeNull();
+      expect(screen.getByTestId('who-hexes')).toBeInTheDocument();
+    });
+  }
 
   it('ships + an attackable focus: ONE Lock orders the ships to attack it (T2)', () => {
     mount();
@@ -313,6 +320,34 @@ describe('LeftStripHost in Fly (T4)', () => {
       expect(attackFocus).not.toHaveBeenCalled();
     });
   }
+
+  it('on touch the Lock do-hex carries Target: the strip leaves it out, Details stays', () => {
+    useUIStore.setState({ pilotMode: 'pilot' });
+    mount(true);
+    select([], 'p2', 'ship');
+    expect(screen.queryByTestId('fc-target')).toBeNull();
+    expect(screen.getByTestId('left-strip-details')).toBeInTheDocument();
+  });
+});
+
+describe('one place per action: the strip reads the do-hexes\' own predicate and coverage', () => {
+  const st = (pilotMode: 'pilot' | 'spectator', isDead = false, buildMode = false) => ({ pilotMode, isDead, buildMode });
+  it('doHexSet: Fly hexes on touch only, the fleet set off the helm', () => {
+    expect(doHexSet(st('pilot'), true)).toBe('fly');
+    expect(doHexSet(st('pilot'), false)).toBeNull();
+    expect(doHexSet(st('spectator'), false)).toBe('fleet');
+    expect(doHexSet(st('pilot', true), true)).toBe('fleet');
+    expect(doHexSet(st('pilot', false, true), true)).toBe('fleet');
+  });
+
+  it('flyHexCovers: Target and the pod Open, not the fleet Lock, cargo or Pilot', () => {
+    const b = (key: string, testId: string) => ({ kind: 'button' as const, key, testId, icon: 'target' as const, tooltip: '', onPress: () => {} });
+    expect(flyHexCovers(b('target', 'fc-target'))).toBe(true);
+    expect(flyHexCovers(b('loot', 'pod-open'))).toBe(true);
+    expect(flyHexCovers(b('target', 'left-strip-lock'))).toBe(false);
+    expect(flyHexCovers(b('loot', 'cargo-open-toggle'))).toBe(false);
+    expect(flyHexCovers(b('pilot', 'ship-action-pilot'))).toBe(false);
+  });
 });
 
 describe('the strip hosts the building section (U3-6)', () => {

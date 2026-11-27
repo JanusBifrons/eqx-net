@@ -48,6 +48,17 @@ export interface FlyDoHexOptions {
 
 const noop = (): void => {};
 
+/** The selection builder's actions the Fly hexes carry: Target -> Lock, the
+ *  pod Open -> Salvage. The left strip leaves them out while these hexes draw. */
+const FLY_LOCK = { key: 'target', testId: 'fc-target' } as const;
+const FLY_SALVAGE = { key: 'loot', testId: 'pod-open' } as const;
+
+/** Is `a` carried by the Fly hexes (pure)? */
+export function flyHexCovers(a: StripAction): boolean {
+  if (a.kind === 'separator') return false;
+  return [FLY_LOCK, FLY_SALVAGE].some((c) => c.key === a.key && c.testId === a.testId);
+}
+
 function button(actions: readonly StripAction[], key: string, testId?: string): StripButtonAction | null {
   const a = actions.find((x) => x.key === key && (testId === undefined || (x.kind !== 'separator' && x.testId === testId)));
   return a !== undefined && a.kind === 'button' ? a : null;
@@ -79,8 +90,8 @@ function stanceHexes(o: FlyDoHexOptions): DoHex[] {
  *  "Stance Lock Boost / More Salvage Cargo". */
 export function flyDoHexes(o: FlyDoHexOptions): DoHex[] {
   if (o.sub === 'stance') return stanceHexes(o);
-  const lock = button(o.selection, 'target', 'fc-target');
-  const pod = button(o.selection, 'loot', 'pod-open');
+  const lock = button(o.selection, FLY_LOCK.key, FLY_LOCK.testId);
+  const pod = button(o.selection, FLY_SALVAGE.key, FLY_SALVAGE.testId);
   const locking = lock?.active === true;
   return [
     {
