@@ -47,6 +47,8 @@ describe('fleet command senders (RTS slice 6a)', () => {
     expect(lastSent().payload).toEqual({ type: 'fleet_order', shipIds: ['a'], kind: 'attack', targetId: 't' });
     sendFleetOrder(['a'], { kind: 'stop' });
     expect(lastSent().payload).toEqual({ type: 'fleet_order', shipIds: ['a'], kind: 'stop' });
+    sendFleetOrder(['a'], { kind: 'salvage', targetId: 'swarm-3' });
+    expect(lastSent().payload).toEqual({ type: 'fleet_order', shipIds: ['a'], kind: 'salvage', targetId: 'swarm-3' });
   });
 
   it('Command speed parity (#15): every telegraph step crosses the wire as its shared fraction', () => {

@@ -18,6 +18,9 @@ export interface FleetCommands {
   /** Command speed (the speed telegraph): re-pace the running Moves of
    *  `ids` to `fraction` of each ship's top speed (0 = halt in place). */
   setSpeed(ids: readonly string[], fraction: number): void;
+  /** Salvage wreck piece / scrap `targetId` (`swarm-<n>`): ships with a
+   *  mining tool take it, the rest guard them (server-side). */
+  salvage(ids: readonly string[], targetId: string): void;
   formSquad(ids: readonly string[]): void;
   disbandSquad(squadId: string): void;
   takeControls(id: string): void;
@@ -31,6 +34,7 @@ const DEFAULTS: FleetCommands = {
   setStance: noop,
   stop: noop,
   setSpeed: noop,
+  salvage: noop,
   formSquad: noop,
   disbandSquad: noop,
   takeControls: (id) => {

@@ -26,7 +26,10 @@ export const FLEET_STATUS_ACTIVITIES = [
   // Navigation slice 9: no way fits to its goal, so it waits as close as it can get.
   'blocked',
 ] as const;
-export const FLEET_STATUS_ORDERS = ['move', 'attack', 'stop'] as const;
+export const FLEET_STATUS_ORDERS = ['move', 'attack', 'stop',
+  // Fleet salvage: cut / take in a wreck piece or scrap (appended).
+  'salvage',
+] as const;
 /** Slot 6 (morale) is RETIRED; it still accepts the old index range so an
  *  older sender parses (fightOn / fallBack / flee). */
 const RETIRED_MORALE_COUNT = 3;
@@ -45,7 +48,9 @@ export type FleetOrder =
   /** `speed`: Command speed, a fraction of the ship's top speed (absent = full). */
   | { readonly kind: 'move'; readonly x: number; readonly y: number; readonly speed?: number }
   | { readonly kind: 'attack'; readonly targetId: string }
-  | { readonly kind: 'stop' };
+  | { readonly kind: 'stop' }
+  /** Salvage a wreck piece / scrap (`swarm-<n>`); only ships with a mining tool take it. */
+  | { readonly kind: 'salvage'; readonly targetId: string };
 
 /** Patrol routes hold this many waypoints (fewer ⇒ defend; extra are dropped). */
 export const FLEET_ROUTE_MIN = 2;

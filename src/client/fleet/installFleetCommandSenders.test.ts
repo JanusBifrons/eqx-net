@@ -45,6 +45,9 @@ describe('installFleetCommandSenders', () => {
     c.stop(ids);
     expect(senders.sendFleetOrder).toHaveBeenCalledWith(['me', 'hull-1'], { kind: 'stop' });
 
+    c.salvage(ids, 'swarm-7');
+    expect(senders.sendFleetOrder).toHaveBeenLastCalledWith(['me', 'hull-1'], { kind: 'salvage', targetId: 'swarm-7' });
+
     c.formSquad(ids);
     expect(senders.sendFormSquad).toHaveBeenCalledWith(['me', 'hull-1']);
 

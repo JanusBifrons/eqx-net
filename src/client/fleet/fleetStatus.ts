@@ -13,7 +13,7 @@
 import { useEffect, useState } from 'react';
 import type { FleetActivity, FleetMode, FleetStance } from '@shared-types/messages/fleetStatusMessages';
 
-export type FleetOrderKind = 'move' | 'attack' | 'stop';
+export type FleetOrderKind = 'move' | 'attack' | 'stop' | 'salvage';
 
 export interface FleetStatusRow {
   mode: FleetMode;
