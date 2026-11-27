@@ -53,6 +53,19 @@ handlers resolve the owner (`sessionToPlayer`) and delegate to
 (decision logic over injected hooks — spawn / health-seed / despawn / clamp / id —
 so it unit-tests like `TransitOrchestrator`):
 
+**Plan then Build (`place_structures`).** One message carries up to
+`PLACE_STRUCTURES_MAX` (32) `place_structure` items, ALL OR NOTHING: `checkBatch`
+runs every item through the same checks as one placement (`validate`), each also
+against the batch's earlier items and with packed crates summed across the batch
+(shared core `BatchPlacementChecker`, `core/structures/batchPlacement.ts`, which
+the client can run on its planned list); a plate a batch connector lays counts as
+deck for the other items. One refusal places none and replies
+`place_structures_refused { refused: [{ index, code }] }` (`PlaceRefusalCode`:
+the `PlacementRejection` names plus `not-buildable`, `kind-rule`, `no-crate`);
+success commits plate-laying connectors first, then the rest, and sends what a
+single placement does (the slice refresh, no reply). Known gap: a kind rule
+(the Territory Lock's one per sector) is checked per item, not across the batch.
+
 - Validate kind, clamp to `SECTOR_PLAYABLE_HALF_EXTENT`, reject footprint overlap
   with a structure or an asteroid (`placementRejection`, obstacles from the
   `getObstacles(near)` hook; in a cut field `near` adds the rocks with no body,

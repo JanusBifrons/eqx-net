@@ -2070,6 +2070,7 @@ export class SectorRoom extends Room<SectorState> {
     const packedGateHost: PackedGateHost = {
       storage: () => this.storage, holdStore: () => getHoldStore(), sectorKey: () => this.sectorKey,
       findPacked: (owner, product) => this.findPacked(owner, product),
+      countPacked: (owner, product) => this.countPacked(owner, product),
     };
     this.structurePlacement = new StructurePlacementSubsystem({
       spawnStructure: (s) => this.swarmSpawner.spawnStructure(s),
@@ -4062,6 +4063,18 @@ export class SectorRoom extends Room<SectorState> {
     const row = shipId ? getHoldStore().get(shipId) : undefined;
     if (shipId && row !== undefined && packedCount(row.hold, product) > 0) return { shipId };
     return null;
+  }
+
+  /** How many packed `product` items `owner` keeps here, over every source
+   *  `findPacked` looks in (a `place_structures` batch sums its crates). */
+  private countPacked(owner: string, product: string): number {
+    let n = 0;
+    for (const rec of this.structureRegistry.all()) {
+      if (rec.owner === owner && rec.hold !== undefined && isOperationalStorage(rec)) n += packedCount(rec.hold, product);
+    }
+    const shipId = this.pilotSwap.ownShipKey(owner);
+    const row = shipId ? getHoldStore().get(shipId) : undefined;
+    return row !== undefined ? n + packedCount(row.hold, product) : n;
   }
 
   /**
