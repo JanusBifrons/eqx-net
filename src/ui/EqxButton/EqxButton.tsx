@@ -9,8 +9,12 @@ import { Button } from '@mui/material';
 import type { ReactNode } from 'react';
 import { HUD } from '../../client/hud/tokens.js';
 
-/** The tones every Eqx control shares. */
-export type EqxTone = 'primary' | 'secondary' | 'danger';
+/**
+ * The tones every Eqx control shares. The colour hints (selection-HUD hex buttons):
+ * `good` green = move / confirm, `danger` red = attack / lock / cancel, `patrol` blue,
+ * `warn` amber = salvage, `primary` cyan = boost / more, `neutral` grey.
+ */
+export type EqxTone = 'primary' | 'secondary' | 'danger' | 'good' | 'warn' | 'patrol' | 'neutral';
 
 /** Tone -> token colour. One map, reused by EqxIconButton. */
 export const TONE_COLOR: Readonly<Record<EqxTone, string>> = {
@@ -18,6 +22,10 @@ export const TONE_COLOR: Readonly<Record<EqxTone, string>> = {
   primary: HUD.color.auto,
   secondary: HUD.color.ink,
   danger: HUD.color.danger,
+  good: HUD.color.hullOk,
+  warn: HUD.color.manual,
+  patrol: HUD.hex.patrol,
+  neutral: HUD.color.inkDim,
 };
 
 /** Filled tones (dark text on the tone colour); the rest are outlined. */
