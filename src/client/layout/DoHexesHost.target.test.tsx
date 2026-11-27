@@ -14,7 +14,12 @@ vi.mock('../ships/shipActionsClient', async (orig) => ({
   sendFleetOrder: (...a: unknown[]) => sendFleetOrder(...a),
 }));
 const client = {
-  mirror: { localPlayerId: 'me', ships: new Map([['p2', { x: 120, y: -40, kind: 'fighter' }]]) },
+  mirror: { localPlayerId: 'me', ships: new Map([
+    ['p2', { x: 120, y: -40, kind: 'fighter' }],
+    // S11: an AI-flown hull without a salvage tool and one with.
+    ['h1', { x: 0, y: 0, kind: 'destroyer' }],
+    ['h2', { x: 0, y: 0, kind: 'barge' }],
+  ]) },
 };
 vi.mock('../net/clientSingleton', () => ({ getGameClient: () => client }));
 
@@ -33,6 +38,7 @@ function stubMedia(): void {
 }
 
 const setMode = vi.fn();
+const salvage = vi.fn();
 const renderer = { selectFleetShips: vi.fn(), attackFocus: vi.fn() };
 const rendererRef = { current: renderer };
 
@@ -40,7 +46,7 @@ function mount(): void {
   render(<LayoutProvider><DoHexesHost rendererRef={rendererRef} /></LayoutProvider>);
 }
 
-function select(ids: string[], focusId: string | null, focusKind: 'ship' | 'asteroid' | null = 'ship'): void {
+function select(ids: string[], focusId: string | null, focusKind: 'ship' | 'asteroid' | 'salvage' | null = 'ship'): void {
   act(() => { useUIStore.setState({ selection: { ids, focusId, focusKind: focusId === null ? null : focusKind } }); });
 }
 
@@ -50,7 +56,7 @@ const cellOf = (testId: string): string | null =>
 beforeEach(() => {
   stubMedia();
   resetFleetStatus();
-  setFleetCommands({ setMode });
+  setFleetCommands({ setMode, salvage });
   useUIStore.setState({
     phase: 'game', rightPanel: null, travelling: true, pilotMode: 'spectator', isDead: false,
     buildMode: false, placementKind: null, fleetPick: null, commandSpeed: 3,
@@ -62,6 +68,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
   sendFleetOrder.mockReset();
   setMode.mockReset();
+  salvage.mockReset();
   resetFleetCommands();
   renderer.selectFleetShips.mockReset();
   renderer.attackFocus.mockReset();
@@ -124,6 +131,33 @@ describe('target do-hexes (S8)', () => {
     expect(screen.getByTestId('do-hex-follow')).toBeDisabled();
     expect(screen.getByTestId('do-hex-attack')).toBeDisabled();
     expect(screen.getByTestId('do-hex-move-to')).not.toBeDisabled();
+  });
+
+  it('a salvage target: Salvage under the thumb, Move to, More, Clear; no Follow or Attack', () => {
+    mount();
+    select(['h2'], 'swarm-8', 'salvage');
+    expect(screen.getByTestId('do-hexes').getAttribute('data-set')).toBe('target');
+    expect(cellOf('do-hex-salvage')).toBe('0');
+    expect(cellOf('do-hex-clear')).toBe('3');
+    for (const k of ['move-to', 'more']) expect(screen.getByTestId(`do-hex-${k}`)).toBeInTheDocument();
+    expect(screen.queryByTestId('do-hex-follow')).toBeNull();
+    expect(screen.queryByTestId('do-hex-attack')).toBeNull();
+  });
+
+  it('Salvage sends the fleet salvage order with the ship ids and the swarm id', () => {
+    mount();
+    select(['h1', 'h2'], 'swarm-8', 'salvage');
+    expect(screen.getByTestId('do-hex-salvage')).not.toBeDisabled();
+    fireEvent.click(screen.getByTestId('do-hex-salvage'));
+    expect(salvage).toHaveBeenCalledWith(['h1', 'h2'], 'swarm-8');
+  });
+
+  it('no selected hull with a salvage tool: Salvage dimmed with the reason', () => {
+    mount();
+    select(['h1'], 'swarm-8', 'salvage');
+    const hex = screen.getByTestId('do-hex-salvage');
+    expect(hex).toBeDisabled();
+    expect(hex).toHaveAttribute('aria-label', 'No salvage tools on these ships');
   });
 
   it('no target hexes in Fly (the helm) even with a target', () => {

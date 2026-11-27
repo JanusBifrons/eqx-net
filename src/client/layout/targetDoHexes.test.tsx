@@ -6,7 +6,9 @@
 import { describe, expect, it, vi } from 'vitest';
 import { doHexLayout } from './doHexLayout';
 import {
-  followTarget, targetDoHexes, targetFollowable, targetHexCovers, targetSelected, type TargetDoHexOptions,
+  fleetCanSalvage, followTarget, salvageDoHexes, salvageTarget, salvageTargetSelected,
+  targetDoHexes, targetFollowable, targetHexCovers, targetSelected,
+  type SalvageDoHexOptions, type TargetDoHexOptions,
 } from './targetDoHexes';
 
 function opts(over: Partial<TargetDoHexOptions> = {}): TargetDoHexOptions {
@@ -79,6 +81,54 @@ describe('targetDoHexes', () => {
     const a = byKey(o, 'attack');
     expect(a.disabled).toBe(true);
     expect(byKey(opts(), 'attack').disabled).toBeFalsy();
+  });
+});
+
+describe('salvage target (S11): Salvage, Move to, More, Clear', () => {
+  const sOpts = (over: Partial<SalvageDoHexOptions> = {}): SalvageDoHexOptions =>
+    ({ canSalvage: true, salvage: vi.fn(), moveTo: vi.fn(), openMore: vi.fn(), clear: vi.fn(), ...over });
+
+  it('Salvage under the thumb (warn), Move to, More, Clear in the far corner; no Follow, no Attack', () => {
+    const hexes = salvageDoHexes(sOpts());
+    expect(hexes.map((h) => h.word)).toEqual(['Salvage', 'Move to', 'More', 'Clear']);
+    const cells = new Map(doHexLayout(hexes).cells.map((c) => [c.hex.key, c.cell]));
+    expect(cells.get('salvage')).toBe(0);
+    expect(cells.get('clear')).toBe(hexes.length - 1);
+    expect(hexes[0]!.tone).toBe('warn');
+    expect(hexes.some((h) => h.key === 'follow' || h.key === 'attack')).toBe(false);
+  });
+
+  it('no salvage tools: Salvage dimmed and blocked with the reason', () => {
+    const h = salvageDoHexes(sOpts({ canSalvage: false }))[0]!;
+    expect(h.dim).toBe(true);
+    expect(h.disabled).toBe(true);
+    expect(h.tooltip).toBe('No salvage tools on these ships');
+    expect(salvageDoHexes(sOpts())[0]!.disabled).toBeFalsy();
+  });
+
+  it('salvageTargetSelected: ships plus a salvage focus only', () => {
+    expect(salvageTargetSelected({ ids: ['a'], focusId: 'swarm-8', focusKind: 'salvage' })).toBe(true);
+    expect(salvageTargetSelected({ ids: ['a'], focusId: 'swarm-3', focusKind: 'asteroid' })).toBe(false);
+    expect(salvageTargetSelected({ ids: [], focusId: 'swarm-8', focusKind: 'salvage' })).toBe(false);
+  });
+
+  it('salvageTarget sends the fleet salvage order with the ids and the swarm id', () => {
+    const cmds = { salvage: vi.fn() };
+    expect(salvageTarget({ ids: ['a', 'b'], focusId: 'swarm-8', focusKind: 'salvage' }, cmds)).toBe(true);
+    expect(cmds.salvage).toHaveBeenCalledWith(['a', 'b'], 'swarm-8');
+    expect(salvageTarget({ ids: ['a'], focusId: 'swarm-3', focusKind: 'asteroid' }, cmds)).toBe(false);
+    expect(cmds.salvage).toHaveBeenCalledOnce();
+  });
+
+  it('fleetCanSalvage: any selected AI-flown hull with a mining tool; the ship I fly never counts', () => {
+    const mirror = {
+      localPlayerId: 'me',
+      ships: new Map<string, { kind: string }>([['me', { kind: 'barge' }], ['h1', { kind: 'destroyer' }], ['h2', { kind: 'barge' }]]),
+    };
+    expect(fleetCanSalvage(['h1', 'h2'], mirror)).toBe(true);
+    expect(fleetCanSalvage(['h1'], mirror)).toBe(false);
+    expect(fleetCanSalvage(['me', 'h1'], mirror), 'my own flown barge does not count').toBe(false);
+    expect(fleetCanSalvage(['gone'], mirror)).toBe(false);
   });
 });
 

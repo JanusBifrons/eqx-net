@@ -18,7 +18,10 @@
  *   building's Upgrade, Demolish, Power, More. Every device, like Command.
  * - Command, own ships selected plus a tapped target that is not mine (S8,
  *   `targetDoHexes.tsx`): Follow (escort; dimmed off ships), Move to, Attack,
- *   More (its Details), Clear (keeps the ships, drops the target).
+ *   More (its Details), Clear (keeps the ships, drops the target). A tapped
+ *   scrap / wreck piece (S11) swaps Follow and Attack out: Salvage (the fleet
+ *   salvage order; dimmed when no selected hull has a salvage tool), Move to,
+ *   More, Clear.
  * - Hidden while a right panel is open (`selectRightPanelOpen`): the panel docks
  *   over the right edge. A held Boost lets go then (HoldButton on unmount).
  * - Hex boxes overlap in their corner triangles (a honeycomb), so each cell
@@ -44,7 +47,10 @@ import { useSelectionStripItems } from './selectionStripItems.js';
 import { usePlacingStripItems } from './placingStripItems.js';
 import { useRouteStripItems } from './routeStripItems.js';
 import { useBuildingStripItems } from './buildingStripItems.js';
-import { followTarget, targetDoHexes, targetFollowable, targetSelected } from './targetDoHexes.js';
+import {
+  fleetCanSalvage, followTarget, salvageDoHexes, salvageTarget, salvageTargetSelected,
+  targetDoHexes, targetFollowable, targetSelected,
+} from './targetDoHexes.js';
 import { resolveFleetCommands } from '../fleet/useFleetSelectionView.js';
 import type { IFleetView } from '@core/contracts/render/IFleetView';
 import { fleetLockApplies, lockFocus } from '../components/targetLock.js';
@@ -153,23 +159,36 @@ function TargetHexes({ rendererRef }: { rendererRef: NonNullable<Props['renderer
   const setRightPanel = useUIStore((s) => s.setRightPanel);
   const attackable = useUIStore((s) => fleetLockApplies(s.selection));
   const followable = useUIStore((s) => targetFollowable(s.selection));
+  const salvageFocus = useUIStore((s) => salvageTargetSelected(s.selection));
+  // Ship kinds never change under an id: read on render (selection changes).
+  const ids = useUIStore((s) => s.selection.ids);
+  const mirror = getGameClient()?.mirror;
+  const canSalvage = salvageFocus && mirror != null && fleetCanSalvage(ids, mirror);
   // The fleet builder decides when fleet orders apply at all (Command, own ships).
   const fleet = useFleetStripItems();
   if (fleet.length === 0) return null;
-  const hexes = targetDoHexes({
-    attackable,
-    followable,
-    follow: () => { followTarget(useUIStore.getState().selection, resolveFleetCommands()); },
-    moveTo: () => {
-      const sel = useUIStore.getState().selection;
-      const mirror = getGameClient()?.mirror;
-      if (sel.focusId === null || mirror == null || !resolveSelectable(mirror, sel.focusId, targetPose)) return;
-      sendMoveOrder(sel.ids, targetPose.x, targetPose.y);
-    },
-    attack: () => { lockFocus(useUIStore.getState().selection, rendererRef.current, () => false); },
-    openMore: () => setRightPanel('details'),
-    clear: () => { rendererRef.current?.selectFleetShips(useUIStore.getState().selection.ids); },
-  });
+  const moveTo = (): void => {
+    const sel = useUIStore.getState().selection;
+    const m = getGameClient()?.mirror;
+    if (sel.focusId === null || m == null || !resolveSelectable(m, sel.focusId, targetPose)) return;
+    sendMoveOrder(sel.ids, targetPose.x, targetPose.y);
+  };
+  const openMore = (): void => setRightPanel('details');
+  const clear = (): void => { rendererRef.current?.selectFleetShips(useUIStore.getState().selection.ids); };
+  const hexes = salvageFocus
+    ? salvageDoHexes({
+      canSalvage,
+      salvage: () => { salvageTarget(useUIStore.getState().selection, resolveFleetCommands()); },
+      moveTo, openMore, clear,
+    })
+    : targetDoHexes({
+      attackable,
+      followable,
+      follow: () => { followTarget(useUIStore.getState().selection, resolveFleetCommands()); },
+      moveTo,
+      attack: () => { lockFocus(useUIStore.getState().selection, rendererRef.current, () => false); },
+      openMore, clear,
+    });
   return <DoHexGrid hexes={hexes} label="Target" set="target" />;
 }
 
