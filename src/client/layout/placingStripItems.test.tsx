@@ -1,13 +1,14 @@
 /**
- * UI plan U3-7: the left strip's placing tools (placingStripItems.tsx), which
- * replace the bottom-middle placing bar and the Build panel's folded strip.
+ * UI plan U3-7, selection HUD S4: the placing tools (placingStripItems.tsx)
+ * are do-hexes (icon + word): Place under the thumb, Cancel in the far corner;
+ * the left strip draws nothing while placing.
  * - Place goes through the one commit path (`commitPlacement`) and keeps
  *   placing until ✕, except a place-once kind; disabled while the ghost is
  *   rejected or held on the spot just sent.
  * - Rotate / Mirror use the R / F keys' functions (real module state here).
- * - The building icon reopens the Build panel, which hides the strip; a new
- *   pick folds back to the strip with the new kind; ✕ stops placing and the
- *   Build panel comes back. Placing wins over a selection. Icons only.
+ * - The building hex reopens the Build panel, which hides the hexes; a new
+ *   pick folds back to the hexes with the new kind; ✕ stops placing and the
+ *   Build panel comes back. Placing wins over a selection.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
@@ -31,17 +32,22 @@ vi.mock('../net/clientSingleton', () => ({
 
 import { LayoutProvider } from './LayoutProvider';
 import { LeftStripHost } from './LeftStripHost';
+import { DoHexesHost } from './DoHexesHost';
 import { BuildSidebarHost } from '../components/BuildSidebarHost';
 
 const rendererRef = { current: { selectFleetShips: vi.fn(), attackFocus: vi.fn() } };
 
 function mount(): void {
-  render(<LayoutProvider><LeftStripHost rendererRef={rendererRef} /><BuildSidebarHost /></LayoutProvider>);
+  render(<LayoutProvider><LeftStripHost rendererRef={rendererRef} /><DoHexesHost /><BuildSidebarHost /></LayoutProvider>);
 }
 
 const tool = (id: string): HTMLButtonElement => screen.getByTestId(id) as HTMLButtonElement;
-const stripOpen = (): boolean => screen.queryByTestId('placement-kind') !== null
-  && screen.getByTestId('left-strip').getAttribute('data-open') === 'true';
+const hexesShown = (): boolean => screen.queryByTestId('placement-kind') !== null
+  && screen.getByTestId('do-hexes').dataset.set === 'placing';
+const hexIds = (): (string | undefined)[] =>
+  Array.from(screen.getByTestId('do-hexes').querySelectorAll('button')).map((b) => b.dataset.testid);
+const cellOf = (testId: string): string | null =>
+  screen.getByTestId(testId).closest('[data-cell]')?.getAttribute('data-cell') ?? null;
 const buildOpen = (): boolean => screen.queryByTestId('build-rail') !== null;
 const pick = (cat: string, kind: string): void => {
   fireEvent.click(screen.getByTestId(`build-cat-${cat}`));
@@ -65,24 +71,47 @@ beforeEach(() => {
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
 
-describe('placing tools on the left strip', () => {
+describe('placing tools as do-hexes', () => {
   it('shows nothing while not placing', () => {
     mount();
     expect(screen.queryByTestId('placement-kind')).toBeNull();
     expect(screen.queryByTestId('placement-confirm')).toBeNull();
   });
 
-  it('shows the building, Place, Rotate, Mirror and Cancel as icons only', () => {
+  it('shows Place, Rotate, the building, Mirror and Cancel as hexes; the strip draws nothing', () => {
     act(() => { useUIStore.setState({ placementKind: 'solar' }); });
     mount();
-    const ids = Array.from(screen.getByTestId('left-strip').querySelectorAll('button')).map((b) => b.dataset.testid);
-    expect(ids).toEqual(['placement-kind', 'placement-confirm', 'placement-rotate', 'placement-mirror', 'placement-cancel']);
+    expect(hexIds()).toEqual(['placement-confirm', 'placement-rotate', 'placement-kind', 'placement-mirror', 'placement-cancel']);
     expect(tool('placement-kind').dataset.state).toBe('solar');
-    for (const [id, label] of [['placement-confirm', 'Place'], ['placement-rotate', 'Rotate'], ['placement-mirror', 'Mirror'], ['placement-cancel', 'Stop placing']] as const) {
-      expect(tool(id).getAttribute('aria-label')).toBe(label);
-      expect(tool(id).textContent).toBe('');
+    for (const [id, label, word] of [
+      ['placement-confirm', 'Place', 'Place'], ['placement-rotate', 'Rotate', 'Rotate'], ['placement-kind', 'Solar Array: open the Build menu', 'Solar'],
+      ['placement-mirror', 'Mirror', 'Mirror'], ['placement-cancel', 'Stop placing', 'Cancel'],
+    ] as const) {
+      expect(tool(id).dataset.variant, id).toBe('hex');
+      if (id !== 'placement-kind') expect(tool(id).getAttribute('aria-label')).toBe(label);
+      expect(screen.getByTestId(`${id}-word`).textContent).toBe(word);
     }
-    expect(screen.getByTestId('left-strip').textContent).toBe('');
+    expect(tool('placement-kind').getAttribute('aria-label')).toMatch(/: open the Build menu$/);
+    expect(screen.queryByTestId('left-strip')).toBeNull();
+  });
+
+  it('the building hex is a normal neutral hex: frame, the kind\'s short name as its word', () => {
+    act(() => { useUIStore.setState({ placementKind: 'capital' }); });
+    mount();
+    const k = tool('placement-kind');
+    expect(k.dataset.variant).toBe('hex');
+    expect(k.dataset.tone).toBe('neutral');
+    expect(screen.getByTestId('placement-kind-word').textContent).toBe('Capital');
+  });
+
+  it('Place is under the thumb (cell 0), Cancel in the far corner', () => {
+    act(() => { useUIStore.setState({ placementKind: 'solar' }); });
+    mount();
+    expect(cellOf('placement-confirm')).toBe('0');
+    expect(cellOf('placement-rotate')).toBe('1');
+    expect(cellOf('placement-kind')).toBe('2');
+    expect(cellOf('placement-mirror')).toBe('3');
+    expect(cellOf('placement-cancel')).toBe('4');
   });
 
   it('plan then Build: Build (n) shows only while buildings are planned; ✕ drops the plan', () => {
@@ -162,29 +191,29 @@ describe('placing tools on the left strip', () => {
     mount();
     fireEvent.click(tool('placement-rotate'));
     expect(getPlacementRotationDeg()).toBe(90);
-    expect(tool('placement-mirror').getAttribute('aria-pressed')).toBe('false');
+    expect(tool('placement-mirror').dataset.lit).toBe('false');
     fireEvent.click(tool('placement-mirror'));
     expect(getPlacementMirror()).toBe(true);
-    expect(tool('placement-mirror').getAttribute('aria-pressed')).toBe('true');
+    expect(tool('placement-mirror').dataset.lit).toBe('true');
     fireEvent.click(tool('placement-mirror'));
     expect(getPlacementMirror()).toBe(false);
     expect(commitChosenPlacement).not.toHaveBeenCalled();
     expect(useUIStore.getState().placementKind).toBe('solar');
   });
 
-  it('a pick folds the Build panel to the strip; the building icon reopens it (strip hidden); a new pick folds back', () => {
+  it('a pick folds the Build panel to the hexes; the building hex reopens it (hexes hidden); a new pick folds back', () => {
     mount();
     act(() => useUIStore.getState().setRightPanel('build'));
     pick('economy', 'solar');
     expect(buildOpen()).toBe(false);
-    expect(stripOpen()).toBe(true);
+    expect(hexesShown()).toBe(true);
     expect(tool('placement-kind').dataset.state).toBe('solar');
 
     fireEvent.click(tool('placement-kind'));
     expect(buildOpen()).toBe(true);
     expect(useUIStore.getState().rightPanel).toBe('build');
     expect(useUIStore.getState().placementKind).toBe('solar');
-    expect(stripOpen()).toBe(false);
+    expect(hexesShown()).toBe(false);
 
     pick('defence', 'turret');
     expect(buildOpen()).toBe(false);
@@ -206,13 +235,21 @@ describe('placing tools on the left strip', () => {
   it('a fence post on a deck adds Gate, which switches post <-> gate (edge feel P3)', () => {
     act(() => { useUIStore.setState({ placementKind: 'shield_pylon', deck: true }); });
     mount();
-    const ids = Array.from(screen.getByTestId('left-strip').querySelectorAll('button')).map((b) => b.dataset.testid);
-    expect(ids).toEqual(['placement-kind', 'placement-confirm', 'placement-rotate', 'placement-mirror', 'placement-gate', 'placement-cancel']);
+    expect(hexIds()).toEqual(['placement-confirm', 'placement-rotate', 'placement-kind', 'placement-mirror', 'placement-gate', 'placement-cancel']);
     expect(tool('placement-gate').getAttribute('aria-label')).toBe('Gate');
+    expect(cellOf('placement-gate')).toBe('4');
+    expect(cellOf('placement-cancel')).toBe('5');
     fireEvent.click(tool('placement-gate'));
     expect(useUIStore.getState().placementKind).toBe('shield_gate');
     fireEvent.click(tool('placement-gate'));
     expect(useUIStore.getState().placementKind).toBe('shield_pylon');
+  });
+
+  it('a road has no Rotate or Mirror: it lines itself up', () => {
+    act(() => { useUIStore.setState({ placementKind: 'road', deck: true }); });
+    mount();
+    const ids = Array.from(screen.getByTestId('left-strip').querySelectorAll('button')).map((b) => b.dataset.testid);
+    expect(ids).toEqual(['placement-kind', 'placement-confirm', 'placement-cancel']);
   });
 
   it('no Gate off a deck room or for other kinds', () => {

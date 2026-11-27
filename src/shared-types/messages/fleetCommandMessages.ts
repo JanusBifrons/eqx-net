@@ -26,14 +26,14 @@ const FiniteSchema = z.number().finite();
 export const FleetSpeedSchema = z.number().finite().min(0).max(1);
 
 /** Client → server: a one-off order (`FleetOrder`) for the given owned ships.
- *  `move` needs finite `x`,`y` (optional `speed`); `attack` needs `targetId`;
+ *  `move` needs finite `x`,`y` (optional `speed`); `attack` and `salvage` need `targetId`;
  *  `speed` (needs `speed`) re-paces the ships' running Move orders: 0 halts
  *  them in place, keeping the destination. Strict. */
 export const FleetOrderSchema = z
   .object({
     type: z.literal('fleet_order'),
     shipIds: FleetShipIdsSchema,
-    kind: z.enum(['move', 'attack', 'stop', 'speed']),
+    kind: z.enum(['move', 'attack', 'stop', 'speed', 'salvage']),
     x: FiniteSchema.optional(),
     y: FiniteSchema.optional(),
     targetId: z.string().min(1).max(64).optional(),
@@ -48,6 +48,9 @@ export const FleetOrderSchema = z
   })
   .refine((m) => m.kind !== 'speed' || m.speed !== undefined, {
     message: 'speed requires speed',
+  })
+  .refine((m) => m.kind !== 'salvage' || m.targetId !== undefined, {
+    message: 'salvage requires targetId',
   });
 
 /** Client → server: set the standing mode for the given ships.

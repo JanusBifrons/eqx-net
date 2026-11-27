@@ -290,6 +290,12 @@ export function mirrorFenceWorld(
   return liveWorld;
 }
 
+/** Each send goes at the deck snap's exact seam point (the same rounding the
+ *  live ghost's chosen point gets), so the pending record matches the ghost
+ *  left on that spot and the held state (`isHeldOnSent`) covers it: dim, no
+ *  red verdict, no re-send. Raw lattice corners differ in the last bits. */
+const SEND_SNAP: DeckSnap = { x: 0, y: 0, q: 0, r: 0, rhombus: -1, rot: -1, slot: 'hex' };
+
 /**
  * Place for a fence run at the chosen point (`commitPlacement` routes a deck
  * room's fence post here). Returns whether anything was sent; with no chosen
@@ -310,10 +316,14 @@ export function commitFenceRun(kind: StructureKindId): boolean | null {
   let sent = false;
   for (let n = 0; n + 1 < plan.sends.length; n += 2) {
     // The first send carries the run's corners for the pending ghost.
-    if (placeStructureAt(DECK_FENCE_POST_KIND, plan.sends[n]!, plan.sends[n + 1]!, n === 0 ? plan.drawn : NO_CORNERS)) sent = true;
+    const at = snapPlacementToDeck(DECK_FENCE_POST_KIND, plan.sends[n]!, plan.sends[n + 1]!, SEND_SNAP);
+    if (placeStructureAt(DECK_FENCE_POST_KIND, at.x, at.y, n === 0 ? plan.drawn : NO_CORNERS)) sent = true;
   }
   // The gate last (the server cuts the seam's post-post link as it lands).
-  if (plan.gate && placeStructureAt(DECK_FENCE_GATE_KIND, plan.gateX, plan.gateY, sent ? NO_CORNERS : plan.drawn)) sent = true;
+  if (plan.gate) {
+    const g = snapPlacementToDeck(DECK_FENCE_GATE_KIND, plan.gateX, plan.gateY, SEND_SNAP);
+    if (placeStructureAt(DECK_FENCE_GATE_KIND, g.x, g.y, sent ? NO_CORNERS : plan.drawn)) sent = true;
+  }
   anchor.active = plan.anchorOk;
   anchor.x = plan.anchorX;
   anchor.y = plan.anchorY;

@@ -18,7 +18,8 @@ import { serverLogEvent } from '../../debug/ServerEventLog.js';
 import { parsedMessage, type ParsedMessageHost, type RoomFeature } from './parsedMessage.js';
 import { getStructureKind, isBuildableStructureKind, isDeckOnlyStructureKind, snapPlayerStructureRotation } from '../../../shared-types/structureKinds.js';
 import { needsPackedCrate, productName } from '../../../shared-types/blueprints.js';
-import { snapPlacementToDeck } from '../../../core/structures/deckPlacement.js';
+import { snapPlacementToDeck, type RoadJoinsAt } from '../../../core/structures/deckPlacement.js';
+import { roadJoinBits } from '../../../core/structures/deckGateRoad.js';
 import type { DeckSnap } from '../../../core/hex/deckSnap.js';
 import {
   PlaceStructureSchema,
@@ -38,7 +39,7 @@ type SeedHold = { goods: Partial<Record<'minerals' | 'salvage' | 'alloy' | 'core
 export interface StructureMessageHost extends ParsedMessageHost {
   sessionToPlayer(): ReadonlyMap<string, string>;
   swarmRegistry: Pick<SwarmEntityRegistry, 'getByEntityId'>;
-  structureRegistry: Pick<StructureRegistry, 'get'>;
+  structureRegistry: Pick<StructureRegistry, 'get' | 'all'>;
   sectorKey(): string | null;
   storage(): Pick<StorageService, 'flushDirty'>;
   rebuildStructuresSlice(): void;
@@ -74,11 +75,11 @@ function playerMayBuild(h: StructureMessageHost, kind: StructureKindId): boolean
  * turns for a quarter-turn-only kind); quarter turns off deck. place() itself
  * keeps any 30° step.
  */
-function snapPlayerPlacement(h: StructureMessageHost, m: { kind: StructureKindId; x: number; y: number; rot?: number; mirror?: boolean }, out: SnappedItem): SnappedItem {
+function snapPlayerPlacement(h: StructureMessageHost, m: { kind: StructureKindId; x: number; y: number; rot?: number; mirror?: boolean }, out: SnappedItem, roadJoinsAt?: RoadJoinsAt): SnappedItem {
   out.kind = m.kind; out.x = m.x; out.y = m.y; out.mirror = m.mirror === true;
   out.rot = snapPlayerStructureRotation(m.rot, false, m.kind);
   if (h.deck()) {
-    snapPlacementToDeck(m.kind, m.x, m.y, deckSnap, m.rot);
+    snapPlacementToDeck(m.kind, m.x, m.y, deckSnap, m.rot, roadJoinsAt);
     out.x = deckSnap.x; out.y = deckSnap.y; out.rot = deckSnap.rot;
   }
   return out;
@@ -120,12 +121,20 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
     h.sectorPersistence().persistSoon();
   };
 
+  // A road's neighbours (roads, gates) over the registry: its turn is automatic,
+  // folded by the same core rule the client ghost folds over its mirror (#15).
+  // Made once; called only when a road is placed on a deck room.
+  const roadJoinsAt: RoadJoinsAt = (q, r) => {
+    let m = 0;
+    for (const s of h.structureRegistry.all()) m |= roadJoinBits(q, r, s.kind, s.x, s.y);
+    return m;
+  };
   // ── Structures plan, Phase 2 — placement / removal ──────────────────
   parsedMessage(h, 'place_structure', PlaceStructureSchema, (msg, client) => {
     const owner = h.sessionToPlayer().get(client.sessionId);
     if (!owner) return;
     if (!playerMayBuild(h, msg.kind)) return;
-    const it = snapPlayerPlacement(h, msg, one);
+    const it = snapPlayerPlacement(h, msg, one, roadJoinsAt);
     const id = h.structurePlacement().place(
       owner,
       it.kind,
@@ -165,7 +174,7 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
     batchView.length = 0;
     for (let i = 0; i < msg.items.length; i++) {
       const b = batchItems[i] ?? (batchItems[i] = { kind: 'connector', x: 0, y: 0, rot: 0, mirror: false });
-      batchView.push(snapPlayerPlacement(h, msg.items[i]!, b));
+      batchView.push(snapPlayerPlacement(h, msg.items[i]!, b, roadJoinsAt));
     }
     const placement = h.structurePlacement();
     placement.checkBatch(owner, batchView, h.deck(), refusedIndex, refusedCode);

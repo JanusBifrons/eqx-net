@@ -19,6 +19,8 @@
  *    (the RTS fleet scene). Refused without a pilot.
  *  - `rocks` / `rockCut`: still rocks `scene-<tag>-<i>`, then each mined to
  *    a break through the mining laser's real wear path (rock-cut scene).
+ *  - `aggro`: mark a spawn step's ships hostile to every pilot again (a
+ *    repeat keeps an out-of-range battle fleet closing; battleRooms.ts).
  *  - `move`: fly a scene ship nose-first to a point and stop there.
  *  - `rigClip`: start a rig clip on a structure (articulation sandbox).
  *  - `end`: the scene is over (the measurement window closes).
@@ -88,14 +90,16 @@ export function scenePoint(i: number, count: number, spread: number, out: { x: n
 
 /** A spawn step with `repeatEveryMs` becomes one step per repeat (built once,
  *  at room creation): repeat k is due at `atMs + k * repeatEveryMs`, while
- *  that is before `repeatUntilMs`, tagged `<tag>-r<k>`. */
+ *  that is before `repeatUntilMs`, tagged `<tag>-r<k>`. An `aggro` step
+ *  repeats the same way but keeps its tag (it re-marks the same ships). */
 export function expandRepeats(script: readonly SceneStep[]): SceneStep[] {
   const out: SceneStep[] = [];
   for (const s of script) {
     out.push(s);
-    if (s.action !== 'spawn' || s.repeatEveryMs === undefined || s.repeatUntilMs === undefined) continue;
+    if ((s.action !== 'spawn' && s.action !== 'aggro') || s.repeatEveryMs === undefined || s.repeatUntilMs === undefined) continue;
     for (let k = 1, t = s.atMs + s.repeatEveryMs; t < s.repeatUntilMs; k++, t += s.repeatEveryMs) {
-      out.push({ ...s, atMs: t, tag: `${s.tag}-r${k}`, repeatEveryMs: undefined, repeatUntilMs: undefined });
+      const tag = s.action === 'spawn' ? `${s.tag}-r${k}` : s.tag;
+      out.push({ ...s, atMs: t, tag, repeatEveryMs: undefined, repeatUntilMs: undefined });
     }
   }
   return out;
@@ -145,6 +149,11 @@ export class SceneScriptRunner {
         : step.keepTarget === true ? { from: 'keep' }
           : step.fromTip === true ? { from: 'tip' } : { from: 'none' };
       if (this.hooks.rigClip?.(step.structure, step.clip, target) ?? false) this.status.spawned++; else this.status.refused++;
+      return;
+    }
+    if (step.action === 'aggro') {
+      // Not counted as spawned/refused: a dead ship is simply skipped.
+      for (let i = 0; i < step.count; i++) this.hooks.markHostileToAll(`scene-${step.tag}-${i}`);
       return;
     }
     if (step.action === 'rockCut') {

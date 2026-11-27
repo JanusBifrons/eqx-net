@@ -19,6 +19,7 @@ import type { FleetCommandSubsystem } from '../../fleet/FleetCommandSubsystem.js
 import { FleetStatusSoon, FLEET_STATUS_SOON_TICKS } from '../../fleet/FleetStatusSoon.js';
 import { FleetStatusStream } from '../../fleet/FleetStatusStream.js';
 import type { FleetHullPose } from '../../transit/fleetArrivalPoses.js';
+import type { SwarmEntityRegistry } from '../../net/SwarmEntityRegistry.js';
 import { hullExtent } from '../join/joinConstants.js';
 import type { ShipState } from '../schema/SectorState.js';
 import type { WingmanPilots } from './wingmanPilots.js';
@@ -44,6 +45,7 @@ export interface FleetRoomHooksHost {
   aiController(): Pick<AiController, 'markHostile' | 'noteDamage'>;
   wingmen(): Pick<WingmanPilots, 'hostileActorOf'>;
   getActiveShip(playerId: string): ShipState | undefined;
+  swarmRegistry: Pick<SwarmEntityRegistry, 'get'>;
   displaceActiveHullToLingering(playerId: string): void;
 }
 
@@ -94,8 +96,15 @@ export class FleetRoomHooks {
         const client = this.h.clients().find((c) => c.sessionId === sessionId);
         try { client?.send('fleet_status', msg); } catch { /* closing */ }
       },
-      // The ship the owner flies goes back out under their playerId (4b).
-      wireShipId: (ownerId, id) => (this.h.playerToActiveShipInstance.get(ownerId) === id ? ownerId : id),
+      // A pilot's flown ship goes back out under their playerId (4b), an NPC
+      // ship under its wire id (`swarm-<n>`, as `set_mode` named it).
+      wireShipId: (ownerId, id) => {
+        if (this.h.playerToActiveShipInstance.get(ownerId) === id) return ownerId;
+        const rec = this.h.swarmRegistry.get(id);
+        if (rec !== null) return `swarm-${rec.entityId}`; // TODO: alloc-debt (status stream, off the physics tick)
+        const s = this.h.state().ships.get(id);
+        return s !== undefined && this.h.playerToActiveShipInstance.get(s.playerId) === id ? s.playerId : id;
+      },
     });
   }
 

@@ -25,6 +25,7 @@ import {
   SetModeSchema,
   SetStanceSchema,
 } from '../../../shared-types/messages.js';
+import { isSalvageFleetTarget, makeFleetSalvageOrder } from './fleetSalvageOrder.js';
 
 /** The one `stop` order object (the brain only reads it). */
 export const FLEET_STOP_ORDER = { kind: 'stop' } as const;
@@ -42,6 +43,8 @@ export interface FleetMessageHost extends ParsedMessageHost {
   swarmRegistry: Pick<SwarmEntityRegistry, 'getByEntityId'>;
   structureRegistry: Pick<StructureRegistry, 'get'>;
   relationCtx: RelationContext;
+  /** Fleet salvage: does hull `shipId` carry a mining tool (`hasMiningTool`)? */
+  fleetCanSalvage(shipId: string): boolean;
 }
 
 /** The entityId in a wire swarm id (`swarm-<entityId>`, what the client's
@@ -84,6 +87,7 @@ export function isFriendlyFleetTarget(
 export function registerFleetMessages(h: FleetMessageHost): RoomFeature {
   /** Reused `set_mode` parameters (#14; the brain copies the route). */
   const fleetModeScratch: FleetModeData = {};
+  const salvage = makeFleetSalvageOrder(h.fleet, (id) => h.fleetCanSalvage(id));
   h.onMessage('fleet_order', (client: Client, raw: unknown) => {
     if (!h.fleetMsgAllowed(client.sessionId)) return;
     const p = FleetOrderSchema.safeParse(raw);
@@ -102,6 +106,14 @@ export function registerFleetMessages(h: FleetMessageHost): RoomFeature {
       if (isFriendlyFleetTarget(pid, d.targetId!, h)) return;
       accepted = h.fleet.applyOrder(pid, d.shipIds, { kind: 'attack', targetId: d.targetId! });
     }
+    // Salvage: only a live wreck piece / scrap; miners take it, the rest guard them.
+    else if (d.kind === 'salvage') {
+      if (!isSalvageFleetTarget(d.targetId!, h.swarmRegistry)) return;
+      const r = salvage(pid, d.shipIds, d.targetId!);
+      if (r.salvagers.length === 0) return;
+      h.fleetTransit()?.fleetCommandIssued(pid, r.guards, true);
+      accepted = r.salvagers;
+    }
     else accepted = h.fleet.applyOrder(pid, d.shipIds, FLEET_STOP_ORDER);
     // RTS fleet warp: a new order to a spooling ship takes it out of the warp.
     h.fleetTransit()?.fleetCommandIssued(pid, accepted, false);
@@ -119,10 +131,14 @@ export function registerFleetMessages(h: FleetMessageHost): RoomFeature {
     md.x = hasPoint ? p.data.x : undefined;
     md.y = hasPoint ? p.data.y : undefined;
     md.route = p.data.route;
-    // The client names its own active ship by playerId; the fleet knows it
-    // by shipInstanceId (`pilotShipOf`, slice 4b).
+    // The client names a pilot's active ship by playerId and an NPC ship by
+    // its wire id (`swarm-<n>`); the fleet knows them by shipInstanceId
+    // (slice 4b) and swarm registry id (what the eviction re-apply names).
     const esc = p.data.escortId;
-    md.escortId = esc === pid ? (h.playerToActiveShipInstance.get(pid) ?? esc) : esc;
+    const sw = esc === undefined ? -1 : wireSwarmEntityId(esc);
+    md.escortId = esc === undefined ? undefined
+      : sw >= 0 ? (h.swarmRegistry.getByEntityId(sw)?.id ?? esc)
+      : (h.playerToActiveShipInstance.get(esc) ?? esc);
     const accepted = h.fleet.setMode(pid, p.data.shipIds, p.data.mode, md);
     md.route = undefined; md.escortId = undefined; md.x = undefined; md.y = undefined;
     // RTS fleet warp: the ship drops out and obeys (its hold is let go).

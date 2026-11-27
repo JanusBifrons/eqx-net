@@ -98,30 +98,30 @@ test('a rail tap switches the sidebar to that category', async ({ browser }) => 
   }
 });
 
-test('Place keeps placing with the left-strip placing tools; ✕ brings the sidebar back on the same category', async ({ browser }) => {
+test('Place keeps placing with the placing do-hexes; ✕ brings the sidebar back on the same category', async ({ browser }) => {
   // Joins as a touch device (the two-step tap → Place flow).
   const { ctx, page } = await joinClient(browser, true);
   try {
     await openBuildSidebar(page);
     await page.locator('[data-testid="build-cat-economy"]').click();
 
-    // Picking a kind raises the ghost, closes the sidebar and shows the left
-    // strip's placing tools (the building, ✓, rotate, mirror, ✕) (U3-7).
+    // Picking a kind raises the ghost, closes the sidebar and shows the placing
+    // tools as do-hexes (Place, Rotate, the building, Mirror, Cancel) (U3-7, S4).
     await page.locator('[data-testid="build-solar"] button').click();
     await expect(page.locator('[data-testid="placement-kind"]')).toBeVisible({ timeout: 5_000 });
     await expect(page.locator('[data-testid="placement-kind"]')).toHaveAttribute('data-state', 'solar');
+    await expect(page.locator('[data-testid="do-hexes"]')).toHaveAttribute('data-set', 'placing');
     await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
 
-    // The building icon reopens the full sidebar (the strip hides) with
-    // placement live; its ✕ folds back to the strip.
+    // The building hex reopens the full sidebar (the hexes hide) with
+    // placement live; its ✕ folds back to the hexes, still on the same kind.
     await page.locator('[data-testid="placement-kind"]').click();
     await expect(page.locator('[data-testid="build-rail"]')).toBeVisible();
-    await expect(page.locator('[data-testid="left-strip"]')).toHaveAttribute('data-open', 'false');
-    await expect(page.locator('[data-testid="placement-kind"]')).toHaveAttribute('data-state', 'solar');
+    await expect(page.locator('[data-testid="do-hexes"]')).toHaveCount(0);
     await page.locator('[data-testid="build-sidebar-close"]').click();
     await expect(page.locator('[data-testid="build-rail"]')).toBeHidden();
-    await expect(page.locator('[data-testid="left-strip"]')).toHaveAttribute('data-open', 'true');
     await expect(page.locator('[data-testid="placement-kind"]')).toBeVisible();
+    await expect(page.locator('[data-testid="placement-kind"]')).toHaveAttribute('data-state', 'solar');
 
     // THE LOCK (M3): Confirm keeps you placing the same building; the
     // sidebar stays closed, the placing tools stay.

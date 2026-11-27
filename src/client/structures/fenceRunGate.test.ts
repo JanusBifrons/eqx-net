@@ -7,6 +7,7 @@ import { placementChosen, resetPlacementChosen } from './placementChosen.js';
 import { endFenceRun, fenceRunAnchor, newFenceRunPlan, planGateRunInto, type FenceRunWorld } from './fenceRun.js';
 import { commitPlacement } from './placementCancel.js';
 import { pendingAfterSend } from './pendingPlacementRun.js';
+import { isHeldOnSent, type PendingPlacement } from './structurePlacementClient.js';
 import { snapPlacementToDeck } from '../../core/structures/deckPlacement.js';
 
 // Edge feel P3: a gate in the fence run. Same client fixture as fenceRun.test.ts.
@@ -151,5 +152,48 @@ describe('gate in a fence run: Place sends', () => {
     expect(p.sent).toBe(3);
     expect(p.kind).toBe('shield_gate');
     expect(p.run!.length).toBe(6);
+  });
+});
+
+// Owner phone playtest 2026-11-27: after a gate went down, the ghost stayed on
+// that seam and at once read red ("Too close to another structure") over its
+// own gate. The live ghost sits at the renderer's SNAPPED seam point; the sent
+// gate (and its posts) must be recorded at that same point so the "just sent"
+// hold (`isHeldOnSent`: dim, no verdict, Place refused) covers it, as it does
+// for any other kind.
+describe('fence run: the ghost is held on the spot just sent', () => {
+  const SNAP = { x: 0, y: 0, q: 0, r: 0, rhombus: -1, rot: -1, slot: 'hex' as const };
+  beforeEach(() => {
+    send.mockClear();
+    notePendingPlacement.mockClear();
+    structures.clear();
+    swarm.clear();
+    resetPlacementChosen();
+    endFenceRun();
+  });
+
+  /** The pending record the client would hold after the sends. */
+  function pendingFromSends(): PendingPlacement | null {
+    let p: PendingPlacement | null = null;
+    for (const c of notePendingPlacement.mock.calls) {
+      p = pendingAfterSend(p, c[0], c[1], c[2], c[3], c[4], 1000, 0, c[5] ?? null);
+    }
+    return p;
+  }
+
+  it('a gate: the ghost at its snapped seam point is held after Place', () => {
+    useUIStore.setState({ deck: true, placementKind: 'shield_gate', packedStock: null });
+    const g = snapPlacementToDeck('shield_gate', mid(1).x, mid(1).y, SNAP);
+    const gx = g.x, gy = g.y;
+    expect(place('shield_gate', { x: gx, y: gy })).toBe(true);
+    expect(isHeldOnSent('shield_gate', pendingFromSends(), gx, gy)).toBe(true);
+  });
+
+  it('a post: the ghost at its snapped corner is held after Place', () => {
+    useUIStore.setState({ deck: true, placementKind: 'shield_pylon', packedStock: null });
+    const c = snapPlacementToDeck('shield_pylon', corner(1).x, corner(1).y, SNAP);
+    const cx = c.x, cy = c.y;
+    expect(place('shield_pylon', { x: cx, y: cy })).toBe(true);
+    expect(isHeldOnSent('shield_pylon', pendingFromSends(), cx, cy)).toBe(true);
   });
 });

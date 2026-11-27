@@ -250,8 +250,12 @@ describe('FleetCommandSubsystem — modes (RTS slice 8)', () => {
     expect(stepFleetPatrol(o, D, D - pass * 4)).toBe(1);
   });
 
-  it('escort accepts an own ship or the caller\'s piloted ship; foreign ids and itself are dropped', () => {
-    const { sys, add, owners } = harness({}, { pilotShipOf: (pid) => (pid === 'alice' ? 'alice-flagship' : null) });
+  it('escort accepts any live ship (own, piloted, another player\'s, an NPC); unknown ids, non-ships and itself are dropped', () => {
+    const live = new Set(['npc-drone', 'carols-active']);
+    const { sys, add, owners } = harness({}, {
+      pilotShipOf: (pid) => (pid === 'alice' ? 'alice-flagship' : null),
+      isLiveShip: (id) => live.has(id),
+    });
     add('a1', 'alice');
     add('a2', 'alice');
     add('b1', 'bob');
@@ -265,9 +269,24 @@ describe('FleetCommandSubsystem — modes (RTS slice 8)', () => {
     sys.setMode('alice', ['a1'], 'escort', { escortId: 'alice-flagship' });
     expect(sys.ordersOf('a1')!.escortId).toBe('alice-flagship');
 
+    // Another player's AI-flown hull (it has an owner, so it is a live ship).
     sys.setMode('alice', ['a1'], 'escort', { escortId: 'bobs-ship' });
-    expect(sys.ordersOf('a1')!.mode).toBe('defend');
-    expect(sys.ordersOf('a1')!.escortId).toBeNull();
+    expect(sys.ordersOf('a1')!.mode).toBe('escort');
+    expect(sys.escortTargetOf('a1')).toBe('bobs-ship');
+
+    // Ships the room vouches for (`isLiveShip`): another pilot's ship, an NPC.
+    sys.setMode('alice', ['a1'], 'escort', { escortId: 'carols-active' });
+    expect(sys.escortTargetOf('a1')).toBe('carols-active');
+    sys.setMode('alice', ['a1'], 'escort', { escortId: 'npc-drone' });
+    expect(sys.escortTargetOf('a1')).toBe('npc-drone');
+
+    // Unknown ids and non-ships (a rock, a pod, a structure) are dropped.
+    for (const bad of ['nobody', 'rock-7', 'pod-3', 'struct-1']) {
+      sys.setMode('alice', ['a1'], 'escort', { escortId: 'a2' });
+      sys.setMode('alice', ['a1'], 'escort', { escortId: bad });
+      expect(sys.ordersOf('a1')!.mode).toBe('defend');
+      expect(sys.ordersOf('a1')!.escortId).toBeNull();
+    }
 
     // A group escort of a1: a1 itself is not told to escort itself.
     sys.setMode('alice', ['a1', 'a2'], 'escort', { escortId: 'a1' });

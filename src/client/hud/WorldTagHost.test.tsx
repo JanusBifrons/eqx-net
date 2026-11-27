@@ -21,6 +21,10 @@ const fleet = {
 };
 vi.mock('../fleet/useFleetSelectionView.js', () => ({ useFleetSelectionView: () => fleet }));
 
+// The group tag's kinds come from the mirror, like the who-hexes.
+const mirrorShips = new Map<string, { kind: string }>();
+vi.mock('../net/clientSingleton', () => ({ getGameClient: () => ({ mirror: { ships: mirrorShips } }) }));
+
 const { WorldTagHost } = await import('./WorldTagHost.js');
 
 let host: HTMLDivElement;
@@ -56,6 +60,8 @@ describe('WorldTagHost', () => {
       { id: 'a', name: 'Fighter', hullPct: 100, shieldPct: null, activity: '' },
       { id: 'b', name: 'Fighter', hullPct: 60, shieldPct: null, activity: '' },
     ];
+    mirrorShips.set('a', { kind: 'fighter' });
+    mirrorShips.set('b', { kind: 'fighter' });
     try {
       render(
         <LayoutContext.Provider value={{ fullscreen: host }}>
@@ -70,6 +76,7 @@ describe('WorldTagHost', () => {
       fleet.active = false;
       fleet.ids = [];
       fleet.ships = [];
+      mirrorShips.clear();
     }
   });
 });

@@ -81,6 +81,9 @@ export interface FleetCommandHooks {
    *  and when it is a member of one of their squads that squad is PILOT-LED:
    *  the members form up on it. */
   pilotShipOf?(playerId: string): string | null;
+  /** True for a live ship that is not a fleet hull (another pilot's flown
+   *  ship, an NPC ship): Escort may follow it. Rocks, pods, structures: false. */
+  isLiveShip?(shipId: string): boolean;
   /** An order was given to `shipId` (after any group-move spread: `order` is
    *  that ship's own). The room forwards it to the AI pilot brain that flies
    *  the hull (RTS Part B). Absent ⇒ ignored. */
@@ -393,9 +396,9 @@ export class FleetCommandSubsystem {
   /**
    * Set the standing mode. `data`: `x`/`y` = the defend / hunt post or the
    * retreat point; `route` = patrol waypoints; `escortId` = the ship to
-   * escort. An escort target must be one of the caller's own ships or the
-   * ship the caller is flying (`pilotShipOf`), and never the ship itself;
-   * otherwise the id is dropped and that ship defends where it is.
+   * escort: ANY live ship (a fleet hull of any owner, the caller's flown ship,
+   * or one `isLiveShip` vouches for), never the ship itself; otherwise the id
+   * is dropped and that ship defends where it is. Stance rules are unchanged.
    *
    * Squads: ids covering every AI-flown member ⇒ it becomes the SQUAD mode:
    * the leader flies it (stored for a pilot-led squad, applied on release),
@@ -411,10 +414,8 @@ export class FleetCommandSubsystem {
     const n = this.collect(callerId, shipIds);
     this.classifySquads(n);
     const escortId = mode === 'escort' && data?.escortId !== undefined ? data.escortId : undefined;
-    const escortOk = escortId !== undefined && (
-      this.hooks.ownerOf(escortId) === callerId
-      || (this.hooks.pilotShipOf !== undefined && this.hooks.pilotShipOf(callerId) === escortId)
-    );
+    const escortOk = escortId !== undefined && (this.hooks.ownerOf(escortId) !== null
+      || this.hooks.pilotShipOf?.(callerId) === escortId || this.hooks.isLiveShip?.(escortId) === true);
     const md = this.modeScratch;
     md.x = data?.x;
     md.y = data?.y;
@@ -576,9 +577,8 @@ export class FleetCommandSubsystem {
    * Re-apply a saved standing job to the attached `shipId` (hydrate). Each part
    * is validated on its own and dropped when invalid: the mode (with its data)
    * and the stance. The checks of a live `set_mode` hold: the ship must still
-   * belong to its owner (`ownerOf`), and an escort target must be a ship that
-   * owner owns and not the ship itself, else it defends where it is. Returns
-   * true when anything was applied.
+   * belong to its owner (`ownerOf`), and an escort target must be a live fleet
+   * hull (any owner) and not the ship itself, else it defends. True if applied.
    */
   restoreShip(shipId: string, saved: { mode?: unknown; modeData?: unknown; stance?: unknown }): boolean {
     const e = this.byId.get(shipId);
@@ -586,7 +586,7 @@ export class FleetCommandSubsystem {
     let applied = false;
     const m = parseSavedMode(saved);
     if (m !== null) {
-      setFleetMode(e.orders, m.mode, this.validatedModeData(e.ownerId, m.mode, m.modeData, shipId));
+      setFleetMode(e.orders, m.mode, this.validatedModeData(m.mode, m.modeData, shipId));
       this.hooks.modeSet?.(shipId);
       applied = true;
     }
@@ -605,7 +605,7 @@ export class FleetCommandSubsystem {
    * squad's owner (`ownerOf`) and not already in a squad; fewer than
    * {@link FLEET_SQUAD_MIN} left ⇒ the squad is dropped. The leader is the
    * saved one when it survived, else the first member. The squad mode is
-   * re-validated like `setMode` (an escort target must be the owner's and not
+   * re-validated like `setMode` (an escort target must be a live fleet hull, not
    * a member). Returns the number of squads formed.
    */
   restoreSquads(saved: readonly unknown[]): number {
@@ -629,7 +629,7 @@ export class FleetCommandSubsystem {
       let modeData: FleetModeData = {};
       if (s.mode !== undefined) {
         mode = s.mode;
-        modeData = this.validatedModeData(s.ownerId, s.mode, s.modeData, null) ?? {};
+        modeData = this.validatedModeData(s.mode, s.modeData, null) ?? {};
         if (modeData.escortId !== undefined && members.includes(modeData.escortId)) {
           modeData = { ...modeData, escortId: undefined };
         }
@@ -658,14 +658,13 @@ export class FleetCommandSubsystem {
     return formed;
   }
 
-  /** Saved mode data made safe to apply: an escort target must be owned by
-   *  `ownerId` and never `selfId`, else it is dropped (escort ⇒ defend here). */
-  private validatedModeData(
-    ownerId: string, mode: FleetMode, md: FleetSavedModeData | undefined, selfId: string | null,
-  ): FleetModeData | undefined {
+  /** Saved mode data made safe to apply: an escort target must be a live fleet
+   *  hull (`ownerOf`, any owner: ids stable across a restart, unlike swarm ids)
+   *  and never `selfId`, else it is dropped (escort ⇒ defend here). */
+  private validatedModeData(mode: FleetMode, md: FleetSavedModeData | undefined, selfId: string | null): FleetModeData | undefined {
     if (md === undefined) return undefined;
     const escortOk = mode === 'escort' && md.escortId !== undefined && md.escortId !== selfId
-      && this.hooks.ownerOf(md.escortId) === ownerId;
+      && this.hooks.ownerOf(md.escortId) !== null;
     return {
       ...(md.x !== undefined ? { x: md.x } : {}),
       ...(md.y !== undefined ? { y: md.y } : {}),

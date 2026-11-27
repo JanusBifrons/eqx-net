@@ -7,7 +7,19 @@
 /** The sandbox room's sector key (`?room=sandbox`). */
 export const SANDBOX_SECTOR_KEY = 'sandbox';
 
-const SEALED: ReadonlySet<string> = new Set([SANDBOX_SECTOR_KEY]);
+/** The battle scenario rooms (`?room=battle-*`, battleRooms.ts): sealed, so
+ *  their scripted fleets (roster rows owned by the pilot) never reach the real
+ *  hangar. Room name = sector key. */
+export const BATTLE_SECTOR_KEYS = [
+  'battle-capitals',
+  'battle-caps-vs-subcaps',
+  'battle-subcaps-vs-caps',
+  'battle-subcaps',
+  'battle-mixed',
+] as const;
+export type BattleSectorKey = typeof BATTLE_SECTOR_KEYS[number];
+
+const SEALED: ReadonlySet<string> = new Set([SANDBOX_SECTOR_KEY, ...BATTLE_SECTOR_KEYS]);
 
 /** Is `sectorKey` a sealed sector? Null / undefined (no sector) = not sealed. */
 export function isSealedSectorKey(sectorKey: string | null | undefined): boolean {

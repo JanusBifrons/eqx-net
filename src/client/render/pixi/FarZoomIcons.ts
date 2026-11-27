@@ -26,16 +26,10 @@ import { getShipKind } from '../../../shared-types/shipKinds.js';
 import { DEFAULT_RADAR_PREFS, OWN_SHIP_COLOUR, type RadarPrefs } from '../../../shared-types/settings/radar.js';
 import { isOwnedByMe } from '../shipOwnership.js';
 import { farIconRelation, type FarIconRelation } from '../relationToLocal.js';
+import { FAR_ICON, isIconOnly } from '../farIconRule.js';
 
-/**
- * Thresholds, in CSS px of the TRUE sprite's on-screen diameter.
- *  - `sizePx`: the icon's constant on-screen size.
- *  - `fadeStartPx`: the icon starts to fade in below this.
- *  - `solidPx`: the icon is fully opaque at and below this, and the sprite
- *    stops rendering (it would be no bigger than the icon covering it).
- *  - `hysteresis`: the sprite comes back only above `solidPx × hysteresis`.
- */
-export const FAR_ICON = { sizePx: 10, fadeStartPx: 14, solidPx: 8, hysteresis: 1.25 } as const;
+/** The thresholds + the icon-only rule live in `../farIconRule.ts` (pure, shared with the world tag). */
+export { FAR_ICON, isIconOnly };
 
 /** Icon opacity for a true on-screen diameter: 0 at/above `fadeStartPx`,
  *  1 at/below `solidPx`, linear between. Pure. */
@@ -43,14 +37,6 @@ export function farIconAlpha(screenDiamPx: number): number {
   if (screenDiamPx >= FAR_ICON.fadeStartPx) return 0;
   if (screenDiamPx <= FAR_ICON.solidPx) return 1;
   return (FAR_ICON.fadeStartPx - screenDiamPx) / (FAR_ICON.fadeStartPx - FAR_ICON.solidPx);
-}
-
-/** Sprite hidden (icon only), with hysteresis: enter below `solidPx`, leave
- *  above `solidPx × hysteresis`. Pure. */
-export function isIconOnly(screenDiamPx: number, wasIconOnly: boolean): boolean {
-  return wasIconOnly
-    ? screenDiamPx < FAR_ICON.solidPx * FAR_ICON.hysteresis
-    : screenDiamPx < FAR_ICON.solidPx;
 }
 
 /** The cut field's median rock size (world u), for the far-zoom switch. */

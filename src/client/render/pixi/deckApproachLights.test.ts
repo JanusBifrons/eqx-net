@@ -4,10 +4,10 @@
  * strobe lifecycle (default on; `?approach=off` hides them).
  */
 import { describe, it, expect } from 'vitest';
-import { Container, type Graphics } from 'pixi.js';
+import { Container, type Sprite } from 'pixi.js';
 import {
   APPROACH_FLASH_MS, APPROACH_LAMP_COUNT, APPROACH_LAMP_SPACING, APPROACH_LAMP_START, APPROACH_LAMP_Z, APPROACH_PERIOD_MS,
-  APPROACH_EDGE_COUNT, APPROACH_EDGE_OFFSET, APPROACH_STEP_MS, DeckApproachLights, approachEdgeContext, approachEdgeInto, approachFlash, approachLampInto, gateOutsideSign, readApproachFlag,
+  APPROACH_EDGE_COUNT, APPROACH_EDGE_OFFSET, APPROACH_STEP_MS, CORE_TINT_PORT, CORE_TINT_STAR, DeckApproachLights, LAMP_CAP_PX, LAMP_CORE_R, LAMP_GLOW_ALPHA, approachEdgeIndex, approachEdgeInto, approachLampScale, approachFlash, approachLampInto, gateOutsideSign, readApproachFlag,
 } from './deckApproachLights.js';
 import { StructureDeckPlates } from './structureDeckPlates.js';
 import { ROAD_HALF_W } from './structureStyleC.transport.road.js';
@@ -78,7 +78,7 @@ describe('approachLampInto', () => {
       expect(cross(port[0]!, port[1]!)).toBeCloseTo(APPROACH_EDGE_OFFSET);
       expect(cross(star[0]!, star[1]!)).toBeCloseTo(-APPROACH_EDGE_OFFSET);
     }
-    expect(approachEdgeContext(true)).not.toBe(approachEdgeContext(false));
+    expect(CORE_TINT_PORT).not.toBe(CORE_TINT_STAR);
   });
 
   it('edge rows sit on the exact road edges, inside the gate (owner: line up with the road)', () => {
@@ -145,14 +145,14 @@ describe('DeckApproachLights', () => {
     const c = lights.containerOf(7)!;
     expect(c.zIndex).toBe(APPROACH_LAMP_Z);
     expect(c.position.x).toBe(100);
-    expect(c.children.length).toBe(2 * APPROACH_LAMP_COUNT + 2 * APPROACH_EDGE_COUNT); // centre base + flash, then port + starboard
+    expect(c.children.length).toBe(APPROACH_LAMP_COUNT + 2 * APPROACH_EDGE_COUNT); // centre lamps, then port + starboard
     // Outside is game +y ⇒ Pixi −y, the first lamp just off the seam.
     expect(c.children[0]!.position.y).toBeCloseTo(-APPROACH_LAMP_START);
-    expect(c.children[2 * (APPROACH_LAMP_COUNT - 1)]!.position.y)
+    expect(c.children[APPROACH_LAMP_COUNT - 1]!.position.y)
       .toBeCloseTo(-(APPROACH_LAMP_START + (APPROACH_LAMP_COUNT - 1) * APPROACH_LAMP_SPACING));
   });
 
-  it('strobes only the flash sprites, at effect time, and skips off-screen gates', () => {
+  it('strobes the centre lamps (glow to full), at effect time, and skips off-screen gates', () => {
     const ships = new Container();
     const lights = new DeckApproachLights(ships, onPlate);
     lights.frame(true, 1, 0, undefined);
@@ -160,14 +160,14 @@ describe('DeckApproachLights', () => {
     lights.frame(true, 1, 0, undefined); // t = 0: the farthest lamp is at full flash
     const c = lights.containerOf(7)!;
     lights.note(7, GATE, 0, 0, 0);
-    const flash = (k: number): Graphics => c.children[2 * k + 1] as Graphics;
+    const flash = (k: number): Sprite => (c.children[k] as Container).children[0] as Sprite; // the glow
     expect(c.visible).toBe(true);
     expect(flash(APPROACH_LAMP_COUNT - 1).alpha).toBe(1);
-    expect(flash(0).visible).toBe(false);
+    expect(flash(0).alpha).toBe(LAMP_GLOW_ALPHA);
     lights.frame(true, 1, (APPROACH_LAMP_COUNT - 1) * APPROACH_STEP_MS, undefined); // the nearest one's turn
     lights.note(7, GATE, 0, 0, 0);
     expect(flash(0).alpha).toBe(1);
-    expect(flash(APPROACH_LAMP_COUNT - 1).visible).toBe(false);
+    expect(flash(APPROACH_LAMP_COUNT - 1).alpha).toBe(LAMP_GLOW_ALPHA);
     lights.frame(true, 1, 0, new Float64Array([5000, 5000, 6000, 6000])); // camera far away
     expect(c.visible).toBe(false);
   });
@@ -198,21 +198,21 @@ describe('DeckApproachLights', () => {
     const lit = Math.ceil((DECK_AT - APPROACH_LAMP_START) / APPROACH_LAMP_SPACING); // lamps 0..lit-1 fall short of it
     expect(lit).toBe(APPROACH_LAMP_COUNT - 1); // the long white row reaches it; the edge rows stop well short
     for (let k = 0; k < APPROACH_LAMP_COUNT; k++) {
-      expect(c.children[2 * k]!.visible).toBe(k < lit);
+      expect(c.children[k]!.visible).toBe(k < lit);
       if (k < APPROACH_EDGE_COUNT) {
-        expect(c.children[2 * APPROACH_LAMP_COUNT + 2 * k]!.visible).toBe(k < lit);
-        expect(c.children[2 * APPROACH_LAMP_COUNT + 2 * k + 1]!.visible).toBe(k < lit);
+        expect(c.children[approachEdgeIndex(k, true)]!.visible).toBe(k < lit);
+        expect(c.children[approachEdgeIndex(k, false)]!.visible).toBe(k < lit);
       }
     }
     lights.frame(true, 1, 0, undefined); // t = 0: the farthest LIT lamp flashes, nothing past it
-    const flash = (k: number): Graphics => c.children[2 * k + 1] as Graphics;
+    const flash = (k: number): Sprite => (c.children[k] as Container).children[0] as Sprite; // the glow
     expect(flash(lit - 1).alpha).toBe(1);
-    for (let k = lit; k < APPROACH_LAMP_COUNT; k++) expect(flash(k).visible).toBe(false);
+    for (let k = lit; k < APPROACH_LAMP_COUNT; k++) expect(c.children[k]!.visible).toBe(false);
     // The neighbour goes away (plate version bumps): the full run comes back.
     const open = new DeckApproachLights(new Container(), (_x, y) => y < 0);
     open.frame(true, 2, 0, undefined);
     open.note(7, GATE, 0, 0, 0);
-    expect(open.containerOf(7)!.children[2 * (APPROACH_LAMP_COUNT - 1)]!.visible).toBe(true);
+    expect(open.containerOf(7)!.children[APPROACH_LAMP_COUNT - 1]!.visible).toBe(true);
   });
 
   it('a gate between two plates (or none) draws no lamps', () => {
@@ -244,5 +244,52 @@ describe('on the deck floor (StructureDeckPlates)', () => {
     off.sync(plates, 0);
     off.note(3, GATE, gx, gy, angle);
     expect(off.approach).toBeUndefined();
+  });
+});
+
+describe('lamp size cap (owner: small lamps + soft glow, never a disc)', () => {
+  /** On-screen core radius (CSS px) at camera `zoom`. */
+  const corePx = (zoom: number): number => LAMP_CORE_R * approachLampScale(zoom) * zoom;
+
+  it('never grows past the cap however far in the camera zooms', () => {
+    for (const zoom of [0.5, 1, 1.5, 2, 3, 3.2, 6, 50]) expect(corePx(zoom)).toBeLessThanOrEqual(LAMP_CAP_PX + 1e-9);
+    expect(corePx(3)).toBeCloseTo(LAMP_CAP_PX); // the fighter's zoom cap: held at the cap, not 33 px
+    expect(LAMP_CAP_PX).toBeGreaterThanOrEqual(3);
+    expect(LAMP_CAP_PX).toBeLessThanOrEqual(6);
+  });
+
+  it('zoomed out it keeps its world size (the build and spawn cameras look as before)', () => {
+    for (const zoom of [0.05, 0.21, 0.25, 0.35]) expect(approachLampScale(zoom)).toBe(1); // build ≈ 0.21, spawn ≈ 0.35
+    expect(LAMP_CORE_R).toBe(11); // today's lens
+    expect(approachLampScale(0)).toBe(1);
+    expect(approachLampScale(Number.NaN)).toBe(1);
+  });
+
+  it('the frame applies the scale to every lamp of an on-screen gate, from the view zoom', () => {
+    const lights = new DeckApproachLights(new Container(), (_x, y) => y < 0);
+    lights.frame(true, 1, 0, undefined);
+    lights.note(7, GATE, 0, 0, 0);
+    const view = { art: { art: null, handles: new Map(), sunAz: 0 }, cameraScale: 3 };
+    lights.frame(true, 1, 0, undefined, view);
+    const c = lights.containerOf(7)!;
+    for (const lamp of c.children) expect(lamp.scale.x).toBeCloseTo(approachLampScale(3));
+    lights.note(7, GATE, 0, 0, 0);
+    lights.frame(true, 1, 0, undefined, { ...view, cameraScale: 0.25 });
+    for (const lamp of c.children) expect(lamp.scale.x).toBe(1);
+  });
+
+  it('the strobe swells the lamp (glow and core) and fades back', () => {
+    const lights = new DeckApproachLights(new Container(), (_x, y) => y < 0);
+    lights.frame(true, 1, 0, undefined);
+    lights.note(7, GATE, 0, 0, 0);
+    lights.frame(true, 1, 0, undefined); // farthest lamp at full flash
+    const c = lights.containerOf(7)!;
+    const far = c.children[APPROACH_LAMP_COUNT - 1] as Container, near = c.children[0] as Container;
+    expect(far.children[0]!.scale.x).toBeGreaterThan(near.children[0]!.scale.x);
+    expect(far.children[1]!.scale.x).toBeGreaterThan(near.children[1]!.scale.x);
+    lights.note(7, GATE, 0, 0, 0);
+    lights.frame(true, 1, APPROACH_FLASH_MS, undefined); // its flash is over
+    expect(far.children[0]!.scale.x).toBeCloseTo(near.children[0]!.scale.x);
+    expect(far.children[0]!.alpha).toBe(LAMP_GLOW_ALPHA);
   });
 });

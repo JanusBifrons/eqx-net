@@ -78,9 +78,10 @@ export function warpFxSizes(stern: number): WarpFxSizes {
 
 /** A smooth radial falloff (white → clear), radius GLOW_R, built once on a
  *  canvas; null where there is no canvas (unit tests). Stacked rings showed
- *  as stepped bands at capital size (fleet film review). */
+ *  as stepped bands at capital size (fleet film review). Also the deck
+ *  approach lamps' glow while the art `glow` is not baked (classic art). */
 let glowTex: Texture | null | undefined;
-function glowTexture(): Texture | null {
+export function glowTexture(): Texture | null {
   if (glowTex !== undefined) return glowTex;
   glowTex = null;
   const C = (globalThis as { OffscreenCanvas?: new (w: number, h: number) => OffscreenCanvas }).OffscreenCanvas;

@@ -48,6 +48,8 @@ export interface SwarmEvictorDeps {
   freeSlots: number[];
   /** Navigation — drop the body's resting obstacle (optional: test rigs). */
   nav?: { swarmGone(id: string): void };
+  /** Fleet ships escorting it fall back (`WingmanPilots.reapplyEscortsOf`). */
+  escortGone?: (id: string) => void;
 }
 
 export interface EvictSwarmOpts {
@@ -89,6 +91,7 @@ export class SwarmEvictor {
     // Phase 4c — clean up drone turret state alongside the body.
     d.mountTicker.clearDrone(rec.id);
     d.freeSlots.push(rec.slot);
+    d.escortGone?.(rec.id);
     if (opts.broadcast) {
       d.logger.info({ targetId: rec.id, shooterId: opts.shooterId }, 'drone destroyed');
     }

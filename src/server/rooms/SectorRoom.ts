@@ -145,6 +145,7 @@ import { WeaponMountTicker } from './WeaponMountTicker.js';
 import type { LockSubsystem } from './LockSubsystem.js';
 import type { NpcLockSubsystem } from './NpcLockSubsystem.js';
 import { fillRangeShape } from '../../core/combat/fireControlBearing.js';
+import { hasMiningTool } from '../../core/combat/salvageTargeting.js';
 import type { PhysicsWorkerProxy, WorkerCmd } from './PhysicsWorkerProxy.js';
 import { classifyAttacker } from './classifyAttacker.js';
 import { RoomHitStanding, adjustStanding } from './features/hitStanding.js';
@@ -474,6 +475,14 @@ export class SectorRoom extends Room<SectorState> {
     pilotShipOf: (playerId) => {
       const ship = this.getActiveShip(playerId);
       return ship?.alive && this.playerToSlot.has(playerId) ? ship.shipInstanceId : null;
+    },
+    // Escort any live ship: an NPC ship (swarm drone record) or a pilot's
+    // flown ship (by shipInstanceId); never a rock, pod, structure or wreck.
+    isLiveShip: (id) => {
+      const rec = this.swarmRegistry.get(id);
+      if (rec !== null) return rec.kind === SWARM_KIND_DRONE;
+      const s = this.state.ships.get(id);
+      return s !== undefined && s.alive && this.playerToActiveShipInstance.get(s.playerId) === id;
     },
     // RTS Part B: an owner's order reaches the AI pilot brain flying the hull.
     orderIssued: (id, order) => this.wingmen.orderIssued(id, order),
@@ -1547,6 +1556,7 @@ export class SectorRoom extends Room<SectorState> {
       shieldHullRouter: this.shieldHullRouter,
       mountTicker: this.mountTicker,
       freeSlots: this.freeSlots, nav: this.nav,
+      escortGone: (id) => this.wingmen.reapplyEscortsOf(id),
     });
 
     // Player respawn handler. Composes worker proxy + SAB writer +
@@ -2317,12 +2327,12 @@ export class SectorRoom extends Room<SectorState> {
         this.testWalletSeed = Math.max(0, Math.floor(g.credits ?? 0));
       }
       this.testHaulerRaiders = Math.max(0, Math.min(6, Math.floor(roomOpts.haulerRaiders ?? 0)));
-      if (roomOpts.sceneScript !== undefined) ({ runner: this.sceneRunner, tickRing: this.sceneTickRing, workerRing: this.sceneWorkerRing } = initSceneScript({ perfSource: this, serverTick: () => this.serverTick, sectorKey: () => this.sectorKey, playerToSlot: () => this.playerToSlot, swarmSpawner: () => this.swarmSpawner, swarmRegistry: this.swarmRegistry, swarmHealth: () => this.swarmHealth, swarmShield: () => this.swarmShield, swarmShieldLastDmg: () => this.swarmShieldLastDmg, aiController: () => this.aiController, broadcast: (t, m) => this.broadcast(t, m), spawnLivingWorldBot: (spec) => this.spawnLivingWorldBot(spec), snapshotRestore: this.snapshotRestore, lingeringSlots: this.lingeringSlots, fleet: this.fleet, capitalWrecks: () => this.capitalWrecks, rigSceneHooks: () => this.rigs.rigScene.sceneHooks() }, roomOpts.sceneScript));
       this.perfFixedLoad = roomOpts.perfFixedLoad === true;
       const twa = roomOpts.testWaveArrival;
       if (twa && Number.isFinite(twa.x) && Number.isFinite(twa.y)) this.testWaveArrivalPose = { x: twa.x, y: twa.y };
       this.waveNeedsOwner = roomOpts.waveNeedsOwner === true;
     }
+    if ((this.testMode || isSealedSectorKey(this.sectorKey)) && roomOpts.sceneScript !== undefined) ({ runner: this.sceneRunner, tickRing: this.sceneTickRing, workerRing: this.sceneWorkerRing } = initSceneScript({ perfSource: this, serverTick: () => this.serverTick, sectorKey: () => this.sectorKey, playerToSlot: () => this.playerToSlot, swarmSpawner: () => this.swarmSpawner, swarmRegistry: this.swarmRegistry, swarmHealth: () => this.swarmHealth, swarmShield: () => this.swarmShield, swarmShieldLastDmg: () => this.swarmShieldLastDmg, aiController: () => this.aiController, broadcast: (t, m) => this.broadcast(t, m), spawnLivingWorldBot: (spec) => this.spawnLivingWorldBot(spec), snapshotRestore: this.snapshotRestore, lingeringSlots: this.lingeringSlots, fleet: this.fleet, capitalWrecks: () => this.capitalWrecks, rigSceneHooks: () => this.rigs.rigScene.sceneHooks() }, roomOpts.sceneScript)); // testMode, or a sealed sector (battle rooms: fixed options, battleRooms.ts)
     // Phase-1 issue 5 — scrap-stress seed: a dense corridor of free-floating
     // scrap ahead of spawn for the fly-through reconciliation E2E.
     if (this.testMode && (roomOpts.scenarioScrapCount ?? 0) > 0) {
@@ -2539,6 +2549,7 @@ export class SectorRoom extends Room<SectorState> {
       logger,
       fleetMsgAllowed: (sid) => this.fleetHooks.fleetMsgAllowed(sid),
       fleet: this.fleet,
+      fleetCanSalvage: (id) => { const s = this.state.ships.get(id); const m = s !== undefined ? getShipKind(s.kind).mounts : undefined; return m !== undefined && hasMiningTool(m); },
       fleetTransit: () => this.transitOrchestrator,
       transitOrchestrator: () => this.transitOrchestrator,
       inputCountThisTick: this.inputCountThisTick,
@@ -3945,7 +3956,7 @@ export class SectorRoom extends Room<SectorState> {
     playerToSession: () => this.playerToSession, playerToActiveShipInstance: this.playerToActiveShipInstance,
     lingeringSlots: this.lingeringSlots, spectateParkedHull: this.spectateParkedHull, sabF32: () => this.sabF32,
     serverTick: () => this.serverTick, sectorKey: () => this.sectorKey, aiController: () => this.aiController,
-    wingmen: () => this.wingmen, getActiveShip: (pid) => this.getActiveShip(pid),
+    wingmen: () => this.wingmen, getActiveShip: (pid) => this.getActiveShip(pid), swarmRegistry: this.swarmRegistry,
     displaceActiveHullToLingering: (pid) => this.pilotSwap.displaceActiveHullToLingering(pid),
   });
   // ── Phase 4 WS-A2 — same-sector instant pilot swap (`features/pilotSwap.ts`) ──

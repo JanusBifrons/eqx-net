@@ -31,6 +31,7 @@ import { interpBuildPct } from './buildBarInterp.js';
 import { CONNECTOR_CONSTRUCTION_COLOR, PREVIEW_BLOCKED_COLOR } from './connectorVisual.js';
 import { deckSlotOutline, type DeckSlot } from '../../../core/hex/deckSnap.js';
 import { BUILD_RING_LABEL, BuildRing, buildRingClearRadius } from './buildRing.js';
+import { drawRoadOverlay } from './structureStyleC.transport.road.js';
 
 /** The hologram's cyan: the construction-flow cyan (connectors, build bar). */
 export const HOLOGRAM_COLOR = CONNECTOR_CONSTRUCTION_COLOR;
@@ -134,6 +135,14 @@ function slotArtFor(slot: DeckSlot, rhombus: number): GraphicsContext {
     c.poly(pts, true).fill({ color: 0xffffff, alpha: 0.06 }).stroke({ color: 0xffffff, alpha: 0.7, width: SLOT_OUTLINE_W });
   }
   slotArt.set(key, c);
+  return c;
+}
+
+/** The road ghost's carriageway art, one shared context per local arm mask. */
+const roadArmsCache = new Map<number, GraphicsContext>();
+function roadArmsArt(mask: number): GraphicsContext {
+  let c = roadArmsCache.get(mask);
+  if (!c) { c = new GraphicsContext(); drawRoadOverlay(c, mask); roadArmsCache.set(mask, c); }
   return c;
 }
 
@@ -249,6 +258,26 @@ export class StructureHologram extends Container {
     this.slotM = m;
     this.slot.scale.x = m * Math.abs(this.slot.scale.y);
     this.slot.rotation = -this.rotation * m;
+  }
+
+  /** The road ghost's carriageway (the placed road's own overlay); made on first use. */
+  private roadArms: Graphics | null = null;
+  /** The local arm mask shown (-1 = none). */
+  roadArmsMask = -1;
+
+  /** Per frame, the placement ghost only: a road shows the carriageway it
+   *  will be laid with (`drawRoadOverlay`, the placed road's own art, for
+   *  its local arm mask `mask`, `roadJoins.roadLocalArms`); -1 hides it.
+   *  One shared context per mask; no allocation after first use. */
+  setRoadArms(mask: number): void {
+    if (mask < 0) {
+      if (this.roadArms) this.roadArms.visible = false;
+      this.roadArmsMask = -1;
+      return;
+    }
+    if (!this.roadArms) { this.roadArms = new Graphics(); this.addChildAt(this.roadArms, this.children.indexOf(this.line)); }
+    if (mask !== this.roadArmsMask) { this.roadArms.context = roadArmsArt(mask); this.roadArmsMask = mask; }
+    this.roadArms.visible = true;
   }
 
   /** Per frame: place the print line and the mask for `buildPct`. No allocation. */
