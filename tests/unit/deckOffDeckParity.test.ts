@@ -119,7 +119,8 @@ describe('off-deck parity (client ghost verdict == server place_structure)', () 
   // A connector on a plate centre at the exact point: server place(deck) vs ghost.
   const EXACT: Array<[string, string, { x: number; y: number }, string | null]> = [
     ['new plate: connector on an adjacent plate centre', 'connector', centre(1, 0), null],
-    ['new plate: connector on a far plate centre', 'connector', centre(2, 2), off],
+    // A Deck plate goes anywhere clear (owner 2026-11-27): no deck to touch.
+    ['new plate: connector on a far plate centre', 'connector', centre(2, 2), null],
     ['own occupied plate centre', 'connector', centre(0, 0), placementRejectionNotice('overlap-structure')],
     ['off every plate', 'reactor', centre(9, -7), off],
   ];
@@ -143,10 +144,10 @@ describe('off-deck parity (client ghost verdict == server place_structure)', () 
   const rock = (p: { x: number; y: number }, radius = 120): GridObstacle => ({ x: p.x, y: p.y, radius });
   const LAY: Array<[string, { x: number; y: number }, GridObstacle[], string | null]> = [
     ['lays a clear plate bordering the deck', near(centre(1, 0)), [], null],
-    ['plate not touching the deck', near(centre(2, 2)), [], off],
+    ['plate not touching the deck (anywhere clear)', near(centre(2, 2)), [], null],
     ['a rock in a ring hex of the new plate', near(centre(1, 0)), [rock(ringHex(1, 0, 4))], placementRejectionNotice('plate-blocked')],
     ['a rock just off the new plate', near(centre(1, 0)), [rock(offPlate10())], null],
-    ["a plate bordering only the rival's deck", near(centre(3, 0)), [], off],
+    ["a plate bordering only the rival's deck (anywhere clear)", near(centre(3, 0)), [], null],
   ];
   for (const [name, p, rocks, want] of LAY) {
     it(`laying a plate: ${name}`, () => {
