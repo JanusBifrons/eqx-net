@@ -57,8 +57,9 @@ export const deckApproachStills: Shot = {
     await ctx.sleep(2500);
     await snap(ctx, 'd-build-view');
     // At the cap the view is ~280 world units wide: centre on the lamp row,
-    // midway between lamps 1 and 2 so the hull covers neither.
-    await ctx.enter(target({ zoom: 50, spawnX: -4892, spawnY: 0 }));
+    // midway between lamps 1 and 2 so the hull covers neither. A fresh room
+    // (own testId): a rejoin of the same room keeps the old hull's pose.
+    await ctx.enter(target({ zoom: 50, spawnX: -4892, spawnY: 0, testId: ctx.testId + '-cap' }));
     await ctx.sleep(2500);
     await snap(ctx, 'b-zoom-cap');
     for (let i = 0; i < 16; i++) {
@@ -66,7 +67,7 @@ export const deckApproachStills: Shot = {
       await ctx.sleep(40);
     }
     // The red (port) edge row at the cap, beside edge lamps 1 and 2.
-    await ctx.enter(target({ zoom: 50, spawnX: -4892, spawnY: 175 }));
+    await ctx.enter(target({ zoom: 50, spawnX: -4892, spawnY: 175, testId: ctx.testId + '-edge' }));
     await ctx.sleep(2500);
     await snap(ctx, 'e-zoom-cap-edge');
   },
