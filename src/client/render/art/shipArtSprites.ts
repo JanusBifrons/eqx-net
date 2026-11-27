@@ -19,6 +19,10 @@ import { MachinedFlatSprite } from './MachinedFlatSprite.js';
 import { MachinedShipSprite } from './MachinedShipSprite.js';
 import { hasTurrets } from './turretLayout.js';
 import { isCapitalKindId } from './capitalKind.js';
+import { DECK_ROAD_KIND } from '../../../core/structures/deckGateRoad.js';
+import { structureStyleDrawer } from '../pixi/structureStyles.js';
+import { roadLitArmsOf } from '../pixi/roadJoins.js';
+import { DECK_LIT_LABEL } from '../pixi/structureMirrorFlip.js';
 
 export interface ShipArtCtx {
   /** Null when the Machined look is off: everything draws today's look. */
@@ -36,6 +40,8 @@ export interface ShipArtCtx {
   structLivery?: boolean;
   /** Structure style (`?restyle=a`, `structureStyles.ts`); absent = today's art. */
   structStyle?: string;
+  /** Lit deck spike (`?deckLit=on`): a road bakes its carriageway (arm mask) into its art. */
+  deckLit?: boolean;
 }
 
 /** The handle a ship should use now (re-acquired only on a kind/paint change).
@@ -65,19 +71,22 @@ export function shipHandleFor(
 /** A structure's handle; its quarter turn is part of the bake.
  *  `owner` (the structure's owning player): with `actx.structLivery` on, the
  *  bake takes the owner's colours and sigil (`ownerLivery`), like ships;
- *  off, or with no owner, it is today's catalogue-colour bake. */
-export function structHandleFor(actx: ShipArtCtx, key: string, kindId: string, rot: number, owner?: string): ArtHandle | null {
+ *  off, or with no owner, it is today's catalogue-colour bake.
+ *  `id` (the entity id): with `actx.deckLit`, a styled road bakes its arm mask. */
+export function structHandleFor(actx: ShipArtCtx, key: string, kindId: string, rot: number, owner?: string, id?: number): ArtHandle | null {
   if (!actx.art) return null;
   let h = actx.handles.get(key);
+  const arms = actx.deckLit === true && id !== undefined && kindId === DECK_ROAD_KIND && structureStyleDrawer(actx.structStyle, kindId) !== undefined
+    ? roadLitArmsOf(id) : undefined;
   const rings = actx.turrets === true && hasTurrets(kindId, true);
   const lv = actx.structLivery === true && owner !== undefined ? ownerLivery(owner) : undefined;
   const jl = h?.job.type === 'struct' ? h.job.livery : undefined;
   const liveryChanged = lv === undefined ? jl !== undefined : jl === undefined || jl.team !== lv.team || jl.sigil !== lv.sigil;
-  if (!h || h.stale === true || h.job.type !== 'struct' || h.job.id !== kindId || (!h.job.lit && quarterTurns(h.job.rot ?? 0) !== quarterTurns(rot)) || (h.job.rings === true) !== rings || liveryChanged || h.job.style !== actx.structStyle) {
+  if (!h || h.stale === true || h.job.type !== 'struct' || h.job.id !== kindId || (!h.job.lit && quarterTurns(h.job.rot ?? 0) !== quarterTurns(rot)) || (h.job.rings === true) !== rings || liveryChanged || h.job.style !== actx.structStyle || h.job.arms !== arms) {
     // The owner's team colour is the plan's accent; the livery adds bands + sigil slots.
     h = lv
-      ? actx.art.struct(kindId, 1, rot, lv.team, true, rings, { team: lv.team, sigil: lv.sigil }, actx.structStyle)
-      : actx.art.struct(kindId, 1, rot, undefined, true, rings, undefined, actx.structStyle);
+      ? actx.art.struct(kindId, 1, rot, lv.team, true, rings, { team: lv.team, sigil: lv.sigil }, actx.structStyle, arms)
+      : actx.art.struct(kindId, 1, rot, undefined, true, rings, undefined, actx.structStyle, arms);
     actx.handles.set(key, h);
   }
   return h;
@@ -110,7 +119,12 @@ export function shipArtSwap(actx: ShipArtCtx, sprite: Container | undefined, h: 
 export function buildArtShipSprite(h: ArtHandle | null, classic: () => Container): Container {
   if (h && h.state === 'ready') {
     if (h.ship) return new MachinedShipSprite(h.ship, h.job.type === 'ship' && isCapitalKindId(h.job.id));
-    if (h.struct) return new MachinedFlatSprite(h.struct);
+    if (h.struct) {
+      const s = new MachinedFlatSprite(h.struct);
+      // Lit deck spike: the road's arm bake is drawn unmirrored (counterFlipStructureParts).
+      if (h.job.type === 'struct' && h.job.arms !== undefined) (s.lit ?? s.body).label = DECK_LIT_LABEL;
+      return s;
+    }
   }
   return classic();
 }

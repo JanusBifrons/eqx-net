@@ -9,7 +9,7 @@
  * Local space is Pixi-up (ship nose at -y). Heights are in WORLD units.
  */
 import { getShipKind, type ShipKind } from '../../../shared-types/shipKinds.js';
-import { buildStructureVisual, type PolyOp } from '../pixi/structureVisuals.js';
+import { buildStructureVisual, type PolyOp, type StructureVisual } from '../pixi/structureVisuals.js';
 import { polyEdgeDist } from '../pixi/structureStyleKit.js';
 import { getStructureKind, isStructureKindId } from '../../../shared-types/structureKinds.js';
 import { boxBlur, distanceInside, gridFor, hashStr, insidePoly, rasterPoly, rng, type Poly } from './raster.js';
@@ -17,7 +17,7 @@ import { shipScrapGroups } from '../../../core/geometry/shipScrapGroups.js';
 import { shipShapeScale } from '../../../core/geometry/shipHullOutline.js';
 import { planBowFeatures, type BowFeature } from './bowDetail.js';
 import { sizeClassOf } from '../../../shared-types/shipScale/tuning.js';
-import { hash01, lin, MAT, newFields, paintOf, PALETTE, setAlbedo, valueNoise, type Fields, type Livery, type StructLivery } from './fieldsCore.js';
+import { bleedFringe, hash01, lin, MAT, newFields, paintOf, PALETTE, setAlbedo, valueNoise, type Fields, type Livery, type StructLivery } from './fieldsCore.js';
 import { stampSigils, stampSigilSlot } from './sigil.js';
 import { bakedHullPaint, liveryHullGrey, liveryLayout, liveryPaint, paintEnamel, paintLivery, weatherLivery } from './liveryForge.js';
 
@@ -558,6 +558,11 @@ export interface StructureForgeOpts {
   /** Structure style (`?restyle=`, `structureStyles.ts`); absent or
    *  `current` = today's bake, byte for byte. */
   style?: string;
+  /** Lit deck spike: a road's arm mask (its style bakes the carriageway) and the grid box it needs (the full deck hex). */
+  arms?: number;
+  box?: { w: number; h: number };
+  /** A ready draw plan (lit deck hex, `deckLitVisual`) instead of the kind's own. */
+  plan?: StructureVisual;
 }
 
 const DECK_HEX = 0x1d2433;
@@ -600,7 +605,7 @@ function stampStylePoly(f: Fields, p: PolyOp): void {
       const cov = Math.min(1, Math.max(0, ed * g.ppu + 0.5));
       const i = ty * g.w + tx;
       const t = Math.min(1, Math.max(0, ed / bev));
-      let hh = f.height[i]! + p.lift * Math.sqrt(1 - (1 - t) * (1 - t));
+      let hh = (p.level ?? f.height[i]!) + p.lift * Math.sqrt(1 - (1 - t) * (1 - t));
       if (p.roof) hh += p.roof[0] * Math.min(1, Math.max(0, ed - bev) / p.roof[1]);
       let k = 1;
       if (p.seams && ed > bev + 1) {
@@ -639,10 +644,10 @@ function stampStylePoly(f: Fields, p: PolyOp): void {
  */
 export function forgeStructure(kindId: string, opts: StructureForgeOpts): Fields {
   const accent = opts.accent ?? (isStructureKindId(kindId) ? getStructureKind(kindId).color : 0x66ccaa);
-  const plan = buildStructureVisual(kindId, { accent, seed: opts.seed ?? 1, omitSpans: true, ...(opts.livery ? { livery: true } : {}), ...(opts.style ? { style: opts.style } : {}) });
-  const fp = plan.footprint;
-  const box: Poly = [[-fp.w / 2, -fp.h / 2], [fp.w / 2, -fp.h / 2], [fp.w / 2, fp.h / 2], [-fp.w / 2, fp.h / 2]];
-  const side = Math.max(fp.w, fp.h) + 4;
+  const plan = opts.plan ?? buildStructureVisual(kindId, { accent, seed: opts.seed ?? 1, omitSpans: true, ...(opts.livery ? { livery: true } : {}), ...(opts.style ? { style: opts.style } : {}), ...(opts.arms !== undefined ? { arms: opts.arms } : {}) });
+  const fp = plan.footprint, gb = opts.box ?? fp;
+  const box: Poly = [[-gb.w / 2, -gb.h / 2], [gb.w / 2, -gb.h / 2], [gb.w / 2, gb.h / 2], [-gb.w / 2, gb.h / 2]];
+  const side = Math.max(gb.w, gb.h) + 4;
   const ppu = opts.maxSide ? Math.min(opts.ppu, opts.maxSide / side) : opts.ppu;
   const g = gridFor([box], ppu, 2);
   const f = newFields(g, paintOf(accent));
@@ -739,6 +744,7 @@ export function forgeStructure(kindId: string, opts: StructureForgeOpts): Fields
       f.albedo[i * 3]! *= k; f.albedo[i * 3 + 1]! *= k; f.albedo[i * 3 + 2]! *= k;
     }
   }
+  if (opts.box) bleedFringe(f, 2); // lit deck tile: no black fringe at the seam
   // Lamps.
   for (const l of plan.lights) {
     const e = lin(l.color);

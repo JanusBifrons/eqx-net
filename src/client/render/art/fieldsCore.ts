@@ -153,3 +153,34 @@ export function valueNoise(x: number, y: number, seed: number): number {
   const c = latticeHash(xi, yi + 1, seed), d = latticeHash(xi + 1, yi + 1, seed);
   return a + (b - a) * sx + (c - a) * sy + (a - b - c + d) * sx * sy;
 }
+
+/**
+ * Bleed colour into the fringe (lit deck spike, `forgeStructure` with a box):
+ * a texel no poly gave a colour (coverage 0, or 0.5 and under: its albedo
+ * stays black) takes its material and albedo from a coloured neighbour,
+ * `passes` texels deep. Without it the lit mesh's linear
+ * filter mixes black into its edge, and a tile drawn over its neighbour shows
+ * that fringe as a dark line across the seam. Coverage is untouched. Cold.
+ */
+export function bleedFringe(f: Fields, passes: number): void {
+  const { w, h } = f.g;
+  const done = new Uint8Array(w * h);
+  for (let i = 0; i < w * h; i++) done[i] = f.albedo[i * 3]! + f.albedo[i * 3 + 1]! + f.albedo[i * 3 + 2]! > 0 ? 1 : 0;
+  const next = new Uint8Array(w * h);
+  for (let p = 0; p < passes; p++) {
+    next.set(done);
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        if (done[i] === 1) continue;
+        const j = x > 0 && done[i - 1] === 1 ? i - 1 : x < w - 1 && done[i + 1] === 1 ? i + 1
+          : y > 0 && done[i - w] === 1 ? i - w : y < h - 1 && done[i + w] === 1 ? i + w : -1;
+        if (j < 0) continue;
+        f.albedo[i * 3] = f.albedo[j * 3]!; f.albedo[i * 3 + 1] = f.albedo[j * 3 + 1]!; f.albedo[i * 3 + 2] = f.albedo[j * 3 + 2]!;
+        f.mat[i] = f.mat[j]!; f.key[i] = f.key[j]!;
+        next[i] = 1;
+      }
+    }
+    done.set(next);
+  }
+}

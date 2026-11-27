@@ -128,6 +128,7 @@ export function updateEntitySprites(mirror: RenderMirror, ctx: RendererFrameCtx)
   t = lanePhaseMark(LanePhase.farIcons, t);
   noteTurretShots(mirror, r.turretShotCtx); // pixi/turretShotUpdater.ts
   r.litSceneCtx.tractorViewCount = ctx.tractorViewCount;
+  r.litSceneCtx.viewBounds = viewBounds;
   feedLitScene(mirror, r.litSceneCtx); // pixi/litSceneUpdater.ts
   t = lanePhaseMark(LanePhase.turretsLit, t);
 

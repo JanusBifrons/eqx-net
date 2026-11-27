@@ -17,6 +17,8 @@ import { structureStyleVersion } from '../pixi/structureStyles.js';
 import { getShipKind } from '../../../shared-types/shipKinds.js';
 import { shipTuning } from '../../../shared-types/shipScale/tuning.js';
 import { SHIP_SCALE } from '../../../shared-types/shipScale/config.js';
+import { DECK_HEX_FLAT, DECK_HEX_SIZE } from '../../../core/hex/plates.js';
+import { DECK_PLATE_HEX_BOX, DECK_PLATE_LIT_VERSION, deckLitVisual, isDeckLitArtId } from '../pixi/structureDeckLitArt.js';
 
 /** Machined ships keep this many sun azimuths and cross-fade between two. */
 export const SUN_STEPS = 16;
@@ -26,6 +28,17 @@ export const STRUCT_SEED_VARIANTS = 3;
  *  STRUCT_MAX_SIDE: small kinds stay sharp up close, big kinds affordable. */
 export const STRUCT_PPU = 2;
 export const STRUCT_MAX_SIDE = 1024;
+/** Lit deck spike (`?deckLit=on`): a road with an arm mask bakes on the full
+ *  deck hex box at this density, so its lit frame (three map slices side by
+ *  side, litMaps.ts) fits one 2048 page. */
+export const DECK_LIT_PPU = 0.42;
+/** The full deck hex's box (flat-top: corner to corner × flat to flat), plus
+ *  room for the carriageway's overrun past the seam (ROAD_LANE_OVERRUN): the
+ *  arm ends must sit inside the texture, not on its last texel row. */
+export const DECK_HEX_BOX = { w: 2 * DECK_HEX_SIZE + 12, h: DECK_HEX_FLAT + 12 } as const;
+/** The road arm bake's drawing version (part of its key only: a change
+ *  re-bakes just the flag-on roads, never anyone's default art). */
+export const DECK_LIT_VERSION = 2; // 2: surface only (lines, dashes, lamps stay vector), seam fix
 
 /** Capital hulls (capital-ship R&D round 3 E): a 5.8 km hull baked sharp is
  *  too big for one texture, so its frames are cut into tiles of at most
@@ -75,7 +88,8 @@ export type BakeJob =
   /** `rot`: the structure's sprite rotation (radians, quarter turns). The sun
    *  is baked relative to it, so a turned structure is still lit from the
    *  sector's sun rather than having its lighting turn with it. */
-  | ({ type: 'struct'; id: string; seed: number; accent?: number; rot?: number; rings?: boolean; livery?: StructLivery; style?: string } & LitFlag)
+  /** `arms` (lit deck spike): a road's local arm mask, baked with its carriageway on the full deck hex. */
+  | ({ type: 'struct'; id: string; seed: number; accent?: number; rot?: number; rings?: boolean; livery?: StructLivery; style?: string; arms?: number } & LitFlag)
   /** The turning part of a turret (R&D, rnd/turrets); lit at every sun step like a ship. */
   | ({ type: 'turret'; id: GunFamily; paint: number; len: number; wid: number; cap: number; ppu: number; naval?: { barrels: number; houseW: number; houseL: number; part?: 'house' | 'barrel' } } & LitFlag)
   /** One component of a destroyed ship; tumbles, so baked like a ship. */
@@ -98,7 +112,7 @@ export function bakeKey(j: BakeJob): string {
   if (j.type === 'fx') return `x:${FX_VERSION}:${j.id}:${j.variant ?? ''}:${j.seed ?? ''}`;
   if (j.type === 'rock') return `r:${j.shapeSeed}:${j.radius}:${j.resource ?? ''}:${quarterTurnsFine(j.rot ?? 0)}`;
   const q = quarterTurns(j.rot ?? 0);
-  return `m:${j.id}:${j.seed}:${j.accent ?? ''}${q ? `:r${q}` : ''}${j.rings ? ':R' : ''}${j.livery ? structLiveryTag(j.livery) : ''}${j.style ? styleTag(j.style, j.id) : ''}`;
+  return `m:${j.id}:${j.seed}:${j.accent ?? ''}${q ? `:r${q}` : ''}${j.rings ? ':R' : ''}${j.livery ? structLiveryTag(j.livery) : ''}${j.style ? styleTag(j.style, j.id) : ''}${armsTag(j)}`;
 }
 
 /** A kind's turret bases (pivot + 1.4 x the larger of ring and cap): what a
@@ -115,6 +129,12 @@ function styleTag(style: string, id: string): string {
   return v ? `:S${style}.${v}` : `:S${style}`;
 }
 
+/** A lit deck bake's key suffix: a road's arm mask, or a deck hex's drawing version (else nothing). */
+function armsTag(j: { id: string; arms?: number }): string {
+  if (isDeckLitArtId(j.id)) return `:D${DECK_PLATE_LIT_VERSION}`;
+  return j.arms === undefined ? '' : `:A${DECK_LIT_VERSION}.${j.arms}`;
+}
+
 /** A liveried structure's key suffix (on by default, `?structLivery=0` = off; absent adds nothing). */
 function structLiveryTag(l: StructLivery): string { return `:SL${l.team.toString(16)}:${l.sigil.toString(16)}`; }
 
@@ -124,7 +144,7 @@ function liveryTag(l: Livery): string { return `:L${l.treatment}${l.team.toStrin
 /** A lit job's key (prefixed `L` by bakeKey): no sun, and no turn for
  *  structures and rocks (the mesh turns; the maps don't change). */
 function litKeyBody(j: Exclude<BakeJob, { type: 'fx' }>): string {
-  if (j.type === 'struct') return `m:${j.id}:${j.seed}:${j.accent ?? ''}${j.rings ? ':R' : ''}${j.livery ? structLiveryTag(j.livery) : ''}${j.style ? styleTag(j.style, j.id) : ''}`;
+  if (j.type === 'struct') return `m:${j.id}:${j.seed}:${j.accent ?? ''}${j.rings ? ':R' : ''}${j.livery ? structLiveryTag(j.livery) : ''}${j.style ? styleTag(j.style, j.id) : ''}${armsTag(j)}`;
   if (j.type === 'rock') return `r:${j.shapeSeed}:${j.radius}:${j.resource ?? ''}`;
   return bakeKey({ ...j, lit: false });
 }
@@ -257,7 +277,9 @@ export function runBake(j: BakeJob, rig: LightRig): Baked {
     return { frames, w: f.g.w, h: f.g.h, density: f.g.ppu, nozzles: f.nozzles, navLights: f.navLights, ...(tiles > 1 ? { tiles, tileH: TILE_MAX_SIDE } : {}) };
   }
   const rings = j.rings ? structureTurrets(j.id).map((t) => ({ x: t.px, y: t.py, r: t.ring })) : undefined;
-  const f = forgeStructure(j.id, { ppu: STRUCT_PPU, maxSide: STRUCT_MAX_SIDE, seed: j.seed, accent: j.accent, rings, ...(j.livery ? { livery: j.livery } : {}), ...(j.style ? { style: j.style } : {}) });
+  const size = isDeckLitArtId(j.id) ? { ppu: DECK_LIT_PPU, box: DECK_PLATE_HEX_BOX, plan: deckLitVisual(j.id, j.seed) }
+    : j.arms !== undefined ? { ppu: DECK_LIT_PPU, arms: j.arms, box: DECK_HEX_BOX } : { ppu: STRUCT_PPU, maxSide: STRUCT_MAX_SIDE };
+  const f = forgeStructure(j.id, { ...size, seed: j.seed, accent: j.accent, rings, ...(j.livery ? { livery: j.livery } : {}), ...(j.style ? { style: j.style } : {}) });
   if (j.lit) return litBaked(f, Infinity);
   return {
     frames: [litFrame(f, rig, rig.sunAz - quarterTurns(j.rot ?? 0) * (Math.PI / 2)), albedoHalf(f)],

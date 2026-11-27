@@ -16,6 +16,7 @@ import { litPass } from '../art/litPass.js';
 import { addBeamLights, beamLightBudget } from '../beamStyles';
 import type { BeamView } from '../BeamSpritePool';
 import type { BeamCtx } from './beamUpdater.js';
+import { addRoadLampLights } from './roadLampLights.js';
 
 export interface LitSceneCtx {
   fxNow: () => number;
@@ -26,6 +27,10 @@ export interface LitSceneCtx {
   tractorViews: BeamView[];
   /** Written by the caller each frame. */
   tractorViewCount: number;
+  /** Lit deck (`?deckLit=on`): the road lamps light the deck. Set once at init. */
+  deckLamps: boolean;
+  /** The camera rect this frame (written by the caller; on-screen lamps only). */
+  viewBounds: Float64Array | undefined;
 }
 
 export interface LitSceneCtxRefs {
@@ -35,7 +40,7 @@ export interface LitSceneCtxRefs {
 
 /** Build the lit-scene ctx once (renderer construction). */
 export function createLitSceneCtx(refs: LitSceneCtxRefs): LitSceneCtx {
-  return { fxNow: refs.fxNow, blastLights: [], blastLightNext: 0, beamCtx: null, tractorViews: refs.tractorViews, tractorViewCount: 0 };
+  return { fxNow: refs.fxNow, blastLights: [], blastLightNext: 0, beamCtx: null, tractorViews: refs.tractorViews, tractorViewCount: 0, deckLamps: false, viewBounds: undefined };
 }
 
 /** An explosion lights the hulls around it for ~0.9 s (sprite space). */
@@ -78,6 +83,7 @@ export function feedLitScene(mirror: RenderMirror, ctx: LitSceneCtx): void {
   for (let i = 0; i < beamCtx.liveBeamCacheCount; i++) beamLights(beamCtx.liveBeamCache[i]!);
   for (let i = 0; i < beamCtx.remoteBeamCacheCount; i++) beamLights(beamCtx.remoteBeamCache[i]!);
   for (let i = 0; i < ctx.tractorViewCount; i++) beamLights(ctx.tractorViews[i]!); // tractors glow blue where they hold
+  if (ctx.deckLamps) addRoadLampLights(sc, ctx.viewBounds); // weak amber pools round the road lamps
 }
 
 /** A beam lights where it hits and along its length. */

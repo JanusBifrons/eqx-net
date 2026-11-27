@@ -61,6 +61,8 @@ export interface ArtOptions {
   edgeLook?: import('../pixi/connectorEdgeLook.js').EdgeLook;
   /** Base platforms deck zone markings (`?zones=on|off`). Absent = the URL / on. */
   zones?: boolean;
+  /** Lit deck spike (`?deckLit=on`): roads bake their carriageway. Absent = the URL / off. */
+  deckLit?: boolean;
   /** Base platforms gate approach lights (`?approach=on|off`). Absent = the URL / off. */
   approach?: boolean;
   /** Base platforms free build-slot outlines (`?buildSlots=off` hides). Absent = the URL / on. */

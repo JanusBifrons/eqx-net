@@ -61,6 +61,8 @@ export interface BootMsg {
   rigs?: boolean;
   /** Deck floor look (`?deckTex=`). Absent = the default. */
   deckTex?: import('../../pixi/structureDeckTexture.js').DeckTex;
+  /** Lit deck spike (`?deckLit=on`); absent = off. */
+  deckLit?: boolean;
   /** Deck fence link look (`?fenceLook=`). Absent = the default. */
   fenceLook?: import('../../pixi/connectorFenceBeam.js').FenceLook;
   /** Fence post + link mock-up look (`?edgeLook=`). Absent = off. */

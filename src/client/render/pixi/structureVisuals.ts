@@ -80,6 +80,8 @@ export interface StructureVisualOpts {
   /** Structure style (`?restyle=`, `structureStyles.ts`); absent or
    *  `current` = today's plan, exactly. */
   style?: string;
+  /** Lit deck spike: a road's local arm mask for its style drawer (`StyleCtx.arms`). */
+  arms?: number;
 }
 
 export function buildStructureVisual(kindId: string, opts: StructureVisualOpts): StructureVisual {
@@ -103,7 +105,7 @@ export function buildStructureVisual(kindId: string, opts: StructureVisualOpts):
   const drawStyle = structureStyleDrawer(opts.style, kindId);
   if (drawStyle) {
     const polys: PolyOp[] = [];
-    drawStyle({ kindId, styleId: opts.style!, W, H, accent, seed, live, livery, polys, sigils, bands, lit });
+    drawStyle({ kindId, styleId: opts.style!, W, H, accent, seed, live, livery, polys, sigils, bands, lit, ...(opts.arms !== undefined ? { arms: opts.arms } : {}) });
     if (opts.built === false) for (const p of polys) p.alpha = (p.alpha ?? 1) * 0.45;
     return livery ? { rects, lights, footprint: fp, sigils, bands, polys } : { rects, lights, footprint: fp, polys };
   }
