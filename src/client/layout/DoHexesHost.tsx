@@ -22,6 +22,14 @@
  *   scrap / wreck piece (S11) swaps Follow and Attack out: Salvage (the fleet
  *   salvage order; dimmed when no selected hull has a salvage tool), Move to,
  *   More, Clear.
+ * - Touch: no left strip (owner 2026-11-27). Each set also draws what its
+ *   builder leaves over (`doHexLeftovers.tsx`: Pilot, a tapped thing's cargo,
+ *   the personal Lock, Power you may not manage): in a free cell, else behind
+ *   More, which then opens a More sub-set (the set's own More first, the
+ *   leftovers, Back). With no hexes of its own (a focus-only pick in Command,
+ *   Build with anything but your own structure) the leftovers are a small
+ *   set (`data-set="focus"`) with Details as More. Desktop: unchanged (the
+ *   strip keeps them).
  * - Hidden while a right panel is open (`selectRightPanelOpen`): the panel docks
  *   over the right edge. A held Boost lets go then (HoldButton on unmount).
  * - Hex boxes overlap in their corner triangles (a honeycomb), so each cell
@@ -44,7 +52,6 @@ import { doHexLayout, type DoHex } from './doHexLayout.js';
 import { fleetDoHexes, type FleetHexSub } from './fleetDoHexes.js';
 import { flyDoHexes, type FlyFireMode, type FlyHexSub } from './flyDoHexes.js';
 import { useFleetStripItems } from './fleetStripItems.js';
-import { useSelectionStripItems } from './selectionStripItems.js';
 import { usePlacingStripItems } from './placingStripItems.js';
 import { useRouteStripItems } from './routeStripItems.js';
 import { useBuildingStripItems } from './buildingStripItems.js';
@@ -62,6 +69,7 @@ import { canManageBuildings } from '../structures/buildingManagement.js';
 import { sendStructureAction, sendUpgradeStructure } from '../structures/structureActionsClient.js';
 import { DECONSTRUCT_HOLD_MS, useManageData } from '../components/StructureManageActions.js';
 import { useHoldPress } from '../components/useHoldPress.js';
+import { useLeftoverActions, useMoreMenu, withLeftovers } from './doHexLeftovers.js';
 
 const CELL_CLASS = 'eqx-do-hex-cell';
 /** Only the clipped hex button takes a touch, never its cell's square box. */
@@ -107,14 +115,15 @@ export function useDoHexSet(touch: boolean): DoHexSet {
 export function DoHexesHost({ touchInput = null, rendererRef = NO_RENDERER }: Props): JSX.Element | null {
   const shown = useShouldRenderHud();
   const panelOpen = useUIStore(selectRightPanelOpen);
-  const set = useDoHexSet(touchInput !== null);
+  const touch = touchInput !== null;
+  const set = useDoHexSet(touch);
   if (!shown || panelOpen || set === null) return null;
   if (set === 'fly') return touchInput !== null ? <FlyHexes touchInput={touchInput} /> : null;
   if (set === 'placing') return <PlacingHexes />;
   if (set === 'route') return <RouteHexes />;
-  if (set === 'build') return <BuildingHexes />;
-  if (set === 'target') return <TargetHexes rendererRef={rendererRef} />;
-  return <FleetHexes />;
+  if (set === 'build') return <BuildingHexes touch={touch} rendererRef={rendererRef} />;
+  if (set === 'target') return <TargetHexes touch={touch} rendererRef={rendererRef} />;
+  return <FleetHexes touch={touch} rendererRef={rendererRef} />;
 }
 
 /** Placing a structure: the placing builder's tools. */
@@ -130,8 +139,16 @@ function RouteHexes(): JSX.Element | null {
 /** The Manage page's cadence (4 Hz). */
 const MANAGE_POLL_MS = 250;
 
-/** Build, your own structure selected. */
-function BuildingHexes(): JSX.Element | null {
+type HexRenderer = NonNullable<Props['rendererRef']>;
+
+/** Touch: the leftovers (what the left strip used to carry) as hexes or behind More. */
+interface SetProps { touch: boolean; rendererRef: HexRenderer }
+
+/** Build, your own structure selected; on touch anything else selected gets
+ *  the leftovers as its own small set (Details as More). */
+function BuildingHexes({ touch, rendererRef }: SetProps): JSX.Element | null {
+  const left = useLeftoverActions('build', rendererRef);
+  const more = useMoreMenu();
   const setRightPanel = useUIStore((s) => s.setRightPanel);
   const manage = useUIStore(canManageBuildings);
   const data = useSelectionPanelData();
@@ -142,8 +159,11 @@ function BuildingHexes(): JSX.Element | null {
   const demolish = useHoldPress(DECONSTRUCT_HOLD_MS, () => {
     if (entityId !== null) sendStructureAction(entityId, 'toggle_deconstruct');
   });
-  if (entityId === null) return null;
-  const hexes = buildingDoHexes({
+  if (entityId === null) {
+    if (!touch) return null;
+    return <><DoHexGrid hexes={withLeftovers([], left.extras, more, 'Details')} label="Selection" set="focus" />{left.loot}</>;
+  }
+  const own = buildingDoHexes({
     building, manage: manageData,
     upgrade: () => { sendUpgradeStructure(entityId); },
     demolishHold: (down) => { if (down) demolish.handlers.onPointerDown(); else demolish.handlers.onPointerUp(); },
@@ -151,7 +171,13 @@ function BuildingHexes(): JSX.Element | null {
     stopDemolish: () => { sendStructureAction(entityId, 'toggle_deconstruct'); },
     openMore: () => setRightPanel('details'),
   });
-  return <DoHexGrid hexes={hexes} label="Building" set="build" />;
+  const hexes = touch ? withLeftovers(own, left.extras, more, 'Details') : own;
+  return (
+    <>
+      <DoHexGrid hexes={hexes} label="Building" set={hexes[0]?.key === 'more-panel' ? 'more' : 'build'} />
+      {touch && left.loot}
+    </>
+  );
 }
 
 const NO_RENDERER = { current: null };
@@ -159,7 +185,9 @@ const NO_RENDERER = { current: null };
 const targetPose: SelectableTarget = { x: 0, y: 0, r: 0, hw: 0, hh: 0 };
 
 /** Command, own ships selected plus a tapped target that is not mine (S8). */
-function TargetHexes({ rendererRef }: { rendererRef: NonNullable<Props['rendererRef']> }): JSX.Element | null {
+function TargetHexes({ touch, rendererRef }: SetProps): JSX.Element | null {
+  const left = useLeftoverActions('target', rendererRef);
+  const more = useMoreMenu();
   const setRightPanel = useUIStore((s) => s.setRightPanel);
   const attackable = useUIStore((s) => fleetLockApplies(s.selection));
   const followable = useUIStore((s) => targetFollowable(s.selection));
@@ -179,7 +207,7 @@ function TargetHexes({ rendererRef }: { rendererRef: NonNullable<Props['renderer
   };
   const openMore = (): void => setRightPanel('details');
   const clear = (): void => { rendererRef.current?.selectFleetShips(useUIStore.getState().selection.ids); };
-  const hexes = salvageFocus
+  const own = salvageFocus
     ? salvageDoHexes({
       canSalvage,
       salvage: () => { salvageTarget(useUIStore.getState().selection, resolveFleetCommands()); },
@@ -193,19 +221,39 @@ function TargetHexes({ rendererRef }: { rendererRef: NonNullable<Props['renderer
       attack: () => { lockFocus(useUIStore.getState().selection, rendererRef.current, () => false); },
       openMore, clear,
     });
-  return <DoHexGrid hexes={hexes} label="Target" set="target" />;
+  const hexes = touch ? withLeftovers(own, left.extras, more, 'Details') : own;
+  return (
+    <>
+      <DoHexGrid hexes={hexes} label="Target" set={hexes[0]?.key === 'more-panel' ? 'more' : 'target'} />
+      {touch && left.loot}
+    </>
+  );
 }
 
 /** Command, own ships selected. */
-function FleetHexes(): JSX.Element | null {
+function FleetHexes({ touch, rendererRef }: SetProps): JSX.Element | null {
   const setRightPanel = useUIStore((s) => s.setRightPanel);
   const fleet = useFleetStripItems();
+  const left = useLeftoverActions('fleet', rendererRef);
+  const more = useMoreMenu();
   const [sub, setSub] = useState<FleetHexSub>(null);
   const none = fleet.length === 0;
   // The stance choices close when the selection (or Command) goes away.
   useEffect(() => { if (none) setSub(null); }, [none]);
-  const hexes = fleetDoHexes(fleet, { sub, setSub, openMore: () => setRightPanel('orders') });
-  return <DoHexGrid hexes={hexes} label={sub === 'stance' ? 'Stance' : 'Orders'} set={sub ?? 'orders'} />;
+  const own = fleetDoHexes(fleet, { sub, setSub, openMore: () => setRightPanel('orders') });
+  if (!touch) return <DoHexGrid hexes={own} label={sub === 'stance' ? 'Stance' : 'Orders'} set={sub ?? 'orders'} />;
+  // Touch, no own ships (a focus-only pick): the leftovers are the whole set.
+  if (none) {
+    return <><DoHexGrid hexes={withLeftovers([], left.extras, more, 'Details')} label="Selection" set="focus" />{left.loot}</>;
+  }
+  const hexes = sub === null ? withLeftovers(own, left.extras, more, 'Orders') : own;
+  const menu = hexes[0]?.key === 'more-panel';
+  return (
+    <>
+      <DoHexGrid hexes={hexes} label={menu ? 'More' : sub === 'stance' ? 'Stance' : 'Orders'} set={menu ? 'more' : sub ?? 'orders'} />
+      {left.loot}
+    </>
+  );
 }
 
 /** Every group's mode as one shared value (null when mixed or none). Pure. */
@@ -219,11 +267,11 @@ export function sharedFireMode(groups: readonly Pick<FcGroupSummary, 'mode'>[]):
 function FlyHexes({ touchInput }: { touchInput: Pick<TouchInput, 'setBoostHeld'> }): JSX.Element | null {
   const setRightPanel = useUIStore((s) => s.setRightPanel);
   const groups = useUIStore((s) => s.fcGroups);
-  const data = useSelectionPanelData();
-  const { items, loot } = useSelectionStripItems(data, null);
+  const { items, loot, extras } = useLeftoverActions('fly', NO_RENDERER);
+  const more = useMoreMenu();
   const [sub, setSub] = useState<FlyHexSub>(null);
   const [boostHeld, setHeld] = useState(false);
-  const hexes = flyDoHexes({
+  const own = flyDoHexes({
     sub, setSub, selection: items,
     fireMode: sharedFireMode(groups), hasGroups: groups.length > 0,
     setFireMode: (mode) => {
@@ -235,9 +283,11 @@ function FlyHexes({ touchInput }: { touchInput: Pick<TouchInput, 'setBoostHeld'>
     openCargo: () => setRightPanel('hold'),
     openMore: () => setRightPanel(useUIStore.getState().selection.focusId !== null ? 'details' : 'contacts'),
   });
+  const hexes = sub === null ? withLeftovers(own, extras, more, 'Details') : own;
+  const menu = hexes[0]?.key === 'more-panel';
   return (
     <>
-      <DoHexGrid hexes={hexes} label={sub === 'stance' ? 'Stance' : 'Ship'} set={sub ?? 'fly'} />
+      <DoHexGrid hexes={hexes} label={menu ? 'More' : sub === 'stance' ? 'Stance' : 'Ship'} set={menu ? 'more' : sub ?? 'fly'} />
       {loot}
     </>
   );

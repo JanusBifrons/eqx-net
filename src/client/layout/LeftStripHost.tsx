@@ -9,22 +9,21 @@
  *   orders panel with the full list. Grouping lives in `fleet/fleetView.ts`.
  * - Fly and Build: no who-hexes (the actor is implied: your own ship, or the
  *   ghost / structure the world tag names).
- * - The selection's ACTIONS the bottom-right do-hexes do not carry stay on a
- *   slim icon strip (`left-strip`; under the who-hexes when they show). An action shows in one
- *   place only: the strip reads the do-hexes' own predicate (`useDoHexSet`) and
- *   coverage (`FLEET_HEX_KEYS`, `flyHexCovers`). While the fleet hexes draw, the
- *   fleet section (Order / Move / Stance / Stop, `fleetStripItems.tsx`) is gone;
- *   while the Fly hexes draw (touch), Target, the pod Open, the tapped ship's
- *   cargo and Details are gone (Lock, Salvage, Cargo, More), leaving Pilot.
- *   While the target hexes draw (own ships + a tapped target, S8), the T2
- *   Lock is their Attack (`targetHexCovers`) and the fleet section stays
- *   gone as in the fleet set (Clear returns to those hexes).
- *   In Build with your own structure selected, its Power and Details are hexes
- *   (`buildHexCovers`). Elsewhere what stays: Power for a building you may not
- *   manage here (`buildingStripItems.tsx`),
- *   the other quick actions (cargo, Pilot, the T2 Lock, `selectionStripItems.tsx`),
- *   everything on desktop Fly (no hexes there) and, for a focus-only pick,
- *   Details (`rightPanel='details'`). Nothing left: no strip frame.
+ * - Touch (the phone game, owner 2026-11-27): NO action strip at all. Every
+ *   action is a do-hex, bottom right: the do-hex sets draw what their own
+ *   builders leave over (`doHexLeftovers.tsx`, the one leftover filter) in a
+ *   free cell or behind their More, and a focus-only pick (or Build with
+ *   something that is not your own structure) gets a small set of its own
+ *   (its Lock / cargo / Pilot plus Details as More). Only the who-hexes draw here.
+ * - Desktop (a later tranche, unchanged): the selection's ACTIONS the do-hexes
+ *   do not carry stay on a slim icon strip (`left-strip`; under the who-hexes
+ *   when they show), from the same `useLeftoverActions`: the fleet section
+ *   leaves while the fleet or target hexes draw (`FLEET_HEX_KEYS`; the T2 Lock
+ *   is the target set's Attack, `targetHexCovers`); in Build with your own
+ *   structure its Power and Details are hexes (`buildHexCovers`). What stays:
+ *   cargo, Pilot, the personal Target, Power for a building you may not manage
+ *   here, Details for a focus-only pick, everything in Fly (no desktop Fly
+ *   hexes). Nothing left: no strip frame.
  * - The identity icons and the ⚙ / ✕ buttons are retired: the world tag names
  *   the focus; tapping empty space or Esc deselects; the rail's Fleet orders item
  *   (or "?") opens the orders panel.
@@ -33,7 +32,8 @@
  *   (`lockFocus` -> the renderer's `attackFocus`, the right-click order path).
  * - Doing mode: a route / target pick (`routeStripItems.tsx`, U3-3) or placing a
  *   building (`placingStripItems.tsx`, U3-7) replaces all of it until it ends;
- *   its tools are do-hexes (selection HUD S4), so the strip draws nothing then.
+ *   its tools are do-hexes (selection HUD S4), so the strip draws nothing then
+ *   (and never on touch).
  * - Never both sides: everything slides away while a right panel is open.
  */
 import { EqxStrip, type EqxIconName } from '../../ui/index.js';
@@ -41,25 +41,17 @@ import type { IFleetView } from '@core/contracts/render/IFleetView';
 import { selectControlMode, useShouldRenderHud, useUIStore } from '../state/store';
 import type { RightPanel } from '../state/rightPanel';
 import type { SelectionFocusKind, UISelection } from '../state/storeTypes';
-import { useSelectionPanelData } from '../components/selectionPanelData';
-import { fleetLockApplies, lockFocus } from '../components/targetLock';
 import { getGameClient } from '../net/clientSingleton';
 import { capKindGroups, groupMirrorSelection, keepOnlyKind } from '../fleet/fleetView';
 import { Slot } from './Slot';
-import { useFleetStripItems } from './fleetStripItems';
-import { useBuildingStripItems } from './buildingStripItems';
-import { useSelectionStripItems } from './selectionStripItems';
 import { usePlacingStripItems } from './placingStripItems';
 import { useRouteStripItems } from './routeStripItems';
-import { renderStripActions, type StripAction } from './stripActions';
+import { renderStripActions } from './stripActions';
 import { useLeftStripFit } from './leftStripFit';
 import { WHO_HEX_MAX, WhoHexes } from './WhoHexes';
 import { useDoHexSet } from './DoHexesHost';
-import { FLEET_HEX_KEYS } from './fleetDoHexes';
-import { flyHexCovers } from './flyDoHexes';
-import { targetHexCovers } from './targetDoHexes';
-import { buildHexCovers, buildingHexesShow } from './buildDoHexes';
-import { canManageBuildings } from '../structures/buildingManagement';
+import { buildHexCovers } from './buildDoHexes';
+import { useLeftoverActions } from './doHexLeftovers';
 
 const FOCUS_LOOK: Readonly<Record<SelectionFocusKind, { icon: EqxIconName; tooltip: string }>> = {
   ship: { icon: 'ship', tooltip: 'Ship' },
@@ -101,17 +93,11 @@ export function LeftStripHost({ rendererRef, touch = false }: Props): JSX.Elemen
   const mode = useUIStore(selectControlMode);
   const panelOpen = useUIStore((s) => s.rightPanel !== null);
   const setRightPanel = useUIStore((s) => s.setRightPanel);
-  const fleetItems = useFleetStripItems();
-  const data = useSelectionPanelData();
-  const buildingItems = useBuildingStripItems(data);
-  const fleetLock = fleetLockApplies(selection)
-    ? (): void => { lockFocus(useUIStore.getState().selection, rendererRef.current, () => false); }
-    : null;
-  const { items: quickItems, loot } = useSelectionStripItems(data, fleetLock);
   const placingItems = usePlacingStripItems();
   const routeItems = useRouteStripItems();
   const hexSet = useDoHexSet(touch);
-  const manage = useUIStore(canManageBuildings);
+  // The one leftover filter (`doHexLeftovers.tsx`): on touch the do-hexes draw these.
+  const { extras: actions, loot } = useLeftoverActions(hexSet, rendererRef);
   const id = stripIdentity(selection);
   const placing = placingItems.length > 0;
   // What the do-hexes leave over in a doing mode (they carry every placing / route tool).
@@ -119,12 +105,12 @@ export function LeftStripHost({ rendererRef, touch = false }: Props): JSX.Elemen
   const doingLeft = doing !== null && (hexSet === 'placing' || hexSet === 'route')
     ? doing.filter((a) => !buildHexCovers(hexSet, a, false))
     : doing;
-  useLeftStripFit(shown && ((doingLeft !== null && doingLeft.length > 0) || id !== null));
+  useLeftStripFit(shown && ((!touch && doingLeft !== null && doingLeft.length > 0) || id !== null));
   if (!shown) return null;
   if (doingLeft !== null) {
     // Doing mode: placing a building (U3-7) or a route / target pick (U3-3) replaces
-    // the selection strip until it ends; its tools are do-hexes (S4).
-    if (doingLeft.length === 0) return null;
+    // the selection strip until it ends; its tools are do-hexes (S4). Never a strip on touch.
+    if (doingLeft.length === 0 || touch) return null;
     return (
       <Slot anchor="left-strip">
         <EqxStrip
@@ -142,23 +128,10 @@ export function LeftStripHost({ rendererRef, touch = false }: Props): JSX.Elemen
   const groups = mode === 'command' && selection.ids.length > 0
     ? capKindGroups(groupMirrorSelection(getGameClient()?.mirror, selection.ids), WHO_HEX_MAX)
     : null;
-  // A focus-only pick keeps one way to its readout until the do-hexes' More lands.
-  const details: StripAction[] = selection.ids.length === 0
-    ? [{ kind: 'button', key: 'details', testId: 'left-strip-details', icon: 'details',
-        tooltip: data !== null && data.name !== '' ? `${data.name}: details` : 'Details',
-        onPress: () => setRightPanel('details') }]
-    : [];
-  // Leave out what the do-hexes carry in this state (their own predicate and keys).
-  // The target set (S8) keeps the old fleet strip retired too: Clear is the way back to those orders.
-  const fleetLeft = hexSet === 'fleet' || hexSet === 'target' ? fleetItems.filter((a) => a.kind === 'separator' || !FLEET_HEX_KEYS.has(a.key)) : fleetItems;
-  const quick = [...quickItems, ...details];
-  const quickLeft = hexSet === 'fly' ? quick.filter((a) => !flyHexCovers(a))
-    : hexSet === 'target' ? quick.filter((a) => !targetHexCovers(a, fleetLock !== null)) : quick;
-  const buildingShown = hexSet === 'build' && buildingHexesShow(data, manage);
-  const buildLeft = (a: StripAction): boolean => !buildingShown || !buildHexCovers('build', a, true);
-  const actions = [...fleetLeft, ...buildingItems.filter(buildLeft), ...quickLeft.filter(buildLeft)];
+  const strip = !touch && actions.length > 0;
+  if (touch && groups === null) return null;
   // The who-hexes start top left (the `left-column` anchor, under the mode
-  // switch); what is left of the strip follows them down the same column.
+  // switch); on desktop what is left of the strip follows them down the same column.
   return (
     <Slot anchor={groups !== null ? 'left-column' : 'left-strip'}>
       {groups !== null && (
@@ -167,12 +140,12 @@ export function LeftStripHost({ rendererRef, touch = false }: Props): JSX.Elemen
           onKeep={(g) => { if (rendererRef.current) keepOnlyKind(rendererRef.current, g); }}
           onMore={() => setRightPanel('orders')} />
       )}
-      {actions.length > 0 && (
+      {strip && (
         <EqxStrip aria-label="Selection actions" open={!panelOpen} data-testid="left-strip">
           {renderStripActions(actions)}
         </EqxStrip>
       )}
-      {loot}
+      {!touch && loot}
     </Slot>
   );
 }

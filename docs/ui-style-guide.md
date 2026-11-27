@@ -99,6 +99,8 @@ The strictest element. The owner's rule:
 
 > **2026-11-27 owner change (selection-HUD redesign):** the strip's content became the *who hexes* below; the doing-tools, quick actions, ⚙ and ✕ moved to the **do hexes** (bottom-right, with words). The no-words rule above still holds for the left: icon + count only.
 
+> **2026-11-27 owner decision (final):** on the phone there is **no left icon strip at all**. Every action is a do hex: a set's own hexes, plus anything else that applies (Pilot, a tapped thing's cargo, its Lock) in a free cell or behind the set's **More** (More then shows the set's panel button, those actions and Back, in the honeycomb). A focus-only pick gets a small do-hex set of its own (its actions + More for Details). Only the who hexes stay on the left. Desktop keeps the slim strip until the desktop tranche.
+
 - **Who hexes:** one pointy hex per selected ship type with ×N; tap one to keep only that type; past five types the last slot is "?" +N and opens the full list in the Orders panel.
 - *Earlier (pre-2026-11-27) strip layout, kept for history:*
 - **One icon column.** Every button is the same size with its icon centred.
@@ -142,8 +144,8 @@ Some of today's surfaces still exist while the UI-language refactor runs. New wo
 | Settings, profile, account, logout, debug | Cog panel. The display name is a field; logout confirms inline; Developer is a drill-down. Cog › Display has a Full screen switch and "Install as app". |
 | Full screen | The first tap in a touch browser goes full screen. |
 | A selected ship, fleet or building | Who hexes on the left (Command) + world tag; its actions (stance, attack, move, More, Clear…) are do hexes, bottom-right. |
-| Selection details (bars, inspector sections) | Details panel, from ⚙ on the strip. Building settings use Power / Production / Manage on a segmented control there. |
-| Fleet orders, stance, speed, ship list | Orders panel, from ⚙ on the fleet strip, ending in Apply. |
+| Selection details (bars, inspector sections) | Details panel, from the do hexes' More. Building settings use Power / Production / Manage on a segmented control there. |
+| Fleet orders, stance, speed, ship list | Orders panel, from the fleet do hexes' More (or the who hexes' "?"), ending in Apply. |
 | Placing a building, picking route points | Do hexes (Place/confirm under the thumb, Cancel in the far corner). |
 | Cargo transfer, market | Window, opened only from a panel button that works. |
 | Level-up, while-away, hangar | Window (`EqxWindow`). |

@@ -2,8 +2,9 @@
  * The left strip host (UI plan U1-8; selection HUD S5). In Command with own
  * ships selected the strip is the who-hex honeycomb (one hex per ship type,
  * tap keeps that type, "?" overflow opens the orders panel); Fly and Build show
- * no who-hexes. The selection's actions stay on a slim strip until the
- * do-hexes take them; ⚙ / ✕ and the identity icons are retired.
+ * no who-hexes. On touch there is no action strip (every action is a do-hex,
+ * `selectionHudNoStrip.test.tsx`); on desktop what the do-hexes do not carry
+ * stays on a slim strip; ⚙ / ✕ and the identity icons are retired.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
@@ -288,7 +289,7 @@ describe('the action strip (what the do-hexes do not carry)', () => {
     });
   }
 
-  it('a focus-only pick: the personal Target and Details, which opens its Details panel', () => {
+  it('a focus-only pick (desktop): the personal Target and Details, which opens its Details panel', () => {
     panelData = { name: 'Depot', hpPct: 100, shieldPct: null };
     mount();
     select([], 's1', 'structure');
@@ -338,13 +339,21 @@ describe('LeftStripHost in Fly (T4)', () => {
     });
   }
 
-  it('on touch the do-hexes carry Target, cargo and Details: only Pilot stays on the strip', () => {
+  it('on touch no strip at all: Target, cargo and Details are Fly hexes, Pilot is behind their More', () => {
     panelData = { name: 'Hauler', hpPct: 100, shieldPct: null, entityId: 4, hasCargo: true, pilotShipId: 'h1' };
     useUIStore.setState({ pilotMode: 'pilot' });
     mount(true);
     select([], 'swarm-4', 'ship');
-    // The Pilot button's own badge is a child of it, not a second action.
-    expect(stripTestIds().filter((t) => !t.endsWith('-badge'))).toEqual(['ship-action-pilot']);
+    expect(screen.queryByTestId('left-strip')).toBeNull();
+    expect(screen.queryByTestId('ship-action-pilot')).toBeNull();
+  });
+
+  it('on touch a focus-only pick in Command draws no strip (its Details is a do-hex)', () => {
+    panelData = { name: 'Depot', hpPct: 100, shieldPct: null };
+    mount(true);
+    select([], 's1', 'structure');
+    expect(screen.queryByTestId('left-strip')).toBeNull();
+    expect(screen.queryByTestId('left-strip-details')).toBeNull();
   });
 
   it('on touch with nothing the strip keeps (an enemy ship tapped): no strip frame at all', () => {

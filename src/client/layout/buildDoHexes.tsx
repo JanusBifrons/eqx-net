@@ -148,6 +148,16 @@ export interface BuildingDoHexOptions {
   openMore: () => void;
 }
 
+/** The building builder's Power fly-out as one hex: one tap flips it. */
+export function powerHex(power: StripFlyoutAction): DoHex {
+  const on = power.value !== 'off';
+  return {
+    key: 'power', testId: 'do-hex-power', icon: <EqxIcon name={on ? 'power' : 'stop'} />, word: on ? 'Power on' : 'Power off',
+    tooltip: on ? 'Power on: tap to switch off' : 'Power off: tap to switch on', tone: on ? 'good' : 'neutral', lit: on,
+    onPress: () => power.onPick(on ? 'off' : 'on'), state: on ? 'on' : 'off',
+  };
+}
+
 /** The own-structure hexes (only call while `buildingHexesShow`). Nearness
  *  order: Upgrade under the thumb, then Demolish, Power, More. */
 export function buildingDoHexes(o: BuildingDoHexOptions): DoHex[] {
@@ -175,14 +185,7 @@ export function buildingDoHexes(o: BuildingDoHexOptions): DoHex[] {
         });
   }
   const power = find(o.building, 'power', 'flyout') as StripFlyoutAction | null;
-  if (power !== null) {
-    const on = power.value !== 'off';
-    out.push({
-      key: 'power', testId: 'do-hex-power', icon: <EqxIcon name={on ? 'power' : 'stop'} />, word: on ? 'Power on' : 'Power off',
-      tooltip: on ? 'Power on: tap to switch off' : 'Power off: tap to switch on', tone: on ? 'good' : 'neutral', lit: on,
-      onPress: () => power.onPick(on ? 'off' : 'on'), state: on ? 'on' : 'off',
-    });
-  }
+  if (power !== null) out.push(powerHex(power));
   out.push({
     key: 'more', testId: 'do-hex-more', icon: <EqxIcon name="details" />, word: 'More', tooltip: 'Details and settings',
     tone: 'primary', onPress: o.openMore,
