@@ -306,8 +306,8 @@ export function isHeldOnSent(
 
 /** Plan then Build: the spot just planned (the chosen point, turn and
  *  mirror at the Place), held like a sent one until the ghost leaves it. */
-const planHold: PendingPlacement & { active: boolean } = {
-  kind: 'connector', x: 0, y: 0, rot: 0, mirror: false, sentAtMs: 0, baselineStructureCount: 0, active: false,
+const planHold: PendingPlacement & { active: boolean; built: boolean } = {
+  kind: 'connector', x: 0, y: 0, rot: 0, mirror: false, sentAtMs: 0, baselineStructureCount: 0, active: false, built: false,
 };
 
 /**
@@ -319,8 +319,9 @@ const planHold: PendingPlacement & { active: boolean } = {
  */
 export function isHeldOnPlanned(kind: StructureKindId, chosenX: number | null, chosenY: number | null): boolean {
   if (!planHold.active) return false;
-  // Only while that building is still planned (a sent or cleared plan ends it).
-  if (isHeldOnSent(kind, planHold, chosenX, chosenY) && plannedPlacementHitIndex(chosenX, chosenY) >= 0) return true;
+  // While that building is still planned (a cleared plan ends it), or once
+  // Build sent it: then it is held like a sent Place, on its own new building.
+  if (isHeldOnSent(kind, planHold, chosenX, chosenY) && (planHold.built || plannedPlacementHitIndex(chosenX, chosenY) >= 0)) return true;
   planHold.active = false;
   return false;
 }
@@ -331,6 +332,13 @@ export function holdOnPlanned(kind: StructureKindId, x: number, y: number): void
   planHold.kind = kind; planHold.x = x; planHold.y = y;
   planHold.rot = placementRotationFor(kind); planHold.mirror = placementMirror;
   planHold.active = true;
+  planHold.built = false;
+}
+
+/** Build sent the plan: the hold on the last planned spot stays until the
+ *  ghost leaves it, as after a sent Place (never red on its own building). */
+export function holdPlanSent(): void {
+  planHold.built = true;
 }
 
 /**

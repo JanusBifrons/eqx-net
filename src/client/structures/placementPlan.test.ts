@@ -54,6 +54,7 @@ beforeEach(() => {
   cancelPlacement();
   clearPlacementPlan();
   mirror.structures.clear();
+  mirror.swarm.clear();
   setPlacementRotationDeg(0);
   setPlacementMirror(false);
   useUIStore.setState({
@@ -127,6 +128,8 @@ describe('plan then Build', () => {
     const id = lastBatchId();
     onPlaceStructuresPlaced(id + 1); // a stale or foreign id: nothing happens
     expect(getPlacementPlanCount()).toBe(2);
+    // Both buildings are in the snapshot (placementPlanLanding.test.ts: the plan stays drawn until they are).
+    for (const sid of [1, 2]) { mirror.structures.set(sid, {}); mirror.swarm.set(sid, {}); }
     onPlaceStructuresPlaced(id);
     expect(getPlacementPlanCount()).toBe(0);
     // Timeout: the plan stays, Build may be pressed again; a late placed for the old id is ignored.
@@ -139,6 +142,7 @@ describe('plan then Build', () => {
     expect(buildPlacementPlan()).toBe(true);
     onPlaceStructuresPlaced(late);
     expect(getPlacementPlanCount()).toBe(1);
+    mirror.structures.set(3, {}); mirror.swarm.set(3, {});
     onPlaceStructuresPlaced(lastBatchId());
     expect(getPlacementPlanCount()).toBe(0);
   });

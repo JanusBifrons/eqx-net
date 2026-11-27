@@ -115,6 +115,7 @@ describe('fence run: Place plans the posts (Plan then Build C3)', () => {
     const msg = batches[0]![1] as { batchId: number; items: Array<{ kind: string }> };
     expect(msg.items.length).toBe(3);
     expect(msg.items.every((i) => i.kind === 'shield_pylon')).toBe(true);
+    for (const id of [1, 2, 3]) { structures.set(id, {}); swarm.set(id, { x: 0, y: 0, angle: 0, shipKind: 'shield_pylon' }); }
     onPlaceStructuresPlaced(msg.batchId);
     expect(getPlacementPlanCount()).toBe(0);
   });
