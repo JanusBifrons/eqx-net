@@ -16,7 +16,9 @@
  *   fleet section (Order / Move / Stance / Stop, `fleetStripItems.tsx`) is gone;
  *   while the Fly hexes draw (touch), Target, the pod Open, the tapped ship's
  *   cargo and Details are gone (Lock, Salvage, Cargo, More), leaving Pilot.
- *   Elsewhere what stays: your building's Power in Build (`buildingStripItems.tsx`),
+ *   In Build with your own structure selected, its Power and Details are hexes
+ *   (`buildHexCovers`). Elsewhere what stays: Power for a building you may not
+ *   manage here (`buildingStripItems.tsx`),
  *   the other quick actions (cargo, Pilot, the T2 Lock, `selectionStripItems.tsx`),
  *   everything on desktop Fly (no hexes there) and, for a focus-only pick,
  *   Details (`rightPanel='details'`). Nothing left: no strip frame.
@@ -27,7 +29,8 @@
  *   of them, the quick actions carry ONE Lock: the selected ships attack it
  *   (`lockFocus` -> the renderer's `attackFocus`, the right-click order path).
  * - Doing mode: a route / target pick (`routeStripItems.tsx`, U3-3) or placing a
- *   building (`placingStripItems.tsx`, U3-7) replaces all of it until it ends.
+ *   building (`placingStripItems.tsx`, U3-7) replaces all of it until it ends;
+ *   its tools are do-hexes (selection HUD S4), so the strip draws nothing then.
  * - Never both sides: everything slides away while a right panel is open.
  */
 import { EqxStrip, type EqxIconName } from '../../ui/index.js';
@@ -51,6 +54,8 @@ import { WHO_HEX_MAX, WhoHexes } from './WhoHexes';
 import { useDoHexSet } from './DoHexesHost';
 import { FLEET_HEX_KEYS } from './fleetDoHexes';
 import { flyHexCovers } from './flyDoHexes';
+import { buildHexCovers, buildingHexesShow } from './buildDoHexes';
+import { canManageBuildings } from '../structures/buildingManagement';
 
 const FOCUS_LOOK: Readonly<Record<SelectionFocusKind, { icon: EqxIconName; tooltip: string }>> = {
   ship: { icon: 'ship', tooltip: 'Ship' },
@@ -100,13 +105,20 @@ export function LeftStripHost({ rendererRef, touch = false }: Props): JSX.Elemen
   const placingItems = usePlacingStripItems();
   const routeItems = useRouteStripItems();
   const hexSet = useDoHexSet(touch);
+  const manage = useUIStore(canManageBuildings);
   const id = stripIdentity(selection);
   const placing = placingItems.length > 0;
-  useLeftStripFit(shown && (placing || routeItems !== null || id !== null));
+  // What the do-hexes leave over in a doing mode (they carry every placing / route tool).
+  const doing = placing ? placingItems : routeItems;
+  const doingLeft = doing !== null && (hexSet === 'placing' || hexSet === 'route')
+    ? doing.filter((a) => !buildHexCovers(hexSet, a, false))
+    : doing;
+  useLeftStripFit(shown && ((doingLeft !== null && doingLeft.length > 0) || id !== null));
   if (!shown) return null;
-  if (placing || routeItems !== null) {
+  if (doingLeft !== null) {
     // Doing mode: placing a building (U3-7) or a route / target pick (U3-3) replaces
-    // the selection strip until it ends.
+    // the selection strip until it ends; its tools are do-hexes (S4).
+    if (doingLeft.length === 0) return null;
     return (
       <Slot anchor="left-strip">
         <EqxStrip
@@ -114,7 +126,7 @@ export function LeftStripHost({ rendererRef, touch = false }: Props): JSX.Elemen
           open={!panelOpen}
           data-testid="left-strip"
         >
-          {renderStripActions(placing ? placingItems : routeItems ?? [])}
+          {renderStripActions(doingLeft)}
         </EqxStrip>
       </Slot>
     );
@@ -134,7 +146,9 @@ export function LeftStripHost({ rendererRef, touch = false }: Props): JSX.Elemen
   const fleetLeft = hexSet === 'fleet' ? fleetItems.filter((a) => a.kind === 'separator' || !FLEET_HEX_KEYS.has(a.key)) : fleetItems;
   const quick = [...quickItems, ...details];
   const quickLeft = hexSet === 'fly' ? quick.filter((a) => !flyHexCovers(a)) : quick;
-  const actions = [...fleetLeft, ...buildingItems, ...quickLeft];
+  const buildingShown = hexSet === 'build' && buildingHexesShow(data, manage);
+  const buildLeft = (a: StripAction): boolean => !buildingShown || !buildHexCovers('build', a, true);
+  const actions = [...fleetLeft, ...buildingItems.filter(buildLeft), ...quickLeft.filter(buildLeft)];
   // The who-hexes start top left (the `left-column` anchor, under the mode
   // switch); what is left of the strip follows them down the same column.
   return (

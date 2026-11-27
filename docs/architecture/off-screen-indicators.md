@@ -128,6 +128,15 @@ beyond a banded grouping distance → project → spring-smooth → fade-in.
    It takes taps only then: a tap glides the camera there (`glideCameraTo`).
    While a single tag is edge-stuck, `RenderMirror.worldTagEdgeId` names the
    focus and the radar skips that entity (`halo/tagSkip.ts`): one arrow, not two.
+11. **Compact world tag** (selection HUD S10). At far zoom the tag shrinks to
+   one line, the type name (or "5 ships") + an owner-colour dot; no owner
+   line, no hull bar; pointer, bob and the edge layout stay. The switch is the
+   far-zoom icon rule `isIconOnly(diam, wasIconOnly)` with its hysteresis
+   (`render/farIconRule.ts`, shared with `FarZoomIcons`) on `focusScreenDiam`.
+   A group tag uses the focus's diameter when one of the group is focused,
+   else its biggest hull radius × the zoom from `viewHalf`
+   (`worldTagCompactDiam`). The writer flips the root's `data-compact` on
+   change only; CSS picks the layout (no React render).
 
 ## 4. Defaults
 

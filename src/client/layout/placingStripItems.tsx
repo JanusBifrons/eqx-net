@@ -4,6 +4,8 @@
  * only: the building (its portrait), ✓ Place, Rotate, Mirror, then ✕ Cancel.
  * A fence post or gate on a deck adds Gate (edge feel P3): it switches
  * `placementKind` between the two and the fence run stays open (`fenceRun.ts`).
+ * A road has no Rotate or Mirror: it lines itself up with the roads and gates
+ * beside it (`roadAutoTurnDeg`, core).
  * It replaces the old bottom-middle placing bar and the Build panel's folded
  * picked-building strip; desktop and touch alike (the desktop R / F keys and
  * click-to-place keep working beside it).
@@ -31,6 +33,7 @@ import { getPlacementHeld, getPlacementRejection, subscribePlacementHeld, subscr
 import { cancelPlacement, commitPlacement } from '../structures/placementCancel.js';
 import { isFenceRunKind } from '../structures/fenceRun.js';
 import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from '../../core/structures/deckLinks.js';
+import { DECK_ROAD_KIND } from '../../core/structures/deckGateRoad.js';
 import { structurePortraitUrl } from '../render/art/shipPortraits.js';
 import type { StripAction } from './stripActions.js';
 
@@ -61,10 +64,13 @@ export function usePlacingStripItems(): StripAction[] {
       onPress: () => setRightPanel('build'), state: kind, testId: 'placement-kind' },
     { kind: 'button', key: 'place', tone: 'primary', icon: 'confirm', tooltip: 'Place',
       disabled: rejected || held, onPress: () => { commitPlacement(kind); }, testId: 'placement-confirm' },
-    { kind: 'button', key: 'rotate', icon: 'rotate', tooltip: 'Rotate',
-      onPress: () => { cyclePlacementRotation(); }, testId: 'placement-rotate' },
-    { kind: 'button', key: 'mirror', icon: 'mirror', tooltip: 'Mirror', active: mirrored,
-      onPress: () => { togglePlacementMirror(); bumpMirror((n) => n + 1); }, testId: 'placement-mirror' },
+    // A road lines itself up (core `roadAutoTurnDeg`) and its straight is symmetric: no Rotate / Mirror.
+    ...(kind === DECK_ROAD_KIND ? [] : [
+      { kind: 'button', key: 'rotate', icon: 'rotate', tooltip: 'Rotate',
+        onPress: () => { cyclePlacementRotation(); }, testId: 'placement-rotate' } satisfies StripAction,
+      { kind: 'button', key: 'mirror', icon: 'mirror', tooltip: 'Mirror', active: mirrored,
+        onPress: () => { togglePlacementMirror(); bumpMirror((n) => n + 1); }, testId: 'placement-mirror' } satisfies StripAction,
+    ]),
     ...(isFenceRunKind(kind, deck) ? [
       { kind: 'button', key: 'gate', icon: 'gate', tooltip: 'Gate', active: kind === DECK_FENCE_GATE_KIND,
         onPress: () => { setPlacementKind(kind === DECK_FENCE_GATE_KIND ? DECK_FENCE_POST_KIND : DECK_FENCE_GATE_KIND); },

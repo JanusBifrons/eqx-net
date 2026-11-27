@@ -10,6 +10,8 @@ import { Container, Matrix } from 'pixi.js';
 import { createPlacementGhostCtx, updatePlacementGhost } from './placementGhostUpdater.js';
 import { snapPlacementToDeck } from '../../../core/structures/deckPlacement.js';
 import type { DeckSnap } from '../../../core/hex/deckSnap.js';
+import { roadAutoTurnDeg } from '../../../core/structures/deckGateRoad.js';
+import { armCount, ROAD_STRAIGHT_MASK, roadLocalArms } from './roadJoins.js';
 import { DECK_HEX_FLAT, deckHexCentreInto, plateCentreWorldInto, plateHexes } from '../../../core/hex/plates.js';
 import type { RenderMirror, RendererFeedback } from '../../../core/contracts/IRenderer.js';
 import type { RendererInputController } from './rendererInputController.js';
@@ -59,6 +61,27 @@ describe('placement ghost on a deck room', () => {
     m.pendingPlacementPreview!.pending = true;
     updatePlacementGhost(m, ctx);
     expect(ctx.placementGhost!.rotation).toBeCloseTo(-(s.rot * Math.PI) / 180, 9);
+  });
+
+  it('a road ghost lines up with the road beside it and shows the carriageway it will be laid with', () => {
+    const c = deckHexCentreInto(2, 1, { x: 0, y: 0 });
+    const nx = c.x + DECK_HEX_FLAT * Math.cos(Math.PI / 3), ny = c.y + DECK_HEX_FLAT * Math.sin(Math.PI / 3);
+    const { ctx, mirror } = harness([c.x + 30, c.y - 20]);
+    const m = mirror('road', 0, 0, true, Math.PI); // the held turn is ignored
+    m.structures!.set(7, {} as never);
+    m.swarm!.set(7, { shipKind: 'road', x: nx, y: ny } as never);
+    updatePlacementGhost(m, ctx);
+    const rot = roadAutoTurnDeg(1 << 1);
+    expect(ctx.placementGhost!.rotation).toBeCloseTo(-(rot * Math.PI) / 180, 9);
+    // The placed road's own arms: a straight through edge 1 (local slots j, j + 3).
+    const arms = roadLocalArms(1 << 1, rot, false);
+    expect(armCount(arms)).toBe(2);
+    expect(ctx.placementGhost!.roadArmsMask).toBe(arms);
+    // A lone road shows its straight; another kind shows no carriageway.
+    updatePlacementGhost(mirror('road', 0, 0, true), ctx);
+    expect(ctx.placementGhost!.roadArmsMask).toBe(ROAD_STRAIGHT_MASK);
+    updatePlacementGhost(mirror('reactor', 0, 0, true), ctx);
+    expect(ctx.placementGhost!.roadArmsMask).toBe(-1);
   });
 
   it('the ahead-of-ship pose (no chosen point) snaps too', () => {

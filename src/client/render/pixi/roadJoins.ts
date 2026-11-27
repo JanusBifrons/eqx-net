@@ -19,9 +19,8 @@
  */
 import type { StructureRenderState, SwarmRenderState } from '../../../core/contracts/IRenderer.js';
 import { pixelToAxialInto, type AxialHex } from '../../../core/hex/hex.js';
-import { DECK_HEX_FLAT, DECK_HEX_SIZE, deckHexCentreInto } from '../../../core/hex/plates.js';
-import { DECK_HEX_INRADIUS } from '../../../core/hex/deckCorners.js';
-import { DECK_ROAD_KIND } from '../../../core/structures/deckGateRoad.js';
+import { DECK_HEX_SIZE } from '../../../core/hex/plates.js';
+import { DECK_ROAD_KIND, roadJoinBits, roadJoinEdges } from '../../../core/structures/deckGateRoad.js';
 import { DECK_FENCE_GATE_KIND } from '../../../core/structures/deckLinks.js';
 import { rebuildRoadLamps, resetRoadLamps } from './roadLampLights.js';
 
@@ -49,43 +48,21 @@ export function localArmSlot(i: number, rotDeg: number, mirror: boolean): number
   return ((Math.round((phi - 30) / 60) % 6) + 6) % 6;
 }
 
-const hexKey = (q: number, r: number): number => (q + 0x8000) * 0x10000 + (r + 0x8000);
-
 /**
  * The WORLD join mask of each road (bit `i`: the edge at game angle 60°·i has
- * a road beyond it or a gate on it). Cold path (allocates).
+ * a road beyond it or a gate on it), from the core `roadJoinBits` (the one
+ * road/edge rule the placement snap uses too) folded over every road and
+ * gate, then `roadJoinEdges`. Cold path (allocates; rebuilt only on change).
  */
 export function roadWorldJoins(roads: readonly RoadPiece[], gates: readonly GatePoint[]): Map<number, number> {
   const h: AxialHex = { q: 0, r: 0 };
-  const c = { x: 0, y: 0 };
-  const roadHexes = new Set<number>();
-  for (const p of roads) { pixelToAxialInto(p.x, p.y, DECK_HEX_SIZE, h); roadHexes.add(hexKey(h.q, h.r)); }
-  // Gate seams, as (hex, edge) bits on both hexes of the seam.
-  const gateEdges = new Map<number, number>();
-  const tol = DECK_HEX_INRADIUS * 0.05;
-  for (const g of gates) {
-    pixelToAxialInto(g.x, g.y, DECK_HEX_SIZE, h);
-    deckHexCentreInto(h.q, h.r, c);
-    const vx = g.x - c.x, vy = g.y - c.y;
-    if (Math.abs(Math.hypot(vx, vy) - DECK_HEX_INRADIUS) > tol) continue; // not on a seam midpoint
-    const i = ((Math.round((Math.atan2(vy, vx) * 180) / Math.PI / 60) % 6) + 6) % 6;
-    const ka = hexKey(h.q, h.r);
-    gateEdges.set(ka, (gateEdges.get(ka) ?? 0) | (1 << i));
-    pixelToAxialInto(c.x + 2 * vx, c.y + 2 * vy, DECK_HEX_SIZE, h);
-    const kb = hexKey(h.q, h.r);
-    gateEdges.set(kb, (gateEdges.get(kb) ?? 0) | (1 << ((i + 3) % 6)));
-  }
   const out = new Map<number, number>();
   for (const p of roads) {
     pixelToAxialInto(p.x, p.y, DECK_HEX_SIZE, h);
-    deckHexCentreInto(h.q, h.r, c);
-    let mask = gateEdges.get(hexKey(h.q, h.r)) ?? 0;
-    for (let i = 0; i < 6; i++) {
-      const a = (i * Math.PI) / 3;
-      pixelToAxialInto(c.x + DECK_HEX_FLAT * Math.cos(a), c.y + DECK_HEX_FLAT * Math.sin(a), DECK_HEX_SIZE, h);
-      if (roadHexes.has(hexKey(h.q, h.r))) mask |= 1 << i;
-    }
-    out.set(p.id, mask);
+    let joins = 0;
+    for (const o of roads) joins |= roadJoinBits(h.q, h.r, DECK_ROAD_KIND, o.x, o.y);
+    for (const g of gates) joins |= roadJoinBits(h.q, h.r, DECK_FENCE_GATE_KIND, g.x, g.y);
+    out.set(p.id, roadJoinEdges(joins));
   }
   return out;
 }

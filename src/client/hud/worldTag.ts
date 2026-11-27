@@ -8,12 +8,16 @@
  * `render/selectionTag.ts`). Hidden when nothing is focused. Off screen (S9)
  * it sticks to the screen edge with an arrow + distance (`worldTagEdge.ts`)
  * and a tap glides the camera there.
+ * S10: at far zoom the tag goes compact (one line, type name + owner dot) by
+ * the far-zoom icon rule, `isIconOnly(diam, wasIconOnly)` with its hysteresis
+ * (`render/farIconRule.ts`): a `data-compact` flip on change, no React render.
  * Allocation-free per frame except the strings written on an actual change.
  */
 import type { RendererFeedback } from '../../core/contracts/render/RendererFeedback.js';
 import { EMPTY_RADAR_INSETS, type RadarInsets } from '../../shared-types/settings/radar.js';
 import type { PanelData } from '../components/selectionPanelData.js';
 import { CONTACT_STANCE_LABEL, STANCE_COLOUR, formatContactKm } from '../components/contactRows.js';
+import { isIconOnly } from '../render/farIconRule.js';
 import { distanceTextKey, placeWorldTagOnEdge, worldTagDistance, worldTagEdgeAt, worldTagWorldPoint } from './worldTagEdge.js';
 
 /** What the tag shows (EqxWorldTag props). */
@@ -22,6 +26,8 @@ export interface WorldTagText {
   owner?: string;
   ownerColor?: string;
   hullPct?: number;
+  /** The compact (far zoom, S10) line when it differs from `title`. */
+  compactTitle?: string;
 }
 
 /**
@@ -37,6 +43,7 @@ export function worldTagText(data: PanelData, typeName: string | undefined): Wor
   if (owner !== undefined) out.owner = owner;
   if (data.stance !== undefined) out.ownerColor = STANCE_COLOUR[data.stance];
   if (data.noHull !== true && data.pending !== true) out.hullPct = data.hpPct;
+  if (title !== data.name && typeName !== undefined) out.compactTitle = typeName;
   return out;
 }
 
@@ -57,10 +64,13 @@ export type WorldTagFeedback = Pick<RendererFeedback, 'focusScreenX' | 'focusScr
     | 'focusScreenDiam' | 'viewX' | 'viewY' | 'viewHalf'>>;
 
 /** Pure, alloc-free: should the tag show over its anchor, and where (writes
- *  {@link worldTagAt}). False when the anchor is absent (NaN) or off screen. */
+ *  {@link worldTagAt}). False when the anchor is absent (NaN) or off screen.
+ *  `minY` keeps the pointer tip low enough for the whole tag to stay on
+ *  screen: a hull bigger than the screen has its bracket top far above it. */
 export function worldTagPos(
   fb: WorldTagFeedback,
   anchor: WorldTagAnchor = 'focus',
+  minY = -Infinity,
 ): boolean {
   const group = anchor === 'centroid';
   const x = group ? fb.selCentroidScreenX ?? NaN : fb.focusScreenX;
@@ -68,7 +78,7 @@ export function worldTagPos(
   const on = group ? fb.selCentroidOnScreen === true : fb.focusOnScreen;
   if (!on || !Number.isFinite(x) || !Number.isFinite(y)) return false;
   worldTagAt.x = Math.round(x);
-  worldTagAt.y = Math.round(y);
+  worldTagAt.y = Math.round(Math.max(y, minY));
   return true;
 }
 
@@ -87,6 +97,27 @@ export function worldTagCentre(fb: WorldTagFeedback, anchor: WorldTagAnchor = 'f
   return true;
 }
 
+/**
+ * Pure: the on-screen diameter (px) the compact switch (S10) judges, or NaN
+ * when unknown. A single tag: the focus's own (`focusScreenDiam`). The group
+ * tag has no per-group diameter, so: the focus's when one of the group is
+ * focused, else the largest selected hull (`groupRadiusU`, game units) at the
+ * camera zoom, taken from `viewHalf` (the larger half of the visible world)
+ * against the larger half of the `w × h` screen. The group goes compact
+ * only once its biggest ship would be icon-only.
+ */
+export function worldTagCompactDiam(
+  fb: WorldTagFeedback, anchor: WorldTagAnchor, focusId: string | null, groupRadiusU: number, w: number, h: number,
+): number {
+  if (anchor === 'focus' || focusId !== null) return fb.focusScreenDiam ?? NaN;
+  const viewHalf = fb.viewHalf ?? 0;
+  if (!(viewHalf > 0) || !(groupRadiusU > 0)) return NaN;
+  return (groupRadiusU * Math.max(w, h)) / viewHalf;
+}
+
+/** Gap (px) kept between the screen top and a clamped tag. */
+export const WORLD_TAG_TOP_MARGIN_PX = 6;
+
 /** The camera glide a tap on the edge-stuck tag fires (the pilot-swap glide's length). */
 export const WORLD_TAG_GLIDE_MS = 420;
 
@@ -102,6 +133,11 @@ let _x = NaN;
 let _y = NaN;
 let _anchor: WorldTagAnchor = 'focus';
 let _focusId: string | null = null;
+/** S10 compact state: the rule's hysteresis memory, what the DOM holds (-1 = unwritten), the group's hull radius. */
+let _iconOnly = false;
+let _compactDom = -1;
+let _groupRadiusU = 0;
+let _root: HTMLElement | null = null;
 /** S9 edge-stuck state: the tag's parts, measured half size, last arrow/distance. */
 let _edge = false;
 let _edgeRow: HTMLElement | null = null;
@@ -110,16 +146,25 @@ let _dist: HTMLElement | null = null;
 let _pointer: HTMLElement | null = null;
 let _halfW = 0;
 let _halfH = 0;
+/** The tag's full height (px), re-read when it shows or changes shape. */
+let _tagH = 0;
 let _deg = NaN;
 let _distKey = NaN;
 let _glideReq = false;
 let _hud: RadarInsets = EMPTY_RADAR_INSETS;
 const _glideAt = { x: 0, y: 0 };
 
-/** Set by `WorldTagHost` when the tag mode or the focus changes (low cadence). */
-export function setWorldTagAnchor(anchor: WorldTagAnchor, focusId: string | null = null): void {
+/** Set by `WorldTagHost` when the tag mode, the focus or the group's largest
+ *  hull radius (game units, S10) changes (low cadence). */
+export function setWorldTagAnchor(anchor: WorldTagAnchor, focusId: string | null = null, groupRadiusU = 0): void {
   _anchor = anchor;
   _focusId = focusId;
+  _groupRadiusU = groupRadiusU;
+}
+
+/** Is the tag compact now (the rule's current verdict, S10)? */
+export function worldTagCompact(): boolean {
+  return _iconOnly;
 }
 
 /** The HUD rects the edge-stuck tag keeps clear of (App.tsx, 2 Hz, on change). */
@@ -145,6 +190,8 @@ export function setWorldTagElement(el: HTMLElement | null): void {
   _deg = NaN;
   _distKey = NaN;
   _glideReq = false;
+  _compactDom = -1;
+  _root = el ? part(el, 'data-world-tag') : null;
   _edgeRow = el ? part(el, 'data-world-tag-edge') : null;
   _arrow = el ? part(el, 'data-world-tag-arrow') : null;
   _dist = el ? part(el, 'data-world-tag-dist') : null;
@@ -190,6 +237,19 @@ function writeEdgeParts(el: HTMLElement, cx: number, cy: number, w: number, h: n
   }
 }
 
+/** S10, per shown frame: run the icon-only rule (with hysteresis) and flip
+ *  the tag's `data-compact` on change only; edge-stuck, re-measure. */
+function writeCompact(el: HTMLElement, fb: WorldTagFeedback, w: number, h: number): void {
+  const diam = worldTagCompactDiam(fb, _anchor, _focusId, _groupRadiusU, w, h);
+  if (Number.isFinite(diam)) _iconOnly = isIconOnly(diam, _iconOnly);
+  const c = _iconOnly ? 1 : 0;
+  if (c === _compactDom) return;
+  _compactDom = c;
+  if (_root) _root.setAttribute('data-compact', c === 1 ? '1' : '0');
+  _tagH = el.offsetHeight || 0;
+  if (_edge) measure(el);
+}
+
 /**
  * Per frame (gameRafLoop): follow the anchor; style writes on change only.
  * Off screen (S9) the tag sticks to the screen edge (`w × h`, the window)
@@ -202,7 +262,7 @@ export function updateWorldTag(fb: WorldTagFeedback, w = 0, h = 0, cam?: WorldTa
   const glide = _glideReq;
   _glideReq = false;
   if (el === null) return null;
-  const on = worldTagPos(fb, _anchor);
+  const on = worldTagPos(fb, _anchor, _tagH + WORLD_TAG_TOP_MARGIN_PX);
   const centre = !on && worldTagCentre(fb, _anchor);
   const cx = worldTagCentreAt.x;
   const cy = worldTagCentreAt.y;
@@ -216,8 +276,10 @@ export function updateWorldTag(fb: WorldTagFeedback, w = 0, h = 0, cam?: WorldTa
   if (show !== _shown) {
     _shown = show;
     el.style.visibility = show ? 'visible' : 'hidden';
+    if (show) _tagH = el.offsetHeight || 0;
   }
   if (!show) return null;
+  writeCompact(el, fb, w, h);
   if (edge) {
     writeEdgeParts(el, cx, cy, w, h, fb.viewHalf ?? 0);
     if (glide && cam && worldTagWorldPoint(cx, cy, w, h, fb.viewX ?? 0, fb.viewY ?? 0, fb.viewHalf ?? 0, _glideAt)) {

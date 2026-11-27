@@ -19,7 +19,10 @@ import { STRUCTURE_KINDS_LIST } from '../../src/shared-types/structureKinds/cata
 import { deckHexCentreInto, isPlateCentreHex, plateCentreWorldInto } from '../../src/core/hex/plates.js';
 import { rhombusCentroidInto } from '../../src/core/hex/deckSnap.js';
 import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from '../../src/core/structures/deckLinks.js';
-import { DECK_PLATE_KIND, roadTurnDeg } from '../../src/core/structures/deckPlacement.js';
+import { DECK_PLATE_KIND } from '../../src/core/structures/deckPlacement.js';
+import { ROAD_DEFAULT_TURN_DEG, roadAutoTurnDeg, roadJoinBits } from '../../src/core/structures/deckGateRoad.js';
+import { DECK_HEX_FLAT } from '../../src/core/hex/plates.js';
+import { DECK_HEX_INRADIUS } from '../../src/core/hex/deckCorners.js';
 
 function rig(deck: boolean) {
   const registry = new StructureRegistry();
@@ -122,22 +125,39 @@ describe('deck placement snap parity (client ghost == server placed point)', () 
     }
   });
 
-  it('road: the placed turn is the ghost turn, a 30° + 60°·k step whose carriageway runs edge-mid to edge-mid', () => {
+  it('road: a lone road takes the same default turn on both sides, whatever the player turn (no Rotate)', () => {
     const hexC = deckHexCentreInto(2, 1, { x: 0, y: 0 });
-    for (const playerRot of [0, 15, 29, 31, 60, 95, 150, 181, 240, 299, 330, 359]) {
+    for (const playerRot of [0, 15, 31, 95, 181, 299, 359]) {
       const r = rig(true);
-      const ghost = snapGhostToDeck({ kind: 'road', x: 0, y: 0, angle: (playerRot * Math.PI) / 180, deck: true }, hexC.x + 40, hexC.y - 25);
+      const ghost = snapGhostToDeck({ kind: 'road', x: 0, y: 0, angle: (playerRot * Math.PI) / 180, deck: true }, hexC.x + 40, hexC.y - 25, { structures: new Map(), swarm: new Map() });
       const gx = ghost!.x, gy = ghost!.y, grot = ghost!.rot;
       const placed = r.place('road', hexC.x + 40, hexC.y - 25, playerRot);
       expect(placed, `road at ${playerRot}`).not.toBeNull();
       expect([placed!.x, placed!.y, placed!.rot]).toEqual([gx, gy, grot]);
       expect([gx, gy]).toEqual([hexC.x, hexC.y]);
-      expect(((grot % 60) + 60) % 60).toBe(30);
-      expect(grot, `nearest step to ${playerRot}`).toBe(roadTurnDeg(playerRot));
-      const off = Math.abs(((((playerRot - grot) % 360) + 540) % 360) - 180);
-      expect(off).toBeLessThanOrEqual(30);
-      // The carriageway (the tile's local y) points at game angle rot − 90°: an edge midpoint (60°·i).
-      expect((((grot - 90) % 60) + 60) % 60).toBe(0);
+      expect(grot).toBe(ROAD_DEFAULT_TURN_DEG);
+    }
+  });
+
+  it('road: next to a road or a gate, the ghost and the server pick the same lined-up turn (both fold roadJoinBits)', () => {
+    const hexC = deckHexCentreInto(2, 1, { x: 0, y: 0 });
+    for (let i = 0; i < 6; i++) {
+      for (const [kind, dist] of [['road', DECK_HEX_FLAT], [DECK_FENCE_GATE_KIND, DECK_HEX_INRADIUS]] as const) {
+        const r = rig(true);
+        const nx = hexC.x + dist * Math.cos((i * Math.PI) / 3), ny = hexC.y + dist * Math.sin((i * Math.PI) / 3);
+        // The server's neighbour (placed directly: no snap, so it sits exactly there).
+        expect(r.placement.place('player-1', kind as never, nx, ny, { rot: 0, deck: true }), `${kind} ${i}`).not.toBeNull();
+        // The client's mirror copy of it.
+        const world = { structures: new Map([[7, {} as never]]), swarm: new Map([[7, { shipKind: kind, x: nx, y: ny } as never]]) };
+        const ghost = snapGhostToDeck({ kind: 'road', x: 0, y: 0, angle: 0, deck: true }, hexC.x, hexC.y, world);
+        const grot = ghost!.rot;
+        const placed = r.place('road', hexC.x, hexC.y, 0);
+        expect(placed, `road beside ${kind} ${i}`).not.toBeNull();
+        expect(placed!.rot, `${kind} on edge ${i}`).toBe(grot);
+        expect(grot).toBe(roadAutoTurnDeg(roadJoinBits(2, 1, kind, nx, ny)));
+        // Its carriageway (local y, game angle rot ± 90°) runs through edge i.
+        expect((((grot - 90 - 60 * i) % 180) + 180) % 180, `${kind} on edge ${i}`).toBe(0);
+      }
     }
   });
 

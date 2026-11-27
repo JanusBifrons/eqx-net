@@ -27,6 +27,12 @@ Build mode on its own opens nothing. It is the one place you pick a building:
   plate (the Connector, which lays a whole new plate anywhere clear: in open
   space it starts a new deck), the shield fences and gates, and the road tile; those kinds leave
   their usual categories there.
+- **Roads line up by themselves.** A road has no Rotate or Mirror: it
+  continues the road in the next hex, else runs to a gate on one of its
+  seams, else takes a fixed default turn. Its ghost shows the road as it will
+  be laid (carriageway, edge lines and lamps, with the joins it will make).
+  The ghost and the server use the same core rule (`roadAutoTurnDeg` over
+  `roadJoinBits`, `src/core/structures/deckGateRoad.ts`).
 - The category shows **picture tiles**, one per building. Under each picture
   are its build cost (◆) and its power (⚡ +N generates, −N draws; none when it
   uses no power). A ×N badge shows packed crates you hold; a building you
