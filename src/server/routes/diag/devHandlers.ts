@@ -17,6 +17,7 @@ import { getPlayerShipStore } from '../../db/PersistenceWorker.js';
 import { validateToken } from '../../auth/AuthService.js';
 import { getAccountPlayerRegistry } from '../../identity/AccountPlayerRegistry.js';
 import { GALAXY_SECTORS } from '../../../core/galaxy/galaxy.js';
+import { unsealedRows } from '../../rooms/rosterSealing.js';
 
 /**
  * GET /dev/stats?email=foo — kills/deaths counts for a user. Mounted directly
@@ -288,6 +289,7 @@ export async function devWebrtcCountersHandler(
  * Returns the player's full roster (up to 10 entries). Empty array if the
  * player has never spawned. Read-only; mutations flow through gameplay
  * paths (sector-room onJoin/onLeave/transit) which are wired in Phase 3.
+ * Sealed-sector (sandbox) rows are omitted: they never reach the real game.
  */
 export function devPlayerShipsHandler(req: Request, res: Response): void {
   const playerId = String(req.query['playerId'] ?? '');
@@ -295,7 +297,7 @@ export function devPlayerShipsHandler(req: Request, res: Response): void {
     res.status(400).json({ error: 'playerId required' });
     return;
   }
-  const ships = getPlayerShipStore().listByPlayer(playerId).map((rec) => ({
+  const ships = unsealedRows(getPlayerShipStore().listByPlayer(playerId)).map((rec) => ({
     shipId: rec.shipId,
     kind: rec.kind,
     kindVersion: rec.kindVersion,

@@ -19,6 +19,7 @@ import { serverLogEvent } from '../debug/ServerEventLog.js';
 import { parseOwner } from '../../shared-types/relations.js';
 import { factionDisplayName } from '../../shared-types/factions.js';
 import { ALIEN_GATE_OWNER } from '../../core/galaxy/alienGates.js';
+import { pickResumableRow, rosterRowFitsRoom } from './rosterSealing.js';
 
 export interface RosterPose {
   x: number; y: number; vx: number; vy: number; angle: number; angvel: number;
@@ -67,7 +68,10 @@ export class RosterPersistence {
     if (sectorKey === null) return '';
     const store = getPlayerShipStore();
     const roomId = d.roomId();
-    if (preferredShipId !== '') {
+    // Sandbox sealing (rosterSealing.ts): a sealed room binds only its own
+    // rows, a real room never a sealed one, by id or by reuse-recent.
+    const preferred = preferredShipId !== '' ? store.get(preferredShipId) : null;
+    if (preferred !== null && rosterRowFitsRoom(preferred.lastSectorKey, sectorKey)) {
       const next = store.markActive(preferredShipId, roomId, pose);
       if (next !== null) {
         d.logger.info({ playerId, shipId: next.shipId, path: 'preferred' }, 'roster bind');
@@ -77,12 +81,10 @@ export class RosterPersistence {
       // with the legacy most-recent path so the player still spawns
       // into something rather than getting a roster-less ship.
     }
-    const existing = store.listByPlayer(playerId);
-    if (existing.length > 0 && !forceFreshCreate) {
-      existing.sort((a, b) => b.updatedAt - a.updatedAt);
-      const chosen = existing[0]!;
+    const chosen = forceFreshCreate ? null : pickResumableRow(store.listByPlayer(playerId), sectorKey);
+    if (chosen !== null) {
       const next = store.markActive(chosen.shipId, roomId, pose);
-      d.logger.info({ playerId, shipId: next?.shipId, path: 'reuse-recent', existingCount: existing.length }, 'roster bind');
+      d.logger.info({ playerId, shipId: next?.shipId, path: 'reuse-recent' }, 'roster bind');
       return next?.shipId ?? '';
     }
     try {

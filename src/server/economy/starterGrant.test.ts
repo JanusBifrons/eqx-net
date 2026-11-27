@@ -13,7 +13,7 @@ import { LAUNCHABLE_HULL_KINDS } from '../../shared-types/launch.js';
 import { JUNK_BPC_RUNS, JUNK_OUTPUT_MAX, blueprintProducts, packedStructureProducts, productName, rollPackedStructure } from '../../shared-types/blueprints.js';
 import { HoldStore } from '../cargo/HoldStore.js';
 import { EconomyStore } from './EconomyStore.js';
-import { grantStarter, STARTER_CAPITAL_PRODUCT } from './starterGrant.js';
+import { grantStarter, starterGrantDue, STARTER_CAPITAL_PRODUCT } from './starterGrant.js';
 
 const SKIFF_BP = 'hull:mining-skiff';
 const INTERCEPTOR_BP = 'hull:interceptor';
@@ -140,5 +140,22 @@ describe('starter grant', () => {
     expect(grantStarter({ econ, holds }, P, 'ship-d', 'fighter')).toBe(false);
     expect(holds.get('ship-d')!.hold.blueprints).toHaveLength(0);
     expect(econ.starterGranted(P)).toBe(false);
+  });
+});
+
+describe('starterGrantDue', () => {
+  const fresh = { resumedFromStore: false, adoptedBase: false, shipInstanceId: 's1', sectorKey: 'sol-prime', seededCargo: false };
+  it('a fresh launch in a real sector earns the grant', () => {
+    expect(starterGrantDue(fresh)).toBe(true);
+  });
+  it('never in a sealed sector (the sandbox must not spend the real crate)', () => {
+    expect(starterGrantDue({ ...fresh, sectorKey: 'sandbox' })).toBe(false);
+  });
+  it('not on a resume, a seeded hold, an adopted base, no row or no sector', () => {
+    expect(starterGrantDue({ ...fresh, resumedFromStore: true })).toBe(false);
+    expect(starterGrantDue({ ...fresh, seededCargo: true })).toBe(false);
+    expect(starterGrantDue({ ...fresh, adoptedBase: true })).toBe(false);
+    expect(starterGrantDue({ ...fresh, shipInstanceId: '' })).toBe(false);
+    expect(starterGrantDue({ ...fresh, sectorKey: null })).toBe(false);
   });
 });
