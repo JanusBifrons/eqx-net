@@ -11,25 +11,24 @@
  *    the right rail (layout/RightPanelHost.tsx).
  *  - Desktop: hold LMB on a ship to lock it (MouseLock.ts), RMB boost and a key
  *    hint. Building goes through the Build sidebar (BuildSidebarHost.tsx).
- *  - Touch: floating move stick (left thumb), lock-line stick + BOOST (right).
+ *  - Touch: floating move stick (left thumb), BOOST (right). Locking on touch is
+ *    tap a ship, then Lock in its info box (the lock-line stick was removed 2026-11-27).
  *
  * Every weapon group fires only at a target it has a completed lock on.
  */
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect } from 'react';
 import { selectControlMode, useShouldRenderHud, useUIStore } from '../state/store';
 import { selectRightPanelOpen } from '../state/rightPanel';
 import type { TouchInput } from '../input/TouchInput';
 import { Slot } from '../layout/Slot';
 import { RAIL_W_CSS } from '../layout/railWidth';
 import { BuildSidebarHost } from '../components/BuildSidebarHost';
-import { getGameClient } from '../net/clientSingleton';
 import { FloatingStick } from './FloatingStick';
 import type { StickVec } from './floatingStickMath';
 import { HUD } from './tokens';
 import { hudScale, useHudSize, useIsLandscape } from './useHudScale';
 import { WeaponStrip } from './WeaponStrip';
 import { LockStatusBand } from './LockStatusBand';
-import { stickToWorldBearing } from '@core/combat/manualAim';
 import { HoldButton, SectorChip, useEnergyFill, useFakeCredits } from './widgets';
 import { BuildStatusBody, WalletRow } from './BuildStatus';
 import { NetHealthCluster } from './NetHealthCluster';
@@ -100,8 +99,8 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
         <>
           <MoveStick touchInput={touchInput} />
           {/* The right thumb sits under the right panel: unmounted while one is open
-              (FloatingStick / HoldButton release a held stick or BOOST on unmount). */}
-          {!rightPanelOpen && <LockCluster touchInput={touchInput} />}
+              (HoldButton releases a held BOOST on unmount). */}
+          {!rightPanelOpen && <BoostCluster touchInput={touchInput} />}
         </>
       )}
     </>
@@ -243,60 +242,24 @@ function FcStripDock({ scale }: { scale: number }): JSX.Element {
 }
 
 /**
- * Right thumb: the lock line. Drag anywhere in the right zone — a line leaves
- * the ship along the drag and the target nearest it lights up. Keep it there
- * and the active group's lock builds; slide off or let go before it finishes
- * and the lock drains back to 0. (Hands-off: tap a ship, then Lock in its
- * info box.) Re-checked 10×/s while held, so a moving target stays held.
+ * Right thumb: BOOST (hold). The touch lock-line stick is gone (owner,
+ * 2026-11-27): lock by tapping a ship, then Lock in its info box.
  */
-function LockCluster({ touchInput }: { touchInput: TouchInput }): JSX.Element {
-  const bearing = useRef(NaN);
-  const timer = useRef<number | null>(null);
-  const onMove = useCallback((v: StickVec) => {
-    bearing.current = v.mag > 0.25 ? stickToWorldBearing(v.x, v.y) : NaN;
-    getGameClient()?.guideLock(bearing.current);
-    if (timer.current === null) {
-      timer.current = window.setInterval(() => getGameClient()?.guideLock(bearing.current), 100);
-    }
-  }, []);
-  const onEnd = useCallback(() => {
-    if (timer.current !== null) { window.clearInterval(timer.current); timer.current = null; }
-    bearing.current = NaN;
-    getGameClient()?.releaseLockGuide();
-  }, []);
-  useEffect(() => () => { if (timer.current !== null) window.clearInterval(timer.current); }, []);
+function BoostCluster({ touchInput }: { touchInput: TouchInput }): JSX.Element {
   const base = THUMB_INSET + 6;
   return (
-    <>
-      <FloatingStick
-        id="hud-lock"
-        zone={{ right: RAIL_W_CSS, top: '28%', width: '44%', bottom: 0 }}
-        home={{ right: base + 70, bottom: base }}
-        radius={46}
-        knob={36}
-        color={HUD.color.danger}
-        onMove={onMove}
-        onEnd={onEnd}
-        idleOpacity={0.5}
-        zIndex={16}
-      >
-        <svg width={18} height={18} viewBox="0 0 20 20" style={{ opacity: 0.9 }}>
-          <path d="M2 7V2h5M13 2h5v5M18 13v5h-5M7 18H2v-5" fill="none" stroke="#fff" strokeWidth={1.6} />
-        </svg>
-      </FloatingStick>
-      <div
-        style={{
-          position: 'fixed',
-          right: `calc(env(safe-area-inset-right, 0px) + ${RAIL_W_CSS} + ${base}px)`,
-          bottom: `calc(env(safe-area-inset-bottom, 0px) + ${base}px)`,
-          zIndex: 17,
-        }}
-      >
-        <HoldButton testId="hud-boost" size={46} color={HUD.color.boost} onHold={(d) => touchInput.setBoostHeld(d)}>
-          BOOST
-        </HoldButton>
-      </div>
-    </>
+    <div
+      style={{
+        position: 'fixed',
+        right: `calc(env(safe-area-inset-right, 0px) + ${RAIL_W_CSS} + ${base}px)`,
+        bottom: `calc(env(safe-area-inset-bottom, 0px) + ${base}px)`,
+        zIndex: 17,
+      }}
+    >
+      <HoldButton testId="hud-boost" size={46} color={HUD.color.boost} onHold={(d) => touchInput.setBoostHeld(d)}>
+        BOOST
+      </HoldButton>
+    </div>
   );
 }
 
