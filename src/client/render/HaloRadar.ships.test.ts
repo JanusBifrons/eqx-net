@@ -83,6 +83,20 @@ describe('HaloRadar ships (RTS Part A)', () => {
     expect(icons.every((i) => i.cat === 'player')).toBe(true);
   });
 
+  it('S9: the focus its edge-stuck world tag points at gets no radar icon (one arrow, not two)', () => {
+    const halo = new HaloRadar(false);
+    halo.init(fakeCamera());
+    const m = mirror();
+    m.worldTagEdgeId = 'them';
+    halo.update(m);
+    const keys = halo.getDebugIcons().map((i) => i.key);
+    expect(keys).not.toContain('ship:them');
+    expect(keys).toContain('ship:their-hull');
+    m.worldTagEdgeId = null;
+    halo.update(m);
+    expect(halo.getDebugIcons().map((i) => i.key)).toContain('ship:them');
+  });
+
   it('the retired lingering category is gone; an old saved pref carrying it still parses', () => {
     expect(RADAR_CATEGORIES as readonly string[]).not.toContain('lingering');
     const old = structuredClone(DEFAULT_RADAR_PREFS.desktop) as unknown as { categories: Record<string, unknown> };

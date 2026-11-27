@@ -267,6 +267,14 @@ export interface RenderMirror {
    * A reused plain object (structured-cloneable); `null`/absent ⇒ no marker.
    */
   helmCourse?: { x: number; y: number; seq: number; route?: Float64Array; routeN?: number } | null;
+  /**
+   * Selection HUD S9: the focus id (a `mirror.ships` key or `swarm-<id>`)
+   * while its world tag is stuck to the screen edge pointing at it. The halo
+   * radar skips that entity so one arrow points at it, not two. Written per
+   * frame on the main thread (`hud/worldTag.ts` via `gameRafLoop`); null/absent
+   * ⇒ no skip.
+   */
+  worldTagEdgeId?: string | null;
   /** Ships currently flashing due to recent damage (set of player IDs). */
   damagedShips?: Set<string>;
   /** Ships that just exploded (single-frame trigger). */
