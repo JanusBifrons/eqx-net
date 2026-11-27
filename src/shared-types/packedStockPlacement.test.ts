@@ -33,6 +33,12 @@ describe('placementEndsAfterPlace', () => {
     expect(placementEndsAfterPlace('smelter', {})).toBe(true);
   });
 
+  it('plan then Build: planned buildings of the kind spend the stock too', () => {
+    expect(placementEndsAfterPlace('smelter', { 'structure:smelter': 3 }, true, 1)).toBe(false);
+    expect(placementEndsAfterPlace('smelter', { 'structure:smelter': 3 }, true, 2)).toBe(true); // the last unplanned crate
+    expect(placementEndsAfterPlace('solar', {}, true, 5)).toBe(false); // bank-built: no cap
+  });
+
   it('unknown stock or a room with no sector never ends a crate kind', () => {
     expect(placementEndsAfterPlace('smelter', null)).toBe(false);
     expect(placementEndsAfterPlace('smelter', { 'structure:smelter': 1 }, false)).toBe(false);

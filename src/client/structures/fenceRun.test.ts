@@ -6,6 +6,7 @@ import { placementChosen, resetPlacementChosen } from './placementChosen.js';
 import { endFenceRun, fenceRunAnchor, planFenceRun, type FenceRunWorld } from './fenceRun.js';
 import { cancelPlacement, commitPlacement } from './placementCancel.js';
 import { pendingAfterSend } from './pendingPlacementRun.js';
+import { clearPlacementPlan, getPlacementPlanCount } from './placementPlan.js';
 import { resolvePlacementPreviewStatus, type PlacementPreview } from './structurePlacementClient.js';
 
 // The game client: place_structure sends are observable; the mirror holds the
@@ -137,11 +138,14 @@ describe('fence run: Place on a deck sends one place_structure per missing corne
     expect(fenceRunAnchor().active).toBe(false);
   });
 
-  it('off a deck room a post is a plain place (no run)', () => {
+  it('off a deck room a post is a plain place (no run): planned, not sent', () => {
     useUIStore.setState({ deck: false });
+    clearPlacementPlan();
     click(corner(0));
     click(corner(2));
-    expect(sentPoints().length).toBe(2);
+    expect(sentPoints().length).toBe(0);
+    expect(getPlacementPlanCount()).toBe(2);
+    clearPlacementPlan();
     expect(fenceRunAnchor().active).toBe(false);
   });
 });

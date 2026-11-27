@@ -29,6 +29,7 @@ import { BreakInNoticeSchema, CargoStateSchema } from './messages/cargoMessages.
 import { ClaimFactionLookResultSchema, FactionLookClaimedSchema } from './messages/factionMessages.js';
 import { LabStateSchema } from './messages/labMessages.js';
 import { ShellSalvoSchema, ShellEndSchema } from './messages/shellEvents.js';
+import { PlaceStructuresRefusedSchema } from './messages/clientMessages.js';
 
 // Inbound (client → server)
 export {
@@ -47,6 +48,7 @@ export {
   ClientReadyMessageSchema,
   PlaceStructureSchema,
   PlaceStructuresSchema,
+  PlaceStructuresRefusedSchema,
   PLACE_STRUCTURES_MAX,
   PLACE_REFUSAL_CODES,
   RemoveStructureSchema,
@@ -248,6 +250,7 @@ export const ServerMessageSchemas = {
   claim_faction_look_result: ClaimFactionLookResultSchema,
   faction_look_claimed: FactionLookClaimedSchema,
   lab_state: LabStateSchema,
+  place_structures_refused: PlaceStructuresRefusedSchema,
 } as const;
 
 /** A server → client message type with a `ServerMessageSchemas` row. */

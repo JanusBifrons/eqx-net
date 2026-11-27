@@ -21,9 +21,14 @@ import { getStructureKind } from '../../shared-types/structureKinds.js';
 import { useUIStore } from '../state/store.js';
 import { placementChosen, resetPlacementChosen, setPlacementHeld } from './placementChosen.js';
 import { ghostToGridNode, blankGridNode } from './mirrorToGridNode.js';
+import { clearPlacementPlan, getPlacementPlanCount, plannedPlacementAt } from './placementPlan.js';
+
+/** The last planned building (plan then Build: Place plans, Build sends). */
+const lastPlanned = (): ReturnType<typeof plannedPlacementAt> => plannedPlacementAt(getPlacementPlanCount() - 1);
 
 // Mock the game-client singleton so commitChosenPlacement's send path is
-// observable (placeStructureAt → room.send; placeStructureAhead → mirror pose).
+// observable (plan then Build: it plans and never sends; the ahead-of-ship
+// fallback reads the mirror pose).
 const send = vi.fn();
 const notePendingPlacement = vi.fn();
 let mockLocalId: string | null = 'p1';
@@ -164,7 +169,7 @@ describe('resolvePlacementPreviewStatus', () => {
 
 // ── commitChosenPlacement (WS-10 R2.5 + kuytvy regression) ───────────────────
 // The SHARED commit path used by BOTH the touch Confirm banner AND the desktop
-// one-click place. It MUST send at the production `placementChosen` point (not
+// one-click place. It MUST plan at the production `placementChosen` point (not
 // the webdriver-gated dataset — smoke 2026-06-07 capture kuytvy), falling back
 // to the ahead-of-ship pose only when the ghost was never positioned.
 describe('commitChosenPlacement', () => {
@@ -172,29 +177,29 @@ describe('commitChosenPlacement', () => {
     send.mockClear();
     notePendingPlacement.mockClear();
     resetPlacementChosen();
+    clearPlacementPlan();
     mockLocalId = 'p1';
     mockShips.clear();
     mockShips.set('p1', { x: 0, y: 0, angle: 0 });
   });
 
-  it('sends place_structure at the CHOSEN world point (production channel)', () => {
+  it('plans (never sends) at the CHOSEN world point (production channel)', () => {
     placementChosen.worldX = 1234.5;
     placementChosen.worldY = -678.25;
     placementChosen.stuck = true;
 
-    commitChosenPlacement('capital');
+    expect(commitChosenPlacement('capital')).toBe(true);
 
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith('place_structure', {
-      type: 'place_structure',
+    expect(send).not.toHaveBeenCalled();
+    expect(notePendingPlacement).not.toHaveBeenCalled();
+    expect(getPlacementPlanCount()).toBe(1);
+    expect(lastPlanned()).toEqual({
       kind: 'capital',
       x: 1234.5,
       y: -678.25,
-      rot: 0, // phase V — the ghost's rotation rides the message
+      rot: 0, // phase V — the ghost's rotation rides the plan
       mirror: false, // build mirror (4B): default off
     });
-    // The dim pending ghost is recorded so it bridges the render gap (R2.1).
-    expect(notePendingPlacement).toHaveBeenCalledWith('capital', 1234.5, -678.25, 0, false, null);
   });
 
   it('falls back to ahead-of-ship only when the ghost was never positioned', () => {
@@ -202,18 +207,11 @@ describe('commitChosenPlacement', () => {
     commitChosenPlacement('connector');
 
     const ahead = computePlacementPose({ x: 0, y: 0, angle: 0 }, 'connector');
-    expect(send).toHaveBeenCalledTimes(1);
-    expect(send).toHaveBeenCalledWith('place_structure', {
-      type: 'place_structure',
-      kind: 'connector',
-      x: ahead.x,
-      y: ahead.y,
-      rot: 0,
-      mirror: false,
-    });
+    expect(send).not.toHaveBeenCalled();
+    expect(lastPlanned()).toEqual({ kind: 'connector', x: ahead.x, y: ahead.y, rot: 0, mirror: false });
   });
 
-  it('does not send while the ghost is blocked: the server would refuse it (#15)', () => {
+  it('does not plan while the ghost is blocked: the server would refuse it (#15)', () => {
     // The ghost's verdict (the server's own placementRejection, written each
     // frame from RendererFeedback) says the footprint overlaps a structure: the
     // Confirm / desktop click must not send a place_structure the server refuses.
@@ -221,20 +219,20 @@ describe('commitChosenPlacement', () => {
     placementChosen.worldY = -60;
     placementChosen.rejection = 'overlap-structure';
     expect(commitChosenPlacement('cargo_bay')).toBe(false);
-    expect(send).not.toHaveBeenCalled();
-    expect(notePendingPlacement).not.toHaveBeenCalled();
-    // Clear ghost: it sends.
+    expect(getPlacementPlanCount()).toBe(0);
+    // Clear ghost: it plans.
     placementChosen.rejection = null;
     expect(commitChosenPlacement('cargo_bay')).toBe(true);
-    expect(send).toHaveBeenCalledTimes(1);
+    expect(getPlacementPlanCount()).toBe(1);
+    expect(send).not.toHaveBeenCalled();
   });
 
-  it('phase V: R rotates the ghost a quarter turn and the rotation is sent', () => {
+  it('phase V: R rotates the ghost a quarter turn and the rotation is planned', () => {
     setPlacementRotationDeg(0);
     expect(cyclePlacementRotation()).toBe(90);
     expect(cyclePlacementRotation()).toBe(180);
     commitChosenPlacement('solar');
-    expect(send).toHaveBeenCalledWith('place_structure', expect.objectContaining({ kind: 'solar', rot: 180 }));
+    expect(lastPlanned()).toMatchObject({ kind: 'solar', rot: 180 });
     cyclePlacementRotation();
     expect(cyclePlacementRotation()).toBe(0); // wraps
     setPlacementRotationDeg(0);
@@ -271,6 +269,7 @@ describe('placement mirror (4B)', () => {
     send.mockClear();
     notePendingPlacement.mockClear();
     resetPlacementChosen();
+    clearPlacementPlan();
     setPlacementMirror(false);
   });
 
@@ -292,13 +291,12 @@ describe('placement mirror (4B)', () => {
     expect(ghostToGridNode(out, blankGridNode()).mirror).toBe(false);
   });
 
-  it('Confirm sends mirror:true in place_structure, and the dim pending ghost keeps it', () => {
+  it('Confirm plans mirror:true, and the dim pending ghost keeps it', () => {
     setPlacementMirror(true);
     placementChosen.worldX = 10;
     placementChosen.worldY = 20;
     commitChosenPlacement('solar');
-    expect(send).toHaveBeenCalledWith('place_structure', expect.objectContaining({ kind: 'solar', mirror: true }));
-    expect(notePendingPlacement).toHaveBeenCalledWith('solar', 10, 20, 0, true, null);
+    expect(lastPlanned()).toMatchObject({ kind: 'solar', x: 10, y: 20, mirror: true });
     const pending: PendingPlacement = { kind: 'solar', x: 10, y: 20, rot: 0, mirror: true, sentAtMs: 0, baselineStructureCount: 0 };
     const out: PlacementPreview = { kind: 'capital', x: 0, y: 0, angle: 0 };
     expect(resolvePlacementPreviewStatus(null, null, pending, 0, 0, false, out)).toBe('pending');
@@ -306,13 +304,13 @@ describe('placement mirror (4B)', () => {
     setPlacementMirror(false);
   });
 
-  it('the Mirror toggle (button / F key) flips the flag sent with place_structure', () => {
+  it('the Mirror toggle (button / F key) flips the flag planned', () => {
     expect(togglePlacementMirror()).toBe(true);
     commitChosenPlacement('solar');
-    expect(send).toHaveBeenLastCalledWith('place_structure', expect.objectContaining({ mirror: true }));
+    expect(lastPlanned().mirror).toBe(true);
     expect(handlePlacementKey('F')).toBe(true); // off again
     commitChosenPlacement('solar');
-    expect(send).toHaveBeenLastCalledWith('place_structure', expect.objectContaining({ mirror: false }));
+    expect(lastPlanned().mirror).toBe(false);
     expect(handlePlacementKey('f')).toBe(true);
     expect(getPlacementMirror()).toBe(true);
   });
@@ -344,6 +342,7 @@ describe('held ghost after Place', () => {
   beforeEach(() => {
     send.mockClear();
     resetPlacementChosen();
+    clearPlacementPlan();
     setPlacementRotationDeg(0);
     setPlacementMirror(false);
   });
@@ -379,17 +378,19 @@ describe('held ghost after Place', () => {
     expect(o.held).toBe(false);
   });
 
-  it('Place right after Place sends nothing until the ghost moves', () => {
+  it('Place right after Place plans nothing until the ghost moves', () => {
     placementChosen.worldX = 120;
     placementChosen.worldY = -40;
     expect(commitChosenPlacement('solar')).toBe(true);
     expect(placementChosen.held).toBe(true);
     // Same spot again (desktop double-click, or Place tapped twice): refused.
     expect(commitChosenPlacement('solar')).toBe(false);
-    expect(send).toHaveBeenCalledTimes(1);
-    setPlacementHeld(false); // the ghost moved
-    placementChosen.worldX = 200;
+    expect(getPlacementPlanCount()).toBe(1);
+    setPlacementHeld(false); // held lifts, the ghost still there: the plan refuses the same pose
+    expect(commitChosenPlacement('solar')).toBe(false);
+    placementChosen.worldX = 200; // the ghost moved
     expect(commitChosenPlacement('solar')).toBe(true);
-    expect(send).toHaveBeenCalledTimes(2);
+    expect(getPlacementPlanCount()).toBe(2);
+    expect(send).not.toHaveBeenCalled();
   });
 });

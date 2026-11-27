@@ -80,6 +80,7 @@ const DEG = Math.PI / 180;
 import { getGameClient } from '../net/clientSingleton.js';
 import { writePreviewRun } from './pendingPlacementRun.js';
 import { placementChosen, setPlacementHeld } from './placementChosen.js';
+import { addPlannedPlacement, type PlannedPlacement } from './placementPlan.js';
 import { logEvent } from '../debug/ClientLogger.js';
 
 /** Gap (world units) between the ship's leading edge and the new structure's
@@ -315,10 +316,11 @@ export function computePlacementPreview(
 }
 
 /**
- * Place a structure of `kindId` ahead of the local ship. Returns true if the
- * message was sent (false when there's no live room / local ship yet).
+ * Plan a structure of `kindId` ahead of the local ship (the commit path with
+ * no chosen point yet). Returns true if it was planned (false when there's no
+ * local ship yet, or the plan refused it).
  */
-export function placeStructureAhead(kindId: StructureKindId): boolean {
+export function planStructureAhead(kindId: StructureKindId): boolean {
   const client = getGameClient();
   if (!client) return false;
   const localId = client.mirror.localPlayerId;
@@ -326,13 +328,37 @@ export function placeStructureAhead(kindId: StructureKindId): boolean {
   const ship = client.mirror.ships.get(localId);
   if (!ship) return false;
   const pos = computePlacementPose({ x: ship.x, y: ship.y, angle: ship.angle }, kindId);
-  return placeStructureAt(kindId, pos.x, pos.y);
+  return planStructureAt(kindId, pos.x, pos.y);
+}
+
+/** Plan then Build: add `kindId` at (x, y) with the held turn and mirror to
+ *  the planned list (`placementPlan.ts`), snapped as the server will place it. */
+export function planStructureAt(kindId: StructureKindId, x: number, y: number): boolean {
+  return addPlannedPlacement(kindId, x, y, placementRotationFor(kindId), placementMirror, useUIStore.getState().deck);
+}
+
+/** Reused `place_structures` message (Colyseus encodes it on send, #14). */
+const placeStructuresMsg: { type: 'place_structures'; items: readonly PlannedPlacement[] } = { type: 'place_structures', items: [] };
+
+/**
+ * Plan then Build: send every planned building as ONE `place_structures`
+ * (all or nothing on the server; a refusal replies `place_structures_refused`).
+ * `items` are already snapped wire items (`placementPlan.ts`). Returns whether
+ * it was sent (false with no live room or nothing to send).
+ */
+export function sendPlaceStructures(items: readonly PlannedPlacement[]): boolean {
+  if (items.length === 0) return false;
+  const room = getGameClient()?.getRoom();
+  if (!room) return false;
+  placeStructuresMsg.items = items;
+  room.send('place_structures', placeStructuresMsg);
+  return true;
 }
 
 /**
- * Place a structure of `kindId` at an EXPLICIT world position (the tap/drag-
- * positioned blueprint ghost — 2026-06-07). Returns true if the message was
- * sent (false when there's no live room yet). `run` (fence run only): this
+ * Place a structure of `kindId` at an EXPLICIT world position at once (the
+ * fence run, `fenceRun.ts`; every other Place plans instead). Returns true if
+ * the message was sent (false when there's no live room yet). `run`: this
  * place is part of a run, with the corners to add to its pending ghost
  * (`pendingAfterSend`).
  */
@@ -354,14 +380,15 @@ export function placeStructureAt(kindId: StructureKindId, x: number, y: number, 
  * production `placementChosen` channel gameRafLoop writes every frame while the
  * ghost is up), falling back to the ahead-of-ship pose if the player confirmed
  * before positioning. The SINGLE commit path shared by BOTH the touch Confirm
- * banner AND the WS-10 (R2.5) desktop one-click place — so the log + send +
- * pending-ghost behaviour is identical regardless of how the player committed.
- * Does NOT clear `placementKind` (Zustand) — the caller owns that, since the
+ * banner AND the WS-10 (R2.5) desktop one-click place — so the log + plan
+ * behaviour is identical regardless of how the player committed. Plan then
+ * Build: it ADDS the building to the planned list (`placementPlan.ts`); the
+ * strip's Build sends the list. Does NOT clear `placementKind` (Zustand) — the caller owns that, since the
  * banner reads it via a hook and gameRafLoop via `getState()`.
  *
- * Sends nothing while the ghost is blocked (`placementChosen.rejection`, the
+ * Plans nothing while the ghost is blocked (`placementChosen.rejection`, the
  * server's own `placementRejection` at the drawn pose): the server would
- * refuse it (#15). Returns whether a placement was sent.
+ * refuse it (#15). Returns whether a placement was planned.
  */
 export function commitChosenPlacement(kindId: StructureKindId): boolean {
   if (placementChosen.held) {
@@ -384,10 +411,10 @@ export function commitChosenPlacement(kindId: StructureKindId): boolean {
     y: cy,
     stuck: placementChosen.stuck,
   });
-  if (!hasChosen) return placeStructureAhead(kindId);
-  const sentOk = placeStructureAt(kindId, cx, cy);
-  // Hold at once (the mirror pass confirms it next frame) so a second click in
-  // the same frame cannot re-send.
-  if (sentOk) setPlacementHeld(true);
-  return sentOk;
+  if (!hasChosen) return planStructureAhead(kindId);
+  const planned = planStructureAt(kindId, cx, cy);
+  // Hold at once so a second click in the same frame cannot re-plan (the plan
+  // also refuses the same pose twice).
+  if (planned) setPlacementHeld(true);
+  return planned;
 }

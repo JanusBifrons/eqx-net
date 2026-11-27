@@ -69,6 +69,23 @@ the `PlacementRejection` names plus `not-buildable`, `kind-rule`, `no-crate`,
 success commits plate-laying connectors first, then the rest, and sends what a
 single placement does (the slice refresh, no reply).
 
+Client side: in build mode every Place (✓, the desktop click: `commitPlacement` →
+`commitChosenPlacement`) ADDS the building to the planned list
+(`client/structures/placementPlan.ts`: flat, pre-allocated, the pose snapped as
+the server snaps it) instead of sending it. The strip's Build (`placement-build`,
+"Build (n)", only while the list is non-empty) runs `buildPlacementPlan`
+(`placementCancel.ts`): the shared `batchPlacementRejections` against the mirror's
+structures, rocks and deck marks clashing items refused without a round trip; a
+clean plan goes as one `place_structures` (`sendPlaceStructures`). A
+`place_structures_refused` reply keeps the plan and flags the refused indices.
+Success has no reply: the plan clears once the room state's structure count
+reaches the count at send plus the planned count (`stepPlacementPlan`, per frame
+from `gameRafLoop`, the dim-ghost rule); after `PENDING_PLACEMENT_TIMEOUT_MS`
+without either the plan stays and Build may be pressed again. ✕ (`cancelPlacement`),
+leaving build mode and a sector change drop the plan. The crate cap
+(`placementEndsAfterPlace`) counts planned buildings of the kind. A deck fence
+run (`commitFenceRun`) still sends at once.
+
 - Validate kind, clamp to `SECTOR_PLAYABLE_HALF_EXTENT`, reject footprint overlap
   with a structure or an asteroid (`placementRejection`, obstacles from the
   `getObstacles(near)` hook; in a cut field `near` adds the rocks with no body,

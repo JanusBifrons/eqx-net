@@ -274,6 +274,15 @@ export interface PlaceStructuresRefusedEvent {
   refused: Array<{ index: number; code: PlaceRefusalCode }>;
 }
 
+/** The client's ingest schema for {@link PlaceStructuresRefusedEvent} (#3). */
+export const PlaceStructuresRefusedSchema = z.object({
+  type: z.literal('place_structures_refused'),
+  refused: z.array(z.object({
+    index: z.number().int().min(0).max(PLACE_STRUCTURES_MAX - 1),
+    code: z.enum(PLACE_REFUSAL_CODES),
+  })).max(PLACE_STRUCTURES_MAX),
+}) satisfies z.ZodType<PlaceStructuresRefusedEvent>;
+
 /** Client → server (structures plan, Phase 2): "remove the structure I own
  *  with this id". The server rejects ids the requester doesn't own. */
 export const RemoveStructureSchema = z

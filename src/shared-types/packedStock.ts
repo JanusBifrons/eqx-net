@@ -54,11 +54,13 @@ export const PLACE_ONCE_KINDS: ReadonlySet<string> = new Set(['capital', 'territ
 /** The keep-placing rule, shared by the touch Confirm and the desktop click:
  *  after a successful place of `kindId`, does placement end? Yes for a
  *  place-once kind, or a crate-stocked kind whose last crate that was (`counts`
- *  is the stock BEFORE the place; unknown stock never ends it). */
+ *  is the stock BEFORE the place; unknown stock never ends it). `planned`:
+ *  how many `kindId` are already planned (plan then Build), each spending a
+ *  crate of that stock when Build sends them. */
 export function placementEndsAfterPlace(
-  kindId: string, counts: Readonly<Record<string, number>> | null, inSector = true,
+  kindId: string, counts: Readonly<Record<string, number>> | null, inSector = true, planned = 0,
 ): boolean {
   if (PLACE_ONCE_KINDS.has(kindId)) return true;
   if (!needsPackedCrate(kindId) || !inSector || counts === null) return false;
-  return (counts[`structure:${kindId}`] ?? 0) <= 1;
+  return (counts[`structure:${kindId}`] ?? 0) - planned <= 1;
 }

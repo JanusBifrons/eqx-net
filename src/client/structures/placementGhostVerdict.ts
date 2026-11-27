@@ -88,6 +88,12 @@ export class PlacementGhostVerdict {
     fps.length = n;
   }
 
+  /** The footprints the last {@link prepare} loaded (the planned list's batch
+   *  check runs the core `batchPlacementRejections` against them). */
+  prepared(): readonly PlacementFootprint[] {
+    return this.footprints;
+  }
+
   /** {@link check} against the set the last {@link prepare} loaded. */
   checkPrepared(ghost: GhostPose, obstacles: readonly GridObstacle[] | null, deck: PlacementDeck | null = null): PlacementRejection | null {
     if (!isStructureKindId(ghost.kind)) return null;

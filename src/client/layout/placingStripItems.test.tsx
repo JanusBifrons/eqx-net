@@ -14,6 +14,7 @@ import { act, cleanup, fireEvent, render, screen } from '@testing-library/react'
 import { useUIStore } from '../state/store';
 import { getPlacementMirror, getPlacementRotationDeg, setPlacementMirror, setPlacementRotationDeg } from '../structures/structurePlacementClient';
 import { resetPlacementChosen, setPlacementHeld, setPlacementRejection } from '../structures/placementChosen';
+import { addPlannedPlacement, clearPlacementPlan, getPlacementPlanCount } from '../structures/placementPlan';
 
 const commitChosenPlacement = vi.fn((..._a: unknown[]) => true);
 vi.mock('../structures/structurePlacementClient', async (orig) => ({
@@ -59,6 +60,7 @@ beforeEach(() => {
     selection: { ids: [], focusId: null, focusKind: null },
   });
   resetPlacementChosen();
+  clearPlacementPlan();
   commitChosenPlacement.mockClear();
 });
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); });
@@ -81,6 +83,29 @@ describe('placing tools on the left strip', () => {
       expect(tool(id).textContent).toBe('');
     }
     expect(screen.getByTestId('left-strip').textContent).toBe('');
+  });
+
+  it('plan then Build: Build (n) shows only while buildings are planned; ✕ drops the plan', () => {
+    act(() => { useUIStore.setState({ placementKind: 'solar' }); });
+    mount();
+    expect(screen.queryByTestId('placement-build')).toBeNull();
+    act(() => { addPlannedPlacement('solar', 0, 0, 0, false, false); addPlannedPlacement('solar', 5000, 0, 0, false, false); });
+    const ids = Array.from(screen.getByTestId('left-strip').querySelectorAll('button')).map((b) => b.dataset.testid);
+    expect(ids).toEqual(['placement-kind', 'placement-confirm', 'placement-rotate', 'placement-mirror', 'placement-build', 'placement-cancel']);
+    expect(tool('placement-build').getAttribute('aria-label')).toBe('Build (2)');
+    expect(tool('placement-build').dataset.state).toBe('2');
+    fireEvent.click(tool('placement-cancel'));
+    expect(getPlacementPlanCount()).toBe(0);
+    expect(screen.queryByTestId('placement-build')).toBeNull();
+  });
+
+  it('a place-once kind ends placing with its building planned: Build and ✕ stay', () => {
+    act(() => { useUIStore.setState({ placementKind: null }); addPlannedPlacement('capital', 0, 0, 0, false, false); });
+    mount();
+    const ids = Array.from(screen.getByTestId('left-strip').querySelectorAll('button')).map((b) => b.dataset.testid);
+    expect(ids).toEqual(['placement-build', 'placement-cancel']);
+    fireEvent.click(tool('placement-cancel'));
+    expect(getPlacementPlanCount()).toBe(0);
   });
 
   it('placing wins over a selection', () => {

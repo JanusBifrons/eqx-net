@@ -16,7 +16,9 @@
  *   disabled while the ghost is rejected or held on the spot just sent;
  * - Rotate / Mirror → `cyclePlacementRotation` / `togglePlacementMirror` (the
  *   R / F keys' functions; module state the renderer reads);
- * - ✕ → `cancelPlacement` (the ghost goes, Build stays).
+ * - Build (plan then Build; only while buildings are planned, "Build (n)") →
+ *   `buildPlacementPlan`: Place only PLANS a building, Build sends them all;
+ * - ✕ → `cancelPlacement` (the ghost and the plan go, Build mode stays).
  *
  * Returned as data (`StripAction`, `stripActions.tsx`); the strip draws it with
  * `renderStripActions`.
@@ -28,7 +30,8 @@ import { EqxIcon } from '../../ui/index.js';
 import { useUIStore } from '../state/store.js';
 import { cyclePlacementRotation, getPlacementMirror, togglePlacementMirror } from '../structures/structurePlacementClient.js';
 import { getPlacementHeld, getPlacementRejection, subscribePlacementHeld, subscribePlacementRejection } from '../structures/placementChosen.js';
-import { cancelPlacement, commitPlacement } from '../structures/placementCancel.js';
+import { buildPlacementPlan, cancelPlacement, commitPlacement } from '../structures/placementCancel.js';
+import { getPlacementPlanCount, subscribePlacementPlan } from '../structures/placementPlan.js';
 import { isFenceRunKind } from '../structures/fenceRun.js';
 import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from '../../core/structures/deckLinks.js';
 import { structurePortraitUrl } from '../render/art/shipPortraits.js';
@@ -53,7 +56,13 @@ export function usePlacingStripItems(): StripAction[] {
   // Blocked ghost (the server's own placement rule) or held on the spot just sent: no Place.
   const rejected = useSyncExternalStore(subscribePlacementRejection, getPlacementRejection) !== null;
   const held = useSyncExternalStore(subscribePlacementHeld, getPlacementHeld);
-  if (kind === null) return [];
+  const planned = useSyncExternalStore(subscribePlacementPlan, getPlacementPlanCount);
+  const cancel: StripAction = { kind: 'button', key: 'cancel', tone: 'danger', icon: 'close', tooltip: 'Stop placing',
+    onPress: cancelPlacement, testId: 'placement-cancel' };
+  const build: StripAction[] = planned > 0 ? [{ kind: 'button', key: 'build', tone: 'primary', icon: 'build', tooltip: `Build (${planned})`, state: String(planned),
+    onPress: () => { buildPlacementPlan(); }, testId: 'placement-build' }] : [];
+  // A place-once kind ends placing with its building still planned: Build and ✕ stay.
+  if (kind === null) return planned > 0 ? [...build, { kind: 'separator', key: 'sep' }, cancel] : [];
   const mirrored = getPlacementMirror();
   const name = getStructureKind(kind).displayName;
   return [
@@ -70,8 +79,8 @@ export function usePlacingStripItems(): StripAction[] {
         onPress: () => { setPlacementKind(kind === DECK_FENCE_GATE_KIND ? DECK_FENCE_POST_KIND : DECK_FENCE_GATE_KIND); },
         testId: 'placement-gate' } satisfies StripAction,
     ] : []),
+    ...build,
     { kind: 'separator', key: 'sep' },
-    { kind: 'button', key: 'cancel', tone: 'danger', icon: 'close', tooltip: 'Stop placing',
-      onPress: cancelPlacement, testId: 'placement-cancel' },
+    cancel,
   ];
 }
