@@ -135,7 +135,7 @@ export function updateHudOverlays(mirror: RenderMirror, ctx: RendererFrameCtx): 
   r.hitEventCtx.effects = r.effects;
   updateHitEvents(mirror, r.hitEventCtx);
   // Damage-number cancels + tick, level-up icons, health bars: see pixi/hudDrainUpdater.ts.
-  updateHudDrains(mirror, r.hudCtx);
+  updateHudDrains(mirror, r.hudCtx, r.input._focusId); // the focus's bar hides under its world tag
   if (r.lockMarksVisible) r.aimFeedback?.update(mirror, r.camera.scale.x);
   else r.aimFeedback?.hide();
 
@@ -145,7 +145,7 @@ export function updateHudOverlays(mirror: RenderMirror, ctx: RendererFrameCtx): 
   r.cutField.update(mirror, r.artCtx.sunAz, r.camera.scale.x, r.camera.visibleBoundsInto(ctx.swarmViewScratch)); // cut-field chunks + view (far-zoom tiles culled to it)
 
   // Phase 1 — name labels above remote ships and drones (skip self).
-  r.labels?.update(mirror);
+  r.labels?.update(mirror, r.input._focusId); // the focus is named by its world tag
 
   // Dying capitals: hand over to wreck pieces drawn this frame, or give up
   // at the deadline; the rest keep their light frame at the last pose.

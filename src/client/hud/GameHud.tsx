@@ -34,6 +34,7 @@ import { HoldButton, SectorChip, useEnergyFill, useFakeCredits } from './widgets
 import { BuildStatusBody, WalletRow } from './BuildStatus';
 import { NetHealthCluster } from './NetHealthCluster';
 import { ShieldRing } from './ShieldRing';
+import { WorldTagHost } from './WorldTagHost';
 
 interface Props {
   /** Present on touch devices only. */
@@ -79,6 +80,8 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
       {flying && !rightPanelOpen && <FcStripDock scale={scale} />}
       {/* The Build sidebar portals to <body> (EqxPanel): no Slot. */}
       <BuildSidebarHost />
+      {/* Selection HUD: the floating name tag over the focus (moved per frame by gameRafLoop). */}
+      <WorldTagHost />
 
       {/* ── Bottom ──────────────────────────────────────────────────────────── */}
       {/* Status capsule: bottom-centre on desktop and landscape touch (order 3).

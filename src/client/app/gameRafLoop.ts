@@ -34,6 +34,7 @@ import {
 import { syncArtBake } from '../state/artBakeUi.js';
 import { placementChosen, resetPlacementChosen, writePlacementChosen } from '../structures/placementChosen.js';
 import { updatePlacementHints } from '../structures/placementHints.js';
+import { updateWorldTag } from '../hud/worldTag.js';
 import { commitPlacement } from '../structures/placementCancel.js';
 import { stepBuildModeView, takeBuildRestoreScale } from '../structures/buildModeView.js';
 import { sendSelectEntity, sendDeselectEntity } from '../net/selectionClient.js';
@@ -364,6 +365,7 @@ export function createGameRafLoop(deps: GameRafLoopDeps): (now: number) => void 
     // per-frame read is cheap; the actual work fires only on a transition.
     const selFb = feedback ?? renderer.getFeedback();
     gameClient.setFieldView(selFb.viewX, selFb.viewY, selFb.viewHalf); // the cut field follows the camera
+    updateWorldTag(selFb); // the focus name tag follows the bracket (style writes on change only)
     _helmGate.frame(gameClient, useUIStore.getState(), selFb);
     // THE selection (RTS Part A): the selected ships (`fleetSelIds`) and the
     // focus (`selectedPickId/Kind`, the entity whose details panel shows) are

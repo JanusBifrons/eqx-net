@@ -184,7 +184,9 @@ export class HealthBarManager {
     return this.bars.has(entityId);
   }
 
-  update(mirror: RenderMirror): void {
+  /** @param hideId The selection focus: its bar is hidden while the floating
+   *  world tag shows its hull (selection HUD). */
+  update(mirror: RenderMirror, hideId: string | null = null): void {
     const now = performance.now();
     // Per-update drain dt (clamped so a long RAF gap / the first frame can't
     // collapse the chip in one step).
@@ -273,6 +275,7 @@ export class HealthBarManager {
       // 60 Hz ≈ 9k geometry ops/sec — the rank-1 GC-pressure source
       // surfaced by the snapshot-diff + the user's 2 MB/s heap
       // climb during combat.
+      entry.gfx.visible = entityId !== hideId;
       entry.gfx.x = ex;
       entry.gfx.y = -ey - BAR_OFFSET_Y;
 

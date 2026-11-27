@@ -79,6 +79,18 @@ describe('HealthBarManager — dirty-flag optimisation', () => {
     expect(gfx.fill.mock.calls.length).toBeGreaterThanOrEqual(4);
   });
 
+  it('the selection focus (hideId) hides its bar; the others stay shown (selection HUD world tag)', () => {
+    (mirror as unknown as MutableMirror).ships.set('ship-B', { x: 0, y: 0 });
+    mgr.onHit('ship-A', 0.8, 0);
+    mgr.onHit('ship-B', 0.8, 0);
+    const bars = (mgr as unknown as { bars: Map<string, { gfx: { visible?: boolean } }> }).bars;
+    mgr.update(mirror, 'ship-A');
+    expect(bars.get('ship-A')!.gfx.visible).toBe(false);
+    expect(bars.get('ship-B')!.gfx.visible).toBe(true);
+    mgr.update(mirror, null);
+    expect(bars.get('ship-A')!.gfx.visible).toBe(true);
+  });
+
   it('subsequent update() with unchanged state does NOT rebuild', () => {
     mgr.onHit('ship-A', 0.8, 0.5);
     mgr.update(mirror); // first paint

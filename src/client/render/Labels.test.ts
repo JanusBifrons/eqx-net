@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { Container } from 'pixi.js';
 import type { RenderMirror } from '@core/contracts/IRenderer';
-import { formatAiShipCallsign, formatDroneName, formatPlayerLabel, LabelManager } from './Labels.js';
+import { formatAiShipCallsign, formatDroneName, formatPlayerLabel, LabelManager, swarmIdOf } from './Labels.js';
 
 describe('formatDroneName', () => {
   it('zero-pads small ids to 3 hex chars', () => {
@@ -69,6 +69,27 @@ describe('LabelManager ship labels (RTS Part A)', () => {
     expect(map.has('p:my-hull')).toBe(false);
     expect(map.get('p:them')?.text.text).toBe('Them');
     expect(map.get('p:their-hull')?.text.text).toBe(formatAiShipCallsign('their-hull'));
+  });
+
+  it('the selection focus (hideId) carries no label: its world tag names it', () => {
+    const m = mirror();
+    (m as unknown as { swarm: Map<number, unknown> }).swarm = new Map([[7, { kind: 1, x: 0, y: 0 }], [8, { kind: 1, x: 0, y: 0 }]]);
+    const l = new LabelManager(new Container());
+    l.update(m, 'them');
+    expect(labelsOf(l).has('p:them')).toBe(false);
+    expect(labelsOf(l).has('d:7')).toBe(true);
+    l.update(m, 'swarm-7');
+    expect(labelsOf(l).has('p:them')).toBe(true);
+    expect(labelsOf(l).has('d:7')).toBe(false);
+    expect(labelsOf(l).has('d:8')).toBe(true);
+  });
+
+  it('swarmIdOf parses swarm-<n> only', () => {
+    expect(swarmIdOf('swarm-42')).toBe(42);
+    expect(swarmIdOf('swarm-')).toBe(-1);
+    expect(swarmIdOf('swarm-4x')).toBe(-1);
+    expect(swarmIdOf('them')).toBe(-1);
+    expect(swarmIdOf(null)).toBe(-1);
   });
 
   it('AI-flown ships follow the NPC callsign switch (off for showcase capture)', () => {

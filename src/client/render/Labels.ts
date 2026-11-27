@@ -104,6 +104,18 @@ export function formatEliteLabel(name: string): string {
   return `★ ${name}`;
 }
 
+/** The numeric swarm id of a `swarm-<id>` selection id; -1 otherwise. Alloc-free. */
+export function swarmIdOf(id: string | null): number {
+  if (id === null || id.length <= 6 || !id.startsWith('swarm-')) return -1;
+  let n = 0;
+  for (let i = 6; i < id.length; i++) {
+    const c = id.charCodeAt(i) - 48;
+    if (c < 0 || c > 9) return -1;
+    n = n * 10 + c;
+  }
+  return n;
+}
+
 export class LabelManager {
   private readonly container: Container;
   private readonly labels = new Map<string, LabelEntry>();
@@ -134,8 +146,11 @@ export class LabelManager {
     stale?.text.destroy({ texture: true, textureSource: true });
   }
 
-  update(mirror: RenderMirror): void {
+  /** @param hideId The selection focus (a ship key or `swarm-<id>`): its
+   *  label is skipped while the floating world tag names it (selection HUD). */
+  update(mirror: RenderMirror, hideId: string | null = null): void {
     this.seen.clear();
+    const hideSwarm = swarmIdOf(hideId);
     const localId = mirror.localPlayerId;
 
     // Ships, ACTIVE and LINGERING (#17). RTS Part A owner decision: friendly
@@ -145,7 +160,7 @@ export class LabelManager {
     // rule: an `AI XXX` callsign in the drone style, off with NPC callsigns.
     // Another pilot's ship keeps its name. TODO: labels configurable.
     for (const [key0, ship] of mirror.ships) {
-      if (key0 === localId || isOwnedByMe(mirror, key0, ship)) continue;
+      if (key0 === localId || key0 === hideId || isOwnedByMe(mirror, key0, ship)) continue;
       // Phase 4 warp travel: a ship on its warp run is out of the world.
       if (ship.warp === 2) continue;
       const aiFlown = isParkedHull(mirror, key0, ship);
@@ -166,7 +181,7 @@ export class LabelManager {
     // labelled, even when NPC callsigns are off (showcase capture).
     if (mirror.swarm) {
       for (const [entityId, sw] of mirror.swarm) {
-        if (sw.kind !== 1) continue;
+        if (sw.kind !== 1 || entityId === hideSwarm) continue;
         const elite = sw.eliteName;
         if (elite === undefined && !this.showDroneLabels) continue;
         const key = `d:${entityId}`;

@@ -243,6 +243,26 @@ export const HUD = {
     flyInPx: 9,
     flyInMs: 220,
   },
+  /** EqxWorldTag: the floating name tag over the focus (selection HUD S6b).
+   *  No box: light text with a black outline. Px, fixed at every zoom. */
+  worldTag: {
+    /** Line 1 (Type · Name) and line 2 (owner) font sizes. */
+    titleSize: 13,
+    ownerSize: 11,
+    /** The black text outline (text-stroke width, painted under the fill). */
+    outline: '#000',
+    outlineW: 3,
+    /** Hull bar under the text. */
+    barW: 44,
+    barH: 3,
+    barGap: 3,
+    /** Pointer triangle half-width and height. */
+    pointerHalf: 5,
+    pointerH: 5,
+    /** Gentle bob: amplitude (px) and period (ms); none under reduced motion. */
+    bobPx: 1.5,
+    bobMs: 2600,
+  },
   /** EqxBar: a readout bar in a panel (mock .lrow + .bar). Px and colours. */
   bar: {
     /** Track height (.5cqw) and the empty track (mock .bar). */
