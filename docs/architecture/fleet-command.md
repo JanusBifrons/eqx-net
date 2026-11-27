@@ -277,7 +277,7 @@ side, §0). What the owner tells the ship is its fleet ORDERS
   of several ships to one point gives each its own spot in a hex cluster
   `flockSeparation` apart (`FleetCommandSubsystem.spreadMove`), so they never
   pile onto one point and shove (RTS stop drift, 2026-11-14).
-- **Salvage order** (`salvage { targetId }`): only a live wreck piece (kind 4) or scrap (kind 3, never a loot pod) by its `swarm-<n>` id; ships with a mining tool (`hasMiningTool`) take it, the rest of the command escort the first of them; no miner ⇒ nothing (`features/fleetSalvageOrder.ts`; cutting and travel are later slices).
+- **Salvage order** (`salvage { targetId }`): only a live wreck piece (kind 4) or scrap (kind 3, never a loot pod) by its `swarm-<n>` id; ships with a mining tool (`hasMiningTool`) take it, the rest of the command escort the first of them; no miner ⇒ nothing (`features/fleetSalvageOrder.ts`). Salvage groups lock and fire on the piece, guns never (`features/wingmanSalvage.ts`; Hold fire stops only the guns); the hull travels into reach, holds, retargets along the piece's split lineage and finishes when the wreck is gone, the hold is full or nothing left is workable (`features/wingmanSalvageOrder.ts`), sending fleet status on retarget and finish. What it cuts reaches the hold through `LootCollectors.forEachSalvager` / `LootSubsystem.collectTick`; no auto-unload. The panel reads the hull as "Salvaging" (`orderKind === 'salvage'` in `fleet/fleetView.ts` `describeActivity`; a retreat still says why).
 - **Stance** (`aggressive`, `defensive`, `holdFire`): the brain's attitude
   (`applyHullStance`).
 - **Squad role**: fly as a loose pack on the leader (§0 slice 10).

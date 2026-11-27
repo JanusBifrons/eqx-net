@@ -76,6 +76,22 @@ On a phone, with ships selected, a tap gives the order. The **Move / Attack**
 toggle on the fleet strip says which: Move sends them to the tapped point,
 Attack sends them after whatever you tapped.
 
+### Salvage
+
+- **Tap a scrap or wreck piece, then the Salvage hex.** Only wrecks and scrap
+  take it, never rocks or loot pods.
+- **Miners do the work.** Ships with salvage tools (mining skiff, barge) go to
+  that wreck and work it until it is gone or their hold is full, then go back
+  to their previous job. There is no auto-unload.
+- **Gunships guard.** The other ships in the selection guard a miner.
+- **No miner, no order.** When no ship in the selection has salvage tools the
+  Salvage hex is greyed out: "No salvage tools on these ships".
+- **The lock is the trigger.** Salvage groups fire on their lock on the piece;
+  guns never fire at it. Under **Hold fire** the guns stop, but the salvage
+  groups still cut the ordered piece.
+- **Too small ends it.** A piece too small for any salvage mount to lock or
+  take ends the order.
+
 ## The fleet panel
 
 While ships are selected, the left strip shows the quick orders as icons:
@@ -85,8 +101,8 @@ neutral dots icon. The ⚙ on the strip opens the Orders panel on the right:
 Order, Stance and Speed as switches (a change shows amber until you press
 Apply, then the panel folds away), Stop, squad buttons and Take controls. It lists each ship by type,
 its hull, and what it is doing in plain words: Idle, Moving, Patrolling,
-Chasing a Drone, Attacking, Guarding, Forming up, or Retreating with its hull
-percentage.
+Chasing a Drone, Attacking, Guarding, Forming up, Salvaging, or Retreating
+with its hull percentage.
 
 ### Modes: what a ship does when it has no order
 
