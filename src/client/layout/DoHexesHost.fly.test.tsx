@@ -182,6 +182,19 @@ describe('Fly do-hexes (S3b)', () => {
     expect(useUIStore.getState().rightPanel).toBe('details');
   });
 
+  it('Cargo with a ship with a readable hold tapped opens THAT ship\'s cargo (the strip\'s handler), not your hold', () => {
+    mount();
+    expect(attr('do-hex-cargo', 'data-state')).toBe('yours');
+    panel = { name: 'Hauler', hpPct: 100, shieldPct: null, entityId: 4, hasCargo: true };
+    act(() => { useUIStore.setState({ selection: { ids: [], focusId: 'swarm-4', focusKind: 'ship' } }); });
+    expect(attr('do-hex-cargo', 'data-state')).toBe('theirs');
+    expect(attr('do-hex-cargo', 'aria-label')).toBe('Open cargo');
+    expect(screen.queryByTestId('stub-loot')).toBeNull();
+    fireEvent.click(screen.getByTestId('do-hex-cargo'));
+    expect(screen.getByTestId('stub-loot')).toBeTruthy();
+    expect(useUIStore.getState().rightPanel).toBeNull();
+  });
+
   it('Stance swaps to Auto fire / Hold fire (current lit, Back far corner); a pick sets every group', () => {
     mount();
     expect(attr('do-hex-stance', 'data-state')).toBe('auto');

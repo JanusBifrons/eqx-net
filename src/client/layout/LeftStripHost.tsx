@@ -13,9 +13,10 @@
  *   place only: the strip reads the do-hexes' own predicate (`useDoHexSet`) and
  *   coverage (`FLEET_HEX_KEYS`, `flyHexCovers`). While the fleet hexes draw, the
  *   fleet section (Order / Move / Stance / Stop, `fleetStripItems.tsx`) is gone;
- *   while the Fly hexes draw (touch), Target / Lock and the pod Open are gone.
- *   What stays: your building's Power in Build (`buildingStripItems.tsx`), the
- *   other quick actions (cargo, Pilot, the T2 Lock, `selectionStripItems.tsx`),
+ *   while the Fly hexes draw (touch), Target, the pod Open, the tapped ship's
+ *   cargo and Details are gone (Lock, Salvage, Cargo, More), leaving Pilot.
+ *   Elsewhere what stays: your building's Power in Build (`buildingStripItems.tsx`),
+ *   the other quick actions (cargo, Pilot, the T2 Lock, `selectionStripItems.tsx`),
  *   everything on desktop Fly (no hexes there) and, for a focus-only pick,
  *   Details (`rightPanel='details'`). Nothing left: no strip frame.
  * - The identity icons and the ⚙ / ✕ buttons are retired: the world tag names
@@ -130,8 +131,9 @@ export function LeftStripHost({ rendererRef, touch = false }: Props): JSX.Elemen
     : [];
   // Leave out what the do-hexes carry in this state (their own predicate and keys).
   const fleetLeft = hexSet === 'fleet' ? fleetItems.filter((a) => a.kind === 'separator' || !FLEET_HEX_KEYS.has(a.key)) : fleetItems;
-  const quickLeft = hexSet === 'fly' ? quickItems.filter((a) => !flyHexCovers(a)) : quickItems;
-  const actions = [...fleetLeft, ...buildingItems, ...quickLeft, ...details];
+  const quick = [...quickItems, ...details];
+  const quickLeft = hexSet === 'fly' ? quick.filter((a) => !flyHexCovers(a)) : quick;
+  const actions = [...fleetLeft, ...buildingItems, ...quickLeft];
   return (
     <Slot anchor="left-strip">
       {groups !== null && (

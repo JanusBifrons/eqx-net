@@ -45,10 +45,11 @@ async function selectFromList(page: Page, open: () => Promise<void>, touch: bool
 
   if (touch) await target.tap();
   else await target.click();
-  // Selected, not locked: the panel closes and the strip shows the contact.
+  // Selected, not locked: the panel closes and Lock offers the contact (the strip's
+  // Target on desktop, the do-hexes' Lock on touch, where the strip may be empty).
   await expect(panel).toBeHidden();
-  await expect(page.locator('[data-testid="left-strip"]')).toBeVisible({ timeout: 5_000 });
   const lockBtn = page.locator(LOCK_BUTTON);
+  await expect(lockBtn).toBeVisible({ timeout: 5_000 });
   await expect(lockBtn).toHaveAttribute('data-state', 'lock', { timeout: 5_000 });
   await expect(chip).toHaveAttribute('data-locked', '0');
 

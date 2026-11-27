@@ -237,9 +237,10 @@ describe('the honeycomb layout', () => {
   });
 });
 
+const stripTestIds = (): string[] =>
+  Array.from(screen.getByTestId('left-strip').querySelectorAll('[data-testid]')).map((b) => b.getAttribute('data-testid') ?? '');
+
 describe('the action strip (what the do-hexes do not carry)', () => {
-  const stripTestIds = (): string[] =>
-    Array.from(screen.getByTestId('left-strip').querySelectorAll('[data-testid]')).map((b) => b.getAttribute('data-testid') ?? '');
 
   it('⚙, ✕ and the identity icons are gone', () => {
     mount();
@@ -321,12 +322,28 @@ describe('LeftStripHost in Fly (T4)', () => {
     });
   }
 
-  it('on touch the Lock do-hex carries Target: the strip leaves it out, Details stays', () => {
+  it('on touch the do-hexes carry Target, cargo and Details: only Pilot stays on the strip', () => {
+    panelData = { name: 'Hauler', hpPct: 100, shieldPct: null, entityId: 4, hasCargo: true, pilotShipId: 'h1' };
+    useUIStore.setState({ pilotMode: 'pilot' });
+    mount(true);
+    select([], 'swarm-4', 'ship');
+    // The Pilot button's own badge is a child of it, not a second action.
+    expect(stripTestIds().filter((t) => !t.endsWith('-badge'))).toEqual(['ship-action-pilot']);
+  });
+
+  it('on touch with nothing the strip keeps (an enemy ship tapped): no strip frame at all', () => {
     useUIStore.setState({ pilotMode: 'pilot' });
     mount(true);
     select([], 'p2', 'ship');
-    expect(screen.queryByTestId('fc-target')).toBeNull();
-    expect(screen.getByTestId('left-strip-details')).toBeInTheDocument();
+    expect(screen.queryByTestId('left-strip')).toBeNull();
+  });
+
+  it('on desktop Fly (no hexes) the strip keeps Target, cargo and Details', () => {
+    panelData = { name: 'Hauler', hpPct: 100, shieldPct: null, entityId: 4, hasCargo: true };
+    useUIStore.setState({ pilotMode: 'pilot' });
+    mount(false);
+    select([], 'swarm-4', 'ship');
+    expect(stripTestIds()).toEqual(expect.arrayContaining(['fc-target', 'cargo-open-toggle', 'left-strip-details']));
   });
 });
 
@@ -340,12 +357,13 @@ describe('one place per action: the strip reads the do-hexes\' own predicate and
     expect(doHexSet(st('pilot', false, true), true)).toBe('fleet');
   });
 
-  it('flyHexCovers: Target and the pod Open, not the fleet Lock, cargo or Pilot', () => {
+  it('flyHexCovers: Target, the pod Open, the tapped ship\'s cargo and Details; not the fleet Lock or Pilot', () => {
     const b = (key: string, testId: string) => ({ kind: 'button' as const, key, testId, icon: 'target' as const, tooltip: '', onPress: () => {} });
     expect(flyHexCovers(b('target', 'fc-target'))).toBe(true);
     expect(flyHexCovers(b('loot', 'pod-open'))).toBe(true);
+    expect(flyHexCovers(b('loot', 'cargo-open-toggle'))).toBe(true);
+    expect(flyHexCovers(b('details', 'left-strip-details'))).toBe(true);
     expect(flyHexCovers(b('target', 'left-strip-lock'))).toBe(false);
-    expect(flyHexCovers(b('loot', 'cargo-open-toggle'))).toBe(false);
     expect(flyHexCovers(b('pilot', 'ship-action-pilot'))).toBe(false);
   });
 });
