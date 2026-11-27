@@ -931,7 +931,7 @@ function GameSurface({
         <>
       {/* The piloting HUD: status capsule, sector chip, weapon strip + lock
        *  band, Build sidebar, thumb sticks (touch) / lock line (desktop). */}
-      <GameHud touchInput={isTouchRef.current ? touchInputRef.current : null} />
+      <GameHud touchInput={isTouchRef.current ? touchInputRef.current : null} rendererRef={rendererRef} />
       {/* Living World P1a — carried cargo + pickup popups. */}
       <Slot anchor="top-left" order={3}><CargoChip /></Slot>
       <Slot anchor="top-left" order={10}><Hud /></Slot>

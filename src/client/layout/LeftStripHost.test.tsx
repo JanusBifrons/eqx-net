@@ -267,12 +267,11 @@ describe('the action strip (what the do-hexes do not carry)', () => {
     });
   }
 
-  it('ships + an attackable focus: ONE Lock orders the ships to attack it (T2)', () => {
+  it('ships + an attackable focus: the T2 Lock is the target do-hexes\' Attack (S8), not on the strip; no personal Target', () => {
     mount();
     select(['a'], 'p2', 'ship');
     expect(screen.queryByTestId('fc-target')).toBeNull();
-    fireEvent.click(screen.getByTestId('left-strip-lock'));
-    expect(attackFocus).toHaveBeenCalledOnce();
+    expect(screen.queryByTestId('left-strip-lock')).toBeNull();
     expect(lockSelected).not.toHaveBeenCalled();
   });
 
@@ -368,6 +367,20 @@ describe('one place per action: the strip reads the do-hexes\' own predicate and
     expect(doHexSet({ ...st('spectator', false, true), placementKind: 'solar' }, true)).toBe('placing');
     expect(doHexSet({ ...st('spectator'), fleetPick: pick('patrol') }, false)).toBe('route');
     expect(doHexSet({ ...st('spectator'), fleetPick: pick('move') }, false)).toBe('fleet');
+  });
+
+  it('doHexSet: own ships plus a tapped target that is not mine: the target set, just above the fleet set (S8)', () => {
+    const sel = (ids: string[], focusId: string | null) => ({ ids, focusId, focusKind: focusId === null ? null : 'ship' as const });
+    expect(doHexSet({ ...st('spectator'), selection: sel(['a'], 'p2') }, false)).toBe('target');
+    expect(doHexSet({ ...st('spectator'), selection: sel(['a'], 'p2') }, true)).toBe('target');
+    expect(doHexSet({ ...st('spectator'), selection: sel(['a'], null) }, false)).toBe('fleet');
+    expect(doHexSet({ ...st('spectator'), selection: sel([], 'p2') }, false)).toBe('fleet');
+    // Placing, a route pick, Fly and Build still win over it.
+    const pick = { kind: 'patrol', points: 0, doneSeq: 0, undoSeq: 0 } as never;
+    expect(doHexSet({ ...st('spectator'), selection: sel(['a'], 'p2'), fleetPick: pick }, false)).toBe('route');
+    expect(doHexSet({ ...st('spectator'), selection: sel(['a'], 'p2'), placementKind: 'solar' }, false)).toBe('placing');
+    expect(doHexSet({ ...st('pilot'), selection: sel(['a'], 'p2') }, true)).toBe('fly');
+    expect(doHexSet({ ...st('spectator', false, true), selection: sel(['a'], 'p2') }, false)).toBe('build');
   });
 
   it('flyHexCovers: Target, the pod Open, the tapped ship\'s cargo and Details; not the fleet Lock or Pilot', () => {

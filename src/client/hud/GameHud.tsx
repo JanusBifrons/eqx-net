@@ -21,6 +21,7 @@ import { useCallback, useEffect } from 'react';
 import { selectControlMode, useShouldRenderHud, useUIStore } from '../state/store';
 import { selectRightPanelOpen } from '../state/rightPanel';
 import type { TouchInput } from '../input/TouchInput';
+import type { IFleetView } from '@core/contracts/render/IFleetView';
 import { Slot } from '../layout/Slot';
 import { DoHexesHost } from '../layout/DoHexesHost';
 import { RAIL_W_CSS } from '../layout/railWidth';
@@ -40,12 +41,14 @@ import { WorldTagHost } from './WorldTagHost';
 interface Props {
   /** Present on touch devices only. */
   touchInput: TouchInput | null;
+  /** The renderer (it owns the selection): the target do-hexes' Attack and Clear. */
+  rendererRef?: { readonly current: Pick<IFleetView, 'selectFleetShips' | 'attackFocus'> | null };
 }
 
 /** Edge inset for thumb controls (px), on top of the safe-area padding. */
 const THUMB_INSET = 22;
 
-export function GameHud({ touchInput }: Props): JSX.Element | null {
+export function GameHud({ touchInput, rendererRef }: Props): JSX.Element | null {
   const shouldRender = useShouldRenderHud();
   const spectating = useUIStore((s) => s.pilotMode === 'spectator');
   const isDead = useUIStore((s) => s.isDead);
@@ -94,7 +97,7 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
 
       {/* Selection HUD: the do-hexes (bottom-right honeycomb: Command own ships; Fly on
           touch, with Boost under the right thumb). */}
-      <DoHexesHost touchInput={touchInput} />
+      <DoHexesHost touchInput={touchInput} {...(rendererRef !== undefined ? { rendererRef } : {})} />
 
       {/* ── Desktop ─────────────────────────────────────────────────────── */}
       {/* RTS command view: fleet orders, and a running map pick's tools, live on
