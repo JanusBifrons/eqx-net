@@ -290,11 +290,11 @@ export class WingmanPilots {
   }
 
   /** Slice 10: the ship `gone` left the AI controller (its owner took the
-   *  controls, or it died). Unregistering it cleared the guard post of every
+   *  controls, or it died; an escorted NPC's eviction calls it too). Unregistering it cleared the guard post of every
    *  brain anchored to it (`noteEntityGone`): re-apply each escort of it,
    *  which packs on it again where its pilot flies it, else holds where it
    *  is. Rare (a hand-over or a death), never per tick. */
-  private reapplyEscortsOf(gone: string): void {
+  reapplyEscortsOf(gone: string): void {
     const fleet = this.h.fleet;
     for (let i = 0; i < fleet.size; i++) {
       const id = fleet.idAt(i);

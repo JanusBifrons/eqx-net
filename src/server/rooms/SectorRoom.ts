@@ -475,6 +475,14 @@ export class SectorRoom extends Room<SectorState> {
       const ship = this.getActiveShip(playerId);
       return ship?.alive && this.playerToSlot.has(playerId) ? ship.shipInstanceId : null;
     },
+    // Escort any live ship: an NPC ship (swarm drone record) or a pilot's
+    // flown ship (by shipInstanceId); never a rock, pod, structure or wreck.
+    isLiveShip: (id) => {
+      const rec = this.swarmRegistry.get(id);
+      if (rec !== null) return rec.kind === SWARM_KIND_DRONE;
+      const s = this.state.ships.get(id);
+      return s !== undefined && s.alive && this.playerToActiveShipInstance.get(s.playerId) === id;
+    },
     // RTS Part B: an owner's order reaches the AI pilot brain flying the hull.
     orderIssued: (id, order) => this.wingmen.orderIssued(id, order),
     // RTS Part B: the standing mode and the attitude reach the AI pilot brain.
@@ -1547,6 +1555,7 @@ export class SectorRoom extends Room<SectorState> {
       shieldHullRouter: this.shieldHullRouter,
       mountTicker: this.mountTicker,
       freeSlots: this.freeSlots, nav: this.nav,
+      escortGone: (id) => this.wingmen.reapplyEscortsOf(id),
     });
 
     // Player respawn handler. Composes worker proxy + SAB writer +
@@ -3943,7 +3952,7 @@ export class SectorRoom extends Room<SectorState> {
     playerToSession: () => this.playerToSession, playerToActiveShipInstance: this.playerToActiveShipInstance,
     lingeringSlots: this.lingeringSlots, spectateParkedHull: this.spectateParkedHull, sabF32: () => this.sabF32,
     serverTick: () => this.serverTick, sectorKey: () => this.sectorKey, aiController: () => this.aiController,
-    wingmen: () => this.wingmen, getActiveShip: (pid) => this.getActiveShip(pid),
+    wingmen: () => this.wingmen, getActiveShip: (pid) => this.getActiveShip(pid), swarmRegistry: this.swarmRegistry,
     displaceActiveHullToLingering: (pid) => this.pilotSwap.displaceActiveHullToLingering(pid),
   });
   // ── Phase 4 WS-A2 — same-sector instant pilot swap (`features/pilotSwap.ts`) ──
