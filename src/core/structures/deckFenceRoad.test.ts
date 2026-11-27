@@ -26,7 +26,7 @@ function footprint(n: GridNode): PlacementFootprint {
   return { x: n.x, y: n.y, radius: n.radius, halfW: n.halfW, halfH: n.halfH, kind: n.kind, rot: 0 };
 }
 
-const ALL_DECK = { plates: { plateAtWorld: () => true }, owner: 'me' };
+const ALL_DECK = { plates: { plateAtWorld: () => true, plateCount: () => 1 }, owner: 'me' };
 
 describe('a fence across a road (edge placement slice 3)', () => {
   // Two road hexes side by side: (0, 0) and its neighbour across edge 0.

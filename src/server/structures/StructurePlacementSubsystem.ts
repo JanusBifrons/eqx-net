@@ -121,7 +121,7 @@ export class StructurePlacementSubsystem {
   private readonly localExt = { hw: 0, hh: 0 };
   private readonly turn = { cos: 1, sin: 0 };
   /** Scratch deck context for a player's placement on a deck room (#14). */
-  private readonly deckScratch: PlacementDeck = { plates: { plateAtWorld: () => false }, owner: '' };
+  private readonly deckScratch: PlacementDeck = { plates: { plateAtWorld: () => false, plateCount: () => 0 }, owner: '' };
   /** Why the last `place` was refused (an overlap, or a kind rule via
    *  `placementRefusal`), for the room's notice; null when it wasn't (or it
    *  succeeded). */

@@ -98,7 +98,7 @@ const DECK_ROOM_CATEGORIES: readonly BuildCategory[] = [
  *  deck room the Connector is the "Deck plate" (what it does there). */
 export function buildKindText(kindId: StructureKindId, deck: boolean): { name: string; description: string } | null {
   if (deck && kindId === 'connector') {
-    return { name: 'Deck plate', description: 'Lays a new deck plate. Place it on the centre of a plate next to one of yours.' };
+    return { name: 'Deck plate', description: 'Lays a new deck plate. Your first goes anywhere clear; after that, on the centre of a plate next to one of yours.' };
   }
   return null;
 }

@@ -2,7 +2,7 @@
  * Base platforms — the `off-deck` placement rule (`placementRejection`'s deck
  * context). On a deck room a player's structure must stand on one of their
  * own plates; a connector may also lay a NEW plate on the centre of a plate
- * bordering theirs. No deck context = no deck rule.
+ * bordering theirs (anywhere clear for their first plate). No deck context = no deck rule.
  */
 import { describe, it, expect } from 'vitest';
 import { placementRejection, type PlacementDeck } from './placementRules.js';
@@ -49,6 +49,26 @@ describe('placementRejection — off-deck', () => {
     expect(reject('connector', centre(2, 2), deckOf('alice'))).toBe('off-deck');
     // Bordering only bob's plate is not alice's deck.
     expect(reject('connector', centre(5, 0), deckOf('alice'))).toBe('off-deck');
+  });
+
+  it('a player with no deck yet lays their first plate on any clear plate centre', () => {
+    for (const [i, j] of [[9, -7], [2, 2], [-6, 3]] as const) {
+      expect(reject('connector', centre(i, j), deckOf('nobody')), `${i},${j}`).toBeNull();
+    }
+    // Still only a connector, and only on a plate centre.
+    expect(reject('reactor', centre(9, -7), deckOf('nobody'))).toBe('off-deck');
+    const c = centre(9, -7);
+    expect(reject('connector', { x: c.x + 40, y: c.y }, deckOf('nobody'))).toBe('off-deck');
+    // The renderer copy agrees.
+    const list: PlacementDeck = { plates: new OwnerPlateList(), owner: 'nobody' };
+    expect(reject('connector', c, list)).toBeNull();
+    expect(reject('reactor', c, list)).toBe('off-deck');
+  });
+
+  it('the first plate still needs clear space', () => {
+    const c = centre(9, -7);
+    const rock = { x: ringHex(9, -7, 3).x, y: ringHex(9, -7, 3).y, radius: 100 };
+    expect(placementRejection('connector', c.x, c.y, [], [rock], 0, false, deckOf('nobody'))).toBe('plate-blocked');
   });
 
   it('a non-connector on an adjacent plate centre is rejected (only connectors lay plates)', () => {

@@ -58,6 +58,8 @@ export type PlacementRejection = 'overlap-structure' | 'overlap-obstacle' | 'ove
 export interface DeckPlateQuery {
   /** Is world point (x, y) on one of `owner`'s plates? */
   plateAtWorld(owner: string, x: number, y: number): boolean;
+  /** How many plates `owner` has (0 = no deck yet: their first plate may go anywhere). */
+  plateCount(owner: string): number;
 }
 
 /** Deck context for {@link placementRejection} (base platforms, room flag
@@ -245,11 +247,13 @@ const ON_DECK = 0, NEW_PLATE = 1, OFF_DECK = 2;
 
 /** Where a `kindId` centre at (x, y) stands against `deck.owner`'s deck:
  *  ON_DECK, NEW_PLATE (a connector exactly on the centre of an unowned plate
- *  bordering theirs; that plate is left in DECK_PLATE) or OFF_DECK. */
+ *  bordering theirs, or anywhere when they have no plate yet: their first
+ *  plate; that plate is left in DECK_PLATE) or OFF_DECK. */
 function deckStanding(kindId: string, x: number, y: number, deck: PlacementDeck): number {
   const { plates, owner } = deck;
   if (plates.plateAtWorld(owner, x, y) || fenceTouchesDeck(kindId, x, y, deck)) return ON_DECK;
   if (!isConnectorKind(kindId) || !plateCentreAtWorldInto(x, y, DECK_PLATE)) return OFF_DECK;
+  if (plates.plateCount(owner) === 0) return NEW_PLATE;
   const i = DECK_PLATE.i, j = DECK_PLATE.j;
   for (let d = 0; d < PLATE_DIRS.length; d++) {
     const dir = PLATE_DIRS[d]!;
@@ -293,8 +297,9 @@ function onLaidPlate(x: number, y: number): boolean {
 /**
  * Base platforms: may a `kindId` centre at (x, y) stand on `deck.owner`'s
  * deck? Yes when (x, y) is on one of their plates; also for a connector-kind
- * structure exactly on the centre of a plate that borders one of theirs (that
- * connector lays a NEW plate). Occupancy is the overlap check's job.
+ * structure exactly on the centre of a plate that borders one of theirs, or of
+ * any plate when they have none yet (that connector lays a NEW plate: the
+ * first plate starts a deck anywhere). Occupancy is the overlap check's job.
  * Allocation-free.
  */
 export function onOwnDeck(kindId: string, x: number, y: number, deck: PlacementDeck): boolean {
