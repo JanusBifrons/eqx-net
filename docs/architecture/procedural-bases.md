@@ -110,8 +110,10 @@ cross a road (it blocks it; `deckFenceRoad.test.ts`).
   `DECK_LINK_SEAM_FENCE` beams.
 - **Refusals:** the first corner the ghost's own rule (`PlacementGhostVerdict`)
   refuses is still sent, so the server's `lastRefusal` notice says why, and the
-  run stops there. No rollback. Rocks are not in the client check: a corner on
-  a rock is refused by the server while later corners still go.
+  run stops there. No rollback. Rocks are in the check (`fenceRunRocks`): every
+  asteroid on the swarm wire, with its real shape (`shapeSeed`), a field rock
+  there by its box. Dormant field rocks off the wire live only in the renderer's
+  rock layer, so such a corner is still sent and refused by the server.
 - **Preview:** the sent corners ride the one pending record
   (`PendingPlacement.sent` / `run`, `pendingPlacementRun.ts`) into
   `pendingPlacementPreview.run` until all of the run's posts land (or the
@@ -126,9 +128,9 @@ cross a road (it blocks it; `deckFenceRoad.test.ts`).
   with one look in the placement ghost pass (`PendingRunGhosts`,
   `pendingRunGhosts.ts`): a capped pool of placement ghosts and
   `drawFenceBeamBody` beams, solid for the sent run, faint for the hover. The
-  hover's red corner is the click's refused one, or the first a rock refuses
-  in the renderer's ghost check (the single ghost's `obstacles`); nothing past
-  it draws.
+  hover's red corner is the click's refused one (the same swarm rocks), or the
+  first a dormant field rock refuses in the renderer's ghost check (the single
+  ghost's `obstacles`); nothing past it draws.
 - **Gates in the run** (edge feel P3): with a fence post or gate picked on a
   deck, the placing strip shows a Gate toggle that switches `placementKind`
   between `shield_pylon` and `shield_gate` without ending the run. A gate

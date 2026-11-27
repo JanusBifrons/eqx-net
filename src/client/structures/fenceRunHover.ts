@@ -17,7 +17,7 @@ import { nearestDeckCornerInto, nearestDeckEdgeInto } from '../../core/hex/deckC
 import { DECK_FENCE_GATE_KIND } from '../../core/structures/deckLinks.js';
 import type { HexPoint } from '../../core/hex/hex.js';
 import type { RenderMirror } from '../../core/contracts/IRenderer.js';
-import { fenceRunAnchor, isFenceRunKind, mirrorFenceWorld, newFenceRunPlan, planFenceRunInto, planGateRunInto } from './fenceRun.js';
+import { fenceRunAnchor, fenceRunRocks, isFenceRunKind, mirrorFenceWorld, newFenceRunPlan, planFenceRunInto, planGateRunInto } from './fenceRun.js';
 import type { PlacementPreview } from './structurePlacementClient.js';
 
 const plan = newFenceRunPlan();
@@ -77,8 +77,8 @@ export function writePreviewHoverRun(
   key.ax = anchor.x; key.ay = anchor.y; key.structures = structures; key.run = run;
   key.owner = owner; key.plates = plates; key.plateSum = plateSum;
 
-  // Rocks: the click has no rock list either (the renderer adds them to its red).
-  (gate ? planGateRunInto : planFenceRunInto)(plan, anchor, chosenX, chosenY, out.deckPlates ?? EMPTY, mirrorFenceWorld(mirror, null, out));
+  // Rocks: the same swarm rocks the click checks (the renderer adds dormant field rocks to its red).
+  (gate ? planGateRunInto : planFenceRunInto)(plan, anchor, chosenX, chosenY, out.deckPlates ?? EMPTY, mirrorFenceWorld(mirror, fenceRunRocks(mirror), out));
   const hover = out.runHover ?? (out.runHover = []);
   const mark = out.runHoverMark ?? (out.runHoverMark = []);
   hover.length = 0; mark.length = 0;
