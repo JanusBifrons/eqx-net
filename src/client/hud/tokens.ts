@@ -198,6 +198,28 @@ export const HUD = {
    * Left strip + status fly-out look (owner-approved mock .lbar / .ib / .flyo,
    * 1cqw = 9.15 px on a 915 px sideways phone). Px and colours.
    */
+  /** EqxIconButton `variant="hex"`: the pointy-top selection-HUD tile. Px; body = `strip.cell`. */
+  hex: {
+    /** Tile width; height = width x 2/sqrt(3) (a regular pointy-top hexagon). */
+    w: 52,
+    h: 60,
+    /** Tone-coloured edge: rest and lit. */
+    edge: 1.5,
+    litEdge: 2.5,
+    /** Lit glow radius (drop-shadow in the tone colour). */
+    glow: 5,
+    /** Icon size, the word under it, and the gap between them. */
+    icon: 20,
+    wordFont: 8,
+    wordTracking: '0.04em',
+    gap: 1,
+    /** Dim / disabled tile. */
+    dimOpacity: 0.4,
+    /** Black outline on light text over the world (as the shield-ring label). */
+    textOutline: '0 0 3px #000, 0 0 2px #000',
+    /** Patrol blue: the capital tier edge (`color.tier1`) at full strength. */
+    patrol: '#4aa8ff',
+  },
   strip: {
     /** Strip / fly-out box paper. */
     bg: 'rgba(8,12,24,0.97)',

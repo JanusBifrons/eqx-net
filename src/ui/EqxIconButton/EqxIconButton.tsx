@@ -9,19 +9,23 @@
  * - `variant` `rail` (dim) / `railTool` (a mode tool, brighter): the right-rail tiles, a
  *   borderless rounded square `HUD.size.railItem`, line icon, cyan well plus an inset cyan bar on
  *   the left when active, badge as a small pill on the tile corner.
+ * - `variant="hex"`: the selection-HUD pointy-top hexagon `HUD.hex`; the tone colours the
+ *   edge and icon only (body stays dark panel); optional short `word` under the icon; `lit` =
+ *   stronger edge + glow, `dim` = faded. No badge. Look in `hexTile.ts`.
  */
 import { Badge, Box, IconButton } from '@mui/material';
 import type { ReactNode } from 'react';
 import { HUD } from '../../client/hud/tokens.js';
 import { TONE_COLOR, type EqxTone } from '../EqxButton/EqxButton.js';
 import { EqxTooltip } from '../EqxTooltip/EqxTooltip.js';
+import { hexGlowSx, hexTileSx, hexWordSx } from './hexTile.js';
 import { STRIP_BADGE_ROOT, stripBadgeSx, stripTileSx } from './stripTile.js';
 
 /** Strip status tile: `calm` = cyan icon, `alert` = red icon (aggressive stance). */
 export type EqxStripStatus = 'calm' | 'alert';
 
-/** `round`: outlined circle. `rail` / `railTool`: right-rail tile (dim / bright). `strip`: left-strip square tile. */
-export type EqxIconButtonVariant = 'round' | 'rail' | 'railTool' | 'strip';
+/** `round`: outlined circle. `rail` / `railTool`: right-rail tile (dim / bright). `strip`: left-strip square tile. `hex`: selection-HUD hexagon. */
+export type EqxIconButtonVariant = 'round' | 'rail' | 'railTool' | 'strip' | 'hex';
 
 export interface EqxIconButtonProps {
   /** The icon element (e.g. an `@mui/icons-material` icon or a game SVG). */
@@ -45,6 +49,12 @@ export interface EqxIconButtonProps {
   /** Strip variant only: the colour this action has in the world (`#rrggbb`, e.g. the move-order
    *  green), so the button and its mark read as one thing. Overrides tone / status colour. */
   accent?: string;
+  /** Hex variant only: a short word under the icon (e.g. "Move"); omit for icon only. */
+  word?: string;
+  /** Hex variant only: stronger edge + tone glow (the current / suggested action). */
+  lit?: boolean;
+  /** Hex variant only: faded but still tappable (`disabled` fades and blocks). */
+  dim?: boolean;
   'data-testid'?: string;
   /** Round / strip only: a machine-readable state for tests (`data-state`), e.g. a lock's stage. Never shown. */
   'data-state'?: string;
@@ -62,9 +72,44 @@ export function EqxIconButton({
   variant = 'round',
   status,
   accent,
+  word,
+  lit = false,
+  dim = false,
   'data-testid': testId,
   'data-state': dataState,
 }: EqxIconButtonProps) {
+  if (variant === 'hex') {
+    const hexColor = TONE_COLOR[tone];
+    return (
+      <EqxTooltip title={tooltip} {...(holdMs === undefined ? {} : { holdMs })}>
+        {/* Unclipped wrapper: carries the lit glow, and keeps the tooltip working when disabled. */}
+        <Box component="span" sx={hexGlowSx(hexColor, lit)}>
+          <IconButton
+            aria-label={tooltip}
+            aria-pressed={active}
+            disabled={disabled}
+            disableRipple
+            onClick={onClick}
+            data-testid={testId}
+            data-variant="hex"
+            data-tone={tone}
+            data-active={active ? 'true' : 'false'}
+            data-lit={lit ? 'true' : 'false'}
+            data-dim={dim ? 'true' : 'false'}
+            {...(dataState !== undefined ? { 'data-state': dataState } : {})}
+            sx={hexTileSx(hexColor, lit, dim)}
+          >
+            {icon}
+            {word !== undefined && word !== '' ? (
+              <Box component="span" data-testid={testId ? `${testId}-word` : undefined} sx={hexWordSx}>
+                {word}
+              </Box>
+            ) : null}
+          </IconButton>
+        </Box>
+      </EqxTooltip>
+    );
+  }
   if (variant === 'rail' || variant === 'railTool') {
     return (
       <RailTile

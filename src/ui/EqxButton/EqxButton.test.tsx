@@ -27,7 +27,15 @@ describe('EqxButton', () => {
     rerender(<EqxButton data-testid="b" tone="danger">X</EqxButton>);
     expect(b().dataset['tone']).toBe('danger');
     expect(b().className).toContain('MuiButton-outlined');
-    expect(TONE_COLOR).toEqual({ primary: HUD.color.auto, secondary: HUD.color.ink, danger: HUD.color.danger });
+    expect(TONE_COLOR).toEqual({
+      primary: HUD.color.auto,
+      secondary: HUD.color.ink,
+      danger: HUD.color.danger,
+      good: HUD.color.hullOk,
+      warn: HUD.color.manual,
+      patrol: HUD.hex.patrol,
+      neutral: HUD.color.inkDim,
+    });
   });
 
   it('keeps sentence case (no MUI uppercase)', () => {
