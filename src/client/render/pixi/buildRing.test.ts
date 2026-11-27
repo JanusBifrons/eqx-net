@@ -7,10 +7,11 @@
 import { describe, expect, it } from 'vitest';
 import { Container } from 'pixi.js';
 import {
-  BUILD_HEX_DANGER_GAP, BUILD_RING_LABEL, BUILD_RING_MIN_PX, BUILD_RING_PAD, BUILD_RING_STEPS, BuildRing,
+  BUILD_HEX_DANGER_GAP, BUILD_RING_HIDE_PX, BUILD_RING_LABEL, BUILD_RING_MAX_APOTHEM, BUILD_RING_MIN_PX, BUILD_RING_PAD, BUILD_RING_STEPS, BuildRing,
   HEX_APOTHEM_RATIO, buildRingApothem, buildRingClearRadius, buildRingStep, hexPerimeterPath, readBuildRingFlag,
 } from './buildRing.js';
 import { gunDangerOuterRadius } from './structureDeckZones.js';
+import { DECK_HEX_INRADIUS } from '../../../core/hex/deckCorners.js';
 import { HOLOGRAM_LABEL, holoRingOut, StructureHologram, syncStructureHologram, WIRE_ALPHA } from './structureHologram.js';
 import type { StructureRenderState } from '../../../core/contracts/IRenderer.js';
 
@@ -112,6 +113,30 @@ describe('hexagon size', () => {
     expect(buildRingApothem(120, 0.25) * 0.25).toBeCloseTo(BUILD_RING_MIN_PX, 9);
     expect(buildRingApothem(120, 0.1) * 0.1).toBeCloseTo(BUILD_RING_MIN_PX, 9);
     expect(buildRingApothem(120, 0)).toBe(120);
+  });
+
+  it('never grows past one deck hex tile in the world, however far out', () => {
+    expect(BUILD_RING_MAX_APOTHEM).toBe(DECK_HEX_INRADIUS);
+    // Zoom 0.02: the 36 px floor would ask for 1800 u, almost three tiles.
+    expect(buildRingApothem(120, 0.02)).toBeCloseTo(DECK_HEX_INRADIUS, 9);
+    expect(buildRingApothem(120, 0.001)).toBeCloseTo(DECK_HEX_INRADIUS, 9);
+    // Under the cap the floor still rules.
+    expect(buildRingApothem(120, 0.1) * 0.1).toBeCloseTo(BUILD_RING_MIN_PX, 9);
+  });
+
+  it('once capped it shrinks on screen, then hides under the hide size', () => {
+    const host = new Container();
+    const ring = new BuildRing(120);
+    ring.update(0.5, 0.25, host);
+    expect(ring.visible).toBe(true);
+    const zHide = BUILD_RING_HIDE_PX / DECK_HEX_INRADIUS;
+    ring.update(0.5, zHide * 1.05, host);
+    expect(ring.visible).toBe(true);
+    ring.update(0.5, zHide * 0.95, host);
+    expect(ring.visible).toBe(false);
+    // Zooming back in shows it again.
+    ring.update(0.5, 0.25, host);
+    expect(ring.visible).toBe(true);
   });
 
   it('shares one fill context per step (no redraw per frame)', () => {

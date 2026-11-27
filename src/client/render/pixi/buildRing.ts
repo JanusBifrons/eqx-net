@@ -14,6 +14,11 @@
  * (`gunDangerOuterRadius` + `BUILD_HEX_DANGER_GAP`), or the footprint's corner
  * radius + `BUILD_RING_PAD` for a kind without one, and never draws under
  * `BUILD_RING_MIN_PX` on screen, so it reads with the camera pulled back.
+ * That floor grows its WORLD size only up to one deck hex tile
+ * (`BUILD_RING_MAX_APOTHEM` = `DECK_HEX_INRADIUS`, the tile's centre to edge
+ * midpoint), never past it (owner, 2026-11-27). Zoomed out further it just
+ * shrinks on screen, and under `BUILD_RING_HIDE_PX` it is hidden
+ * (`visible = false`): at that range nobody is looking at construction.
  *
  * Perf (phone, invariant #14): drawn once at a unit circumradius and scaled
  * to size (its line width grows with it). The track is ONE shared
@@ -24,6 +29,7 @@
 import { Container, Graphics, GraphicsContext } from 'pixi.js';
 import type { ArcPathSink } from '../arcSubpath.js';
 import { gunDangerOuterRadius } from './structureDeckZones.js';
+import { DECK_HEX_INRADIUS } from '../../../core/hex/deckCorners.js';
 
 /** `?buildRing=on|off` — default on (owner OK); `?buildRing=off` hides the hexagon (and the wireframe hologram). */
 export function readBuildRingFlag(search: string): boolean {
@@ -34,6 +40,11 @@ export function readBuildRingFlag(search: string): boolean {
 export const BUILD_RING_LABEL = 'buildRing';
 /** The hexagon's inscribed radius never draws under this on screen (CSS px). */
 export const BUILD_RING_MIN_PX = 36;
+/** The on-screen floor grows the WORLD inscribed radius at most to one deck
+ *  hex tile (its inradius, ~650 u), never past it. */
+export const BUILD_RING_MAX_APOTHEM = DECK_HEX_INRADIUS;
+/** Under this on-screen inscribed radius (CSS px) the hexagon is hidden. */
+export const BUILD_RING_HIDE_PX = 10;
 /** World units past the footprint's corner radius (kinds with no danger ring). */
 export const BUILD_RING_PAD = 12;
 /** World units past the outer edge of a gun's danger ring. */
@@ -59,10 +70,12 @@ export function buildRingClearRadius(kindId: string | undefined, footR: number):
 }
 
 /** The hexagon's WORLD inscribed radius at camera `zoom` (CSS px per world
- *  u): `clearR`, but never under `BUILD_RING_MIN_PX` on screen. Pure. */
+ *  u): `clearR`, but never under `BUILD_RING_MIN_PX` on screen, that floor
+ *  itself capped at one deck hex tile (`BUILD_RING_MAX_APOTHEM`). Pure. */
 export function buildRingApothem(clearR: number, zoom: number): number {
   if (!(zoom > 0)) return clearR;
-  const min = BUILD_RING_MIN_PX / zoom;
+  const px = BUILD_RING_MIN_PX / zoom;
+  const min = px < BUILD_RING_MAX_APOTHEM ? px : BUILD_RING_MAX_APOTHEM;
   return clearR > min ? clearR : min;
 }
 
@@ -156,13 +169,16 @@ export class BuildRing extends Container {
    * Per frame: size the hexagon at camera `zoom`, fill it to `pct`, and keep
    * it upright on screen whatever the host sprite's turn and build mirror.
    * The host is the structure sprite (`rotation`, `scale`); this hexagon's
-   * parent (the hologram) adds no transform. No allocation after warm-up.
+   * parent (the hologram) adds no transform. Hidden once its on-screen
+   * inscribed radius drops under `BUILD_RING_HIDE_PX`. No allocation after warm-up.
    */
   update(pct: number, zoom: number, host: Container): void {
     const step = buildRingStep(pct);
     if (step !== this.step) { this.step = step; this.arc.context = fillContext(step); }
     const hostScale = Math.abs(host.scale.y) || 1;
-    this.localR = buildRingApothem(this.clearR, zoom) / HEX_APOTHEM_RATIO / hostScale;
+    const apothem = buildRingApothem(this.clearR, zoom);
+    this.visible = !(zoom > 0) || apothem * zoom >= BUILD_RING_HIDE_PX;
+    this.localR = apothem / HEX_APOTHEM_RATIO / hostScale;
     const k = this.localR / RING_UNIT;
     // Parent = R(rot)·S(m): the child R(-rot·m)·S(m) cancels it (setDeckSlot's rule).
     const m = host.scale.x < 0 ? -1 : 1;
