@@ -3,7 +3,7 @@
  * focus. React supplies only the text, at the panel poll rate
  * (`useSelectionPanelData`); `hud/worldTag.ts` moves the wrapper per frame
  * from `gameRafLoop` by direct style writes. Fullscreen slot, no pointer
- * events. Nothing focused ⇒ nothing mounted.
+ * events. Nothing focused, or a right panel open ⇒ nothing mounted.
  */
 import { useCallback } from 'react';
 import { getShipKind } from '@shared-types/shipKinds';
@@ -12,6 +12,7 @@ import { Slot } from '../layout/Slot';
 import { useSelectionPanelData } from '../components/selectionPanelData.js';
 import { getGameClient } from '../net/clientSingleton';
 import { useUIStore } from '../state/store';
+import { selectRightPanelOpen } from '../state/rightPanel';
 import { setWorldTagElement, worldTagText } from './worldTag.js';
 
 /** The wrapper the per-frame writer moves: top-left origin, translated. */
@@ -28,8 +29,10 @@ export function WorldTagHost() {
   const data = useSelectionPanelData();
   const focusId = useUIStore((s) => s.selection.focusId);
   const focusKind = useUIStore((s) => s.selection.focusKind);
+  // A right panel docks over the world: no tag drawing over it (like LockCluster).
+  const panelOpen = useUIStore(selectRightPanelOpen);
   const ref = useCallback((el: HTMLDivElement | null) => setWorldTagElement(el), []);
-  if (data === null) return null;
+  if (data === null || panelOpen) return null;
   const tag = worldTagText(data, focusTypeName(focusId, focusKind));
   return (
     <Slot anchor="fullscreen" pointerEvents="none">
