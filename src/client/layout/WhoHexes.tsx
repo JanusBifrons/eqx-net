@@ -52,6 +52,27 @@ export function whoHexBox(n: number): { w: number; h: number } {
   return { w, h };
 }
 
+/** Characters that fit across a hex under the icon (`HUD.hex.w`, the hex word font). */
+export const WHO_HEX_WORD_CHARS = 10;
+
+/**
+ * The hex's word: the short type name plus the count ("Fighter ×2"), within
+ * {@link WHO_HEX_WORD_CHARS}. A long multi-word name keeps its last word (the
+ * hull: "Mining Barge" -> "Barge"); still too long, it is cut with "…".
+ * The full name stays in the tooltip (pure; unit-tested).
+ */
+export function whoHexWord(name: string, count: number, max = WHO_HEX_WORD_CHARS): string {
+  const suffix = ` ×${count}`;
+  const room = Math.max(1, max - suffix.length);
+  let short = name.trim() || 'Ship';
+  if (short.length > room) {
+    const words = short.split(/\s+/);
+    if (words.length > 1) short = words[words.length - 1]!;
+  }
+  if (short.length > room) short = `${short.slice(0, Math.max(1, room - 1))}…`;
+  return short + suffix;
+}
+
 /** Test-id slug for a kind (`''` = not known yet). */
 export function whoHexTestId(kind: string): string {
   return `who-hex-${kind === '' ? 'unknown' : kind}`;
@@ -97,7 +118,7 @@ export function WhoHexes({ shown, overflowKinds, overflowCount, total, focusId, 
       data-count={total} data-kinds={shown.length + overflowKinds.length} style={style}>
       {shown.map((g, i) => (
         <div key={g.kind || 'unknown'} style={at(i)}>
-          <EqxIconButton variant="hex" tone="neutral" icon={<EqxIcon name="ship" />} word={`×${g.count}`}
+          <EqxIconButton variant="hex" tone="neutral" icon={<EqxIcon name="ship" />} word={whoHexWord(g.displayName, g.count)}
             tooltip={`${g.displayName} ×${g.count}`} lit={focusId !== null && g.ids.includes(focusId)}
             onClick={() => onKeep(g)} data-testid={whoHexTestId(g.kind)} />
         </div>

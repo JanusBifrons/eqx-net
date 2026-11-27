@@ -26,7 +26,7 @@ vi.mock('../net/clientSingleton', () => ({
 
 import { LayoutProvider } from './LayoutProvider';
 import { LeftStripHost, stripIdentity } from './LeftStripHost';
-import { WHO_HEX_MAX, whoHexBox, whoHexSlot, whoHexTestId } from './WhoHexes';
+import { WHO_HEX_MAX, WHO_HEX_WORD_CHARS, whoHexBox, whoHexSlot, whoHexTestId, whoHexWord } from './WhoHexes';
 import { HUD } from '../hud/tokens';
 
 function stubMedia(): void {
@@ -78,7 +78,7 @@ const hexIds = (): string[] =>
     .map((b) => b.getAttribute('data-testid') ?? '');
 
 describe('who hexes (selection HUD S5)', () => {
-  it('one hex per ship type, "×N" under the type icon, named by its type', () => {
+  it('one hex per ship type, its short type name and "×N" under the type icon', () => {
     const [k1, k2] = KINDS as [string, string];
     fleet({ a: k1, b: k1, c: k2 });
     mount();
@@ -87,10 +87,11 @@ describe('who hexes (selection HUD S5)', () => {
     expect(hexes.getAttribute('data-count')).toBe('3');
     expect(hexes.getAttribute('data-kinds')).toBe('2');
     const h1 = screen.getByTestId(whoHexTestId(k1));
-    expect(screen.getByTestId(`${whoHexTestId(k1)}-word`).textContent).toBe('×2');
+    expect(screen.getByTestId(`${whoHexTestId(k1)}-word`).textContent).toBe(whoHexWord(getShipKind(k1).displayName, 2));
+    expect(screen.getByTestId(`${whoHexTestId(k1)}-word`).textContent).toMatch(/ ×2$/);
     expect(h1.getAttribute('aria-label')).toBe(`${getShipKind(k1).displayName} ×2`);
     expect(h1.querySelector('svg')?.getAttribute('data-icon')).toBe('ship');
-    expect(screen.getByTestId(`${whoHexTestId(k2)}-word`).textContent).toBe('×1');
+    expect(screen.getByTestId(`${whoHexTestId(k2)}-word`).textContent).toBe(whoHexWord(getShipKind(k2).displayName, 1));
   });
 
   it('tapping a hex keeps only that type selected, through the renderer', () => {
@@ -166,6 +167,30 @@ describe('who hexes (selection HUD S5)', () => {
     mount();
     select([], 's1', 'structure');
     expect(screen.queryByTestId('who-hexes')).toBeNull();
+  });
+});
+
+describe('whoHexWord (the hex word)', () => {
+  it('a short name keeps its whole name plus the count', () => {
+    expect(whoHexWord('Fighter', 2)).toBe('Fighter ×2');
+    expect(whoHexWord('Heavy', 1)).toBe('Heavy ×1');
+  });
+
+  it('a long multi-word name keeps its last word (the hull)', () => {
+    expect(whoHexWord('Mining Barge', 3)).toBe('Barge ×3');
+    expect(whoHexWord('Missile Frigate', 1)).toBe('Frigate ×1');
+  });
+
+  it('a long single word is cut with "…" and never runs past the hex width', () => {
+    expect(whoHexWord('Interceptor', 2)).toBe('Interc… ×2');
+    expect(whoHexWord('Interceptor', 12)).toBe('Inter… ×12');
+    for (const name of ['Interceptor', 'Robot Harvester', 'Supercalifragilistic Dreadnought', 'x'.repeat(40)]) {
+      for (const n of [1, 9, 42, 120]) expect(whoHexWord(name, n).length).toBeLessThanOrEqual(WHO_HEX_WORD_CHARS);
+    }
+  });
+
+  it('an empty name reads "Ship"', () => {
+    expect(whoHexWord('', 1)).toBe('Ship ×1');
   });
 });
 
