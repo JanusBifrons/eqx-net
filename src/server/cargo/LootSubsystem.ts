@@ -66,6 +66,9 @@ export interface LootCollector {
    *  ownerless `hauler`-type record keyed by its swarm id (spilled on death by
    *  the kill path), and it gets no player popup. */
   npc?: boolean;
+  /** The tractor lease emitter id when it is not `playerId`: an AI-flown
+   *  owned hull's beams are keyed by its shipInstanceId (`forEachSalvager`). */
+  emitterId?: string;
 }
 
 export interface LootSubsystemDeps {
@@ -98,6 +101,11 @@ export interface LootSubsystemDeps {
    *  filled; false = a ship that is not collecting; null = not a ship. Absent:
    *  a pod contact is never a hull touch. */
   fillCollector?: (shipId: string, c: LootCollector) => boolean | null;
+  /** Visit every AI-flown owned hull on a fleet SALVAGE order
+   *  (`LootCollectors.forEachSalvager`): it takes in wreck pieces only (its
+   *  own tractor's hold zone, or consumable on hull touch), never pods.
+   *  Absent: AI-flown hulls never collect. */
+  forEachSalvager?: (visit: (c: LootCollector) => void) => void;
   /** Salvage plan PR 12, hold-zone pickup: is pod `podId` (at x, y) held by a
    *  tractor beam of collector `c` close enough to take it
    *  (`ForceFieldSubsystem.inTractorHold`)? Such a pod is loaded whole (until
@@ -291,6 +299,22 @@ export class LootSubsystem {
   collectTick(): void {
     if (this.pods.size === 0 && this.d.heldPieces?.any() !== true) return;
     this.d.forEachCollector(this.visitCollector);
+    if (this.d.heldPieces?.any() === true) this.d.forEachSalvager?.(this.visitSalvager);
+  }
+
+  /** A salvaging AI-flown hull: wreck pieces only. Bound once (#14). */
+  private readonly visitSalvager = (c: LootCollector): void => { this.collectPieces(c); };
+
+  /** The piece store for collector `c`: pieces its own tractor holds in the
+   *  hold zone, and consumable pieces touching its hull. */
+  private collectPieces(c: LootCollector): void {
+    const hp = this.d.heldPieces;
+    if (hp === undefined) return;
+    this.pieceCollector = c;
+    hp.forEach(c, this.storeHeldPiece);
+    const maxM = salvageConsumeMass(c.kind);
+    if (maxM > 0) hp.near(c.x, c.y, shipHitBound(c.kind.id), maxM, this.consumeNearPiece);
+    this.pieceCollector = null;
   }
 
   /** The collector the piece-store visit runs for (no closure per pass, #14). */
@@ -298,13 +322,7 @@ export class LootSubsystem {
 
   /** Bound once (no per-tick closure allocation, #14). */
   private readonly visitCollector = (c: LootCollector): void => {
-    if (this.d.heldPieces !== undefined) {
-      this.pieceCollector = c;
-      this.d.heldPieces.forEach(c, this.storeHeldPiece);
-      const maxM = salvageConsumeMass(c.kind);
-      if (maxM > 0) this.d.heldPieces.near(c.x, c.y, shipHitBound(c.kind.id), maxM, this.consumeNearPiece);
-      this.pieceCollector = null;
-    }
+    this.collectPieces(c);
     // Plan cargo-pods slice 14: no fly-over or touch pickup; a pilot opens a
     // pod (`take`). An AI harvester has no window: it takes all within the
     // same reach. A pod in the collector's own tractor hold zone loads whole.

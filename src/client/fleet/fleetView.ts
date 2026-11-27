@@ -27,9 +27,12 @@ export const STANCE_LABELS: Record<FleetStance, string> = {
   holdFire: 'Hold fire',
 };
 
-/** What a ship is doing, in plain words ("Chasing Drone", "Retreating – hull 20%"). */
+/** What a ship is doing, in plain words ("Chasing Drone", "Retreating – hull 20%").
+ *  A hull on a salvage order reads "Salvaging" while it travels to and works
+ *  the piece; a retreat still says why it is pulling out. */
 export function describeActivity(row: FleetStatusRow | undefined, targetName?: string, hullPct: number | null = null): string {
   if (!row) return 'No report yet';
+  if (row.orderKind === 'salvage' && row.activity !== 'retreating') return 'Salvaging';
   const t = targetName ? ` ${targetName}` : '';
   switch (row.activity) {
     case 'idle':

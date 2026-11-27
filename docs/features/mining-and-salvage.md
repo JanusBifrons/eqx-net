@@ -137,6 +137,24 @@ Tractor mounts (`tractor-*`) carry the `tractor` weapon and draw as dishes.
 
 To see one in the game, start the server with `EQX_BARGE_LOOK=A` (or B, C) and open the page with `?room=showcase-barge-look&bargeLook=A`: the barge parks beside a battleship and a few small ships. Room `showcase-barge-thrust` has one barge under way at full thrust. Showcase shots `barge-look`, `barge-stern` and `barge-thrust` film them. The switch is for this look review only. Unset, the catalogue is unchanged. Set, the look is added at the very end of the catalogue as kind `barge-look`, and it never spawns at random. Set it on both the server and the page. It stays for comparing looks B and C with the real barge (look A).
 
+## Fleet salvage order
+
+In Command, tap a scrap or wreck piece and then the **Salvage** hex. The order
+covers wrecks and scrap only, never rocks or loot pods.
+
+- Ships with salvage tools (mining skiff, barge) fly to that wreck and work it
+  until it is gone or their hold is full, then go back to their previous job.
+  There is no auto-unload.
+- Gunships in the selection guard a miner. With no salvage tools in the
+  selection the hex is greyed out: "No salvage tools on these ships".
+- The salvage groups' trigger is their lock on the piece; guns never fire at
+  it. Under Hold fire the guns stop, but the salvage groups still cut the
+  ordered piece.
+- A piece too small for any salvage mount to lock or take ends the order.
+- The fleet panel shows such a ship as "Salvaging".
+
+How it works: [fleet-command](../architecture/fleet-command.md) (salvage order).
+
 ## Coming next
 
 - **The barge's AI pilot:** its turrets pick salvage targets and it strip-mines a wreck field, banking at its owner's base.

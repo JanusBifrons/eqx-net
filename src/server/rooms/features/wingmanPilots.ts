@@ -1,11 +1,9 @@
 /**
  * RTS — AI pilots on lingering hulls: attach / detach, the owner's orders,
  * modes and stances reaching the AI pilot brain, the hull's control keys,
- * and the ~10 Hz target step and per-tick fire of every AI-flown hull. The
- * room-side half of the fleet (`FleetCommandSubsystem` keeps the orders and
- * squads; this flies them). Moved verbatim out of `SectorRoom`; the room
- * hands in live accessors. Per-tick path (#14): the scratch poses, the pack
- * ids and the INPUT command are allocated once, here.
+ * and the ~10 Hz target step and per-tick fire of every AI-flown hull (the
+ * room-side half of the fleet; `FleetCommandSubsystem` keeps the orders).
+ * Per-tick path (#14): scratch poses, pack ids and INPUT command allocated once.
  */
 import type { MapSchema } from '@colyseus/schema';
 import type { AiController } from '../../../core/ai/AiController.js';
@@ -30,6 +28,7 @@ import type { WorkerCmd } from '../PhysicsWorkerProxy.js';
 import { wireSwarmEntityId } from './fleetMessages.js';
 import { WingmanKeptLocks } from './wingmanKeptLocks.js';
 import { WingmanSalvage } from './wingmanSalvage.js';
+import { SALVAGE_DONE, SALVAGE_WORKING, WingmanSalvageOrder, type WingmanSalvageOrderHost } from './wingmanSalvageOrder.js';
 
 /** RTS slice 4b — `fleet.detach` options when the owner takes a member's helm. */
 const KEEP_SQUAD = Object.freeze({ keepSquad: true });
@@ -38,7 +37,7 @@ const KEEP_SQUAD = Object.freeze({ keepSquad: true });
 const HULL_AI_REGISTRATION = Object.freeze({ hull: true });
 
 /** What the wingman pilots need from the room; getters read the live field. */
-export interface WingmanPilotsHost {
+export interface WingmanPilotsHost extends Pick<WingmanSalvageOrderHost, 'salvageLineage' | 'salvageHoldFull' | 'salvageFlags'> {
   state(): { ships: MapSchema<ShipState> };
   fleet: FleetCommandSubsystem;
   lingeringSlots: ReadonlyMap<string, number>;
@@ -65,7 +64,7 @@ export interface WingmanPilotsHost {
 }
 
 export class WingmanPilots {
-  constructor(private readonly h: WingmanPilotsHost) { this.keptLocks = new WingmanKeptLocks(h); this.salvage = new WingmanSalvage(h); }
+  constructor(private readonly h: WingmanPilotsHost) { this.keptLocks = new WingmanKeptLocks(h); this.salvage = new WingmanSalvage(h); this.salvageOrder = new WingmanSalvageOrder(h); }
 
   /** Scratch for a wingman attack target's pose (#14). */
   readonly wingmanTargetPose = { x: 0, y: 0, vx: 0, vy: 0, angle: 0, angvel: 0 };
@@ -97,7 +96,8 @@ export class WingmanPilots {
     if (order.kind === 'stop') {
       if (brain.stopAt !== undefined) brain.stopAt(p.x, p.y, p.vx, p.vy);
       else this.holdHullAt(brain, p.x, p.y);
-    } else if (brain.getTravelState?.() === 1) this.holdHullAt(brain, p.x, p.y);
+    } else if (order.kind === 'salvage') this.applyHullMode(id); // travel into reach (`wingmanSalvageOrder.ts`)
+    else if (brain.getTravelState?.() === 1) this.holdHullAt(brain, p.x, p.y);
   }
 
   // ── RTS — AI pilots on lingering hulls ────────────────────────────────────
@@ -186,13 +186,9 @@ export class WingmanPilots {
     this.h.fleetStatusSoonFor(fleet.ownerAt(i));
   }
 
-  /** RTS Part B slice 11: an owned hull in Patrol mode at (x, y) walks its
-   *  fleet route (the ONE route, on its fleet orders): `stepFleetPatrol` steps it
-   *  with the shared `stepRoute` (the garrison patrols' stepper), looping;
-   *  a new waypoint (or a brain no longer on its leg: a fight lost it, a
-   *  travel arrived) gets a fresh patrol leg from the last waypoint (from the
-   *  hull on the first leg). `fresh` forces the leg (the mode was just set).
-   *  Called from `applyHullMode` and the ~10 Hz target step. */
+  /** RTS Part B slice 11: a Patrol hull at (x, y) walks its fleet route (`stepFleetPatrol`, the shared
+   *  `stepRoute`), looping; a new waypoint (or a brain off its leg) gets a fresh leg from the last
+   *  waypoint (the hull on the first). `fresh` forces the leg. From `applyHullMode` and the target step. */
   private stepHullPatrol(w: FleetShipOrders, brain: IAiBehaviour, x: number, y: number, fresh: boolean): void {
     if (brain.setPatrolLeg === undefined) return;
     const before = w.routeIdx;
@@ -254,6 +250,7 @@ export class WingmanPilots {
     if (brain === null || w === null) return;
     const o = w.order;
     if (o !== null && o.kind === 'move' && brain.setTravel !== undefined) { brain.setTravel(o.x, o.y, o.speed); return; }
+    if (o !== null && o.kind === 'salvage' && this.salvageOrder.fly(id, o, brain, this.hold)) return; // `wingmanSalvageOrder.ts`
     const sq = fleet.squadOf(id);
     const pack = this.hullPackIds;
     const esc = fleet.escortTargetOf(id);
@@ -346,7 +343,7 @@ export class WingmanPilots {
     this.h.lockActivated().delete(shipInstanceId);
     this.wingmanFireKeys.delete(shipInstanceId);
     this.keptLocks.forget(shipInstanceId);
-    this.salvage.forget(shipInstanceId);
+    this.salvage.forget(shipInstanceId); this.salvageOrder.forget(shipInstanceId);
     const slot = this.h.lingeringSlots.get(shipInstanceId);
     if (slot === undefined) return;
     const cmd = this.wingmanInputCmd;
@@ -427,7 +424,8 @@ export class WingmanPilots {
   readonly wingmanFireKeys = new Map<string, { id: string; key: string }>();
   /** Per hull: its kept lock (capital S2; `wingmanKeptLocks.ts`). */
   private readonly keptLocks: WingmanKeptLocks;
-  private readonly salvage: WingmanSalvage; // a salvage order's locks (`wingmanSalvage.ts`)
+  private readonly salvage: WingmanSalvage; private readonly salvageOrder: WingmanSalvageOrder; // its locks; travel + finish
+  private readonly hold = (b: IAiBehaviour, x: number, y: number): void => this.holdHullAt(b, x, y);
   /** A swarm record by registry id or wire id (`swarm-<entityId>`, what the
    *  client's attack order names). Alloc-free digit parse. */
   private swarmRecByAnyId(id: string): SwarmEntityRecord | null {
@@ -515,6 +513,10 @@ export class WingmanPilots {
           if (w.mode === 'retreat') this.applyHullMode(sid);
           this.h.fleetStatusSoonFor(fleet.ownerAt(i));
         }
+      } else if (o !== null && o.kind === 'salvage') { // travel, lineage, finish (`wingmanSalvageOrder.ts`)
+        const st = this.salvageOrder.step(sid, ship.kind, w, hb, pose.x, pose.y, this.hold);
+        if (st === SALVAGE_DONE) { clearFleetOrder(w); this.applyHullMode(sid); }
+        if (st !== SALVAGE_WORKING) this.h.fleetStatusSoonFor(fleet.ownerAt(i));
       } else if (hb !== null && hb.getTravelState !== undefined) this.completeHullTravel(i, sid, hb);
       // Slice 11: a patrolling hull walks its route.
       if (hb !== null && w.order === null && w.mode === 'patrol' && fleet.squadFollowOf(sid) === null) this.stepHullPatrol(w, hb, pose.x, pose.y, false);

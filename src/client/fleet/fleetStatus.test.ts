@@ -72,6 +72,12 @@ describe('describeActivity', () => {
     expect(describeActivity(undefined)).toBe('No report yet');
   });
 
+  it('reads Salvaging for a hull on a salvage order, whatever it is doing', () => {
+    expect(describeActivity(row('a', { orderKind: 'salvage', activity: 'moving' }))).toBe('Salvaging');
+    expect(describeActivity(row('a', { orderKind: 'salvage', activity: 'attacking' }), 'Wreck')).toBe('Salvaging');
+    expect(describeActivity(row('a', { orderKind: 'salvage', activity: 'retreating' }), undefined, 40)).toBe('Retreating – hull 40%');
+  });
+
   it('says why a ship is pulling out, in plain words', () => {
     // Hull lost (hull from the mirror ship entry, RTS Part A).
     expect(describeActivity(row('a', { activity: 'retreating' }), undefined, 45)).toBe('Retreating – hull 45%');

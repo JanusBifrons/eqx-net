@@ -642,7 +642,7 @@ export class SectorRoom extends Room<SectorState> {
     { type: 'WRECK_RIGID_IMPULSE', entityIds: [], jx: 0, jy: 0, px: 0, py: 0 };
   /** The hulls that collect loot: the pickup pass, a pod's hull contact, auto-deposit (and the hand-moved set, `manualCargo`). */
   private readonly lootCollectors = new LootCollectors({ sectorKey: () => this.sectorKey, pilots: this.playerToSlot, activeShip: (pid) => this.getActiveShip(pid), hasHold: (id) => this.hasHold(id), pilotPose: (pid) => this.shipPoseCache.get(pid), cargoCapacity: (k, id) => this.shipCargoCapacity(k, id), swarm: this.swarmRegistry, sab: () => this.sabF32,
-    playerToSession: () => this.playerToSession, clients: () => this.clients });
+    playerToSession: () => this.playerToSession, clients: () => this.clients, fleet: this.fleet, lingeringPose: (id) => this.lingeringPoseCache.get(id), ship: (id) => this.state.ships.get(id) });
   /** Structure-restyle rigs (`features/structureRigs.ts`): rig clips + sandbox scene hooks (`RigScene`), auto-deposit + crane bays (`CraneBays`). */
   private readonly rigs = buildStructureRigs({
     structures: () => this.structureRegistry, swarm: () => this.swarmRegistry, lootCollectors: this.lootCollectors, sab: () => this.sabF32,
@@ -1418,7 +1418,7 @@ export class SectorRoom extends Room<SectorState> {
       fireAllowed: (pid, slotId) => this.fireLocks.locksFor(pid).hasLocked(pid, slotId),
       mountBearsOnLock: (pid, mountId, k, ox, oy, angle, weaponId, size) => this.fireLocks.mountBearsOnLock(pid, mountId, k, ox, oy, angle, weaponId, size),
       hullLineBlocked: (sid, fx, fy, dx, dy, weaponId, svx, svy, size) => this.lineOfFire.hullLineBlocked(sid, fx, fy, dx, dy, weaponId, svx, svy, size),
-      fireTractor: (pid, m) => this.forceFields.renewTractor(pid, m, lockKeyBodyId(this.locks.aimKeyFor(pid, m.id), this.swarmRegistry)),
+      fireTractor: (pid, m) => this.forceFields.renewTractor(pid, m, lockKeyBodyId(this.fireLocks.locksFor(pid).aimKeyFor(pid, m.id), this.swarmRegistry)),
     });
 
     // AI drone weapon-fire resolver. Composes the per-mount hitscan +
@@ -3950,6 +3950,7 @@ export class SectorRoom extends Room<SectorState> {
     transitOrchestrator: () => this.transitOrchestrator, postToWorker: (cmd) => this.postToWorker(cmd),
     getActiveShip: (pid) => this.getActiveShip(pid), swarmEntityPoseInto: (id, out) => this.swarmEntityPoseInto(id, out),
     resolveActiveShipKey: (pid) => this.resolveActiveShipKey(pid), fleetStatusSoonFor: (pid) => this.fleetHooks.fleetStatusSoonFor(pid),
+    salvageLineage: () => this.fireLocks.lockLineage, salvageHoldFull: (sid) => this.fireLocks.holdFull(sid), salvageFlags: (sid, key) => this.fireLocks.salvageFlags(sid, key),
   });
   private readonly fleetHooks: FleetRoomHooks = new FleetRoomHooks({
     state: () => this.state, fleet: this.fleet, clients: () => this.clients, sessionToPlayer: () => this.sessionToPlayer,
