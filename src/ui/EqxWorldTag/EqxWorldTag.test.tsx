@@ -15,7 +15,7 @@ describe('EqxWorldTag', () => {
 
   it('no owner: title only', () => {
     render(<EqxWorldTag title="Asteroid" data-testid="t" />);
-    expect(screen.getByTestId('t').textContent).toBe('Asteroid');
+    expect(screen.getByTestId('t').querySelector('[data-world-tag-full]')!.textContent).toBe('Asteroid');
     expect(screen.getByTestId('t').getAttribute('aria-label')).toBe('Asteroid');
   });
 
@@ -27,6 +27,29 @@ describe('EqxWorldTag', () => {
     expect(tag.querySelector('[data-world-tag-edge]')).not.toBeNull();
     expect(tag.querySelector('[data-world-tag-dist]')).not.toBeNull();
     expect(tag.querySelector('[data-world-tag-pointer]')).not.toBeNull();
+  });
+
+  it('S10 compact: one line (compactTitle + owner-colour dot), no owner line or hull bar; pointer stays', () => {
+    render(<EqxWorldTag title="Fighter · Vex" compactTitle="Fighter" owner="Hostile" ownerColor="#ff6b6b" hullPct={50} compact data-testid="t" />);
+    const tag = screen.getByTestId('t');
+    expect(tag.getAttribute('data-compact')).toBe('1');
+    const compactRow = tag.querySelector<HTMLElement>('[data-world-tag-compact]')!;
+    expect(compactRow.textContent).toBe('Fighter');
+    expect(tag.querySelector<HTMLElement>('[data-world-tag-dot]')!.style.backgroundColor).toBe('rgb(255, 107, 107)');
+    // CSS shows one layout by data-compact: compact hides the full block.
+    expect(getComputedStyle(tag.querySelector('[data-world-tag-full]')!).display).toBe('none');
+    expect(getComputedStyle(compactRow).display).not.toBe('none');
+    expect(tag.querySelector('[data-world-tag-pointer]')).not.toBeNull();
+  });
+
+  it('S10 not compact: the compact row is hidden, the full layout shows; compactTitle defaults to title', () => {
+    render(<EqxWorldTag title="Asteroid" data-testid="t" />);
+    const tag = screen.getByTestId('t');
+    expect(tag.getAttribute('data-compact')).toBe('0');
+    const compactRow = tag.querySelector<HTMLElement>('[data-world-tag-compact]')!;
+    expect(compactRow.textContent).toBe('Asteroid');
+    expect(getComputedStyle(compactRow).display).toBe('none');
+    expect(getComputedStyle(tag.querySelector('[data-world-tag-full]')!).display).not.toBe('none');
   });
 
   it('hullPct draws a clamped hull meter coloured by health; omitted = no bar', () => {
