@@ -18,6 +18,7 @@ import { getGameClient } from '../net/clientSingleton';
 import { useUIStore } from '../state/store';
 import { selectRightPanelOpen } from '../state/rightPanel';
 import { useFleetSelectionView } from '../fleet/useFleetSelectionView.js';
+import { groupMirrorSelection } from '../fleet/fleetView.js';
 import { requestWorldTagGlide, setWorldTagAnchor, setWorldTagElement, worldTagText, type WorldTagText } from './worldTag.js';
 import { useTouchClickActivate } from '../components/touchClickActivate.js';
 import { groupTagText, worldTagMode } from './groupWorldTag.js';
@@ -61,7 +62,7 @@ export function WorldTagHost() {
   const ref = useCallback((el: HTMLDivElement | null) => setWorldTagElement(el), []);
   if (panelOpen || (!group && data === null)) return null;
   const tag: WorldTagText = group
-    ? groupTagText(fleet.ships, fleet.mode, fleet.stance)
+    ? groupTagText(fleet.ships, groupMirrorSelection(getGameClient()?.mirror, fleet.ids), fleet.mode, fleet.stance)
     : worldTagText(data!, focusTypeName(focusId, focusKind));
   return (
     <Slot anchor="fullscreen" pointerEvents="none">
