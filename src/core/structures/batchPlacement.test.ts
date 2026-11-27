@@ -45,6 +45,13 @@ describe('BatchPlacementChecker — a batch checked against itself', () => {
     expect([0, 1, 2, 3].map((i) => c.countOf('capital', i))).toEqual([0, 1, 1, 2]);
   });
 
+  it('earlierItems lists the items before an index with the batch owner (kind rules count them)', () => {
+    const c = new BatchPlacementChecker();
+    c.begin([item('territory_lock', 0, 0), item('solar', 3000, 0), item('territory_lock', 6000, 0)], null, 'alice');
+    expect([...c.earlierItems(0)]).toEqual([]);
+    expect([...c.earlierItems(2)].map((e) => [e.kind, e.owner])).toEqual([['territory_lock', 'alice'], ['solar', 'alice']]);
+  });
+
   it('a plate the batch lays is deck for its other items, in any order', () => {
     const ps = new PlateSet<string>();
     const home = centre(0, 0);

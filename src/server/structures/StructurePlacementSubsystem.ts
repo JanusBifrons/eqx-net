@@ -35,7 +35,7 @@ import {
 } from '../../core/structures/structureGridConstants.js';
 import type { GridObstacle, ObstacleBox } from '../../core/structures/Grid.js';
 import { placementRejection, placementRejectionNotice, type PlacementDeck } from '../../core/structures/placementRules.js';
-import { BatchPlacementChecker, type BatchPlacementItem } from '../../core/structures/batchPlacement.js';
+import { BatchPlacementChecker, type BatchEarlierItem, type BatchPlacementItem } from '../../core/structures/batchPlacement.js';
 import type { PlaceRefusalCode } from '../../shared-types/messages.js';
 import { plateReachBoxAdd } from '../../core/structures/plateClearance.js';
 import { isPlateAnchor } from '../../core/hex/plateSet.js';
@@ -75,7 +75,11 @@ export interface StructurePlacementHooks {
   /** A kind's own placement rule for a PLAYER placement (`requirePacked`):
    *  the refusal text, or null to allow. Today only the Territory Lock has one
    *  (`territoryLockRefusal`). Absent ⇒ no extra rule. */
-  placementRefusal?(owner: string, kindId: StructureKindId): string | null;
+  placementRefusal?(owner: string, kindId: StructureKindId, earlier?: Iterable<BatchEarlierItem>): string | null;
+  /** Free entity slots for new structures (the room's slot pool). A
+   *  `place_structures` batch needs one per item, else it is refused
+   *  `no-room` before anything lands. Absent = never short. */
+  freeSpawnSlots?(): number;
   /** Room's sector key (for the packed gate). Null or absent = no sector:
    *  no holds there, so the Capital needs no crate. */
   sectorKey?(): string | null;
@@ -118,6 +122,9 @@ export interface StructurePlacementHooks {
    *  (`moveParkedHullsClear`). Absent ⇒ they are left where they are. */
   parkedHulls?: ParkedHullClearHost;
 }
+
+/** The notice for a batch the room's entity slots can't hold. */
+export const NO_ROOM_NOTICE = "Can't build: no room in this sector for that many buildings";
 
 export class StructurePlacementSubsystem {
   /** Scratch for `linkReachBox` (auto-connect's `near` box). */
@@ -196,7 +203,7 @@ export class StructurePlacementSubsystem {
       b.kind = it.kind; b.x = pos.x; b.y = pos.y; b.rot = normaliseStructureRotation(it.rot); b.mirror = it.mirror === true;
       this.batchView.push(b);
     }
-    this.batch.begin(this.batchView, deck ? this.deckFor(owner) : null);
+    this.batch.begin(this.batchView, deck ? this.deckFor(owner) : null, owner);
     let firstText: string | null = null;
     for (let i = 0; i < this.batchView.length; i++) {
       const it = this.batchView[i]!;
@@ -205,6 +212,13 @@ export class StructurePlacementSubsystem {
         outCode.push(this.lastRefusalCode ?? 'not-buildable');
         firstText ??= this.lastRefusal;
       }
+    }
+    // All or nothing: every item needs an entity slot, or none lands. The
+    // items past the free slots are refused (in order, after any others).
+    const slots = this.hooks.freeSpawnSlots?.() ?? Infinity;
+    if (outIndex.length === 0 && slots < this.batchView.length) {
+      for (let i = Math.max(0, slots); i < this.batchView.length; i++) { outIndex.push(i); outCode.push('no-room'); }
+      firstText = NO_ROOM_NOTICE;
     }
     this.lastRefusal = firstText;
     return outIndex.length === 0;
@@ -274,7 +288,7 @@ export class StructurePlacementSubsystem {
 
     // A kind's own rule (the Territory Lock: hold the sector, one per sector).
     if (opts?.requirePacked === true && this.hooks.placementRefusal) {
-      this.lastRefusal = this.hooks.placementRefusal(owner, kindId);
+      this.lastRefusal = this.hooks.placementRefusal(owner, kindId, batchIndex >= 0 ? this.batch.earlierItems(batchIndex) : undefined);
       if (this.lastRefusal !== null) { this.lastRefusalCode = 'kind-rule'; return false; }
     }
 

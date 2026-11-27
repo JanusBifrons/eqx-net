@@ -257,11 +257,12 @@ export const PlaceStructuresSchema = z
 /** Why one planned building was refused: a placement-rule rejection
  *  (`PlacementRejection` in core, same names), or `not-buildable` (a kind a
  *  player can never place here), `kind-rule` (the kind's own rule, e.g. one
- *  Territory Lock per sector), `no-crate` (not enough packed crates for the
- *  batch). */
+ *  Territory Lock per sector, counting the batch's earlier items), `no-crate`
+ *  (not enough packed crates for the batch), `no-room` (the sector has too
+ *  few free entity slots for the whole batch: the items past the room). */
 export const PLACE_REFUSAL_CODES = [
   'overlap-structure', 'overlap-obstacle', 'overlap-pad', 'off-deck', 'plate-blocked',
-  'not-buildable', 'kind-rule', 'no-crate',
+  'not-buildable', 'kind-rule', 'no-crate', 'no-room',
 ] as const;
 export type PlaceRefusalCode = (typeof PLACE_REFUSAL_CODES)[number];
 

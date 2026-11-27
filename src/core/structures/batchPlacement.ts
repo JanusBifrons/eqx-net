@@ -41,8 +41,15 @@ export interface BatchPlacementItem {
   readonly mirror?: boolean;
 }
 
+/** An earlier batch item as a kind rule sees it (`earlierItems`). */
+export interface BatchEarlierItem {
+  readonly kind: string;
+  readonly owner: string;
+}
+
 interface BatchSlot extends PlacementFootprint {
   kind: string;
+  owner: string;
   rot: number;
   /** Lays a plate (`isPlateAnchor`); its plate in `pi`/`pj`. */
   anchor: boolean;
@@ -68,7 +75,7 @@ export class BatchPlacementChecker {
   private self = -1;
   private base: PlacementDeck | null = null;
   private readonly deck: PlacementDeck;
-  private readonly earlier: Iterable<PlacementFootprint>;
+  private readonly earlier: Iterable<BatchSlot>;
 
   constructor() {
     const plates: DeckPlateQuery = {
@@ -77,8 +84,8 @@ export class BatchPlacementChecker {
     this.deck = { plates, owner: '' };
     // One reusable iterator over slots[0..upTo) (no per-call allocation).
     let k = 0;
-    const res = { value: undefined as unknown as PlacementFootprint, done: false };
-    const it: Iterator<PlacementFootprint> = {
+    const res = { value: undefined as unknown as BatchSlot, done: false };
+    const it: Iterator<BatchSlot> = {
       next: () => {
         if (k < this.upTo) { res.value = this.slots[k++]!; res.done = false; } else { res.done = true; }
         return res;
@@ -87,8 +94,8 @@ export class BatchPlacementChecker {
     this.earlier = { [Symbol.iterator]: () => { k = 0; return it; } };
   }
 
-  /** Start a batch. `deck`: the room's deck rule (null = none). */
-  begin(items: readonly BatchPlacementItem[], deck: PlacementDeck | null): void {
+  /** Start a batch placed by `owner`. `deck`: the room's deck rule (null = none). */
+  begin(items: readonly BatchPlacementItem[], deck: PlacementDeck | null, owner = ''): void {
     this.base = deck;
     if (deck !== null) this.deck.owner = deck.owner;
     this.n = items.length;
@@ -96,11 +103,11 @@ export class BatchPlacementChecker {
       const it = items[i]!;
       let s = this.slots[i];
       if (s === undefined) {
-        s = { x: 0, y: 0, radius: 0, halfW: 0, halfH: 0, kind: '', rot: 0, mirror: false, anchor: false, pi: 0, pj: 0 };
+        s = { x: 0, y: 0, radius: 0, halfW: 0, halfH: 0, kind: '', owner: '', rot: 0, mirror: false, anchor: false, pi: 0, pj: 0 };
         this.slots.push(s);
       }
       structureHalfExtentsInto(it.kind, it.rot, EXT);
-      s.x = it.x; s.y = it.y; s.kind = it.kind; s.rot = it.rot; s.mirror = it.mirror === true;
+      s.x = it.x; s.y = it.y; s.kind = it.kind; s.owner = owner; s.rot = it.rot; s.mirror = it.mirror === true;
       s.radius = getStructureKind(it.kind).radius;
       s.halfW = EXT.hw; s.halfH = EXT.hh;
       s.anchor = isPlateAnchor(it.kind, it.x, it.y) && plateCentreAtWorldInto(it.x, it.y, PLATE);
@@ -121,6 +128,14 @@ export class BatchPlacementChecker {
     if (world !== null) return world;
     this.upTo = index;
     return placementRejection(s.kind, s.x, s.y, this.earlier, null, s.rot, s.mirror, null);
+  }
+
+  /** The batch items before `index`, for a kind's own rule (one Territory
+   *  Lock per sector) to count as placed. A reusable view: read it before the
+   *  next `rejection` / `earlierItems` call. */
+  earlierItems(index: number): Iterable<BatchEarlierItem> {
+    this.upTo = index;
+    return this.earlier;
   }
 
   /** How many items of `kind` come before `index` in the batch. */

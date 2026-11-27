@@ -35,19 +35,23 @@ export const LOCK_TAKEN_REASON = 'This sector already has a Territory Lock.';
  * Territory Lock has rules. `holder` = the sector's holder on the live control
  * meter (`liveSectorHolder`): null = neutral, undefined = no meter running, in
  * which case the sector's static controller stands in (never a player).
- * Placement cadence (a player's click), never a tick.
+ * Placement cadence (a player's click), never a tick. `earlier`: the earlier
+ * items of a `place_structures` batch, counted as if already placed (a
+ * second lock in one batch is refused like a second lock in the sector).
  */
 export function territoryLockRefusal(
   owner: string,
   kindId: string,
   sectorKey: string,
   holder: string | null | undefined,
-  structures: Iterable<StructureRecord>,
+  structures: Iterable<Pick<StructureRecord, 'kind' | 'owner'>>,
+  earlier?: Iterable<{ readonly kind: string; readonly owner: string }>,
 ): string | null {
   if (kindId !== TERRITORY_LOCK_KIND) return null;
   const held = sectorHeldBy(sectorKey, holder);
   if (held === null || held !== parseOwner(owner).faction) return LOCK_NOT_HELD_REASON;
   for (const s of structures) if (s.kind === TERRITORY_LOCK_KIND && !isUnownedOwner(s.owner)) return LOCK_TAKEN_REASON;
+  if (earlier) for (const s of earlier) if (s.kind === TERRITORY_LOCK_KIND && !isUnownedOwner(s.owner)) return LOCK_TAKEN_REASON;
   return null;
 }
 

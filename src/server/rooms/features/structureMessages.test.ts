@@ -5,17 +5,28 @@ import { StructurePlacementSubsystem } from '../../structures/StructurePlacement
 import { StructureRegistry } from '../../structures/StructureRegistry.js';
 import { StructureGridSubsystem } from '../../structures/StructureGridSubsystem.js';
 import type { GridObstacle } from '../../../core/structures/Grid.js';
+import { territoryLockRefusal } from '../../structures/territoryLockRules.js';
+import { parseOwner } from '../../../shared-types/relations.js';
 
 /** A host over a REAL placement subsystem; records the notices sent and
  *  the replies. `crates`: the owner holds that many packed crates of each
- *  kind (a sector room, so the Capital needs one); absent = no crate rule. */
-function rig(obstacles: GridObstacle[] = [], crates?: number) {
+ *  kind (a sector room, so the Capital needs one); absent = no crate rule.
+ *  `slots`: free spawn slots (absent = endless); `locks`: the Territory
+ *  Lock rule, with the owner's side holding the sector. */
+function rig(obstacles: GridObstacle[] = [], crates?: number, opts: { slots?: number; locks?: boolean } = {}) {
+  let slots = opts.slots ?? Infinity;
   const registry = new StructureRegistry();
   let n = 0;
   let held = crates ?? 0;
   const placement = new StructurePlacementSubsystem({
-    spawnStructure: () => true, seedHealth: () => {}, despawn: () => {}, clamp: (x, y) => ({ x, y }),
+    spawnStructure: () => { if (slots <= 0) return false; slots--; return true; },
+    seedHealth: () => {}, despawn: () => {}, clamp: (x, y) => ({ x, y }),
     nextId: () => `pstruct-${n++}`, registry, getObstacles: () => obstacles,
+    ...(opts.slots === undefined ? {} : { freeSpawnSlots: () => slots }),
+    ...(opts.locks !== true ? {} : {
+      placementRefusal: (owner: string, kind: string, earlier?: Iterable<{ kind: string; owner: string }>) =>
+        territoryLockRefusal(owner, kind, 'A1', parseOwner(owner).faction, registry.all(), earlier),
+    }),
     ...(crates === undefined ? {} : {
       sectorKey: () => 'A1',
       packedGateForBuild: (_o: string, kind: string) => ({
@@ -202,6 +213,35 @@ describe('place_structures — plan then Build, all or nothing', () => {
     r.placeAll([{ kind: 'solar', x: 0, y: 0 }, { kind: 'alien_gate', x: 9000, y: 0 }]);
     expect(r.registry.size).toBe(0);
     expect(r.sent[0]!.msg).toEqual({ type: 'place_structures_refused', refused: [{ index: 1, code: 'not-buildable' }] });
+  });
+
+  it('two Territory Locks in one batch: the second breaks the one-per-sector rule, none placed', () => {
+    const r = rig([], undefined, { locks: true });
+    r.placeAll([{ kind: 'territory_lock', x: 0, y: 0 }, { kind: 'territory_lock', x: 5000, y: 0 }]);
+    expect(r.registry.size).toBe(0);
+    expect(r.sent[0]!.msg).toEqual({ type: 'place_structures_refused', refused: [{ index: 1, code: 'kind-rule' }] });
+    expect(r.notices).toEqual(['This sector already has a Territory Lock.']);
+  });
+
+  it('one Territory Lock in a batch is fine', () => {
+    const r = rig([], undefined, { locks: true });
+    r.placeAll([{ kind: 'territory_lock', x: 0, y: 0 }, { kind: 'solar', x: 5000, y: 0 }]);
+    expect(r.registry.size).toBe(2);
+    expect(r.sent).toEqual([]);
+  });
+
+  it('free spawn slots for 2 but a batch of 3: the batch is refused no-room, none placed', () => {
+    const r = rig([], undefined, { slots: 2 });
+    r.placeAll([{ kind: 'solar', x: 0, y: 0 }, { kind: 'solar', x: 3000, y: 0 }, { kind: 'solar', x: 6000, y: 0 }]);
+    expect(r.registry.size).toBe(0);
+    expect(r.sent[0]!.msg).toEqual({ type: 'place_structures_refused', refused: [{ index: 2, code: 'no-room' }] });
+  });
+
+  it('free spawn slots for exactly the batch: all placed', () => {
+    const r = rig([], undefined, { slots: 2 });
+    r.placeAll([{ kind: 'solar', x: 0, y: 0 }, { kind: 'solar', x: 3000, y: 0 }]);
+    expect(r.registry.size).toBe(2);
+    expect(r.sent).toEqual([]);
   });
 
   it('a malformed or oversized batch is dropped', () => {
