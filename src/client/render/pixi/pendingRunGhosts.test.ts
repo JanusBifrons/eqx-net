@@ -10,6 +10,10 @@ import { HOVER_ALPHA, HOVER_BEAM_ALPHA, PendingRunGhosts, PLANNED_GHOST_CAP, RUN
 import { PLACE_STRUCTURES_MAX } from '../../../shared-types/messages.js';
 import { structureKindToIndex } from '../../../shared-types/structureKinds.js';
 import { GHOST_BLOCKED_COLOR, GHOST_PLANNED_COLOR } from './structureHologram.js';
+import { BatchPlacementChecker, batchPlacementRejections, type BatchPlacementItem } from '../../../core/structures/batchPlacement.js';
+import type { PlacementDeck, PlacementRejection } from '../../../core/structures/placementRules.js';
+import { PlateSet } from '../../../core/hex/plateSet.js';
+import { deckHexCentreInto, plateCentreWorldInto, plateHexes } from '../../../core/hex/plates.js';
 
 /** A stride-5 `preview.plan` of `n` solars in a row (`refused` indices flagged). */
 function plan(n: number, refused: number[] = []): number[] {
@@ -125,5 +129,31 @@ describe('planned ghosts (plan then Build)', () => {
     expect(f.verdict.check({ kind: 'solar', x: 10, y: 0, angle: 0 }, new Map(), new Map(), null)).toBe('overlap-structure');
     addPlanFootprints(f.verdict, undefined);
     expect(f.verdict.check({ kind: 'solar', x: 10, y: 0, angle: 0 }, new Map(), new Map(), null)).toBeNull();
+  });
+
+  it('a planned plate-laying connector makes its plate deck for the live ghost; the batch check agrees (parity)', () => {
+    const ps = new PlateSet<string>();
+    const home = plateCentreWorldInto(0, 0, { x: 0, y: 0 });
+    ps.upsert('me-plate', 'me', 'connector', home.x, home.y);
+    const deck: PlacementDeck = { plates: ps, owner: 'me' };
+    const plate = plateCentreWorldInto(1, 0, { x: 0, y: 0 });
+    const h = plateHexes(1, 0)[2]!;
+    const on = deckHexCentreInto(h.q, h.r, { x: 0, y: 0 });
+    const kind = 'solar';
+    const f = frame({});
+    const judge = (d: PlacementDeck | null): PlacementRejection | null =>
+      f.verdict.check({ kind, x: on.x, y: on.y, angle: 0 }, new Map(), new Map(), null, d);
+    // No plan: the new plate is open space, off the deck.
+    expect(judge(addPlanFootprints(f.verdict, undefined, deck))).toBe('off-deck');
+    // The connector that lays it is planned: the plate is deck, the ghost is green.
+    const p = [plate.x, plate.y, 0, structureKindToIndex('connector'), 0];
+    expect(judge(addPlanFootprints(f.verdict, p, deck))).toBeNull();
+    // The batch check (server's place_structures) agrees on the same plan.
+    const items: BatchPlacementItem[] = [{ kind: 'connector', x: plate.x, y: plate.y, rot: 0 }, { kind, x: on.x, y: on.y, rot: 0 }];
+    const idx: number[] = [], code: PlacementRejection[] = [];
+    batchPlacementRejections(new BatchPlacementChecker(), items, [], deck, idx, code);
+    expect(idx).toEqual([]);
+    // No deck room: stays null (no deck rule at all).
+    expect(addPlanFootprints(f.verdict, p, null)).toBeNull();
   });
 });

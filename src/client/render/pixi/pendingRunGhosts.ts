@@ -30,6 +30,7 @@ import { Container, Graphics } from 'pixi.js';
 import type { RenderMirror } from '../../../core/contracts/IRenderer.js';
 import type { GridObstacle } from '../../../core/structures/Grid.js';
 import type { PlacementDeck } from '../../../core/structures/placementRules.js';
+import { BatchPlacementChecker, type BatchPlacementItem } from '../../../core/structures/batchPlacement.js';
 import { DECK_FENCE_POST_KIND } from '../../../core/structures/deckLinks.js';
 import { DECK_CORNER_TOLERANCE } from '../../../core/hex/deckCorners.js';
 import { getStructureKind, structureKindFromIndex } from '../../../shared-types/structureKinds.js';
@@ -70,17 +71,36 @@ const PLAN_REFUSED = 2;
 /** Most planned ghosts drawn at once: the whole plan. */
 export const PLANNED_GHOST_CAP = PLACE_STRUCTURES_MAX;
 
+/** The plan as batch items (pooled) and the shared core batch checker that
+ *  turns its plate-laying connectors into deck (`deckWithBatch`). */
+const planChecker = new BatchPlacementChecker();
+const planItems: BatchPlacementItem[] = [];
+const planItemPool: Array<{ kind: string; x: number; y: number; rot: number; mirror: boolean }> = [];
+
 /**
  * Feed the plan (`preview.plan`) to the live ghost's verdict as if placed
  * (`PlacementGhostVerdict.addFootprint`, the batch check's rule), so a ghost
- * on a planned building reads red with the batch's reason. Allocation-free.
+ * on a planned building reads red with the batch's reason. Returns the deck
+ * to judge the ghost on: `deck` plus every plate a planned connector lays
+ * (the core `BatchPlacementChecker`'s own plate rule), so a ghost on a planned
+ * plate is on deck as the batch will find it. Allocation-free after warm-up.
  */
-export function addPlanFootprints(verdict: PlacementGhostVerdict, plan: readonly number[] | undefined): void {
+export function addPlanFootprints(verdict: PlacementGhostVerdict, plan: readonly number[] | undefined, deck: PlacementDeck | null = null): PlacementDeck | null {
   verdict.clearAdded();
-  if (plan === undefined) return;
+  planItems.length = 0;
+  if (plan === undefined || plan.length < PLAN_STRIDE) return deck;
   for (let i = 0; i + PLAN_STRIDE <= plan.length; i += PLAN_STRIDE) {
-    verdict.addFootprint(structureKindFromIndex(plan[i + 3]!), plan[i]!, plan[i + 1]!, plan[i + 2]!, (plan[i + 4]! & PLAN_MIRROR) !== 0);
+    const kind = structureKindFromIndex(plan[i + 3]!), mirror = (plan[i + 4]! & PLAN_MIRROR) !== 0;
+    verdict.addFootprint(kind, plan[i]!, plan[i + 1]!, plan[i + 2]!, mirror);
+    const n = planItems.length;
+    let it = planItemPool[n];
+    if (it === undefined) { it = { kind: '', x: 0, y: 0, rot: 0, mirror: false }; planItemPool.push(it); }
+    it.kind = kind; it.x = plan[i]!; it.y = plan[i + 1]!; it.rot = plan[i + 2]!; it.mirror = mirror;
+    planItems.push(it);
   }
+  if (deck === null) return null;
+  planChecker.begin(planItems, deck);
+  return planChecker.deckWithBatch();
 }
 
 export class PendingRunGhosts {

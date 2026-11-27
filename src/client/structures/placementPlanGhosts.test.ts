@@ -26,6 +26,7 @@ import {
   writePreviewPlan,
 } from './placementPlan.js';
 import { resolvePlacementPreviewStatus, setPlacementMirror, setPlacementRotationDeg, type PlacementPreview } from './structurePlacementClient.js';
+import { setPlacementHeld } from './placementChosen.js';
 
 function place(kind: 'solar' | 'battery', x: number, y: number): boolean {
   resetPlacementChosen();
@@ -108,6 +109,37 @@ describe('a Place on a planned building removes it', () => {
     expect(place('solar', 100, 0)).toBe(true);
     expect(plannedPlacements().map((p) => p.x)).toEqual([2000]);
     expect(useUIStore.getState().placementKind).toBe('solar');
+  });
+
+  /** One preview frame with the ghost at (x, y): the held flag as the mirror pass sets it. */
+  function frameAt(x: number, y: number): PlacementPreview {
+    const out = { kind: 'solar', x: 0, y: 0, angle: 0 } as PlacementPreview;
+    resolvePlacementPreviewStatus('solar', { x: 0, y: 0, angle: 0 }, null, 0, 0, true, out, x, y);
+    placementChosen.worldX = x;
+    placementChosen.worldY = y;
+    setPlacementHeld(out.held === true);
+    return out;
+  }
+
+  it('right after a Place the ghost is HELD on the new planned building: a second Place (double-click) does nothing', () => {
+    resetPlacementChosen();
+    frameAt(100, 0);
+    expect(commitPlacement('solar')).toBe(true);
+    expect(getPlacementPlanCount()).toBe(1);
+    const out = frameAt(100, 0);
+    expect(out.held).toBe(true); // dim, no verdict: never red on its own new building
+    expect(commitPlacement('solar')).toBe(false);
+    expect(getPlacementPlanCount()).toBe(1);
+  });
+
+  it('moved away and back onto the planned building, a Place removes it', () => {
+    resetPlacementChosen();
+    frameAt(100, 0);
+    expect(commitPlacement('solar')).toBe(true);
+    expect(frameAt(3000, 0).held).toBe(false);
+    expect(frameAt(100, 0).held).toBe(false); // the hold ended when the ghost left
+    expect(commitPlacement('solar')).toBe(true);
+    expect(getPlacementPlanCount()).toBe(0);
   });
 
   it('the Place button stays enabled on a planned building (onPlanned), off it does not', () => {

@@ -71,13 +71,14 @@ export function cancelPlacement(): void {
  * refused commit (blocked ghost) keeps placement open. A fence post on a deck
  * room still places at once as a fence run (`fenceRun.ts`). A Place ON a
  * planned building (`planTapHitIndex`) removes that one from the plan
- * instead. Returns whether a placement was planned (or, for a fence run,
+ * instead, unless the ghost is still held on the spot just planned. Returns whether a placement was planned (or, for a fence run,
  * sent), or a planned one removed.
  */
 export function commitPlacement(kindId: StructureKindId): boolean {
   if (flight.active) return false; // the plan is on its way: it is not edited
   watchPlanExit();
-  const hit = plannedPlacementHitIndex(placementChosen.worldX, placementChosen.worldY);
+  // Held on the spot just planned: nothing (a double-click never removes it).
+  const hit = placementChosen.held ? -1 : plannedPlacementHitIndex(placementChosen.worldX, placementChosen.worldY);
   if (hit >= 0) return removePlannedPlacement(hit);
   const ui = useUIStore.getState();
   const ends = placementEndsAfterPlace(kindId, ui.packedStock, ui.currentSectorKey !== null && !ui.freeBuilds, plannedCountOfKind(kindId));

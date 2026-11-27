@@ -80,7 +80,7 @@ const DEG = Math.PI / 180;
 import { getGameClient } from '../net/clientSingleton.js';
 import { writePreviewRun } from './pendingPlacementRun.js';
 import { placementChosen, setPlacementHeld } from './placementChosen.js';
-import { addPlannedPlacement, writePreviewPlan, type PlannedPlacement } from './placementPlan.js';
+import { addPlannedPlacement, plannedPlacementHitIndex, writePreviewPlan, type PlannedPlacement } from './placementPlan.js';
 import { logEvent } from '../debug/ClientLogger.js';
 
 /** Gap (world units) between the ship's leading edge and the new structure's
@@ -260,12 +260,13 @@ export function resolvePlacementPreviewStatus(
     out.angle = placementRotationFor(placementKind) * DEG;
     out.mirror = placementMirror;
     out.pending = false;
-    out.held = isHeldOnSent(placementKind, pending, chosenX, chosenY);
+    out.held = isHeldOnSent(placementKind, pending, chosenX, chosenY) || isHeldOnPlanned(placementKind, chosenX, chosenY);
     const live = pending !== null && !pendingPlacementResolved(pending, nowMs, currentStructureCount, allStructuresRenderable);
     writePreviewRun(out, live ? pending : null);
     writePreviewPlan(out); // plan then Build: the planned ghosts + their verdict footprints
     return 'active';
   }
+  planHold.active = false; // not placing: the hold on the last planned spot ends
   if (pending) {
     if (pendingPlacementResolved(pending, nowMs, currentStructureCount, allStructuresRenderable)) {
       return 'cleared';
@@ -301,6 +302,34 @@ export function isHeldOnSent(
   return sent !== null && chosenX !== null && chosenY !== null
     && sent.kind === kind && sent.x === chosenX && sent.y === chosenY
     && (sent.rot ?? 0) === placementRotationFor(kind) && (sent.mirror === true) === placementMirror;
+}
+
+/** Plan then Build: the spot just planned (the chosen point, turn and
+ *  mirror at the Place), held like a sent one until the ghost leaves it. */
+const planHold: PendingPlacement & { active: boolean } = {
+  kind: 'connector', x: 0, y: 0, rot: 0, mirror: false, sentAtMs: 0, baselineStructureCount: 0, active: false,
+};
+
+/**
+ * Plan then Build: is the live ghost still on the spot just PLANNED? The
+ * same rule as {@link isHeldOnSent} (dim, no verdict, Place refused), so the
+ * ghost never reads red on its own new planned building and a second Place
+ * (a double-click) does nothing. Once the ghost leaves the spot the hold
+ * ends for good: coming back is a Place ON a planned building (it removes it).
+ */
+export function isHeldOnPlanned(kind: StructureKindId, chosenX: number | null, chosenY: number | null): boolean {
+  if (!planHold.active) return false;
+  // Only while that building is still planned (a sent or cleared plan ends it).
+  if (isHeldOnSent(kind, planHold, chosenX, chosenY) && plannedPlacementHitIndex(chosenX, chosenY) >= 0) return true;
+  planHold.active = false;
+  return false;
+}
+
+/** Hold the live ghost on the spot just planned (`commitChosenPlacement`). */
+function holdOnPlanned(kind: StructureKindId, x: number, y: number): void {
+  planHold.kind = kind; planHold.x = x; planHold.y = y;
+  planHold.rot = placementRotationFor(kind); planHold.mirror = placementMirror;
+  planHold.active = true;
 }
 
 /**
@@ -422,6 +451,6 @@ export function commitChosenPlacement(kindId: StructureKindId): boolean {
   const planned = planStructureAt(kindId, cx, cy);
   // Hold at once so a second click in the same frame cannot re-plan (the plan
   // also refuses the same pose twice).
-  if (planned) setPlacementHeld(true);
+  if (planned) { holdOnPlanned(kindId, cx, cy); setPlacementHeld(true); }
   return planned;
 }

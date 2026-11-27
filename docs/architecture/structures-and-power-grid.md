@@ -98,8 +98,16 @@ run's `RUN_GHOST_CAP` slots. `addPlanFootprints` feeds the same plan to the live
 ghost's `PlacementGhostVerdict.addFootprint`: after the world check, the ghost is
 judged against the planned buildings the way the batch checks a later item
 (overlap and pad only), so it reads red on a planned building with the batch's
-reason. A Place ON a planned building (`planTapHitIndex`, its footprint box)
-removes that one from the plan instead of adding; the ✓ stays enabled there
+reason. On a deck room a planned plate-laying connector makes its plate deck for
+the live ghost too: `addPlanFootprints` begins the core `BatchPlacementChecker`
+on the plan and judges the ghost against its `deckWithBatch()` (the batch's own
+plate rule, not a re-derivation). Right after a Place the ghost is HELD on the
+spot just planned, the same hold as after a send (`isHeldOnPlanned` beside
+`isHeldOnSent`: dim, no verdict, Place refused), so it never reads red on its
+own new building and a double-click does nothing. The hold ends for good once the
+ghost leaves the spot (or the plan is sent or cleared). A Place ON a planned
+building it is not held on (`planTapHitIndex`, its footprint box) removes that
+one from the plan instead of adding; the ✓ stays enabled there
 (`placementChosen.onPlanned`) though the ghost reads red.
 
 - Validate kind, clamp to `SECTOR_PLAYABLE_HALF_EXTENT`, reject footprint overlap

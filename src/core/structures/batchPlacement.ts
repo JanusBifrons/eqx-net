@@ -150,6 +150,15 @@ export class BatchPlacementChecker {
     return this.slots[index]!.anchor;
   }
 
+  /** The deck as the batch sees it: the room's deck (`begin`'s) plus every
+   *  plate the batch lays, so a building judged against the batch from outside
+   *  it (the client's live ghost over its planned list) may stand on a planned
+   *  plate. Null when `begin` had no deck. Valid until the next `begin`. */
+  deckWithBatch(): PlacementDeck | null {
+    this.self = -1;
+    return this.base === null ? null : this.deck;
+  }
+
   /** Is (x, y) on a plate another item of the batch lays? */
   private onBatchPlate(x: number, y: number): boolean {
     let found = false;

@@ -72,6 +72,17 @@ describe('placement ghost: red or green by the server rule', () => {
     expect(ctx.runGhosts!.plannedDrawn).toBe(1);
   });
 
+  it('held on the spot just planned: dim, not red (the plan is drawn, not judged against)', () => {
+    const { ctx, feedback, mirror } = harness([]);
+    const m = mirror(0, 0);
+    m.pendingPlacementPreview!.plan = [0, 0, 0, structureKindToIndex('connector'), 0];
+    m.pendingPlacementPreview!.held = true;
+    updatePlacementGhost(m, ctx);
+    expect(feedback.placementPreviewRejection).toBeNull();
+    expect(ctx.placementGhost!.tint).toBe(GHOST_CLEAR_COLOR);
+    expect(ctx.placementGhost!.alpha).toBeLessThan(0.6);
+  });
+
   it('ghost is red over another structure', () => {
     const { ctx, feedback, mirror } = harness([], [['connector', 0, 0]]);
     updatePlacementGhost(mirror(10, 0), ctx);
