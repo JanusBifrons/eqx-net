@@ -30,6 +30,7 @@ import { TransitStateMachine, SPOOL_DURATION_MS } from '../../core/transit/Trans
 import type { Bus } from '../../core/events/Bus.js';
 import type { PlayerShipStore } from '../playerShips/PlayerShipStore.js';
 import { isNeighbour } from '../../core/galaxy/galaxy.js';
+import { crossesSeal } from '../rooms/sealedSectors.js';
 import { auditEvent } from '../audit/GameplayAuditLog.js';
 import type { TransitStateMessage, TransitCancelReason, TransitReadyMessage } from '../../shared-types/messages.js';
 import { randomUUID } from 'node:crypto';
@@ -261,10 +262,9 @@ export class TransitOrchestrator {
       this.sendState(playerId, { type: 'transit_state', state: 'DOCKED', reason: 'manual' });
       return false;
     }
-    if (!isNeighbour(src, targetSectorKey)) {
-      this.sendState(playerId, { type: 'transit_state', state: 'DOCKED', reason: 'not_neighbour' });
-      return false;
-    }
+    // Sandbox: a sealed sector has no way in or out (`crossesSeal`).
+    const refused = crossesSeal(src, targetSectorKey) ? 'destination_unavailable' : !isNeighbour(src, targetSectorKey) ? 'not_neighbour' : null;
+    if (refused !== null) { this.sendState(playerId, { type: 'transit_state', state: 'DOCKED', reason: refused }); return false; }
     // Campaign 3.1 (anti-patterns review A14) — a warp needs a LIVE hull.
     // The SHIP_DESTROYED subscription below only aborts a death DURING the
     // spool; an already-dead (spectating) player used to sail straight into
@@ -360,7 +360,7 @@ export class TransitOrchestrator {
    * the same shipId-restore every warp uses.
    */
   teleportOut(playerId: string, targetSectorKey: string, arrival: { x: number; y: number }): boolean {
-    if (this.room.sectorKey === null || this.inFlight.has(playerId) || !this.room.hasLiveHull(playerId)) return false;
+    if (this.room.sectorKey === null || crossesSeal(this.room.sectorKey, targetSectorKey) || this.inFlight.has(playerId) || !this.room.hasLiveHull(playerId)) return false;
     const machine = new TransitStateMachine(playerId, this.room.bus, 1);
     machine.beginSpool(this.clock.now());
     const onShipDestroyed: InFlight['onShipDestroyed'] = () => undefined;
@@ -434,10 +434,8 @@ export class TransitOrchestrator {
       this.sendState(commanderId, { type: 'transit_state', state: 'DOCKED', reason: 'manual' });
       return null;
     }
-    if (!isNeighbour(src, targetSectorKey)) {
-      this.sendState(commanderId, { type: 'transit_state', state: 'DOCKED', reason: 'not_neighbour' });
-      return null;
-    }
+    const refused = crossesSeal(src, targetSectorKey) ? 'destination_unavailable' : !isNeighbour(src, targetSectorKey) ? 'not_neighbour' : null;
+    if (refused !== null) { this.sendState(commanderId, { type: 'transit_state', state: 'DOCKED', reason: refused }); return null; }
     const ids = new Set<string>(); // off the tick: one message per Warp click
     const n = Math.min(shipIds.length, FLEET_WARP_MAX_IDS);
     for (let i = 0; i < n; i++) {

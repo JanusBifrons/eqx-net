@@ -96,6 +96,7 @@ import { npcBaseTrade } from '../economy/npcBaseTrade.js';
 import { buildStructureRigs, type StructureRigs } from './features/structureRigs.js';
 import { LAUNCH_COSTS_ON } from '../../shared-types/launch.js';
 import { chargeLaunchFor } from './launchGate.js';
+import { paysRealCredits } from './sealedSectors.js';
 import { ASTEROID_YIELD, rollAsteroidResource, type AsteroidFieldFeature, type AsteroidResourceId } from '../../shared-types/asteroidResources.js';
 import { getSector } from '../../core/galaxy/galaxy.js';
 
@@ -2221,8 +2222,7 @@ export class SectorRoom extends Room<SectorState> {
       onBlueprintSpent: (rec) => this.storage.persistSlot(rec), swapBlueprint: (rec, recipe) => swapBlueprintFor(this.storage, rec, recipe),
       // Active power: processors draw full only while running.
       setActive: (rec, active) => this.structureGrid.setActive(rec, active),
-      // D3 — station taxes: a player's habitat modules and spires pay their wallet; an NPC or ownerless base has none (`walletOwnerOf`).
-      payCredits: (rec, n) => { const w = walletOwnerOf(rec.owner); if (w !== null) getWallet().credit(w, n, 'station_taxes'); },
+      payCredits: (rec, n) => { const w = walletOwnerOf(rec.owner); if (w !== null && paysRealCredits(this.sectorKey)) getWallet().credit(w, n, 'station_taxes'); }, // D3 station taxes: a player's base pays their wallet; NPC / ownerless bases and a sealed sandbox pay nothing
       // A finished hull goes live: out of a Shipyard's slipway on a Move order to its park spot (`HullHandOff.launchNewHull`).
       launchHull: (rec, kind, q) => walletOwnerOf(rec.owner) !== null && this.hullHandOff.launchNewHull(rec.owner, kind, q, newHullOrigin(rec.kind, rec.x, rec.y, rec.rot ?? 0, kind, rec.prodCycles, rec.mirror), true).ok,
     });
