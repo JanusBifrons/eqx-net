@@ -36,6 +36,7 @@ import { getGameClient } from '../net/clientSingleton.js';
 import { useUIStore } from '../state/store.js';
 import { placementChosen, setPlacementHeld } from './placementChosen.js';
 import { PlacementGhostVerdict, type GhostPose } from './placementGhostVerdict.js';
+import { asteroidObstaclesFromSwarm, RockObstacleShapes } from './mirrorToGridNode.js';
 import { placeStructureAt } from './structurePlacementClient.js';
 
 type MirrorPreview = NonNullable<RenderMirror['pendingPlacementPreview']>;
@@ -238,8 +239,19 @@ const liveWorld = {
   },
 };
 
+/** The rocks the run plan checks, from the mirror's swarm (the main thread
+ *  has no renderer rock layer): each asteroid on the wire with its real shape
+ *  (`shapeSeed`); a field rock there falls back to its box (never a false
+ *  green). Dormant field rocks off the wire are the renderer's only, so its
+ *  red can still stop a run the plan let through. Pooled scratch (#14). */
+const runRocks: GridObstacle[] = [];
+const runRockShapes = new RockObstacleShapes();
+export function fenceRunRocks(mirror: RenderMirror): readonly GridObstacle[] | null {
+  return mirror.swarm ? asteroidObstaclesFromSwarm(mirror.swarm, runRocks, runRockShapes) : null;
+}
+
 /** Point the live world at `mirror` and `preview` (default: the mirror's; its deck and sent run) and `obstacles`
- *  (rocks; null = none, as the click has no rock list). Allocation-free;
+ *  (rocks, {@link fenceRunRocks}; null = none). Allocation-free;
  *  the returned world is shared module state. */
 export function mirrorFenceWorld(
   mirror: RenderMirror, obstacles: readonly GridObstacle[] | null,
@@ -267,7 +279,7 @@ export function commitFenceRun(kind: StructureKindId): boolean | null {
   if (!client) return false;
   watchKind();
   const mirror = client.mirror;
-  const plates = mirror.pendingPlacementPreview?.deckPlates ?? NO_PLATES, world = mirrorFenceWorld(mirror, null);
+  const plates = mirror.pendingPlacementPreview?.deckPlates ?? NO_PLATES, world = mirrorFenceWorld(mirror, fenceRunRocks(mirror));
   const plan = kind === DECK_FENCE_GATE_KIND
     ? planGateRunInto(newFenceRunPlan(), anchor, cx, cy, plates, world)
     : planFenceRun(anchor, cx, cy, plates, world);
