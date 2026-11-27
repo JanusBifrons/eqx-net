@@ -178,3 +178,39 @@ describe('Fly: a touch tap uses the same pick as Command', () => {
     }
   });
 });
+
+/**
+ * Selection HUD S11: scrap (kind 3) and wreck pieces (kind 4) are picked as
+ * 'salvage' in the Command view only; the Lock never orders an attack on one.
+ * In Fly a tap there stays what it was: a helm course to the point.
+ */
+describe('salvage picks: Command only', () => {
+  function withScrap(m: RenderMirror): void {
+    (m.swarm as Map<number, unknown>).set(8, { kind: 3, shipKind: 'fighter', radius: 12, x: 300, y: -100, angle: 0 });
+    (m.swarm as Map<number, unknown>).set(9, { kind: 4, shipKind: 'cruiser', radius: 40, x: 500, y: -100, angle: 0 });
+  }
+
+  it('Command: a tap on scrap / a wreck piece focuses it as salvage; Lock gives no attack', () => {
+    const { ctl, feedback, mirror } = setup();
+    withScrap(mirror);
+    tap(ctl, 300, 100);
+    expect(ctl._focusId).toBe('swarm-8');
+    expect(ctl._focusKind).toBe('salvage');
+    ctl.attackFocus();
+    expect(feedback.orderSeq).toBe(0);
+    tap(ctl, 500, 100);
+    expect(ctl._focusId).toBe('swarm-9');
+    expect(ctl._focusKind).toBe('salvage');
+  });
+
+  it('Fly: a tap on scrap selects nothing and sets the helm course there', () => {
+    const { ctl, feedback, mirror } = setup();
+    withScrap(mirror);
+    (mirror.ships as Map<string, unknown>).set('me-123', { kind: 'fighter', x: 0, y: 0, angle: 0 });
+    ctl.setCommandView(false);
+    ctl.selectFleetShips([]);
+    tap(ctl, 300, 100);
+    expect(ctl._focusId).toBeNull();
+    expect(feedback.helmCourseSeq).toBe(1);
+  });
+});

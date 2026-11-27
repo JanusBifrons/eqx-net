@@ -15,7 +15,7 @@ import type { RecipeId } from '@shared-types/recipes';
 import { makesThings, readProduction } from './structureSettingsProduction';
 import { gateTypeOf } from '@core/structures/gateGeometry';
 import { gateAccessFromIndex, type GateAccess } from '@shared-types/gateAccess';
-import { asteroidPanelRow, podPanelRow } from './swarmTerrainInfo';
+import { asteroidPanelRow, podPanelRow, salvagePanelRow } from './swarmTerrainInfo';
 import { isAlienGateKind, isTeleporterKind } from '../../shared-types/teleport';
 import { alienGateLine } from './alienGateInfo';
 import { getStructureKind } from '@shared-types/structureKinds';
@@ -311,6 +311,11 @@ function readData(id: string, kind: PickedEntityKind | null): PanelData | null {
     const sw = Number.isNaN(swarmId) ? undefined : client.mirror.swarm?.get(swarmId);
     if (!sw) return null;
     return kind === 'asteroid' ? asteroidPanelRow(sw) : podPanelRow(client.mirror, swarmId, sw);
+  }
+  // SALVAGE — a scrap or wreck piece picked in the Command view (no hull bar).
+  if (kind === 'salvage' && id.startsWith('swarm-')) {
+    const sw = client.mirror.swarm?.get(parseInt(id.slice('swarm-'.length), 10));
+    return sw ? salvagePanelRow(sw) : null;
   }
   // LINGERING HULL (R2.23) — the name line already shows WHOSE hull it is (the
   // owner's server-propagated display name); never surface the raw ownerPlayerId

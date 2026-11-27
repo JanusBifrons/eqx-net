@@ -1,10 +1,10 @@
 /**
- * The entity stats panel's rows for indestructible swarm terrain: an asteroid
- * and a cargo pod (split out of EntityStatsPanel.tsx, god-file cap). Both read
- * the render mirror directly and show no hull bar.
+ * The entity stats panel's rows for swarm terrain: an asteroid, a cargo pod
+ * and a salvage piece (split out of EntityStatsPanel.tsx, god-file cap). All
+ * read the render mirror directly and show no hull bar.
  */
 import type { RenderMirror, SwarmRenderState } from '@core/contracts/IRenderer';
-import { isLootPod } from '@shared-types/swarmWireFormat';
+import { isLootPod, SWARM_KIND_WRECK } from '@shared-types/swarmWireFormat';
 import { podSizeOf } from '@shared-types/shipKinds/cargoPod';
 import { withinLootOpenReach } from '@core/cargo/lootReach';
 
@@ -27,6 +27,16 @@ export function asteroidPanelRow(sw: SwarmRenderState): TerrainPanelRow {
     infoLine: hasRes
       ? `RES ${Math.round(sw.resources ?? 0)} / ${Math.round(sw.resourcesMax!)}`
       : `SIZE ${Math.round(sw.radius)}`,
+  };
+}
+
+/** SALVAGE — a plain scrap piece (swarm kind 3) or a wreck piece (kind 4),
+ *  selectable in the Command view: no hull bar, a SIZE line from its radius. */
+export function salvagePanelRow(sw: SwarmRenderState): TerrainPanelRow {
+  return {
+    name: sw.kind === SWARM_KIND_WRECK ? 'Wreck piece' : 'Scrap',
+    hpPct: 0, shieldPct: null, noHull: true,
+    infoLine: `SIZE ${Math.round(sw.radius)}`,
   };
 }
 

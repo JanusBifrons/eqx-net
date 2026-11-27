@@ -215,7 +215,7 @@ export interface RendererFeedback {
   /** Kind of the selected entity (drives the stats-channel routing: only
    *  `ship`/`structure` use the server `entity_stats` channel; `drone`
    *  reads health from the mirror directly). `null` when nothing is selected. */
-  selectedPickKind: 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | 'pod' | null;
+  selectedPickKind: 'ship' | 'drone' | 'structure' | 'asteroid' | 'lingering' | 'pod' | 'salvage' | null;
   /**
    * WS-10 (R2.4) — the id of the entity the desktop pointer is HOVERING over
    * (set from pointer-move via `pickEntityAt`), or null when the cursor is over

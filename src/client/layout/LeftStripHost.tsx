@@ -68,6 +68,8 @@ const FOCUS_LOOK: Readonly<Record<SelectionFocusKind, { icon: EqxIconName; toolt
   structure: { icon: 'structure', tooltip: 'Structure' },
   asteroid: { icon: 'rock', tooltip: 'Asteroid' },
   pod: { icon: 'pod', tooltip: 'Cargo pod' },
+  // Scrap / wreck piece (Command pick): loose debris, the rock glyph for now.
+  salvage: { icon: 'rock', tooltip: 'Salvage' },
 };
 
 export interface StripIdentity {
