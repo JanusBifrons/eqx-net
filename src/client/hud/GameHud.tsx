@@ -11,8 +11,9 @@
  *    the right rail (layout/RightPanelHost.tsx).
  *  - Desktop: hold LMB on a ship to lock it (MouseLock.ts), RMB boost and a key
  *    hint. Building goes through the Build sidebar (BuildSidebarHost.tsx).
- *  - Touch: floating move stick (left thumb), BOOST (right). Locking on touch is
- *    tap a ship, then Lock in its info box (the lock-line stick was removed 2026-11-27).
+ *  - Touch: floating move stick (left thumb); the right thumb is the do-hexes
+ *    (layout/DoHexesHost.tsx: Boost under the thumb, Lock, Cargo, Stance,
+ *    Salvage, More). Locking on touch is tap a ship, then Lock.
  *
  * Every weapon group fires only at a target it has a completed lock on.
  */
@@ -21,6 +22,7 @@ import { selectControlMode, useShouldRenderHud, useUIStore } from '../state/stor
 import { selectRightPanelOpen } from '../state/rightPanel';
 import type { TouchInput } from '../input/TouchInput';
 import { Slot } from '../layout/Slot';
+import { DoHexesHost } from '../layout/DoHexesHost';
 import { RAIL_W_CSS } from '../layout/railWidth';
 import { BuildSidebarHost } from '../components/BuildSidebarHost';
 import { FloatingStick } from './FloatingStick';
@@ -29,7 +31,7 @@ import { HUD } from './tokens';
 import { hudScale, useHudSize, useIsLandscape } from './useHudScale';
 import { WeaponStrip } from './WeaponStrip';
 import { LockStatusBand } from './LockStatusBand';
-import { HoldButton, SectorChip, useEnergyFill, useFakeCredits } from './widgets';
+import { SectorChip, useEnergyFill, useFakeCredits } from './widgets';
 import { BuildStatusBody, WalletRow } from './BuildStatus';
 import { NetHealthCluster } from './NetHealthCluster';
 import { ShieldRing } from './ShieldRing';
@@ -90,6 +92,10 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
         ? <Slot anchor="top-center" order={0} pointerEvents="none"><StatusCapsule scale={scale} /></Slot>
         : <Slot anchor="bottom-center" order={3} pointerEvents="none"><StatusCapsule scale={scale} /></Slot>}
 
+      {/* Selection HUD: the do-hexes (bottom-right honeycomb: Command own ships; Fly on
+          touch, with Boost under the right thumb). */}
+      <DoHexesHost touchInput={touchInput} />
+
       {/* ── Desktop ─────────────────────────────────────────────────────── */}
       {/* RTS command view: fleet orders, and a running map pick's tools, live on
           the left strip (layout/LeftStripHost.tsx) and the Orders panel (⚙, panels/OrdersPanel.tsx). */}
@@ -98,14 +104,8 @@ export function GameHud({ touchInput }: Props): JSX.Element | null {
       )}
 
       {/* ── Touch controls ──────────────────────────────────────────────── */}
-      {touch && flying && touchInput && (
-        <>
-          <MoveStick touchInput={touchInput} />
-          {/* The right thumb sits under the right panel: unmounted while one is open
-              (HoldButton releases a held BOOST on unmount). */}
-          {!rightPanelOpen && <BoostCluster touchInput={touchInput} />}
-        </>
-      )}
+      {/* The right thumb is the do-hexes (Boost under it, DoHexesHost above). */}
+      {touch && flying && touchInput && <MoveStick touchInput={touchInput} />}
     </>
   );
 }
@@ -240,28 +240,6 @@ function FcStripDock({ scale }: { scale: number }): JSX.Element {
       }}
     >
       <WeaponStrip scale={scale} />
-    </div>
-  );
-}
-
-/**
- * Right thumb: BOOST (hold). The touch lock-line stick is gone (owner,
- * 2026-11-27): lock by tapping a ship, then Lock in its info box.
- */
-function BoostCluster({ touchInput }: { touchInput: TouchInput }): JSX.Element {
-  const base = THUMB_INSET + 6;
-  return (
-    <div
-      style={{
-        position: 'fixed',
-        right: `calc(env(safe-area-inset-right, 0px) + ${RAIL_W_CSS} + ${base}px)`,
-        bottom: `calc(env(safe-area-inset-bottom, 0px) + ${base}px)`,
-        zIndex: 17,
-      }}
-    >
-      <HoldButton testId="hud-boost" size={46} color={HUD.color.boost} onHold={(d) => touchInput.setBoostHeld(d)}>
-        BOOST
-      </HoldButton>
     </div>
   );
 }

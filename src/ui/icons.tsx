@@ -34,6 +34,7 @@ export const EQX_ICON_NAMES = [
   'target',
   'build',
   'pilot',
+  'boost',
   // Doing mode (placing, route points)
   'rotate',
   'gate',
@@ -130,8 +131,10 @@ export const EQX_ICONS = {
       <circle cx="12" cy="12" r="1.6" fill="currentColor" />
     </>
   ),
+  // new: two chevrons pointing ahead (the boost impulse along the facing)
+  boost: <path d="M6 13l6-6 6 6M6 19l6-6 6 6" />,
   // mock
-  stop: <rect x="6" y="6" width="12" height="12" rx="1.5" />,
+  stop:<rect x="6" y="6" width="12" height="12" rx="1.5" />,
   // mock
   trade: <path d="M4 8h15l-3-3M20 16H5l3 3" />,
   // new: the in-world LOCKED mark (render/AimFeedbackRenderer.ts), four corner
