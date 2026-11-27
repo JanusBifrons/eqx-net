@@ -119,10 +119,14 @@ export function registerFleetMessages(h: FleetMessageHost): RoomFeature {
     md.x = hasPoint ? p.data.x : undefined;
     md.y = hasPoint ? p.data.y : undefined;
     md.route = p.data.route;
-    // The client names its own active ship by playerId; the fleet knows it
-    // by shipInstanceId (`pilotShipOf`, slice 4b).
+    // The client names a pilot's active ship by playerId and an NPC ship by
+    // its wire id (`swarm-<n>`); the fleet knows them by shipInstanceId
+    // (slice 4b) and swarm registry id (what the eviction re-apply names).
     const esc = p.data.escortId;
-    md.escortId = esc === pid ? (h.playerToActiveShipInstance.get(pid) ?? esc) : esc;
+    const sw = esc === undefined ? -1 : wireSwarmEntityId(esc);
+    md.escortId = esc === undefined ? undefined
+      : sw >= 0 ? (h.swarmRegistry.getByEntityId(sw)?.id ?? esc)
+      : (h.playerToActiveShipInstance.get(esc) ?? esc);
     const accepted = h.fleet.setMode(pid, p.data.shipIds, p.data.mode, md);
     md.route = undefined; md.escortId = undefined; md.x = undefined; md.y = undefined;
     // RTS fleet warp: the ship drops out and obeys (its hold is let go).

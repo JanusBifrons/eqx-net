@@ -137,7 +137,7 @@ describe('FleetCommandSubsystem persistence (slice 9)', () => {
     expect(JSON.stringify(sys.exportSquads())).not.toContain('shape');
   });
 
-  it('a member its squad owner does not own is dropped; an escort target the owner does not own becomes defend', () => {
+  it('a member its squad owner does not own is dropped; an escort target is kept only while it is a live ship', () => {
     const { sys, add, owners } = harness();
     add('a1', 'alice');
     add('a2', 'alice');
@@ -153,7 +153,12 @@ describe('FleetCommandSubsystem persistence (slice 9)', () => {
     ])).toBe(0);
 
     add('a3', 'alice');
+    // Another player's live ship is kept; a ship gone by restore (or never
+    // a ship) becomes defend.
     sys.restoreShip('a3', { mode: 'escort', modeData: { escortId: 'b1' } });
+    expect(sys.ordersOf('a3')!.mode).toBe('escort');
+    expect(sys.escortTargetOf('a3')).toBe('b1');
+    sys.restoreShip('a3', { mode: 'escort', modeData: { escortId: 'gone-ship' } });
     expect(sys.ordersOf('a3')!.mode).toBe('defend');
     expect(sys.ordersOf('a3')!.escortId).toBeNull();
     sys.restoreShip('a3', { mode: 'escort', modeData: { escortId: 'a3' } }); // never itself
