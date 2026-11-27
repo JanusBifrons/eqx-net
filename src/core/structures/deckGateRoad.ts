@@ -88,6 +88,12 @@ export function roadJoinBits(q: number, r: number, kind: string | undefined, x: 
   return i < 0 ? 0 : 1 << i;
 }
 
+/** A hex's 6-bit edge mask from its join bits: bit `i` set when edge `i`
+ *  has a road beyond it OR a gate on it (what a road draws arms to). */
+export function roadJoinEdges(joins: number): number {
+  return (joins & 63) | ((joins >> ROAD_GATE_SHIFT) & 63);
+}
+
 /** The turn (degrees) a road takes with no road or gate beside it. */
 export const ROAD_DEFAULT_TURN_DEG = 30;
 

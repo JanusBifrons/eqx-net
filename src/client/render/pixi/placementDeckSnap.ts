@@ -13,7 +13,7 @@
  */
 import type { RenderMirror, StructureRenderState, SwarmRenderState } from '@core/contracts/IRenderer';
 import { snapPlacementToDeck, type RoadJoinsAt } from '../../../core/structures/deckPlacement.js';
-import { DECK_ROAD_KIND, ROAD_GATE_SHIFT, roadJoinBits } from '../../../core/structures/deckGateRoad.js';
+import { DECK_ROAD_KIND, roadJoinBits, roadJoinEdges } from '../../../core/structures/deckGateRoad.js';
 import { roadLocalArms } from './roadJoins.js';
 import type { DeckSnap } from '../../../core/hex/deckSnap.js';
 import { OwnerPlateList } from '../../../core/hex/plateSet.js';
@@ -108,6 +108,6 @@ export function ghostPlateReachBoxAdd(kind: string, x: number, y: number, box: {
  *  when the ghost is not a road on a deck. Allocation-free. */
 export function ghostRoadArms(preview: Preview, angle: number): number {
   if (preview.deck !== true || preview.kind !== DECK_ROAD_KIND) return -1;
-  const world = (lastJoins & 63) | ((lastJoins >> ROAD_GATE_SHIFT) & 63);
+  const world = roadJoinEdges(lastJoins);
   return roadLocalArms(world, angle * RAD_TO_DEG, preview.mirror === true);
 }
