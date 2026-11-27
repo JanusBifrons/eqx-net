@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { STANCE_COLOUR } from '../components/contactRows.js';
 import type { PanelData } from '../components/selectionPanelData.js';
-import { setWorldTagElement, updateWorldTag, worldTagAt, worldTagPos, worldTagText } from './worldTag.js';
+import { GROUP_TAG_LIFT_PX, setWorldTagElement, updateWorldTag, worldTagAt, worldTagPos, worldTagText } from './worldTag.js';
 
 const data = (extra: Partial<PanelData>): PanelData => ({ name: 'Vex', hpPct: 60, shieldPct: null, ...extra });
 
@@ -28,6 +28,14 @@ describe('worldTagPos', () => {
   it('rounds an on-screen anchor', () => {
     expect(worldTagPos({ focusScreenX: 10.4, focusScreenY: 20.6, focusOnScreen: true })).toBe(true);
     expect(worldTagAt).toEqual({ x: 10, y: 21 });
+  });
+
+  it('the group tag hangs a fixed lift above the selection centroid', () => {
+    const fb = { focusScreenX: NaN, focusScreenY: NaN, focusOnScreen: false, selCentroidScreenX: 50.4, selCentroidScreenY: 200, selCentroidOnScreen: true };
+    expect(worldTagPos(fb, 'centroid')).toBe(true);
+    expect(worldTagAt).toEqual({ x: 50, y: 200 - GROUP_TAG_LIFT_PX });
+    expect(worldTagPos({ ...fb, selCentroidOnScreen: false }, 'centroid')).toBe(false);
+    expect(worldTagPos(fb, 'focus')).toBe(false);
   });
 
   it('hidden off screen or with nothing focused (NaN)', () => {

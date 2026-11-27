@@ -4,8 +4,10 @@
  * (`useSelectionPanelData`); `hud/worldTag.ts` moves the wrapper per frame
  * from `gameRafLoop` by direct style writes. Fullscreen slot, no pointer
  * events. Nothing focused, or a right panel open ⇒ nothing mounted.
+ * S7: 2+ own ships selected (the focus one of them or none) ⇒ ONE group tag
+ * over the selection centroid instead (`groupWorldTag.ts`).
  */
-import { useCallback } from 'react';
+import { useCallback, useEffect } from 'react';
 import { getShipKind } from '@shared-types/shipKinds';
 import { EqxWorldTag } from '../../ui/index.js';
 import { Slot } from '../layout/Slot';
@@ -13,7 +15,9 @@ import { useSelectionPanelData } from '../components/selectionPanelData.js';
 import { getGameClient } from '../net/clientSingleton';
 import { useUIStore } from '../state/store';
 import { selectRightPanelOpen } from '../state/rightPanel';
-import { setWorldTagElement, worldTagText } from './worldTag.js';
+import { useFleetSelectionView } from '../fleet/useFleetSelectionView.js';
+import { setWorldTagAnchor, setWorldTagElement, worldTagText, type WorldTagText } from './worldTag.js';
+import { groupTagText, worldTagMode } from './groupWorldTag.js';
 
 /** The wrapper the per-frame writer moves: top-left origin, translated. */
 const WRAP_STYLE = { position: 'absolute', left: 0, top: 0, visibility: 'hidden', willChange: 'transform' } as const;
@@ -31,12 +35,17 @@ export function WorldTagHost() {
   const focusKind = useUIStore((s) => s.selection.focusKind);
   // A right panel docks over the world: no tag drawing over it (like LockCluster).
   const panelOpen = useUIStore(selectRightPanelOpen);
+  const fleet = useFleetSelectionView();
+  const group = worldTagMode(fleet.active ? fleet.ids : [], focusId) === 'group';
+  useEffect(() => setWorldTagAnchor(group ? 'centroid' : 'focus'), [group]);
   const ref = useCallback((el: HTMLDivElement | null) => setWorldTagElement(el), []);
-  if (data === null || panelOpen) return null;
-  const tag = worldTagText(data, focusTypeName(focusId, focusKind));
+  if (panelOpen || (!group && data === null)) return null;
+  const tag: WorldTagText = group
+    ? groupTagText(fleet.ships, fleet.mode, fleet.stance)
+    : worldTagText(data!, focusTypeName(focusId, focusKind));
   return (
     <Slot anchor="fullscreen" pointerEvents="none">
-      <div ref={ref} style={WRAP_STYLE} data-testid="world-tag" data-focus-id={focusId ?? undefined}>
+      <div ref={ref} style={WRAP_STYLE} data-testid="world-tag" data-focus-id={focusId ?? undefined} data-tag-mode={group ? 'group' : 'single'}>
         <EqxWorldTag title={tag.title} owner={tag.owner} ownerColor={tag.ownerColor} hullPct={tag.hullPct} />
       </div>
     </Slot>

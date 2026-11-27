@@ -4,6 +4,7 @@ import type { BoxRect, HoldArmed } from './input/commandPointerRouter.js';
 import type { FleetPickState } from './input/fleetPick.js';
 import { traceRoute, routeDots } from './routeLine.js';
 import { MOVE_ORDER_COLOUR } from './orderMarkerColours.js';
+import { drawTargetLine, targetLineWanted } from './selectionTargetLine.js';
 
 /**
  * Command-view fleet overlay (RTS stream slice 13a).
@@ -15,7 +16,9 @@ import { MOVE_ORDER_COLOUR } from './orderMarkerColours.js';
  *  - an expanding ring at a touch held long enough to draw a box (slice 12),
  *  - order lines for SELECTED ships (slice 15a): to the move destination, to
  *    the attack target's current pose, to the escorted ship, and the patrol
- *    route loop; capped at {@link MAX_ORDER_SEGMENTS} per frame.
+ *    route loop; capped at {@link MAX_ORDER_SEGMENTS} per frame,
+ *  - the dashed target preview from the selection to a focus outside it
+ *    (selection HUD S7, `selectionTargetLine.ts`).
  * Nothing is created per ship. Hidden when there is nothing to draw.
  * Selected ships themselves are marked by `SelectionBracket` (RTS Part A:
  * one selection, one marker style); this overlay draws no ship marker.
@@ -116,6 +119,8 @@ export class FleetOverlay {
   lastOrderSegments = 0;
   /** Patrol pick points drawn in the last update (test/diag hook). */
   lastPickPoints = 0;
+  /** Target preview dots drawn in the last update (test/diag hook). */
+  lastTargetDots = 0;
 
   constructor(parent: Container) {
     this.gfx = new Graphics();
@@ -136,6 +141,8 @@ export class FleetOverlay {
     orders: ReadonlyMap<string, FleetOverlayShip> | null = null,
     /** A patrol route being picked (slice 14b), or null. */
     pick: FleetPickState | null = null,
+    /** The selection focus (S7 target preview), or null. */
+    focusId: string | null = null,
   ): void {
     const g = this.gfx;
     const flashAge = flash.t0 < 0 ? Infinity : nowMs - flash.t0;
@@ -144,7 +151,9 @@ export class FleetOverlay {
     const routeCount = pick !== null && pick.kind === 'patrol' ? pick.count : 0;
     this.lastPickPoints = routeCount;
     const hasOrders = orders !== null && orders.size > 0 && selected.size > 0;
-    if (!hasOrders && box === null && !flashLive && hold === null && routeCount === 0) {
+    const targetLine = targetLineWanted(selected, focusId, mirror.localGroups);
+    this.lastTargetDots = 0;
+    if (!hasOrders && !targetLine && box === null && !flashLive && hold === null && routeCount === 0) {
       if (g.visible) {
         g.clear();
         g.visible = false;
@@ -163,6 +172,7 @@ export class FleetOverlay {
       this.drawOrders(g, mirror, selected, orders, project, true);
     }
     this.lastOrderSegments = this._segments;
+    if (targetLine) this.lastTargetDots = drawTargetLine(g, mirror, selected, focusId!, resolveEntityPos, project, s);
 
     if (box !== null) {
       const x = Math.min(box.x0, box.x1);

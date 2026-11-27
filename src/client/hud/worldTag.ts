@@ -39,12 +39,28 @@ export function worldTagText(data: PanelData, typeName: string | undefined): Wor
 /** Result scratch of {@link worldTagPos}: rounded screen px of the tag's pointer tip. */
 export const worldTagAt = { x: 0, y: 0 };
 
+/** What the tag hangs over (S7): the focus's bracket, or the selected
+ *  ships' centroid (the group tag, {@link GROUP_TAG_LIFT_PX} above it). */
+export type WorldTagAnchor = 'focus' | 'centroid';
+
+/** The group tag's fixed lift above the selection centroid (screen px). */
+export const GROUP_TAG_LIFT_PX = 36;
+
+/** The renderer feedback the per-frame writer reads (the centroid only for a group tag). */
+export type WorldTagFeedback = Pick<RendererFeedback, 'focusScreenX' | 'focusScreenY' | 'focusOnScreen'> &
+  Partial<Pick<RendererFeedback, 'selCentroidScreenX' | 'selCentroidScreenY' | 'selCentroidOnScreen'>>;
+
 /** Pure, alloc-free: should the tag show, and where (writes {@link worldTagAt}).
- *  Hidden when nothing is focused (NaN) or the focus is off screen. */
-export function worldTagPos(fb: Pick<RendererFeedback, 'focusScreenX' | 'focusScreenY' | 'focusOnScreen'>): boolean {
-  const x = fb.focusScreenX;
-  const y = fb.focusScreenY;
-  if (!fb.focusOnScreen || !Number.isFinite(x) || !Number.isFinite(y)) return false;
+ *  Hidden when the anchor is absent (NaN) or off screen. */
+export function worldTagPos(
+  fb: WorldTagFeedback,
+  anchor: WorldTagAnchor = 'focus',
+): boolean {
+  const group = anchor === 'centroid';
+  const x = group ? fb.selCentroidScreenX ?? NaN : fb.focusScreenX;
+  const y = group ? (fb.selCentroidScreenY ?? NaN) - GROUP_TAG_LIFT_PX : fb.focusScreenY;
+  const on = group ? fb.selCentroidOnScreen === true : fb.focusOnScreen;
+  if (!on || !Number.isFinite(x) || !Number.isFinite(y)) return false;
   worldTagAt.x = Math.round(x);
   worldTagAt.y = Math.round(y);
   return true;
@@ -55,6 +71,12 @@ let _el: HTMLElement | null = null;
 let _shown = false;
 let _x = NaN;
 let _y = NaN;
+let _anchor: WorldTagAnchor = 'focus';
+
+/** Set by `WorldTagHost` when the tag mode changes (low cadence). */
+export function setWorldTagAnchor(anchor: WorldTagAnchor): void {
+  _anchor = anchor;
+}
 
 export function setWorldTagElement(el: HTMLElement | null): void {
   _el = el;
@@ -64,11 +86,11 @@ export function setWorldTagElement(el: HTMLElement | null): void {
   if (el) el.style.visibility = 'hidden';
 }
 
-/** Per frame (gameRafLoop): follow the focus; style writes on change only. */
-export function updateWorldTag(fb: Pick<RendererFeedback, 'focusScreenX' | 'focusScreenY' | 'focusOnScreen'>): void {
+/** Per frame (gameRafLoop): follow the anchor; style writes on change only. */
+export function updateWorldTag(fb: WorldTagFeedback): void {
   const el = _el;
   if (el === null) return;
-  const show = worldTagPos(fb);
+  const show = worldTagPos(fb, _anchor);
   if (show !== _shown) {
     _shown = show;
     el.style.visibility = show ? 'visible' : 'hidden';
