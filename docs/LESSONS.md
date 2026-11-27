@@ -3438,3 +3438,8 @@ Chrome's screencast sometimes reports a capture surface twice the page (`deviceW
 - **Symptom:** a `phone-landscape` take switched mid-clip from full frames to the whole page (HUD too) drawn in the top-left quarter with black elsewhere. Raw screencast frames went from 844×390 to 1688×780 at the moment the shot's first finger lifted.
 - **Cause:** the game asks for full screen on the first touch lift (`useFirstTapFullscreen`). In headless capture Chrome that changes the screencast surface mid-take. Not a game bug: on a real phone the emulated viewport already is the whole screen.
 - **Fix:** the recorder grants `requestFullscreen` as a no-op on phone takes. Check raw frame sizes (`ffprobe` on `clips/<id>/frames/*.jpg`) when a phone clip looks cropped.
+
+## 2026-11-27 — E2E: a spec that parks hulls in a galaxy entry sector loses them to drone squads
+- **Symptom:** `rts-fleet-warp` arrival test found 0 own parked hulls in ashfront (sometimes even before the newShip rejoin).
+- **Cause:** ashfront is an entry sector (`ENTRY_SECTOR_KEYS`): Living World squads warp in there. At `timeScale=4` a squad killed the parked Fighters within seconds (trace stills: drone flock and damage numbers on the spawn spot).
+- **Fix:** specs that need hulls to survive start outside greenfall, ashfront and abyssal-gate.
