@@ -33,12 +33,18 @@
  * midpoint to the opposite one. Its flat-top outline lines up with the
  * pointy-top deck cells only at 30° + 60°·k, and there its carriageway (local
  * y) runs edge-mid to edge-mid, so the player's turn snaps to the nearest
- * of those six ({@link roadTurnDeg}); R steps it round the hex.
+ * of those six ({@link roadTurnDeg}). A PLAYER's road turns itself (owner
+ * ruling: roads line up by themselves, no Rotate): the caller passes
+ * {@link RoadJoinsAt} (the client ghost over its mirror, the server over its
+ * registry, both folding the core `roadJoinBits`) and the turn is
+ * `roadAutoTurnDeg` of the hex's joins: continue a neighbouring road, else
+ * meet a gate on one of its seams, else the default. Without it (generated
+ * bases) the given turn snaps as before.
  */
 import { getStructureKind, isConnectorKind, snapPlayerStructureRotation } from '../../shared-types/structureKinds.js';
 import { snapToDeckSlot, type DeckSnap } from '../hex/deckSnap.js';
 import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from './deckLinks.js';
-import { DECK_ROAD_KIND } from './deckGateRoad.js';
+import { DECK_ROAD_KIND, roadAutoTurnDeg } from './deckGateRoad.js';
 import { isPlateCentreHex } from '../hex/plates.js';
 
 /** The Deck plate (build menu): a connector, which on a deck room always lays
@@ -54,15 +60,24 @@ export function roadTurnDeg(deg: number): number {
   return ((((Math.round((d - 30) / 60) * 60 + 30) % 360) + 360) % 360) + 0;
 }
 
+/** The world join bits of deck hex (q, r): `roadJoinBits` folded over every
+ *  structure the caller knows. Pass a function made once, never a fresh
+ *  closure per call (invariant 14). */
+export type RoadJoinsAt = (q: number, r: number) => number;
+
 /** Allocation-free: snap a player's requested point for `kind` to the centre
  *  of its deck slot (`kind.deckSlot`, or the centre of the plate under it for
  *  a connector), and their requested turn `rotDeg` to the turn the
- *  building is placed at (`out.rot`, see the header), written into `out`. */
-export function snapPlacementToDeck(kind: string, x: number, y: number, out: DeckSnap, rotDeg = 0): DeckSnap {
+ *  building is placed at (`out.rot`, see the header), written into `out`.
+ *  `roadJoinsAt` (the player path): a road's neighbours decide its turn. */
+export function snapPlacementToDeck(kind: string, x: number, y: number, out: DeckSnap, rotDeg = 0, roadJoinsAt?: RoadJoinsAt): DeckSnap {
   const k = getStructureKind(kind);
   snapToDeckSlot(kind === DECK_FENCE_POST_KIND ? 'corner' : kind === DECK_FENCE_GATE_KIND ? 'edge' : k.deckSlot, x, y, out);
   if (out.slot === 'edge') return out; // the seam's turn, a 30° step already
-  if (kind === DECK_ROAD_KIND) { out.rot = roadTurnDeg(rotDeg); return out; }
+  if (kind === DECK_ROAD_KIND) {
+    out.rot = roadJoinsAt !== undefined ? roadAutoTurnDeg(roadJoinsAt(out.q, out.r)) : roadTurnDeg(rotDeg);
+    return out;
+  }
   if (out.slot !== 'plate' && (kind === DECK_PLATE_KIND || (isConnectorKind(kind) && isPlateCentreHex(out.q, out.r)))) snapToDeckSlot('plate', x, y, out);
   const faced = out.rot >= 0 ? out.rot + (k.footprint.h > k.footprint.w ? 90 : 0) : rotDeg;
   out.rot = snapPlayerStructureRotation(faced, true, kind);

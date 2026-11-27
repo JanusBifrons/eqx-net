@@ -190,6 +190,13 @@ describe('placing tools on the left strip', () => {
     expect(useUIStore.getState().placementKind).toBe('shield_pylon');
   });
 
+  it('a road has no Rotate or Mirror: it lines itself up', () => {
+    act(() => { useUIStore.setState({ placementKind: 'road', deck: true }); });
+    mount();
+    const ids = Array.from(screen.getByTestId('left-strip').querySelectorAll('button')).map((b) => b.dataset.testid);
+    expect(ids).toEqual(['placement-kind', 'placement-confirm', 'placement-cancel']);
+  });
+
   it('no Gate off a deck room or for other kinds', () => {
     act(() => { useUIStore.setState({ placementKind: 'shield_pylon', deck: false }); });
     mount();
