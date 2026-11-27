@@ -24,6 +24,8 @@ import type { PlacementRejection } from '@core/structures/placementRules';
 import { PlacementGhostVerdict, type GhostPose } from '../../structures/placementGhostVerdict.js';
 import { StructureHologram } from './structureHologram.js';
 import { ghostDeckAngle, ghostDeckContext, snapGhostToDeck } from './placementDeckSnap.js';
+import type { BuildSlotOutlines } from './buildSlotOutlines.js';
+import { PendingRunGhosts, type RunGhostFrame } from './pendingRunGhosts.js';
 const DEG_TO_RAD = Math.PI / 180;
 
 export interface PlacementGhostCtx {
@@ -49,6 +51,12 @@ export interface PlacementGhostCtx {
   obstacles: readonly GridObstacle[] | null;
   /** The server's overlap rule for the ghost (red / green), and its pose scratch. */
   readonly verdict: PlacementGhostVerdict;
+  /** The fence run's sent + hover post ghosts and beams (`pendingRunGhosts.ts`), made on first use. */
+  runGhosts: PendingRunGhosts | null;
+  /** Camera scale, written by the caller each frame (the fence beams' width floor). */
+  scale: number;
+  /** Free build-slot outlines (on by default, `?buildSlots=off` hides; set in `init` by `applyRestyleLook`); null = off. */
+  slotOutlines: BuildSlotOutlines | null;
   readonly pose: GhostPose;
   readonly isTouch: boolean;
   readonly input: RendererInputController;
@@ -65,10 +73,13 @@ export interface PlacementGhostCtxRefs {
 export function createPlacementGhostCtx(refs: PlacementGhostCtxRefs): PlacementGhostCtx {
   return {
     placementGhost: null, placementGhostKind: null, camera: null, shipContainer: null, spectator: false, nowMs: 0,
-    obstacles: null, verdict: new PlacementGhostVerdict(), pose: { kind: '', x: 0, y: 0, angle: 0 },
+    obstacles: null, runGhosts: null, scale: 1, verdict: new PlacementGhostVerdict(), slotOutlines: null, pose: { kind: '', x: 0, y: 0, angle: 0 },
     isTouch: refs.isTouch, input: refs.input, feedback: refs.feedback,
   };
 }
+
+/** The run ghosts' per-frame inputs (reused, #14). */
+const runFrame = { mirror: null, preview: null, verdict: null, obstacles: null, deck: null, ghostX: 0, ghostY: 0, scale: 1, nowMs: 0 } as unknown as RunGhostFrame;
 
 export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCtx): void {
   const camera = ctx.camera!;
@@ -83,6 +94,8 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
   // never steady-state. (Phase-A3: the create/rebuild/hide branching could
   // move to a pure spriteUpdateDecisions helper if a 3rd preview type lands.)
   const preview = mirror.pendingPlacementPreview;
+  // Show where the picked kind can go (deck rooms; `?buildSlots=off` hides): recomputed on change only.
+  ctx.slotOutlines?.update(preview, mirror);
   // A "pending" preview is the dim post-Confirm ghost (playtest 2026-06-10
   // Issue 7): placement is DONE, so it must NOT capture pointers (the camera
   // pans again) and it draws at the SENT point, dimmer.
@@ -152,6 +165,12 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
       rejection = ctx.verdict.check(pose, mirror.structures, mirror.swarm, ctx.obstacles, ghostDeckContext(preview));
     }
     ctx.feedback.placementPreviewRejection = rejection;
+    // Fence run: the sent run and the hover run (one ghost look, faint for the hover).
+    const rg = ctx.runGhosts ?? (ctx.runGhosts = new PendingRunGhosts(shipContainer, ctx.structStyle));
+    const rf = runFrame;
+    rf.mirror = mirror; rf.preview = preview; rf.verdict = ctx.verdict; rf.obstacles = ctx.obstacles;
+    rf.deck = ghostDeckContext(preview); rf.ghostX = gx; rf.ghostY = gy; rf.scale = ctx.scale; rf.nowMs = ctx.nowMs;
+    rg.update(rf);
     // Cyan when clear, red when blocked; the pending ghost is dimmer and still
     // so it reads as "sent, awaiting" vs positioning. Recolour only: no rebuild.
     ctx.placementGhost.updateGhost(rejection !== null, pendingGhost || heldGhost, ctx.nowMs);
@@ -163,6 +182,7 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
     ctx.feedback.placementStuck = !ctx.input._placementFollowing;
   } else {
     if (ctx.placementGhost) ctx.placementGhost.visible = false;
+    ctx.runGhosts?.hide();
     ctx.feedback.placementScreenX = null;
     ctx.feedback.placementScreenY = null;
     ctx.feedback.placementChosenWorldX = null;

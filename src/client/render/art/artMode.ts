@@ -57,10 +57,18 @@ export interface ArtOptions {
   deckTex?: import('../pixi/structureDeckTexture.js').DeckTex;
   /** Base platforms deck fence link look (`?fenceLook=old|new`). Absent = the URL / default. */
   fenceLook?: import('../pixi/connectorFenceBeam.js').FenceLook;
+  /** Edge feel P2 mock-ups: fence post + link look (`?edgeLook=a|b|c`). Absent = the URL / off. */
+  edgeLook?: import('../pixi/connectorEdgeLook.js').EdgeLook;
   /** Base platforms deck zone markings (`?zones=on|off`). Absent = the URL / on. */
   zones?: boolean;
   /** Lit deck spike (`?deckLit=on`): roads bake their carriageway. Absent = the URL / off. */
   deckLit?: boolean;
+  /** Base platforms gate approach lights (`?approach=on|off`). Absent = the URL / off. */
+  approach?: boolean;
+  /** Base platforms free build-slot outlines (`?buildSlots=off` hides). Absent = the URL / on. */
+  buildSlots?: boolean;
+  /** Readable construction ring + wireframe hologram (`?buildRing=on|off`). Absent = the URL / on. */
+  buildRing?: boolean;
   /** Cut-field ore look (`?ore=off|tint|veins|seams`, F1c); absent = veins (owner's pick). */
   ore?: FieldOreLook;
   /** Graphics quality (edge smoothing, render scale, texture softening);

@@ -80,7 +80,7 @@ import { RIG_TICKS_PER_SEC, type StructureRigView } from './structureRigs.js';
 import { cullRadiusForStructure, underZForStructure } from './structureDeckZones.js';
 import { hasBodyStatus, updateSocketNubs } from './structureSocketNubs.js';
 import { syncRoadJoins } from './roadJoins.js';
-import { syncStructureHologram } from './structureHologram.js';
+import { holoRingOut, isUnderConstruction, syncStructureHologram } from './structureHologram.js';
 export type { SpriteBuildSig, SwarmSpriteCtx };
 
 /** Module-scope scratch for a structure's per-mount arc-local angles passed
@@ -125,7 +125,7 @@ export function scrapHeatTint(ageMs: number): number | undefined {
 
 export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): void {
   // Base platforms: the deck floor follows the plate set (one version compare per frame).
-  ctx.deckPlates?.sync(mirror.deckPlates, ctx);
+  ctx.deckPlates?.sync(mirror.deckPlates, ctx.fxNowMs, ctx.viewBounds, ctx); // + gate approach strobe (effect time); ctx = lit deck view
   // Slice 31: road joins, rebuilt only when a road or gate changed.
   if (mirror.deckPlates?.deck === true && ctx.socketNubs === true) syncRoadJoins(mirror.structures, mirror.swarm);
   if (!mirror.swarm) return;
@@ -410,7 +410,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     } else if (entry.kind === 2) {
       // Build mirror (4C): flip in the local frame before the rig follows it.
       structMirrored = applyStructureMirror(sprite, mirror.structures?.get(entityId)?.mirror === true);
-      ctx.deckPlates?.zones?.note(entityId, entry.shipKind, lerped.x, lerped.y, lerped.angle); // slice 33 floor paint
+      ctx.deckPlates?.note(entityId, entry.shipKind, lerped.x, lerped.y, lerped.angle, isUnderConstruction(mirror.structures?.get(entityId))); // floor paint (none while building) + gate lights
       // Restyle 2c: pose the structure's rig (visible structures only); its
       // parts hang off this sprite and `shipContainer` (structureRigs.ts).
       let rigView: StructureRigView | null = null;
@@ -538,12 +538,12 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
     }
     // Base loop 3O — a blueprint (not yet built) draws as a cyan hologram that
     // a print line fills in with its build fraction (structureHologram.ts);
-    // the fill-bar (ConnectorRenderer) still shows the number.
+    // the fill-bar (ConnectorRenderer) shows the number, or (build ring on, the default) a progress hexagon (buildRing.ts).
     // Off screen (hidden by the A3 view test) none of this shows: skip the
     // hologram and readout child scans until it scrolls back into view.
     if (entry.kind === 2 && sprite.visible) {
       const st = mirror.structures?.get(entityId);
-      syncStructureHologram(sprite, entry.shipKind, entry.radius, ctx.art.structStyle, st, now);
+      syncStructureHologram(sprite, entry.shipKind, entry.radius, ctx.art.structStyle, st, now, ctx.buildRing === true ? ctx.cameraScale ?? 1 : 0);
       // WS-9 (R2.12) — update the Capital's mineral readout on CHANGE only (no
       // per-frame Text re-raster). Tagged child; capitals only, so the lookup is rare.
       if (entry.shipKind === 'capital') {
@@ -565,7 +565,7 @@ export function updateSwarmSprites(mirror: RenderMirror, ctx: SwarmSpriteCtx): v
         // Readable on a phone: a constant on-screen size at any zoom.
         if (nextEta !== '' && ctx.cameraScale !== undefined) fitBuildEtaLabel(etaText, ctx.cameraScale, sprite.scale.y);
         // Upright and above the body on screen, whatever the structure's angle.
-        if (nextEta !== '') uprightReadout(sprite, etaText, buildEtaBaseY(entry.radius));
+        if (nextEta !== '') uprightReadout(sprite, etaText, holoRingOut.labelY < 0 ? holoRingOut.labelY : buildEtaBaseY(entry.radius)); // above the hexagon, if any
       }
       // Phase-1 issue 7 — a power store's stored-power number (CHANGE-only).
       if ((getStructureKind(entry.shipKind).powerStorageCapacity ?? 0) > 0) {

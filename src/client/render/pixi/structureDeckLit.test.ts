@@ -168,20 +168,20 @@ describe('StructureDeckPlates — lit layer', () => {
     const ship = new Container();
     const deck = new StructureDeckPlates(ship, 'a', false);
     const { actx, asks } = fakeArt();
-    deck.sync(mirrorOf(1, [[0, 0], [1, 0]]), { art: actx, cameraScale: 1 });
+    deck.sync(mirrorOf(1, [[0, 0], [1, 0]]), 0, undefined, { art: actx, cameraScale: 1 });
     expect(deck.lit).toBeUndefined();
     expect(asks).toHaveLength(0);
     expect(ship.children.every((ch) => ch.label === 'deckPlate')).toBe(true);
     // The plain look never lights, flag or not.
-    expect(new StructureDeckPlates(new Container(), 'plain', false, new StructureDeckLit(new Container(), 'a')).lit).toBeUndefined();
+    expect(new StructureDeckPlates(new Container(), 'plain', false, false, new StructureDeckLit(new Container(), 'a')).lit).toBeUndefined();
   });
 
   it('flag on: each plate gets 7 lit hexes (no self-shadow) and its outline over the vector backing', () => {
     const ship = new Container();
-    const deck = new StructureDeckPlates(ship, 'a', false, new StructureDeckLit(ship, 'a'));
+    const deck = new StructureDeckPlates(ship, 'a', false, false, new StructureDeckLit(ship, 'a'));
     const { actx } = fakeArt();
     const before = litPass.count;
-    deck.sync(mirrorOf(1, [[0, 0], [1, 0]]), { art: actx, cameraScale: 1 });
+    deck.sync(mirrorOf(1, [[0, 0], [1, 0]]), 0, undefined, { art: actx, cameraScale: 1 });
     const roots = litRoots(ship);
     expect(roots).toHaveLength(2);
     expect(ship.children.filter((ch) => ch.label === 'deckPlate')).toHaveLength(2); // backing kept
@@ -210,19 +210,19 @@ describe('StructureDeckPlates — lit layer', () => {
 
   it('zoomed out: hidden by renderable, never destroyed; zoomed back in: the same sprites', () => {
     const ship = new Container();
-    const deck = new StructureDeckPlates(ship, 'b', false, new StructureDeckLit(ship, 'b'));
+    const deck = new StructureDeckPlates(ship, 'b', false, false, new StructureDeckLit(ship, 'b'));
     const { actx, asks } = fakeArt();
     const m = mirrorOf(1, [[0, 0]]);
-    deck.sync(m, { art: actx, cameraScale: 1 });
+    deck.sync(m, 0, undefined, { art: actx, cameraScale: 1 });
     const root = litRoots(ship)[0]!;
     const asked = asks.length;
-    deck.sync(m, { art: actx, cameraScale: 0.3 });
+    deck.sync(m, 0, undefined, { art: actx, cameraScale: 0.3 });
     expect(root.renderable).toBe(false);
     expect(root.destroyed).toBe(false);
     expect(deck.lit!.shownCount).toBe(0);
-    deck.sync(m, { art: actx, cameraScale: 0.45 }); // inside the band: stays vector
+    deck.sync(m, 0, undefined, { art: actx, cameraScale: 0.45 }); // inside the band: stays vector
     expect(root.renderable).toBe(false);
-    deck.sync(m, { art: actx, cameraScale: 0.6 });
+    deck.sync(m, 0, undefined, { art: actx, cameraScale: 0.6 });
     expect(litRoots(ship)[0]).toBe(root);
     expect(root.renderable).toBe(true);
     expect(asks.length).toBe(asked); // no re-acquire on a swap
@@ -230,10 +230,10 @@ describe('StructureDeckPlates — lit layer', () => {
 
   it('off-screen plates are culled and their art is not even asked for', () => {
     const ship = new Container();
-    const deck = new StructureDeckPlates(ship, 'a', false, new StructureDeckLit(ship, 'a'));
+    const deck = new StructureDeckPlates(ship, 'a', false, false, new StructureDeckLit(ship, 'a'));
     const { actx, asks } = fakeArt();
     const far = new Float64Array([1e6, 1e6, 1e6 + 100, 1e6 + 100]);
-    deck.sync(mirrorOf(1, [[0, 0]]), { art: actx, cameraScale: 1, viewBounds: far });
+    deck.sync(mirrorOf(1, [[0, 0]]), 0, undefined, { art: actx, cameraScale: 1, viewBounds: far });
     expect(asks).toHaveLength(0);
     expect(litRoots(ship)).toHaveLength(0);
   });
@@ -241,19 +241,19 @@ describe('StructureDeckPlates — lit layer', () => {
   it('no GPU lighting: the plate stays vector', () => {
     litPass.settings = null;
     const ship = new Container();
-    const deck = new StructureDeckPlates(ship, 'a', false, new StructureDeckLit(ship, 'a'));
-    deck.sync(mirrorOf(1, [[0, 0]]), { art: fakeArt().actx, cameraScale: 1 });
+    const deck = new StructureDeckPlates(ship, 'a', false, false, new StructureDeckLit(ship, 'a'));
+    deck.sync(mirrorOf(1, [[0, 0]]), 0, undefined, { art: fakeArt().actx, cameraScale: 1 });
     expect(litRoots(ship)).toHaveLength(0);
     expect(ship.children.filter((ch) => ch.label === 'deckPlate')).toHaveLength(1);
   });
 
   it('a plate leaving the floor frees its lit sprites; the shared vector context survives', () => {
     const ship = new Container();
-    const deck = new StructureDeckPlates(ship, 'a', false, new StructureDeckLit(ship, 'a'));
+    const deck = new StructureDeckPlates(ship, 'a', false, false, new StructureDeckLit(ship, 'a'));
     const { actx } = fakeArt();
-    deck.sync(mirrorOf(1, [[0, 0], [1, 0]]), { art: actx, cameraScale: 1 });
+    deck.sync(mirrorOf(1, [[0, 0], [1, 0]]), 0, undefined, { art: actx, cameraScale: 1 });
     const before = litPass.count;
-    deck.sync(mirrorOf(2, [[0, 0]]), { art: actx, cameraScale: 1 });
+    deck.sync(mirrorOf(2, [[0, 0]]), 0, undefined, { art: actx, cameraScale: 1 });
     expect(litRoots(ship)).toHaveLength(1);
     expect(before - litPass.count).toBe(7);
     expect(deckPlateContext('a', 0).destroyed).toBe(false);

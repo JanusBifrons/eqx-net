@@ -15,6 +15,7 @@
 import type { RenderMirror } from '@core/contracts/IRenderer';
 import type { EffectsService } from '../../effects/EffectsService';
 import type { FxFences, FxShields, ShieldPoseFn } from '../art/fx/FxShields.js';
+import { HOLOGRAM_COLOR } from './structureHologram.js';
 
 export interface HitEventCtx {
   /** Written by the caller each frame (nulled on dispose). */
@@ -46,6 +47,8 @@ export function beginShieldFrame(ctx: HitEventCtx): boolean {
   return ctx.fxShieldsOn;
 }
 
+const PLACE_POP_OPTS = { radius: 40, tint: HOLOGRAM_COLOR };
+
 export function updateHitEvents(mirror: RenderMirror, ctx: HitEventCtx): void {
   // Effects subsystem (M7 — plan wiggly-puppy): drain the effect-
   // trigger queue and dispatch to spawnBurst / triggerOneShotFilter.
@@ -68,6 +71,10 @@ export function updateHitEvents(mirror: RenderMirror, ctx: HitEventCtx): void {
           ctx.effects.pulseShield(ev.entityId);
           if (ctx.fxShieldsOn) ctx.fxShields!.hitAt(ev.entityId, ev.worldX, ev.worldY, ctx.fxNow(), ctx.fxShieldPose);
         }
+      } else if (ev.kind === 'place-pop') {
+        // A placed structure landed: a hologram-cyan flash + spark ring (reused opts: #14).
+        PLACE_POP_OPTS.radius = ev.radius ?? 40;
+        ctx.effects.spawnBurst('place-pop', ev.worldX, ev.worldY, PLACE_POP_OPTS);
       } else if (ev.kind === 'destruction-shock' || ev.kind === 'shield-flash') {
         ctx.effects.triggerOneShotFilter(ev.kind, ev.worldX, ev.worldY);
       } else {

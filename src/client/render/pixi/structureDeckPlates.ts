@@ -20,13 +20,14 @@
  */
 import { Graphics, GraphicsContext, type Container } from 'pixi.js';
 import type { DeckPlatesMirror } from '../../../core/contracts/IRenderer.js';
-import { HEX_DIRS, type HexPoint } from '../../../core/hex/hex.js';
-import { DECK_HEX_SIZE, deckHexCentreInto, plateCentreWorldInto } from '../../../core/hex/plates.js';
+import { HEX_DIRS, pixelToAxialInto, type AxialHex, type HexPoint } from '../../../core/hex/hex.js';
+import { DECK_HEX_SIZE, deckHexCentreInto, plateCentreWorldInto, plateOfHexInto, type PlateIndex } from '../../../core/hex/plates.js';
 import { RIG_UNDER_Z } from './structureRigs.js';
 import { DEFAULT_DECK_TEX, deckPlatePick, drawDeckHexTexture, type DeckTex } from './structureDeckTexture.js';
 import { StructureDeckZones } from './structureDeckZones.js';
 // Type only: the lit layer is handed in (a value import would cycle the art forge through the lit shader).
 import type { DeckLitView, StructureDeckLit } from './structureDeckLit.js';
+import { DeckApproachLights } from './deckApproachLights.js';
 
 /** zIndex of the deck floor: the bottom of the structure under band. */
 export const DECK_UNDER_Z = RIG_UNDER_Z - 0.5;
@@ -135,14 +136,34 @@ export class StructureDeckPlates {
    *  swarm updater notes each structure into it; {@link sync} sweeps it. */
   readonly zones: StructureDeckZones | undefined;
 
+  /** Runway approach lights outside the fence gates (default on; `?approach=off` hides them). */
+  readonly approach: DeckApproachLights | undefined;
   /** Lit deck (`?deckLit=on`, textured looks only): the lit plates over the vector ones. */
   readonly lit: StructureDeckLit | undefined;
+  private readonly hex: AxialHex = { q: 0, r: 0 };
+  private readonly plate: PlateIndex = { i: 0, j: 0 };
+  /** Is the deck hex at game (x, y) on a floored plate? Allocation-free. */
+  readonly onPlate = (x: number, y: number): boolean => {
+    pixelToAxialInto(x, y, DECK_HEX_SIZE, this.hex);
+    plateOfHexInto(this.hex.q, this.hex.r, this.plate);
+    return this.graphics.has(plateKey(this.plate.i, this.plate.j));
+  };
 
-  /** `tex`: the floor look (`readDeckTex`, `?deckTex=`); `zones`: paint zone markings;
-   *  `lit`: the lit plates (`?deckLit=on`, `restyleLook`; absent = today's floor exactly). */
-  constructor(private readonly shipContainer: Container, private readonly tex: DeckTex = DEFAULT_DECK_TEX, zones = true, lit?: StructureDeckLit) {
+  /** `tex`: the floor look (`readDeckTex`, `?deckTex=`); `zones`: paint zone
+   *  markings; `approach`: gate approach lights; `lit`: the lit plates
+   *  (`?deckLit=on`, `restyleLook`; absent = today's floor exactly). */
+  constructor(private readonly shipContainer: Container, private readonly tex: DeckTex = DEFAULT_DECK_TEX, zones = true, approach = false, lit?: StructureDeckLit) {
     this.zones = zones ? new StructureDeckZones(shipContainer) : undefined;
+    this.approach = approach ? new DeckApproachLights(shipContainer, this.onPlate) : undefined;
     this.lit = tex !== 'plain' ? lit : undefined;
+  }
+
+  /** Structure `id` of kind `kindId` stands at game pose (x, y, angle) this
+   *  frame (the swarm updater, every structure): floor paint and gate lights.
+   *  `building`: under construction (`isUnderConstruction`): no zone paint yet. */
+  note(id: number, kindId: string | undefined, x: number, y: number, angle: number, building = false): void {
+    this.zones?.note(id, kindId, x, y, angle, building);
+    this.approach?.note(id, kindId, x, y, angle);
   }
 
   /** Live plate Graphics (tests, stats): one per plate. */
@@ -150,15 +171,18 @@ export class StructureDeckPlates {
 
   /** Bring the floor in line with `plates` (absent ⇒ none). Only a new
    *  version touches the display tree; `view` (the swarm ctx) drives the lit plates each frame. */
-  sync(plates: DeckPlatesMirror | undefined, view?: DeckLitView): void {
-    const v = plates?.version ?? 0;
+  sync(plates: DeckPlatesMirror | undefined, fxNowMs = 0, viewBounds?: Float64Array, view?: DeckLitView): void {
     this.zones?.frame(plates?.deck === true); // last frame's gone structures lose their paint
-    if (v !== this.version) this.rebuild(plates, v);
+    this.syncPlates(plates);
+    // After the plates: a gate's outside side reads the current set.
+    this.approach?.frame(plates?.deck === true, this.version, fxNowMs, viewBounds);
     if (this.lit !== undefined && view !== undefined) this.lit.frame(view);
   }
 
-  private rebuild(plates: DeckPlatesMirror | undefined, v: number): void {
+  private syncPlates(plates: DeckPlatesMirror | undefined): void {
+    const v = plates?.version ?? 0;
     const count = plates?.count ?? 0;
+    if (v === this.version) return;
     this.version = v;
     this.seen.clear();
     for (let n = 0; n < count; n++) {
@@ -188,6 +212,7 @@ export class StructureDeckPlates {
   destroy(): void {
     this.zones?.destroy();
     this.lit?.destroy();
+    this.approach?.destroy();
     this.seen.clear();
     this.graphics.forEach(this.sweepFn);
   }

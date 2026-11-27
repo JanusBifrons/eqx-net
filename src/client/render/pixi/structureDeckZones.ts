@@ -3,7 +3,8 @@
  * owner's mock-up), part of the deck floor layer ({@link StructureDeckPlates}
  * owns one of these; not a layer of its own). The industry hazard stripes
  * were dropped 2026-11-26 (owner: buildings need a bigger redesign first):
- *  - guns: a dashed red danger ring with a faint red fill;
+ *  - guns: a dashed red danger ring with a faint red fill (once built: none
+ *    while the gun is under construction);
  *  - Capital: a blue border round its deck hex (solid outer line, dashed inner).
  *
  * Flat paint just above the plates and under everything else ({@link DECK_ZONE_Z}).
@@ -46,6 +47,7 @@ export const DECK_ZONE_Z = -1.25;
  * The deck's floor bands on `shipContainer` (bottom to top):
  *   plates (DECK_UNDER_Z −1.5) < zone paint (DECK_ZONE_Z −1.25)
  *   < cables (CABLE_UNDER_Z) < road tiles (ROAD_UNDER_Z, joins + lamps ride the sprite)
+ *   < gate approach lights (APPROACH_LAMP_Z, `deckApproachLights.ts`)
  *   < rig pads (RIG_UNDER_Z −1) < bodies, pylons, fence beams (0).
  * Numbers, not imports: `structureRigs.ts` sits on an import cycle with the road art.
  */
@@ -98,6 +100,12 @@ function dashedSegment(ctx: GraphicsContext, ax: number, ay: number, bx: number,
     const t0 = k * step + step / 4, t1 = t0 + step / 2; // centred dash per step: corners stay clean
     ctx.moveTo(ax + ux * t0, ay + uy * t0).lineTo(ax + ux * t1, ay + uy * t1);
   }
+}
+
+/** The outer edge (world u) of a gun's dashed red danger ring, or null for a
+ *  kind without one (the construction ring clears it: buildRing.ts). */
+export function gunDangerOuterRadius(kindId: string | undefined): number | null {
+  return deckZoneOf(kindId) === 'gun' ? getStructureKind(kindId).radius + GUN_MARGIN + GUN_RING_WIDTH / 2 : null;
 }
 
 function drawGun(ctx: GraphicsContext, radius: number): void {
@@ -182,10 +190,13 @@ export class StructureDeckZones {
     this.stamp++;
   }
 
-  /** Structure `id` of kind `kindId` stands at game pose (x, y, angle) this frame. */
-  note(id: number, kindId: string | undefined, x: number, y: number, angle: number): void {
+  /** Structure `id` of kind `kindId` stands at game pose (x, y, angle) this frame.
+   *  `building` (under construction, the hologram's `isUnderConstruction`): no
+   *  paint yet; a gun's danger zone appears the frame it is built. */
+  note(id: number, kindId: string | undefined, x: number, y: number, angle: number, building = false): void {
     if (!this.deck) return;
     let e = this.entries.get(id);
+    if (building) { if (e !== undefined) this.drop(id, e); return; }
     if (e !== undefined && e.kind !== kindId) { this.drop(id, e); e = undefined; } // recycled id
     if (e === undefined) {
       const ctx = deckZoneContext(kindId);

@@ -2,6 +2,8 @@
  * The left strip's placing tools (UI language plan A5 / U3-7): while a
  * building is being placed (`placementKind` set) the strip shows, as icons
  * only: the building (its portrait), ✓ Place, Rotate, Mirror, then ✕ Cancel.
+ * A fence post or gate on a deck adds Gate (edge feel P3): it switches
+ * `placementKind` between the two and the fence run stays open (`fenceRun.ts`).
  * It replaces the old bottom-middle placing bar and the Build panel's folded
  * picked-building strip; desktop and touch alike (the desktop R / F keys and
  * click-to-place keep working beside it).
@@ -26,6 +28,8 @@ import { useUIStore } from '../state/store.js';
 import { cyclePlacementRotation, getPlacementMirror, togglePlacementMirror } from '../structures/structurePlacementClient.js';
 import { getPlacementHeld, getPlacementRejection, subscribePlacementHeld, subscribePlacementRejection } from '../structures/placementChosen.js';
 import { cancelPlacement, commitPlacement } from '../structures/placementCancel.js';
+import { isFenceRunKind } from '../structures/fenceRun.js';
+import { DECK_FENCE_GATE_KIND, DECK_FENCE_POST_KIND } from '../../core/structures/deckLinks.js';
 import { structurePortraitUrl } from '../render/art/shipPortraits.js';
 
 /** The building's round identity icon: its baked portrait, or the structure icon. */
@@ -40,6 +44,8 @@ function KindIcon({ kind }: { kind: StructureKindId }): ReactElement {
 export function usePlacingStripItems(): ReactElement[] {
   const kind = useUIStore((s) => s.placementKind);
   const setRightPanel = useUIStore((s) => s.setRightPanel);
+  const setPlacementKind = useUIStore((s) => s.setPlacementKind);
+  const deck = useUIStore((s) => s.deck);
   // The mirror choice is module state; this only re-renders the pressed look.
   const [, bumpMirror] = useState(0);
   // Blocked ghost (the server's own placement rule) or held on the spot just sent: no Place.
@@ -57,6 +63,11 @@ export function usePlacingStripItems(): ReactElement[] {
       onClick={() => { cyclePlacementRotation(); }} data-testid="placement-rotate" />,
     <EqxIconButton key="mirror" variant="strip" icon={<EqxIcon name="mirror" />} tooltip="Mirror" active={mirrored}
       onClick={() => { togglePlacementMirror(); bumpMirror((n) => n + 1); }} data-testid="placement-mirror" />,
+    ...(isFenceRunKind(kind, deck) ? [
+      <EqxIconButton key="gate" variant="strip" icon={<EqxIcon name="gate" />} tooltip="Gate" active={kind === DECK_FENCE_GATE_KIND}
+        onClick={() => { setPlacementKind(kind === DECK_FENCE_GATE_KIND ? DECK_FENCE_POST_KIND : DECK_FENCE_GATE_KIND); }}
+        data-testid="placement-gate" />,
+    ] : []),
     <EqxStrip.Separator key="sep" />,
     <EqxIconButton key="cancel" variant="strip" tone="danger" icon={<EqxIcon name="close" />} tooltip="Stop placing"
       onClick={cancelPlacement} data-testid="placement-cancel" />,

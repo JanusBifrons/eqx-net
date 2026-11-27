@@ -8,7 +8,8 @@
  * Mounted while any kind is being placed; HIDDEN by default. `gameRafLoop`
  * toggles `hidden` + positions it under the projected ghost by direct DOM
  * writes (`updatePlacementHints`), so the per-frame check never re-renders
- * React. Sits a line below the turret fence hint. A world hint on desktop and
+ * React. Sits a line above the turret fence hint (one block, kept on screen and
+ * clear of the HUD). A world hint on desktop and
  * touch alike (the placing tools are on the left strip, U3-7).
  */
 import { memo } from 'react';

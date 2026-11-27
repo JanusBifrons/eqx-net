@@ -23,7 +23,7 @@ import { getStructureKind, isStructureKindId } from '../../../shared-types/struc
 import { visitDerivedWalls, type DerivedWallVisitor } from '../../structures/derivedWalls.js';
 import { CABLE_NO_SOCKET } from '../../../core/structures/cableCurve.js';
 import { builtRangeCircleVisualInto, connectorVisualInto, staticScaleKey, type ConnectorVisual, type RingVisual } from './connectorVisual.js';
-import { drawLineLookBody, type LineLook } from './connectorLineLooks.js';
+import { drawLineLookBody, setCableCover, type LineLook } from './connectorLineLooks.js';
 import { drawSocketCableBody, type LinkCable, type LinkCableCache } from './connectorCables.js';
 import { drawFenceBeamBody, fenceBeamUp } from './connectorFenceBeam.js';
 import { CABLE_UNDER_Z } from './structureDeckZones.js';
@@ -35,6 +35,10 @@ export const STATIC_CHUNK_CELL = 1024;
 export const STATIC_CHUNK_KEYS = 6;
 /** Slack around a chunk's drawn box before it counts as off screen. */
 const VIEW_PAD = 64;
+/** How near (world units) a cable station must sit to a lit fence beam to
+ *  hide under it. Deck power cables run on the beam's own seam, so a small
+ *  slack covers them without touching cables on the next seam over. */
+export const FENCE_COVER_R = 6;
 
 /** FNV-1a style integer mix. */
 function mix(h: number, n: number): number {
@@ -208,6 +212,41 @@ export class ConnectorStaticLayer {
   /** Something the signature cannot see changed: redraw everything. */
   invalidate(): void { this._sig = Number.NaN; }
 
+  /** Lit fence beam segments (pixi space, flat [ax, ay, bx, by, ...]) for the
+   *  cable cover mask. Reused; grows only. */
+  private _cover = new Float64Array(64);
+
+  /** Fill `_cover` with every lit fence beam; returns the segment count. */
+  private collectBeamCover(
+    structures: ReadonlyMap<number, StructureRenderState>,
+    swarm: ReadonlyMap<number, SwarmRenderState>,
+  ): number {
+    const cables = this.host.cables;
+    let n = 0;
+    for (const id of structures.keys()) {
+      const st = structures.get(id)!;
+      const a = swarm.get(id);
+      if (!a) continue;
+      const conn = st.connTo;
+      for (let c = 0; c < conn.length; c++) {
+        const otherId = conn[c]!;
+        if (id > otherId) continue;
+        const b = swarm.get(otherId);
+        if (!b || !cables.isFenceBeam(a, b) || !fenceBeamUp(st, structures.get(otherId))) continue;
+        if ((n + 1) * 4 > this._cover.length) {
+          const grown = new Float64Array(this._cover.length * 2);
+          grown.set(this._cover);
+          this._cover = grown;
+        }
+        const o = n * 4;
+        this._cover[o] = a.x; this._cover[o + 1] = -a.y;
+        this._cover[o + 2] = b.x; this._cover[o + 3] = -b.y;
+        n++;
+      }
+    }
+    return n;
+  }
+
   /** No structures: hide every chunk and forget the drawn state. */
   clear(): void {
     if (this._sig !== this._sig) return; // NaN ⇒ already clear
@@ -373,6 +412,11 @@ export class ConnectorStaticLayer {
     const idle = connectorVisualInto(this._edge, 0, 0, scale);
     const cables = host.socketCables;
     const look = host.lineLook;
+    // A new edge look hides cable cradles / lashings under lit fence beams
+    // (deck power cables run along the same seams). Cold path: the walk runs
+    // only on a signature change.
+    const cover = cables && host.cables.edgeLook !== 'off' ? this.collectBeamCover(structures, swarm) : 0;
+    setCableCover(this._cover, cover, FENCE_COVER_R);
     for (const id of structures.keys()) {
       const st = structures.get(id)!;
       const a = swarm.get(id);
@@ -404,7 +448,7 @@ export class ConnectorStaticLayer {
         const b = swarm.get(otherId);
         if (!b) continue;
         // Slice 30: a deck fence link is a shield beam, not a cable (`?fenceLook=new`).
-        if (host.cables.isFenceBeam(a, b)) { drawFenceBeamBody(g, ax, ay, b.x, -b.y, scale, a.radius, b.radius, fenceBeamUp(st, structures.get(otherId))); continue; }
+        if (host.cables.isFenceBeam(a, b)) { drawFenceBeamBody(g, ax, ay, b.x, -b.y, scale, a.radius, b.radius, fenceBeamUp(st, structures.get(otherId)), host.cables.edgeLook); continue; }
         // Cables / idle edges go on the cable band (under roads, pads, bodies).
         if (cables) { drawSocketCableBody(cg, linkCableOf(host.cables, id, st, c, a, b, structures), scale, a.radius, b.radius); continue; }
         if (look) { drawLineLookBody(cg, look, ax, ay, b.x, -b.y, scale, a.radius, b.radius); continue; }
@@ -412,6 +456,7 @@ export class ConnectorStaticLayer {
         cg.stroke({ color: idle.color, alpha: idle.alpha, width: idle.width });
       }
     }
+    setCableCover(this._cover, 0, 0);
     if (host.staticWalls) visitDerivedWalls(structures, swarm, this._drawWalls);
   }
 
