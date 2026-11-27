@@ -4,12 +4,13 @@
  * pick action once; the tools vanish when the pick ends.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, renderHook, screen } from '@testing-library/react';
 import { useUIStore } from '../state/store';
 import { resetFleetStatus } from '../fleet/fleetStatus';
 import { resetFleetCommands, setFleetCommands } from '../fleet/fleetCommands';
 import { LayoutProvider } from './LayoutProvider';
 import { LeftStripHost } from './LeftStripHost';
+import { useRouteStripItems } from './routeStripItems';
 
 function stubMedia(): void {
   vi.stubGlobal('matchMedia', (q: string) => ({
@@ -65,6 +66,16 @@ describe('left strip route tools (U3-3)', () => {
     expect(screen.getByTestId('left-strip-route').querySelector('svg')?.getAttribute('data-icon')).toBe('route');
     expect(screen.queryByTestId('left-strip-order'), 'the fleet section gives way').toBeNull();
     expect(screen.queryByTestId('left-strip-cog')).toBeNull();
+  });
+
+  it('returns data: identity, ✓, undo, separator, ✕; null with no pick', () => {
+    const { result, rerender } = renderHook(() => useRouteStripItems());
+    expect(result.current).toBeNull();
+    startPick('patrol');
+    rerender();
+    expect(result.current?.map((a) => a.kind)).toEqual(['identity', 'button', 'button', 'separator', 'button']);
+    expect(result.current?.[0]).toMatchObject({ icon: 'route', health: 'ok', state: 'patrol', count: 0, testId: 'left-strip-route' });
+    expect(result.current?.[1]).toMatchObject({ icon: 'confirm', tone: 'primary', disabled: true, testId: 'left-strip-route-done' });
   });
 
   it('✓ needs 2 points and asks the renderer for the route once', () => {

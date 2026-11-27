@@ -13,20 +13,20 @@
  * - The shown value comes from the selection's fleet status
  *   (`useFleetSelectionView`, the panel's source); a mixed or unreported
  *   selection shows the neutral `mixed` icon.
- * - Returned as a flat element list so EqxStrip sees its allowed children
- *   directly (it checks child types: icons only).
+ * - Returned as data (`StripAction`, `stripActions.tsx`); the strip draws it
+ *   with `renderStripActions`.
  */
-import type { ReactElement } from 'react';
 import {
   FLEET_STATUS_MODES, FLEET_STATUS_STANCES, type FleetMode, type FleetStance,
 } from '@shared-types/messages/fleetStatusMessages';
-import { EqxIcon, EqxIconButton, EqxStatusFlyout, type EqxIconName, type EqxStatusOption } from '../../ui/index.js';
+import { EqxIcon, type EqxIconName, type EqxStatusOption } from '../../ui/index.js';
 import { useUIStore } from '../state/store.js';
 import { helmOrdersAllowed } from '../helm/helmModeGate.js';
 import { MODE_LABELS, STANCE_LABELS } from '../fleet/fleetView.js';
 import { modeNeedsPick } from '../fleet/fleetPickView.js';
 import { resolveFleetCommands, useFleetSelectionView } from '../fleet/useFleetSelectionView.js';
 import { MOVE_ORDER_COLOUR_HEX } from '../render/orderMarkerColours.js';
+import type { StripAction } from './stripActions.js';
 
 const MODE_ICON: Readonly<Record<FleetMode, EqxIconName>> = {
   patrol: 'patrol', defend: 'defend', hunt: 'hunt', escort: 'escort', retreat: 'retreat',
@@ -51,7 +51,7 @@ function known<T extends string>(v: T | 'mixed' | null): T | null {
 }
 
 /** The fleet section's strip items, or [] when it does not apply (not Command, no own ships). */
-export function useFleetStripItems(): ReactElement[] {
+export function useFleetStripItems(): StripAction[] {
   const view = useFleetSelectionView();
   const command = useUIStore(helmOrdersAllowed);
   const setPick = useUIStore((s) => s.setFleetPick);
@@ -71,13 +71,12 @@ export function useFleetStripItems(): ReactElement[] {
   const onMove = (): void => setPick(moveArmed ? null : 'move');
 
   return [
-    <EqxStatusFlyout key="order" value={mode} emptyIcon={MIXED} options={MODE_OPTIONS} onChange={onMode}
-      tooltip={`Order: ${mode === null ? 'mixed' : MODE_LABELS[mode]}`} data-testid="left-strip-order" />,
-    <EqxIconButton key="move" variant="strip" icon={<EqxIcon name="move" />} tooltip="Move: tap a point"
-      accent={MOVE_ORDER_COLOUR_HEX} active={moveArmed} onClick={onMove} data-testid="left-strip-move" />,
-    <EqxStatusFlyout key="stance" value={stance} emptyIcon={MIXED} options={STANCE_OPTIONS} onChange={onStance}
-      tooltip={`Stance: ${stance === null ? 'mixed' : STANCE_LABELS[stance]}`} data-testid="left-strip-stance" />,
-    <EqxIconButton key="stop" variant="strip" icon={<EqxIcon name="stop" />} tooltip="Stop"
-      onClick={onStop} data-testid="left-strip-stop" />,
+    { kind: 'flyout', key: 'order', value: mode, emptyIcon: MIXED, options: MODE_OPTIONS, onPick: onMode,
+      tooltip: `Order: ${mode === null ? 'mixed' : MODE_LABELS[mode]}`, testId: 'left-strip-order' },
+    { kind: 'button', key: 'move', icon: 'move', tooltip: 'Move: tap a point',
+      accent: MOVE_ORDER_COLOUR_HEX, active: moveArmed, onPress: onMove, testId: 'left-strip-move' },
+    { kind: 'flyout', key: 'stance', value: stance, emptyIcon: MIXED, options: STANCE_OPTIONS, onPick: onStance,
+      tooltip: `Stance: ${stance === null ? 'mixed' : STANCE_LABELS[stance]}`, testId: 'left-strip-stance' },
+    { kind: 'button', key: 'stop', icon: 'stop', tooltip: 'Stop', onPress: onStop, testId: 'left-strip-stop' },
   ];
 }

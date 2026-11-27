@@ -17,11 +17,12 @@
  * - Pilot (`ship-action-pilot`): take the helm of your own parked hull
  *   (`sendPilotShip`).
  *
- * Returns the icon list (EqxStrip checks its children: icons only) and the
- * loot window, which the host renders beside the strip, not inside it.
+ * Returns the actions as data (`StripAction`, `stripActions.tsx`; the strip
+ * draws them with `renderStripActions`) and the loot window, which the host
+ * renders beside the strip, not inside it.
  */
 import { useEffect, useState, type ReactElement } from 'react';
-import { EqxIcon, EqxIconButton } from '../../ui/index.js';
+import type { StripAction } from './stripActions.js';
 import { useTargetLock } from '../components/targetLock.js';
 import { LootWindow } from '../components/LootWindow.js';
 import { sendPilotShip } from '../ships/shipActionsClient.js';
@@ -29,7 +30,7 @@ import type { PanelData } from '../components/selectionPanelData.js';
 import { ACQUIRE_COLOUR_HEX } from '../hud/groupColours.js';
 
 export interface SelectionStripItems {
-  items: ReactElement[];
+  items: StripAction[];
   /** The loot window (closed when nothing asked for it); render outside the strip. */
   loot: ReactElement | null;
 }
@@ -55,33 +56,33 @@ export function useSelectionStripItems(data: PanelData | null, fleetLock: (() =>
   // A new selection (or a pod leaving reach) shuts the window.
   useEffect(() => setLootOpen(false), [lootKey]);
 
-  const items: ReactElement[] = [];
+  const items: StripAction[] = [];
   if (fleetLock !== null) {
-    items.push(
-      <EqxIconButton key="target" variant="strip" icon={<EqxIcon name="target" />} tooltip="Lock: selected ships attack"
-        accent={ACQUIRE_COLOUR_HEX} onClick={fleetLock} data-testid="left-strip-lock" />,
-    );
+    items.push({
+      kind: 'button', key: 'target', icon: 'target', tooltip: 'Lock: selected ships attack',
+      accent: ACQUIRE_COLOUR_HEX, onPress: fleetLock, testId: 'left-strip-lock',
+    });
   } else if (lock !== null) {
-    items.push(
-      <EqxIconButton key="target" variant="strip" icon={<EqxIcon name="target" />} tooltip={lock.tooltip}
-        tone={lock.state === 'blocked' ? 'danger' : 'secondary'}
-        {...(lock.state === 'blocked' ? {} : { accent: ACQUIRE_COLOUR_HEX })} active={lock.state === 'unlock' || lock.state === 'cancel'}
-        onClick={lock.onClick} data-state={lock.state} data-testid="fc-target" />,
-    );
+    items.push({
+      kind: 'button', key: 'target', icon: 'target', tooltip: lock.tooltip,
+      tone: lock.state === 'blocked' ? 'danger' : 'secondary',
+      ...(lock.state === 'blocked' ? {} : { accent: ACQUIRE_COLOUR_HEX }), active: lock.state === 'unlock' || lock.state === 'cancel',
+      onPress: lock.onClick, state: lock.state, testId: 'fc-target',
+    });
   }
   if (target !== null) {
     const pod = target.kind === 'pod';
-    items.push(
-      <EqxIconButton key="loot" variant="strip" icon={<EqxIcon name="hold" />} tooltip={pod ? 'Open pod' : 'Open cargo'}
-        active={lootOpen} onClick={() => setLootOpen(true)} data-testid={pod ? 'pod-open' : 'cargo-open-toggle'} />,
-    );
+    items.push({
+      kind: 'button', key: 'loot', icon: 'hold', tooltip: pod ? 'Open pod' : 'Open cargo',
+      active: lootOpen, onPress: () => setLootOpen(true), testId: pod ? 'pod-open' : 'cargo-open-toggle',
+    });
   }
   if (data?.pilotShipId !== undefined) {
     const shipId = data.pilotShipId;
-    items.push(
-      <EqxIconButton key="pilot" variant="strip" icon={<EqxIcon name="pilot" />} tooltip="Pilot this ship"
-        onClick={() => sendPilotShip(shipId)} data-testid="ship-action-pilot" />,
-    );
+    items.push({
+      kind: 'button', key: 'pilot', icon: 'pilot', tooltip: 'Pilot this ship',
+      onPress: () => sendPilotShip(shipId), testId: 'ship-action-pilot',
+    });
   }
 
   let loot: ReactElement | null = null;

@@ -4,7 +4,7 @@
  * can't work is hidden, never shown and then refused.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { useUIStore } from '../state/store';
 import type { PanelData } from '../components/selectionPanelData';
 
@@ -17,11 +17,12 @@ const sendPilotShip = vi.fn();
 vi.mock('../ships/shipActionsClient', () => ({ sendPilotShip: (id: string) => sendPilotShip(id) }));
 
 import { useSelectionStripItems } from './selectionStripItems';
+import { renderStripActions } from './stripActions';
 import { ACQUIRE_COLOUR, ACQUIRE_COLOUR_HEX } from '../hud/groupColours';
 
 function Harness({ data, fleetLock = null }: { data: PanelData | null; fleetLock?: (() => void) | null }): JSX.Element {
   const { items, loot } = useSelectionStripItems(data, fleetLock);
-  return <div data-testid="strip">{items}{loot}</div>;
+  return <div data-testid="strip">{renderStripActions(items)}{loot}</div>;
 }
 
 function select(focusId: string, focusKind: 'ship' | 'structure' | 'pod' | 'lingering' | 'drone'): void {
@@ -49,6 +50,16 @@ describe('selection strip quick actions (U3-1)', () => {
     expect(t.getAttribute('aria-label')).toBe('Lock · Primary');
     fireEvent.click(t);
     expect(lockSelected).toHaveBeenCalledOnce();
+  });
+
+  it('returns data: button actions with their icon, tooltip and test id', () => {
+    select('hull-1', 'lingering');
+    const data: PanelData = { name: 'My hull', hpPct: 100, shieldPct: null, cargoShip: 'hull-1', pilotShipId: 'hull-1' };
+    const { result } = renderHook(() => useSelectionStripItems(data));
+    expect(result.current.items.map((a) => a.kind === 'button' && [a.key, a.icon, a.tooltip, a.testId])).toEqual([
+      ['loot', 'hold', 'Open cargo', 'cargo-open-toggle'],
+      ['pilot', 'pilot', 'Pilot this ship', 'ship-action-pilot'],
+    ]);
   });
 
   it('tap rule T2: with a fleet Lock, ONE Lock replaces the personal Target; a tap runs the fleet Lock', () => {

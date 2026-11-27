@@ -14,6 +14,7 @@ import { useUIStore } from '../state/store.js';
 import { EntityStatsPanel } from './EntityStatsPanel.js';
 import { useSelectionPanelData } from './selectionPanelData.js';
 import { useSelectionStripItems } from '../layout/selectionStripItems.js';
+import { renderStripActions } from '../layout/stripActions.js';
 import { selectionStats, applySelectionStats, resetSelectionStats } from '../net/selectionStats.js';
 import { setGameClient } from '../net/clientSingleton.js';
 import type { ColyseusGameClient } from '../net/ColyseusClient.js';
@@ -22,7 +23,7 @@ import { SettingsStatus } from './structureSettingsStatus.js';
 /** The left strip's quick actions for the same selection (Cargo and Pilot moved there, U3-1). */
 function StripActions(): JSX.Element {
   const { items, loot } = useSelectionStripItems(useSelectionPanelData());
-  return <>{items}{loot}</>;
+  return <>{renderStripActions(items)}{loot}</>;
 }
 
 // #1046 — the inspector reads the HUD size class (phone = tiny text).

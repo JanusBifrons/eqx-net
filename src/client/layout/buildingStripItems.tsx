@@ -15,12 +15,12 @@
  * - The shown value is the structure slice's `switchedOff`, from the strip's
  *   change-only poll (`useSelectionPanelData`), so the icon follows the server.
  */
-import type { ReactElement } from 'react';
-import { EqxIcon, EqxStatusFlyout, type EqxStatusOption } from '../../ui/index.js';
+import { EqxIcon, type EqxStatusOption } from '../../ui/index.js';
 import { useUIStore } from '../state/store.js';
 import { canManageBuildings } from '../structures/buildingManagement.js';
 import { sendSetStructurePower } from '../structures/structureActionsClient.js';
 import type { PanelData } from '../components/selectionPanelData.js';
+import type { StripAction } from './stripActions.js';
 
 export type PowerPick = 'on' | 'off';
 
@@ -30,7 +30,7 @@ const POWER_OPTIONS: readonly EqxStatusOption<PowerPick>[] = [
 ];
 
 /** The building section's strip items, or [] when it does not apply. */
-export function useBuildingStripItems(data: PanelData | null): ReactElement[] {
+export function useBuildingStripItems(data: PanelData | null): StripAction[] {
   const manage = useUIStore(canManageBuildings);
   if (!manage || data === null || data.powerSwitch !== true || data.entityId === undefined) return [];
   const entityId = data.entityId;
@@ -39,7 +39,7 @@ export function useBuildingStripItems(data: PanelData | null): ReactElement[] {
     if (p !== value) sendSetStructurePower(entityId, p === 'on');
   };
   return [
-    <EqxStatusFlyout key="power" value={value} options={POWER_OPTIONS} onChange={onPower}
-      tooltip={`Power: ${value === 'on' ? 'On' : 'Off'}`} data-testid="left-strip-power" />,
+    { kind: 'flyout', key: 'power', value, options: POWER_OPTIONS, onPick: onPower,
+      tooltip: `Power: ${value === 'on' ? 'On' : 'Off'}`, testId: 'left-strip-power' },
   ];
 }
