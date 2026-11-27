@@ -120,7 +120,7 @@ test.describe('RTS fleet command loop @feature', () => {
     await expect.poll(() => selCount(page), { timeout: 3_000, message: 'box selects both own hulls' }).toBe(2);
     // Fleet orders live on the left strip now (UI plan U3-4), not a bottom panel.
     await expect(page.locator('[data-testid="left-strip"]')).toHaveAttribute('data-open', 'true');
-    await expect(page.locator('[data-testid="left-strip-identity"]')).toHaveAttribute('aria-label', '2 ships selected');
+    await expect(page.locator('[data-testid="who-hexes"]')).toHaveAttribute('data-count', '2');
     await expect(page.locator('[data-testid="left-strip-order"]')).toBeVisible();
     await expect(page.locator('[data-testid="fleet-mode"]')).toHaveCount(0);
 
@@ -173,8 +173,8 @@ test.describe('RTS fleet command loop @feature', () => {
     await expect(page.locator('[data-testid="left-strip-route"]')).toHaveCount(0);
     await expect(page.locator('[data-testid="left-strip-order"]')).toHaveAttribute('aria-label', 'Order: Patrol', { timeout: 5_000 });
 
-    // ── ⚙ → the Orders panel: ship list, squad, Stop. ──────────────────────
-    await page.locator('[data-testid="left-strip-cog"]').click();
+    // ── Rail Fleet orders → the Orders panel: ship list, squad, Stop. ──────────────────────
+    await page.locator('[data-testid="right-rail-orders"]').click();
     const panel = page.locator('[data-testid="orders-panel"]');
     await expect(panel).toBeVisible();
     await expect(panel).toHaveAttribute('data-fleet-count', '2');
