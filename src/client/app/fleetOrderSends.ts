@@ -30,13 +30,20 @@ export function sendSelectionOrder(selFb: RendererFeedback): void {
   const ids = selFb.fleetSelIds;
   if (ids.length > 0) {
     if (selFb.orderKind === 'move') {
-      // At the Command speed the helm panel shows (Stop / ⅓ / ⅔ / Full).
-      const speed = HELM_SPEED_FRACTION[useUIStore.getState().commandSpeed] ?? 1;
-      sendFleetOrder(ids.slice(), { kind: 'move', x: selFb.orderX, y: selFb.orderY, speed });
+      sendMoveOrder(ids, selFb.orderX, selFb.orderY);
     } else if (selFb.orderKind === 'attack' && selFb.orderTargetId !== null) {
       sendFleetOrder(ids.slice(), { kind: 'attack', targetId: selFb.orderTargetId });
     }
   }
   if (selFb.orderKind === 'move' && useUIStore.getState().fleetPick?.kind === 'move') useUIStore.getState().setFleetPick(null);
   logEvent('fleet_order', { seq: selFb.orderSeq, kind: selFb.orderKind, targetId: selFb.orderTargetId, ships: ids.length });
+}
+
+/** The move order: `ids` go to (x, y) game space at the Command speed the helm
+ *  panel shows (Stop / ⅓ / ⅔ / Full). The right-click / Move-pick send, and the
+ *  target do-hexes' Move to (selection HUD S8). Nothing with no ids. */
+export function sendMoveOrder(ids: readonly string[], x: number, y: number): void {
+  if (ids.length === 0) return;
+  const speed = HELM_SPEED_FRACTION[useUIStore.getState().commandSpeed] ?? 1;
+  sendFleetOrder(ids.slice(), { kind: 'move', x, y, speed });
 }

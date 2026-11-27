@@ -16,7 +16,9 @@
  *   structure selected (S4, `buildDoHexes.tsx`): the placing / route tools
  *   (Place or Done under the thumb, Cancel in the far corner) and the
  *   building's Upgrade, Demolish, Power, More. Every device, like Command.
- * - Command targets come in a later slice (S8).
+ * - Command, own ships selected plus a tapped target that is not mine (S8,
+ *   `targetDoHexes.tsx`): Follow (escort; dimmed off ships), Move to, Attack,
+ *   More (its Details), Clear (keeps the ships, drops the target).
  * - Hidden while a right panel is open (`selectRightPanelOpen`): the panel docks
  *   over the right edge. A held Boost lets go then (HoldButton on unmount).
  * - Hex boxes overlap in their corner triangles (a honeycomb), so each cell
@@ -42,6 +44,12 @@ import { useSelectionStripItems } from './selectionStripItems.js';
 import { usePlacingStripItems } from './placingStripItems.js';
 import { useRouteStripItems } from './routeStripItems.js';
 import { useBuildingStripItems } from './buildingStripItems.js';
+import { followTarget, targetDoHexes, targetFollowable, targetSelected } from './targetDoHexes.js';
+import { resolveFleetCommands } from '../fleet/useFleetSelectionView.js';
+import type { IFleetView } from '@core/contracts/render/IFleetView';
+import { fleetLockApplies, lockFocus } from '../components/targetLock.js';
+import { resolveSelectable, type SelectableTarget } from '../render/SelectionBracket.js';
+import { sendMoveOrder } from '../app/fleetOrderSends.js';
 import { buildingDoHexes, buildingHexesShow, placingDoHexes, routeDoHexes } from './buildDoHexes.js';
 import { canManageBuildings } from '../structures/buildingManagement.js';
 import { sendStructureAction, sendUpgradeStructure } from '../structures/structureActionsClient.js';
@@ -55,18 +63,21 @@ const CELL_CSS = `.${CELL_CLASS} button { pointer-events: auto; }`;
 interface Props {
   /** Present on touch devices only (the Fly hexes need it for Boost). */
   touchInput?: Pick<TouchInput, 'setBoostHeld'> | null;
+  /** The renderer (it owns the selection): the target hexes' Attack and Clear. */
+  rendererRef?: { readonly current: Pick<IFleetView, 'selectFleetShips' | 'attackFocus'> | null };
 }
 
 /** Which do-hex set this state draws (pure; unit-tested): the placing tools
  *  while a structure is being placed and the route tools while a route /
  *  target pick runs (every device, like the fleet set); the Fly set when flying
  *  on touch, none when flying on desktop; the Build set in Build (empty
- *  without your own structure selected); else the fleet set (empty without own
+ *  without your own structure selected); the target set with own ships and a
+ *  tapped target that is not mine; else the fleet set (empty without own
  *  ships in Command). The left strip reads it too, so an action shows in
  *  exactly one place (`LeftStripHost`). */
-export type DoHexSet = 'fly' | 'fleet' | 'placing' | 'route' | 'build' | null;
+export type DoHexSet = 'fly' | 'fleet' | 'target' | 'placing' | 'route' | 'build' | null;
 export function doHexSet(
-  s: Pick<UIStore, 'pilotMode' | 'isDead' | 'buildMode'> & Partial<Pick<UIStore, 'placementKind' | 'fleetPick'>>,
+  s: Pick<UIStore, 'pilotMode' | 'isDead' | 'buildMode'> & Partial<Pick<UIStore, 'placementKind' | 'fleetPick' | 'selection'>>,
   touch: boolean,
 ): DoHexSet {
   if (s.placementKind != null) return 'placing';
@@ -74,6 +85,7 @@ export function doHexSet(
   const flying = s.pilotMode !== 'spectator' && !s.isDead && !s.buildMode;
   if (flying) return touch ? 'fly' : null;
   if (s.buildMode) return 'build';
+  if (s.selection !== undefined && targetSelected(s.selection)) return 'target';
   return 'fleet';
 }
 
@@ -82,7 +94,7 @@ export function useDoHexSet(touch: boolean): DoHexSet {
   return useUIStore((s) => doHexSet(s, touch));
 }
 
-export function DoHexesHost({ touchInput = null }: Props): JSX.Element | null {
+export function DoHexesHost({ touchInput = null, rendererRef = NO_RENDERER }: Props): JSX.Element | null {
   const shown = useShouldRenderHud();
   const panelOpen = useUIStore(selectRightPanelOpen);
   const set = useDoHexSet(touchInput !== null);
@@ -91,6 +103,7 @@ export function DoHexesHost({ touchInput = null }: Props): JSX.Element | null {
   if (set === 'placing') return <PlacingHexes />;
   if (set === 'route') return <RouteHexes />;
   if (set === 'build') return <BuildingHexes />;
+  if (set === 'target') return <TargetHexes rendererRef={rendererRef} />;
   return <FleetHexes />;
 }
 
@@ -129,6 +142,35 @@ function BuildingHexes(): JSX.Element | null {
     openMore: () => setRightPanel('details'),
   });
   return <DoHexGrid hexes={hexes} label="Building" set="build" />;
+}
+
+const NO_RENDERER = { current: null };
+/** Move to's pose read (one tap at a time). */
+const targetPose: SelectableTarget = { x: 0, y: 0, r: 0, hw: 0, hh: 0 };
+
+/** Command, own ships selected plus a tapped target that is not mine (S8). */
+function TargetHexes({ rendererRef }: { rendererRef: NonNullable<Props['rendererRef']> }): JSX.Element | null {
+  const setRightPanel = useUIStore((s) => s.setRightPanel);
+  const attackable = useUIStore((s) => fleetLockApplies(s.selection));
+  const followable = useUIStore((s) => targetFollowable(s.selection));
+  // The fleet builder decides when fleet orders apply at all (Command, own ships).
+  const fleet = useFleetStripItems();
+  if (fleet.length === 0) return null;
+  const hexes = targetDoHexes({
+    attackable,
+    followable,
+    follow: () => { followTarget(useUIStore.getState().selection, resolveFleetCommands()); },
+    moveTo: () => {
+      const sel = useUIStore.getState().selection;
+      const mirror = getGameClient()?.mirror;
+      if (sel.focusId === null || mirror == null || !resolveSelectable(mirror, sel.focusId, targetPose)) return;
+      sendMoveOrder(sel.ids, targetPose.x, targetPose.y);
+    },
+    attack: () => { lockFocus(useUIStore.getState().selection, rendererRef.current, () => false); },
+    openMore: () => setRightPanel('details'),
+    clear: () => { rendererRef.current?.selectFleetShips(useUIStore.getState().selection.ids); },
+  });
+  return <DoHexGrid hexes={hexes} label="Target" set="target" />;
 }
 
 /** Command, own ships selected. */
