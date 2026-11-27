@@ -12,7 +12,8 @@
  */
 import { DECK_CORNER_TOLERANCE, DECK_HEX_INRADIUS } from '../hex/deckCorners.js';
 import { pixelToAxialInto, type AxialHex } from '../hex/hex.js';
-import { DECK_HEX_SIZE } from '../hex/plates.js';
+import { DECK_HEX_FLAT, DECK_HEX_SIZE, deckHexCentreInto } from '../hex/plates.js';
+import { DECK_FENCE_GATE_KIND } from './deckLinks.js';
 
 /** The road deck tile kind (`structureKinds/deckTiles.ts`). */
 export const DECK_ROAD_KIND = 'road';
@@ -47,4 +48,68 @@ export function connectorOnRoadHex(cx: number, cy: number, hw: number, hh: numbe
     if (AT_HEX.q === ROAD_HEX.q && AT_HEX.r === ROAD_HEX.r) return true;
   }
   return false;
+}
+
+// ── Road auto-turn (owner 2026-11-27: roads line up by themselves) ─────────
+
+/** World join bits of a deck hex (`roadJoinBits`): bit `i` (0..5) = a road
+ *  in the hex across edge `i` (the edge midpoint at game angle 60°·i); bit
+ *  `ROAD_GATE_SHIFT + i` = a shield gate standing on edge `i`'s seam. */
+export const ROAD_GATE_SHIFT = 6;
+
+const JOIN_C: { x: number; y: number } = { x: 0, y: 0 };
+const JOIN_H: AxialHex = { q: 0, r: 0 };
+const JOIN_TOL = DECK_HEX_INRADIUS * 0.05;
+
+/** The edge index (0..5) of a vector at angle 60°·i, or -1 when its length
+ *  is not `len` (± JOIN_TOL). */
+function edgeOf(vx: number, vy: number, len: number): number {
+  if (Math.abs(Math.hypot(vx, vy) - len) > JOIN_TOL) return -1;
+  return ((Math.round((Math.atan2(vy, vx) * 180) / Math.PI / 60) % 6) + 6) % 6;
+}
+
+/** What ONE structure (`kind` centred at (x, y)) adds to deck hex (q, r)'s
+ *  world join bits: a road in a neighbouring hex sets that edge's road bit, a
+ *  shield gate on one of the hex's seams sets that edge's gate bit. The ONE
+ *  rule both the client ghost and the server's `place_structure` fold over
+ *  their structures (invariant 15). Pure, allocation-free. */
+export function roadJoinBits(q: number, r: number, kind: string | undefined, x: number, y: number): number {
+  const isRoad = kind === DECK_ROAD_KIND;
+  if (!isRoad && kind !== DECK_FENCE_GATE_KIND) return 0;
+  deckHexCentreInto(q, r, JOIN_C);
+  if (!isRoad) {
+    const i = edgeOf(x - JOIN_C.x, y - JOIN_C.y, DECK_HEX_INRADIUS);
+    return i < 0 ? 0 : 1 << (ROAD_GATE_SHIFT + i);
+  }
+  pixelToAxialInto(x, y, DECK_HEX_SIZE, JOIN_H);
+  const cx = JOIN_C.x, cy = JOIN_C.y;
+  deckHexCentreInto(JOIN_H.q, JOIN_H.r, JOIN_C);
+  const i = edgeOf(JOIN_C.x - cx, JOIN_C.y - cy, DECK_HEX_FLAT);
+  return i < 0 ? 0 : 1 << i;
+}
+
+/** The turn (degrees) a road takes with no road or gate beside it. */
+export const ROAD_DEFAULT_TURN_DEG = 30;
+
+/** The axis (0..2: edges a and a + 3) with the most bits set in a 6-bit
+ *  mask, ties to the lowest; -1 when the mask is empty. */
+function bestAxis(mask: number): number {
+  let best = -1, bestN = 0;
+  for (let a = 0; a < 3; a++) {
+    const n = ((mask >> a) & 1) + ((mask >> (a + 3)) & 1);
+    if (n > bestN) { bestN = n; best = a; }
+  }
+  return best;
+}
+
+/** A road's automatic turn (degrees, one of 30° + 60°·k) from its hex's
+ *  world join bits ({@link roadJoinBits}): its carriageway (local y, game
+ *  angle rot ± 90°) runs along the axis with the most neighbouring roads
+ *  (continue the road), else the axis of a gate on one of its seams (meet
+ *  the gate), else {@link ROAD_DEFAULT_TURN_DEG}. Pure. */
+export function roadAutoTurnDeg(joins: number): number {
+  let a = bestAxis(joins & 63);
+  if (a < 0) a = bestAxis((joins >> ROAD_GATE_SHIFT) & 63);
+  if (a < 0) return ROAD_DEFAULT_TURN_DEG;
+  return (60 * a + 270) % 360;
 }

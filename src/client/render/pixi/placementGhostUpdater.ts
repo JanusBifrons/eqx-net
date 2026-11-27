@@ -23,7 +23,7 @@ import type { GridObstacle } from '@core/structures/Grid';
 import type { PlacementRejection } from '@core/structures/placementRules';
 import { PlacementGhostVerdict, type GhostPose } from '../../structures/placementGhostVerdict.js';
 import { StructureHologram } from './structureHologram.js';
-import { ghostDeckAngle, ghostDeckContext, snapGhostToDeck } from './placementDeckSnap.js';
+import { ghostDeckAngle, ghostDeckContext, ghostRoadArms, snapGhostToDeck } from './placementDeckSnap.js';
 import type { BuildSlotOutlines } from './buildSlotOutlines.js';
 import { PendingRunGhosts, type RunGhostFrame } from './pendingRunGhosts.js';
 const DEG_TO_RAD = Math.PI / 180;
@@ -141,8 +141,8 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
     // slot (the server snaps the same way); a chosen point snaps in place too,
     // so the centre seed and the ahead-of-ship pose land on a slot.
     // The snap's turn too (a small building faces its rhombus, slice 18).
-    const snap = snapGhostToDeck(preview, gx, gy);
-    let angle = pendingGhost ? ghostDeckAngle(preview) : preview.angle;
+    const snap = snapGhostToDeck(preview, gx, gy, mirror);
+    let angle = pendingGhost ? ghostDeckAngle(preview, mirror) : preview.angle;
     if (snap) {
       gx = snap.x; gy = snap.y; angle = snap.rot * DEG_TO_RAD;
       if (ctx.input._placementChosenX !== null) { ctx.input._placementChosenX = gx; ctx.input._placementChosenY = gy; }
@@ -156,6 +156,7 @@ export function updatePlacementGhost(mirror: RenderMirror, ctx: PlacementGhostCt
     // The slot outline under the ghost (after the turn + mirror it undoes).
     // A connector on a plate's middle hex snaps to the anchor: the whole 7-hex plate outline.
     ctx.placementGhost.setDeckSlot(snap ? snap.slot : null, snap ? snap.rhombus : -1);
+    ctx.placementGhost.setRoadArms(ghostRoadArms(preview, angle)); // a road shows its carriageway as laid
     // Red / green before the click: the server's own overlap rule at the drawn
     // pose (structures, landing pads, rocks; off-deck on a deck room). The pending ghost is already sent.
     let rejection: PlacementRejection | null = null;

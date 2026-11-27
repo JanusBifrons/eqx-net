@@ -17,7 +17,8 @@ import { auditEvent } from '../../audit/GameplayAuditLog.js';
 import { parsedMessage, type ParsedMessageHost, type RoomFeature } from './parsedMessage.js';
 import { getStructureKind, isBuildableStructureKind, isDeckOnlyStructureKind, snapPlayerStructureRotation } from '../../../shared-types/structureKinds.js';
 import { needsPackedCrate, productName } from '../../../shared-types/blueprints.js';
-import { snapPlacementToDeck } from '../../../core/structures/deckPlacement.js';
+import { snapPlacementToDeck, type RoadJoinsAt } from '../../../core/structures/deckPlacement.js';
+import { roadJoinBits } from '../../../core/structures/deckGateRoad.js';
 import type { DeckSnap } from '../../../core/hex/deckSnap.js';
 import {
   PlaceStructureSchema,
@@ -32,7 +33,7 @@ type SeedHold = { goods: Partial<Record<'minerals' | 'salvage' | 'alloy' | 'core
 export interface StructureMessageHost extends ParsedMessageHost {
   sessionToPlayer(): ReadonlyMap<string, string>;
   swarmRegistry: Pick<SwarmEntityRegistry, 'getByEntityId'>;
-  structureRegistry: Pick<StructureRegistry, 'get'>;
+  structureRegistry: Pick<StructureRegistry, 'get' | 'all'>;
   sectorKey(): string | null;
   storage(): Pick<StorageService, 'flushDirty'>;
   rebuildStructuresSlice(): void;
@@ -51,6 +52,14 @@ export interface StructureMessageHost extends ParsedMessageHost {
 const deckSnap: DeckSnap = { x: 0, y: 0, q: 0, r: 0, rhombus: -1, slot: 'small', rot: -1 };
 
 export function registerStructureMessages(h: StructureMessageHost): RoomFeature {
+  // A road's neighbours (roads, gates) over the registry: its turn is automatic,
+  // folded by the same core rule the client ghost folds over its mirror (#15).
+  // Made once; called only when a road is placed on a deck room.
+  const roadJoinsAt: RoadJoinsAt = (q, r) => {
+    let m = 0;
+    for (const s of h.structureRegistry.all()) m |= roadJoinBits(q, r, s.kind, s.x, s.y);
+    return m;
+  };
   // ── Structures plan, Phase 2 — placement / removal ──────────────────
   parsedMessage(h, 'place_structure', PlaceStructureSchema, (msg, client) => {
     const owner = h.sessionToPlayer().get(client.sessionId);
@@ -69,7 +78,7 @@ export function registerStructureMessages(h: StructureMessageHost): RoomFeature 
     let px = msg.x, py = msg.y;
     let rot: number = snapPlayerStructureRotation(msg.rot, false, msg.kind);
     if (h.deck()) {
-      snapPlacementToDeck(msg.kind, px, py, deckSnap, msg.rot);
+      snapPlacementToDeck(msg.kind, px, py, deckSnap, msg.rot, roadJoinsAt);
       px = deckSnap.x; py = deckSnap.y; rot = deckSnap.rot;
     }
     const id = h.structurePlacement().place(
