@@ -67,7 +67,7 @@ export function BuildPanel({ open, onClose, onPick }: BuildPanelProps): JSX.Elem
   // Stock keeps polling while placing: the keep-placing rule reads it (placementCancel.ts).
   const placing = useUIStore((s) => s.placementKind !== null);
   const packedStock = usePackedStock(open || placing);
-  const inSector = useUIStore((s) => s.currentSectorKey !== null); // no sector = no crate rule
+  const inSector = useUIStore((s) => s.currentSectorKey !== null && !s.freeBuilds); // no sector or a free-build room = no crate rule
   const [shown, setShown] = useState<StructureKindId | null>(null);
   const deck = useUIStore((s) => s.deck); // a deck-only kind (road) shows on a deck room only
   const cat = categoryById(category);

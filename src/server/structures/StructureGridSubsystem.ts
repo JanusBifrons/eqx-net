@@ -37,7 +37,7 @@ import {
 import { isWeaponId, type WeaponDef, type WeaponId, type MissileWeaponDef } from '../../core/combat/WeaponCatalogue.js';
 import { MINING_BEAM_PLAYER_DPS, resolveMiningBeamEndpoint, type MiningBeamObstacle } from '../../core/combat/miningBeamHazard.js';
 import { Grid, type GridObstacle, type ObstacleBox, type PowerSummary } from '../../core/structures/Grid.js';
-import { buildStallReason } from './constructionStall.js';
+import { buildStallReason, buildCostsOnlyTime } from './constructionStall.js';
 import { deckTileFundingTarget } from './deckTileFunding.js';
 import { flashRouteConnections } from './routeFlash.js';
 import { batteryChargeOf, chargeComponentBatteries, dischargeComponentBatteries, drainBatteries } from './gridBatteries.js';
@@ -841,9 +841,8 @@ export class StructureGridSubsystem {
    */
   estimateBuildEtaMs(rec: StructureRecord): number | null {
     if (rec.isConstructed || rec.constructionCost <= 0) return null;
-    // Mirrors processConstruction: a prepaid unpack needs no route.
-    const prepaid = rec.prepaid === true && rec.upgradeTargetLevel === undefined;
-    if (!prepaid && !this.findStorageRoute(rec.id)) return null; // unreachable / dry → paused
+    // Mirrors processConstruction: a prepaid unpack (or a free build) needs no route.
+    if (!buildCostsOnlyTime(rec) && !this.findStorageRoute(rec.id)) return null; // unreachable / dry → paused
     const remaining = Math.max(0, rec.constructionCost - rec.constructionProgress);
     // The REAL pulse period (a test room pulses faster than 1 s).
     const ratePerMs = CONSTRUCTION_PULSE_AMOUNT / this.pulseMs;
@@ -915,7 +914,7 @@ export class StructureGridSubsystem {
     const bill = structureUpgradeGoods(baseCost, rec.level);
     let needsGoods = false;
     for (const g in bill) if ((bill as Record<string, number>)[g]! > 0) needsGoods = true;
-    if (needsGoods && this.hooks.takeGoods && !this.hooks.takeGoods(rec, bill)) return false;
+    if (needsGoods && rec.free !== true && this.hooks.takeGoods && !this.hooks.takeGoods(rec, bill)) return false;
     // Review must-fix #2 (2026-06-20): the Capital's `constructionCost` is 0, so
     // its upgrade `cost` is 0 — a BALANCE oddity (a free capital upgrade,
     // contradicts D14 "costs resources"; recorded as a follow-up, NOT this fix).
@@ -980,7 +979,7 @@ export class StructureGridSubsystem {
       if (bp.isConstructed || bp.isDeconstructing) continue;
       if (bp.constructionProgress >= bp.constructionCost) {
         // Fully paid, waiting for a ship to leave its space (below).
-      } else if (bp.prepaid === true && bp.upgradeTargetLevel === undefined) {
+      } else if (buildCostsOnlyTime(bp)) {
         // Economy v2 W4b — unpacking a packed structure costs only time: it
         // builds at the normal rate with no minerals and needs no route.
         bp.constructionProgress += CONSTRUCTION_PULSE_AMOUNT;
@@ -1062,7 +1061,7 @@ export class StructureGridSubsystem {
       // Return reclaimed minerals to a connected Capital (capped by capacity).
       // Economy v2 W4b — a structure unpacked from a packed item never drew
       // minerals, so taking it down returns none (no credits→minerals mint).
-      if (reclaim > 0 && rec.prepaid !== true) {
+      if (reclaim > 0 && rec.prepaid !== true && rec.free !== true) {
         const source = this.returnRoute(rec.id);
         if (source) {
           const cap = getStructureKind(source.capital.kind).storageCapacity;
@@ -1071,7 +1070,7 @@ export class StructureGridSubsystem {
         }
       }
       if (rec.constructionProgress <= 0) {
-        if (rec.prepaid === true) this.hooks.onRepack?.(rec);
+        if (rec.prepaid === true && rec.free !== true) this.hooks.onRepack?.(rec); // a free (sandbox) one repacks into nothing
         this.hooks.despawn(rec.id);
         this.hooks.registry.remove(rec.id);
       }

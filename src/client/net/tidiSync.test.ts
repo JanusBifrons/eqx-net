@@ -43,4 +43,12 @@ describe('syncTidiFromRoom — deck room flag', () => {
     syncTidiFromRoom({ state: { clockRate: 1 } } as unknown as Room, null);
     expect(useUIStore.getState().deck).toBe(false);
   });
+
+  it('mirrors state.freeBuilds (sandbox) the same way', () => {
+    syncTidiFromRoom({ state: { clockRate: 1, freeBuilds: true } } as unknown as Room, null);
+    expect(useUIStore.getState().freeBuilds).toBe(true);
+    expect(useUIStore.getState().deck).toBe(false);
+    syncTidiFromRoom({ state: { clockRate: 1 } } as unknown as Room, null);
+    expect(useUIStore.getState().freeBuilds).toBe(false);
+  });
 });

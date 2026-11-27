@@ -32,7 +32,7 @@ export function cancelPlacement(): void {
  */
 export function commitPlacement(kindId: StructureKindId): boolean {
   const ui = useUIStore.getState();
-  const ends = placementEndsAfterPlace(kindId, ui.packedStock, ui.currentSectorKey !== null);
+  const ends = placementEndsAfterPlace(kindId, ui.packedStock, ui.currentSectorKey !== null && !ui.freeBuilds);
   const run = isFenceRunKind(kindId, ui.deck) ? commitFenceRun(kindId) : null;
   if (run === false || (run === null && !commitChosenPlacement(kindId))) return false;
   if (ends && useUIStore.getState().placementKind === kindId) ui.setPlacementKind(null);

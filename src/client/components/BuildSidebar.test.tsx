@@ -67,6 +67,15 @@ describe('BuildSidebar', () => {
     expect(onPick).toHaveBeenCalledWith('connector');
   });
 
+  it('a free-build room (sandbox) never locks the Capital', () => {
+    useUIStore.setState({ packedStock: {}, freeBuilds: true });
+    const { onPick } = renderSidebar();
+    expect(screen.getByTestId('build-capital')).toHaveAttribute('data-locked', '0');
+    fireEvent.click(tileButton('build-capital'));
+    expect(onPick).toHaveBeenCalledWith('capital');
+    useUIStore.setState({ freeBuilds: false });
+  });
+
   it('tiles show the packed count', () => {
     useUIStore.setState({ packedStock: { 'structure:capital': 2 } });
     renderSidebar();

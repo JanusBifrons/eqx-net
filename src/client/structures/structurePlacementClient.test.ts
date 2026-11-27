@@ -256,10 +256,10 @@ describe('base platforms: the rotate control steps 30° on a deck room', () => {
   });
 
   it('reads the room deck flag from the store by default', () => {
-    useUIStore.getState().setDeck(true);
+    useUIStore.getState().setRoomFlags(true, false);
     setPlacementRotationDeg(0);
     expect(cyclePlacementRotation()).toBe(30);
-    useUIStore.getState().setDeck(false);
+    useUIStore.getState().setRoomFlags(false, false);
     expect(cyclePlacementRotation()).toBe(90); // 30 + 90 snaps to the quarter grid
     setPlacementRotationDeg(0);
   });
