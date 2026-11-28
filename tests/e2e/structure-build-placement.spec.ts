@@ -62,6 +62,8 @@ test('Build ▸ Capital → confirm places a structure that appears in the swarm
     // The placing do-hexes appear; ✓ Place sends place_structure.
     await expect(page.locator('[data-testid="placement-kind"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="placement-confirm"]').click();
+    // Plan then Build (#1385): Place only plans; the Build hex sends it.
+    await page.locator('[data-testid="placement-build"]').click();
 
     // The structure rides the kind=2 swarm path → swarm count climbs by ≥ 1.
     await page.waitForFunction(
@@ -152,6 +154,8 @@ test('no ghost↔structure gap after Confirm — the blueprint never vanishes (p
     }, before);
 
     await page.locator('[data-testid="placement-confirm"]').click();
+    // Plan then Build (#1385): Place only plans; the Build hex sends it.
+    await page.locator('[data-testid="placement-build"]').click();
 
     // Wait for the structure to land (the sampler sets `appeared`).
     await page.waitForFunction(

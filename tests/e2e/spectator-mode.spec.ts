@@ -237,6 +237,8 @@ test('construction works while spectating (place a structure with no ship)', asy
   const box = (await surface.boundingBox())!;
   // Click off-centre so the structure isn't on top of any seed entity.
   await page.mouse.click(box.x + box.width / 2 + 80, box.y + box.height / 2 - 60);
+  // Plan then Build (#1385): Place only plans; the Build hex sends it.
+  await page.locator('[data-testid="placement-build"]').click();
 
   await page.waitForFunction(
     (b) => {
