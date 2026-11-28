@@ -59,10 +59,14 @@ test('Build ▸ Capital → confirm places a structure that appears in the swarm
     await expect(page.locator('[data-testid="build-capital"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="build-capital"] button').click();
 
-    // The placing do-hexes appear; ✓ Place sends place_structure.
+    // The placing do-hexes appear; ✓ Place plans the Capital.
     await expect(page.locator('[data-testid="placement-kind"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="placement-confirm"]').click();
-    // Plan then Build (#1385): Place only plans; the Build hex sends it.
+
+    // A Capital places once: the placing tools go after Place (Build and ✕ stay).
+    await expect(page.locator('[data-testid="placement-kind"]')).toBeHidden();
+    // Plan then Build (#1385): Place only plans it; the Build hex sends the plan.
+    await expect(page.locator('[data-testid="placement-build"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="placement-build"]').click();
 
     // The structure rides the kind=2 swarm path → swarm count climbs by ≥ 1.
@@ -76,8 +80,8 @@ test('Build ▸ Capital → confirm places a structure that appears in the swarm
     );
     expect(await swarmCount(page)).toBeGreaterThan(before);
 
-    // A Capital places once: the placing tools go after Place.
-    await expect(page.locator('[data-testid="placement-kind"]')).toBeHidden();
+    // The sent plan is gone: no Build hex left.
+    await expect(page.locator('[data-testid="placement-build"]')).toBeHidden();
   } finally {
     await ctx.close();
   }
@@ -92,8 +96,8 @@ test('no ghost↔structure gap after Confirm — the blueprint never vanishes (p
   // NEITHER the ghost NOR the real structure was visible. The fix keeps a dim
   // "pending" ghost at the sent point until the structure lands.
   //
-  // This samples EVERY animation frame from just before Confirm until the
-  // structure appears and asserts there was never a frame with neither the
+  // Plan then Build (#1385): Place plans it, Build sends it. This samples EVERY
+  // animation frame from the Build press until the structure appears and asserts there was never a frame with neither the
   // ghost (data-placement-world-x) nor the structure (data-swarm-size grown). On
   // the pre-fix code the ghost clears immediately → ≥1 neither-frame → fails.
   //
@@ -132,10 +136,19 @@ test('no ghost↔structure gap after Confirm — the blueprint never vanishes (p
       { timeout: 5_000 },
     );
 
-    // Start a per-RAF sampler in page context BEFORE confirming.
+    // Plan then Build (#1385): Place only plans the Capital; Build sends it. A
+    // Capital places once, so Place ends placing and the live ghost may leave
+    // the dataset before Build: the gap that matters is Build → landing.
+    await page.locator('[data-testid="placement-confirm"]').click();
+    const build = page.locator('[data-testid="placement-build"]');
+    await expect(build).toBeVisible({ timeout: 5_000 });
+
+    // A per-RAF sampler armed by the Build press itself (same task). Frames
+    // before the first ghost-or-structure frame are not counted: the dataset
+    // is published every 5th frame, so it can still show the pre-Build state.
     await page.evaluate((baseSwarm) => {
-      const w = window as unknown as { __placeGap: { neither: number; total: number; appeared: boolean } };
-      w.__placeGap = { neither: 0, total: 0, appeared: false };
+      const w = window as unknown as { __placeGap: { neither: number; total: number; appeared: boolean; seen: boolean } };
+      w.__placeGap = { neither: 0, total: 0, appeared: false, seen: false };
       const surface = document.querySelector('[data-testid="game-surface"]') as HTMLElement | null;
       const readSwarm = (): number => Number(surface?.dataset['swarmSize'] ?? '0');
       const loop = (): void => {
@@ -144,6 +157,8 @@ test('no ghost↔structure gap after Confirm — the blueprint never vanishes (p
         const ghostPresent = ghost != null && ghost !== '';
         const structurePresent = readSwarm() > baseSwarm;
         if (structurePresent) s.appeared = true;
+        if (ghostPresent || structurePresent) s.seen = true;
+        if (!s.seen) { requestAnimationFrame(loop); return; }
         if (!ghostPresent && !structurePresent) s.neither++;
         s.total++;
         // Sample for a bounded window after the structure appears, then stop.
@@ -151,11 +166,8 @@ test('no ghost↔structure gap after Confirm — the blueprint never vanishes (p
         requestAnimationFrame(loop);
       };
       requestAnimationFrame(loop);
+      (document.querySelector('[data-testid="placement-build"]') as HTMLButtonElement).click();
     }, before);
-
-    await page.locator('[data-testid="placement-confirm"]').click();
-    // Plan then Build (#1385): Place only plans; the Build hex sends it.
-    await page.locator('[data-testid="placement-build"]').click();
 
     // Wait for the structure to land (the sampler sets `appeared`).
     await page.waitForFunction(

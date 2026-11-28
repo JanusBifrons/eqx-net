@@ -53,7 +53,8 @@ test('Build ▸ Capital places a structure', async ({ browser }) => {
     await page.locator('[data-testid="build-capital"] button').click();
     await expect(page.locator('[data-testid="placement-kind"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="placement-confirm"]').click();
-    // Plan then Build (#1385): Place only plans; the Build hex sends it.
+    // Plan then Build (#1385): Place only plans it; the Build hex sends the plan.
+    await expect(page.locator('[data-testid="placement-build"]')).toBeVisible({ timeout: 5_000 });
     await page.locator('[data-testid="placement-build"]').click();
 
     // The placed Capital appears as a kind-2 swarm entity within a snapshot.

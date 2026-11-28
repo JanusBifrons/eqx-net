@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { useUIStore, useShouldRenderHud } from '../state/store';
 import { type StructureKindId } from '@shared-types/structureKinds';
 import { onGameWindowOpen } from './GameWindow';
 import { BuildPanel } from '../panels/BuildPanel';
+import { getPlacementPlanCount, subscribePlacementPlan } from '../structures/placementPlan';
 
 /**
  * Mounts the Build panel (panels/BuildPanel.tsx: a category rail and kind
@@ -17,7 +18,9 @@ import { BuildPanel } from '../panels/BuildPanel';
  * the ghost. Place keeps placing the same building (placementCancel.ts); the
  * strip's building icon reopens the panel (placement stays live) and its ✕
  * stops placing. Every placement end in Build (✕, or a place-once place)
- * brings the panel back for the next structure. A game window opening closes
+ * brings the panel back for the next structure, once no plan waits for Build:
+ * a place-once kind leaves its building planned and the placing hexes keep
+ * Build and ✕ up, which the panel would cover. A game window opening closes
  * it (one right panel at a time).
  */
 export function BuildSidebarHost(): JSX.Element | null {
@@ -33,8 +36,11 @@ export function BuildSidebarHost(): JSX.Element | null {
 
   // Every placement end in Build (Cancel, or a place-once kind placed: the
   // ghost goes, Build stays) brings the full list back for the next structure,
-  // unless another panel is up. A Place keeps placing, so it stays closed.
-  const placing = useUIStore((s) => s.placementKind !== null);
+  // unless another panel is up. A Place keeps placing, so it stays closed; a
+  // plan waiting for Build counts as placing (the placing hexes stay up).
+  const kindUp = useUIStore((s) => s.placementKind !== null);
+  const planned = useSyncExternalStore(subscribePlacementPlan, getPlacementPlanCount);
+  const placing = kindUp || planned > 0;
   const wasPlacing = useRef(placing);
   useEffect(() => {
     const s = useUIStore.getState();
